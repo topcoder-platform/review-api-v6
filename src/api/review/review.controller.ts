@@ -89,17 +89,12 @@ export class ReviewController {
     return mockReviewResponse;
   }
 
-  @Patch('/:id/items/:itemId')
+  @Patch('/items/:itemId')
   @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Admin)
   @ApiOperation({
     summary:
       'Update a specific review item, if copilot is patching, manager comment is required',
     description: 'Roles: Reviewer, Copilot, Admin',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'The ID of the review',
-    example: 'review123',
   })
   @ApiParam({
     name: 'itemId',
@@ -114,7 +109,6 @@ export class ReviewController {
   })
   @ApiResponse({ status: 404, description: 'Review item not found.' })
   updateReviewItem(
-    @Param('id') id: string,
     @Param('itemId') itemId: string,
     @Body() body: ReviewItemRequestDto,
   ): ReviewItemResponseDto {
@@ -206,16 +200,11 @@ export class ReviewController {
     return { message: `Review ${id} deleted successfully.` };
   }
 
-  @Delete('/:id/items/:itemId')
+  @Delete('/items/:itemId')
   @Roles(UserRole.Copilot, UserRole.Admin)
   @ApiOperation({
     summary: 'Delete a review item',
     description: 'Roles: Copilot, Admin',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'The ID of the review',
-    example: 'mock-review-id',
   })
   @ApiParam({
     name: 'itemId',
@@ -228,9 +217,9 @@ export class ReviewController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review item not found.' })
-  deleteReviewItem(@Param('id') id: string, @Param('itemId') itemId: string) {
+  deleteReviewItem(@Param('itemId') itemId: string) {
     return {
-      message: `Review item ${itemId} from review ${id} deleted successfully.`,
+      message: `Review item ${itemId} deleted successfully.`,
     };
   }
 }

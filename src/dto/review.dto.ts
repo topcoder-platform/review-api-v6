@@ -20,7 +20,11 @@ export class ReviewItemCommentBaseDto {
   })
   type: ReviewItemCommentType;
 
-  @ApiProperty({ description: 'Sort order of the comment', example: 1 })
+  @ApiProperty({
+    description: 'Sort order of the comment. Defaults to 0',
+    example: 1,
+    default: 0,
+  })
   sortOrder: number;
 }
 
@@ -65,9 +69,9 @@ export class ReviewItemBaseDto {
   @ApiProperty({
     description: 'Initial answer for the review item',
     example: 'Yes',
-    required: false,
+    required: true,
   })
-  initialAnswer?: string;
+  initialAnswer: string;
 
   @ApiProperty({
     description: 'Final answer after review updates',
