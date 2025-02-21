@@ -109,15 +109,11 @@ export class AppealController {
     return mockAppealResponseDto;
   }
 
-  @Patch('/:appealId/response/:appealResponseId')
+  @Patch('/response/:appealResponseId')
   @Roles(UserRole.Reviewer)
   @ApiOperation({
     summary: 'Update a response for an appeal',
     description: 'Roles: Reviewer',
-  })
-  @ApiParam({
-    name: 'appealId',
-    description: 'The ID of the appeal to update the response for',
   })
   @ApiParam({
     name: 'appealResponseId',
@@ -134,7 +130,6 @@ export class AppealController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   updateAppealResponse(
-    @Param('appealId') appealId: string,
     @Param('appealResponseId') appealResponseId: string,
     @Body() body: AppealResponseRequestDto,
   ): AppealResponseRequestDto {

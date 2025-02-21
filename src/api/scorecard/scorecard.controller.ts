@@ -23,6 +23,7 @@ import {
   ScorecardResponseDto,
   sampleScorecardResponse,
 } from 'src/dto/scorecard.dto';
+import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 
 @ApiTags('Scorecard')
 @ApiBearerAuth()
@@ -118,6 +119,7 @@ export class ScorecardController {
     description: 'The challenge track to filter by',
     example: 'Data Science',
     required: false,
+    enum: ChallengeTrack
   })
   @ApiQuery({
     name: 'challengeType',
@@ -137,8 +139,8 @@ export class ScorecardController {
     type: [ScorecardResponseDto],
   })
   searchScorecards(
-    @Query('challengeTrack') challengeTrack?: string,
-    @Query('challengeType') cchallengeType?: string,
+    @Query('challengeTrack') challengeTrack?: ChallengeTrack,
+    @Query('challengeType') challengeType?: string,
     @Query('name') name?: string,
   ) {
     return [sampleScorecardResponse];
