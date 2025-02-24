@@ -11,6 +11,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 model scorecard {
