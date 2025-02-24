@@ -34,8 +34,8 @@ build_and_deploy_steps: &build_and_deploy_steps
     - run:
           name: Build Docker Image
           command: |
-              # ./build.sh <<pipeline.parameters.reset-db>>
-              docker buildx build --no-cache=true --build-arg RESET_DB_ARG=<<pipeline.parameters.reset-db>> --build-arg SEED_DATA_ARG=${DEPLOYMENT_ENVIRONMENT} -t ${APPNAME}:latest .
+              ./build.sh <<pipeline.parameters.reset-db>>
+              # docker buildx build --no-cache=true --build-arg RESET_DB_ARG=<<pipeline.parameters.reset-db>> --build-arg SEED_DATA_ARG=${DEPLOYMENT_ENVIRONMENT} -t ${APPNAME}:latest .
     - deploy:
           name: Deploy Using MasterScript
           command: |
