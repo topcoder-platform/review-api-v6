@@ -34,7 +34,7 @@ build_and_deploy_steps: &build_and_deploy_steps
     - run:
           name: Build Docker Image
           command: |
-              ./build.sh 
+              ./build.sh <<pipeline.parameters.reset-db>>
     - deploy:
           name: Deploy Using MasterScript
           command: |

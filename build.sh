@@ -1,3 +1,4 @@
 #!/bin/bash
 set -eo pipefail
-docker buildx build --no-cache=true --build-arg RESET_DB_ARG=<<pipeline.parameters.reset-db>> --build-arg SEED_DATA_ARG=${DEPLOYMENT_ENVIRONMENT} -t ${APPNAME}}:latest .
+RESET_DB_VALUE=$1
+docker buildx build --no-cache=true --build-arg RESET_DB_ARG=${RESET_DB_VALUE} --build-arg SEED_DATA_ARG=${DEPLOYMENT_ENVIRONMENT} -t ${APPNAME}}:latest .
