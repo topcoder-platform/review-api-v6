@@ -3,7 +3,7 @@
 FROM node:22.13.1-alpine
 
 RUN apk add --no-cache bash
-RUN apk update 
+RUN apk update && apk add postgresql-client
 
 ARG RESET_DB_ARG=false
 ENV RESET_DB=$RESET_DB_ARG
