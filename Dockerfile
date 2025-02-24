@@ -3,13 +3,12 @@
 FROM node:22.13.1-alpine
 
 RUN apk add --no-cache bash
-RUN apk update && apk add postgresql-client
+RUN apk update
 
 ARG RESET_DB_ARG=false
 ENV RESET_DB=$RESET_DB_ARG
 ARG SEED_DATA_ARG=""
 ENV SEED_DATA=$SEED_DATA_ARG
-ENV PRISMA_CLI_BINARY_TARGETS: 'debian-openssl-1.1.x,rhel-openssl-3.0.x'
 
 WORKDIR /app
 COPY . .
