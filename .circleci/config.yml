@@ -1,0 +1,81 @@
+version: 2
+
+parameters:
+  reset-db:
+    type: boolean
+    default: false
+
+defaults: &defaults
+    docker:
+        - image: cimg/python:3.12.0-browsers
+
+install_dependencies: &install_dependencies
+    name: Install Dependencies
+    command: |
+        sudo apt update
+        sudo apt install -y jq python3-pip
+        sudo pip3 install awscli --upgrade
+
+install_deploy_scripts: &install_deploy_scripts
+    name: Install Deployment Scripts
+    command: |
+        git clone --branch v1.4.17 https://github.com/topcoder-platform/tc-deploy-scripts ../buildscript
+        cp ../buildscript/master_deploy.sh .
+        cp ../buildscript/buildenv.sh .
+        cp ../buildscript/awsconfiguration.sh .
+        cp ../buildscript/psvar-processor.sh .
+
+
+build_and_deploy_steps: &build_and_deploy_steps
+    - checkout
+    - setup_remote_docker
+    - run: *install_dependencies
+    - run: *install_deploy_scripts
+    - run:
+          name: Build Docker Image
+          command: |
+              ./build.sh 
+    - deploy:
+          name: Deploy Using MasterScript
+          command: |
+              ./awsconfiguration.sh $DEPLOY_ENV
+              source awsenvconf
+              ./psvar-processor.sh -t appenv -p /config/${APPNAME}/deployvar
+              source deployvar_env
+              ./master_deploy.sh -d ECS -e $DEPLOY_ENV -t latest -j /config/${APPNAME}/appvar -i ${APPNAME} -p FARGATE
+
+jobs:
+    build-dev:
+        <<: *defaults
+        environment:
+            DEPLOY_ENV: 'DEV'
+            LOGICAL_ENV: 'dev'
+            APPNAME: 'tc-review-api'
+            DEPLOYMENT_ENVIRONMENT: 'dev'
+        steps: *build_and_deploy_steps
+
+    build-prod:
+        <<: *defaults
+        environment:
+            DEPLOY_ENV: 'PROD'
+            LOGICAL_ENV: 'prod'
+            APPNAME: 'tc-review-api'
+            DEPLOYMENT_ENVIRONMENT: 'prod'
+        steps: *build_and_deploy_steps
+
+workflows:
+    version: 2
+    build:
+        jobs:
+            - 'build-dev':
+                  context: org-global
+                  filters:
+                      branches:
+                          only:
+                              - develop
+            - 'build-prod':
+                  context: org-global
+                  filters:
+                      branches:
+                          only:
+                              - master
