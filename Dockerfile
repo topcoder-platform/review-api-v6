@@ -12,7 +12,8 @@ ENV SEED_DATA=$SEED_DATA_ARG
 
 WORKDIR /app
 COPY . .
-RUN npm install
-RUN npm run build
+RUN npm install pnpm -g
+RUN pnpm install
+RUN pnpm run build
 RUN chmod +x appStartUp.sh
 CMD ./appStartUp.sh
