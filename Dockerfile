@@ -13,7 +13,9 @@ ENV PRISMA_CLI_BINARY_TARGETS=linux-musl-arm64-openssl-3.0.x
 
 WORKDIR /app
 COPY . .
-RUN npm install
+RUN npm install pnpm -g
+RUN pnpm install
+RUN npx prisma generate
 # RUN pnpm run build
 RUN chmod +x appStartUp.sh
 CMD ./appStartUp.sh
