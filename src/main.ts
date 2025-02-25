@@ -11,8 +11,10 @@ async function bootstrap() {
     rawBody: true,
   });
 
-  // Global prefix for all routes in production
-  app.setGlobalPrefix('/v5/review');
+  // Global prefix for all routes in production is configured as `/v5/review`
+  if (process.env.NODE_ENV === 'production') {
+    app.setGlobalPrefix('/v5/review');
+  }
 
   // CORS related settings
   const corsConfig: cors.CorsOptions = {
@@ -32,7 +34,6 @@ async function bootstrap() {
   // Add the global validation pipe to auto-map and validate DTOs
   // Note that the whitelist option sanitizes input DTOs so only properties defined on the class are set
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-
 
   // Setup swagger
   // TODO: finish this and make it so this block only runs in non-prod
