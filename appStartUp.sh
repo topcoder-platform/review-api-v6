@@ -13,4 +13,4 @@ else
 fi
 
 # Start the app
-pnpm start
+npm start
