@@ -9,13 +9,12 @@ ARG RESET_DB_ARG=false
 ENV RESET_DB=$RESET_DB_ARG
 ARG SEED_DATA_ARG=""
 ENV SEED_DATA=$SEED_DATA_ARG
-ENV PRISMA_CLI_BINARY_TARGETS=linux-musl-arm64-openssl-3.0.x
+ENV PRISMA_CLI_BINARY_TARGETS=linux-musl-openssl-3.0.x
 
 WORKDIR /app
 COPY . .
 RUN npm install pnpm -g
 RUN pnpm install
-RUN npx prisma generate
 # RUN pnpm run build
 RUN chmod +x appStartUp.sh
 CMD ./appStartUp.sh
