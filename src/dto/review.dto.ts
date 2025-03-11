@@ -4,6 +4,15 @@ export enum ReviewItemCommentType {
   COMMENT = 'COMMENT',
   REQUIRED = 'REQUIRED',
   RECOMMENDED = 'RECOMMENDED',
+  AGGREGATION_COMMENT = 'AGGREGATION_COMMENT',
+  AGGREGATION_REVIEW_COMMENT = 'AGGREGATION_REVIEW_COMMENT',
+  SUBMITTER_COMMENT = 'SUBMITTER_COMMENT',
+  FINAL_FIX_COMMENT = 'FINAL_FIX_COMMENT',
+  FINAL_REVIEW_COMMENT = 'FINAL_REVIEW_COMMENT',
+  MANAGER_COMMENT = 'MANAGER_COMMENT',
+  APPROVAL_REVIEW_COMMENT = 'APPROVAL_REVIEW_COMMENT',
+  APPROVAL_REVIEW_COMMENT_OTHER_FIXES = 'APPROVAL_REVIEW_COMMENT_OTHER_FIXES',
+  SPECIFICATION_REVIEW_COMMENT = 'SPECIFICATION_REVIEW_COMMENT',
 }
 
 export class ReviewItemCommentBaseDto {
@@ -223,42 +232,40 @@ export class ReviewResponseDto extends ReviewBaseDto {
   updatedBy: string;
 }
 
-export const mockReviewResponse: ReviewResponseDto = {
-  id: 'mock-review-id',
-  resourceId: 'mock-resource-id',
-  phaseId: 'mock-phase-id',
-  submissionId: 'mock-submission-id',
-  scorecardId: 'mock-scorecard-id',
-  finalScore: 85.5,
-  initialScore: 80.0,
-  committed: false,
-  createdBy: 'user123',
-  createdAt: new Date(),
-  updatedBy: 'user456',
-  updatedAt: new Date(),
-  reviewItems: [
-    {
-      id: 'mock-item-id',
-      scorecardQuestionId: 'mock-question-id',
-      initialAnswer: 'Yes',
-      finalAnswer: 'No',
-      managerComment: 'Needs improvement',
-      reviewItemComments: [
-        {
-          id: 'mock-comment-id',
-          content: 'This needs more explanation',
-          type: ReviewItemCommentType.COMMENT,
-          sortOrder: 1,
-          createdBy: 'user123',
-          createdAt: new Date(),
-          updatedBy: 'user456',
-          updatedAt: new Date(),
-        },
-      ],
-      createdBy: 'user123',
-      createdAt: new Date(),
-      updatedBy: 'user456',
-      updatedAt: new Date(),
+export function mapReviewRequestToDto(request: ReviewRequestDto) {
+  const userFields = {
+    createdBy: '',
+    updatedBy: '',
+  };
+
+  return {
+    ...request,
+    ...userFields,
+    reviewItems: {
+      create: request.reviewItems?.map((item) =>
+        mapReviewItemRequestToDto(item),
+      ),
     },
-  ],
-};
+  };
+}
+
+export function mapReviewItemRequestToDto(request: ReviewItemRequestDto) {
+  const userFields = {
+    createdBy: '',
+    updatedBy: '',
+  };
+
+  return {
+    ...request,
+    ...userFields,
+    reviewId: '',
+    reviewItemComments: {
+      create: request.reviewItemComments?.map((comment) => ({
+        ...comment,
+        ...userFields,
+        resourceId: '',
+        reviewItemId: '',
+      })),
+    },
+  };
+}

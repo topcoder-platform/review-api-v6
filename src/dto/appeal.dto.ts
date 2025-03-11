@@ -128,25 +128,28 @@ export class AppealResponseDto extends AppealBaseDto {
   updatedAt?: Date;
 }
 
-export const mockAppealDto: AppealResponseDto = {
-  id: 'appeal456',
-  resourceId: 'resource123',
-  reviewItemCommentId: 'comment123',
-  content: 'This is the content of the appeal.',
-  createdBy: 'john_doe',
-  createdAt: new Date('2023-10-01T00:00:00Z'),
-  updatedBy: 'jane_doe',
-  updatedAt: new Date('2023-10-01T00:00:00Z'),
-};
+export function mapAppealRequestToDto(request: AppealRequestDto) {
+  const userFields = {
+    createdBy: '',
+    updatedBy: '',
+  };
 
-export const mockAppealResponseDto: AppealResponseResponseDto = {
-  id: 'resp1',
-  appealId: 'appeal123',
-  resourceId: 'resource456',
-  content: 'This is the content of the appeal response.',
-  success: true,
-  createdBy: 'admin_user',
-  createdAt: new Date('2023-10-01T00:00:00Z'),
-  updatedBy: 'manager_user',
-  updatedAt: new Date('2023-10-01T00:00:00Z'),
-};
+  return {
+    ...request,
+    ...userFields,
+  };
+}
+
+export function mapAppealResponseRequestToDto(
+  request: AppealResponseRequestDto,
+) {
+  const userFields = {
+    createdBy: '',
+    updatedBy: '',
+  };
+
+  return {
+    ...request,
+    ...userFields,
+  };
+}

@@ -5,7 +5,7 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
@@ -15,19 +15,20 @@ datasource db {
 }
 
 model scorecard {
-  id            String @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  status        ScorecardStatus
-  type          ScorecardType
+  id             String          @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId       String?
+  status         ScorecardStatus
+  type           ScorecardType
   challengeTrack ChallengeTrack
-  challengeType String
-  name          String
-  version       String
-  minScore      Float
-  maxScore      Float
-  createdAt     DateTime @default(now())
-  createdBy     String
-  updatedAt     DateTime @updatedAt
-  updatedBy     String
+  challengeType  String
+  name           String
+  version        String
+  minScore       Float
+  maxScore       Float
+  createdAt      DateTime        @default(now())
+  createdBy      String
+  updatedAt      DateTime        @updatedAt
+  updatedBy      String
 
   scorecardGroups scorecardGroup[]
   reviews         review[]
@@ -63,7 +64,8 @@ enum ChallengeTrack {
 }
 
 model scorecardGroup {
-  id          String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId    String?
   scorecardId String
   name        String
   weight      Float
@@ -73,130 +75,147 @@ model scorecardGroup {
   updatedAt   DateTime @updatedAt
   updatedBy   String
 
-  scorecard   scorecard @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
-  sections    scorecardSection[]
+  scorecard scorecard          @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+  sections  scorecardSection[]
 }
 
 model scorecardSection {
-  id             String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id               String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId         String?
   scorecardGroupId String
-  name          String
-  weight        Float
-  sortOrder     Int
-  createdAt     DateTime @default(now())
-  createdBy     String
-  updatedAt     DateTime @updatedAt
-  updatedBy     String
+  name             String
+  weight           Float
+  sortOrder        Int
+  createdAt        DateTime @default(now())
+  createdBy        String
+  updatedAt        DateTime @updatedAt
+  updatedBy        String
 
-  group         scorecardGroup @relation(fields: [scorecardGroupId], references: [id], onDelete: Cascade)
-  questions     scorecardQuestion[]
+  group     scorecardGroup      @relation(fields: [scorecardGroupId], references: [id], onDelete: Cascade)
+  questions scorecardQuestion[]
 }
 
 enum QuestionType {
   SCALE
   YES_NO
+  TEST_CASE
   // Add other types as needed
 }
 
 model scorecardQuestion {
-  id             String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id                 String       @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId           String?
   scorecardSectionId String
-  type           QuestionType
-  description    String
-  guidelines     String
-  weight        Float
-  requiresUpload Boolean
-  sortOrder     Int
-  createdAt     DateTime @default(now())
-  createdBy     String
-  updatedAt     DateTime @updatedAt
-  updatedBy     String
+  type               QuestionType
+  description        String
+  guidelines         String
+  weight             Float
+  requiresUpload     Boolean
+  sortOrder          Int
+  createdAt          DateTime     @default(now())
+  createdBy          String
+  updatedAt          DateTime     @updatedAt
+  updatedBy          String
 
-  scaleMin          Int?        // Minimum value for scale (used when type is SCALE)
-  scaleMax          Int?        // Maximum value for scale (used when type is SCALE)
+  scaleMin Int? // Minimum value for scale (used when type is SCALE)
+  scaleMax Int? // Maximum value for scale (used when type is SCALE)
 
-  section       scorecardSection @relation(fields: [scorecardSectionId], references: [id], onDelete: Cascade)
+  section scorecardSection @relation(fields: [scorecardSectionId], references: [id], onDelete: Cascade)
 }
 
 model review {
-  id             String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  resourceId     String
-  phaseId        String
-  submissionId   String
-  scorecardId    String
-  committed      Boolean @default(false)
-  finalScore     Float
-  initialScore   Float
-  createdAt      DateTime @default(now())
-  createdBy      String
-  updatedAt      DateTime @updatedAt
-  updatedBy      String
+  id           String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId     String?
+  resourceId   String
+  phaseId      String
+  submissionId String
+  scorecardId  String
+  committed    Boolean  @default(false)
+  finalScore   Float
+  initialScore Float
+  createdAt    DateTime @default(now())
+  createdBy    String
+  updatedAt    DateTime @updatedAt
+  updatedBy    String
 
-  scorecard      scorecard @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
-  reviewItems    reviewItem[]
+  scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+  reviewItems reviewItem[]
 
-  @@index([committed])  // Add index for the committed field
-  @@index([submissionId])   // Index for submissionId field
-  @@index([resourceId])     // Index for resourceId field
+  @@index([committed]) // Add index for the committed field
+  @@index([submissionId]) // Index for submissionId field
+  @@index([resourceId]) // Index for resourceId field
 }
 
 model reviewItem {
-  id                 String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  reviewId           String
+  id                  String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId            String?
+  reviewId            String
   scorecardQuestionId String
-  uploadId           String?
-  initialAnswer      String
-  finalAnswer        String?
-  managerComment     String?
-  createdAt          DateTime @default(now())
-  createdBy          String
-  updatedAt          DateTime @updatedAt
-  updatedBy          String
+  uploadId            String?
+  initialAnswer       String
+  finalAnswer         String?
+  managerComment      String?
+  createdAt           DateTime @default(now())
+  createdBy           String
+  updatedAt           DateTime @updatedAt
+  updatedBy           String
 
-  review            review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  review             review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewItemComments reviewItemComment[]
 }
 
 model reviewItemComment {
-  id            String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  resourceId    String
-  reviewItemId  String
-  content       String
-  type          ReviewItemCommentType
-  sortOrder     Int @default(0)
-  createdAt     DateTime @default(now())
-  createdBy     String
-  updatedAt     DateTime @updatedAt
-  updatedBy     String
+  id           String                @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId     String?
+  resourceId   String
+  reviewItemId String
+  content      String
+  type         ReviewItemCommentType
+  sortOrder    Int                   @default(0)
+  createdAt    DateTime              @default(now())
+  createdBy    String
+  updatedAt    DateTime              @updatedAt
+  updatedBy    String
 
-  reviewItem    reviewItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
-  appeal        appeal?
+  reviewItem reviewItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
+  appeal     appeal?
 }
 
 enum ReviewItemCommentType {
   COMMENT
   REQUIRED
   RECOMMENDED
+  AGGREGATION_COMMENT
+  AGGREGATION_REVIEW_COMMENT
+  SUBMITTER_COMMENT
+  FINAL_FIX_COMMENT
+  FINAL_REVIEW_COMMENT
+  MANAGER_COMMENT
+  APPROVAL_REVIEW_COMMENT
+  APPROVAL_REVIEW_COMMENT_OTHER_FIXES
+  SPECIFICATION_REVIEW_COMMENT
 }
 
 model appeal {
-  id                  String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id                  String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId            String?
   resourceId          String
-  reviewItemCommentId String  @unique  // Ensure one-to-one relationship
+  reviewItemCommentId String   @unique // Ensure one-to-one relationship
   content             String
   createdAt           DateTime @default(now())
   createdBy           String
   updatedAt           DateTime @updatedAt
   updatedBy           String
 
-  reviewItemComment   reviewItemComment @relation(fields: [reviewItemCommentId], references: [id], onDelete: Cascade)  // Define fields and references here
-  appealResponse      appealResponse?
+  reviewItemComment reviewItemComment @relation(fields: [reviewItemCommentId], references: [id], onDelete: Cascade) // Define fields and references here
+  appealResponse    appealResponse?
 
-  @@index([resourceId])     // Index for resourceId field
+  @@index([resourceId]) // Index for resourceId field
 }
 
 model appealResponse {
-  id         String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id         String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId   String?
   appealId   String   @unique
   resourceId String
   content    String
@@ -206,40 +225,40 @@ model appealResponse {
   updatedAt  DateTime @updatedAt
   updatedBy  String
 
-  appeal     appeal @relation(fields: [appealId], references: [id], onDelete: Cascade)
+  appeal appeal @relation(fields: [appealId], references: [id], onDelete: Cascade)
 }
 
 model challengeResult {
-  challengeId         String
-  userId              String
-  paymentId           String?
-  submissionId        String
-  oldRating           Int?
-  newRating           Int?
-  initialScore        Float
-  finalScore          Float
-  placement           Int
-  rated               Boolean
-  passedReview        Boolean
-  validSubmission     Boolean
-  pointAdjustment     Float?
-  ratingOrder         Int?
+  challengeId     String
+  userId          String
+  paymentId       String?
+  submissionId    String
+  oldRating       Int?
+  newRating       Int?
+  initialScore    Float
+  finalScore      Float
+  placement       Int
+  rated           Boolean
+  passedReview    Boolean
+  validSubmission Boolean
+  pointAdjustment Float?
+  ratingOrder     Int?
 
-  createdAt           DateTime @default(now())
-  createdBy           String
-  updatedAt           DateTime @updatedAt
-  updatedBy           String
+  createdAt DateTime @default(now())
+  createdBy String
+  updatedAt DateTime @updatedAt
+  updatedBy String
 
   @@id([challengeId, userId])
 }
 
 model contactRequest {
-  id          String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
   resourceId  String
-  challengeId String   // Associated challenge
-  message     String   // Markdown content
-  createdAt           DateTime @default(now())
-  createdBy           String
-  updatedAt           DateTime @updatedAt
-  updatedBy           String
+  challengeId String // Associated challenge
+  message     String // Markdown content
+  createdAt   DateTime @default(now())
+  createdBy   String
+  updatedAt   DateTime @updatedAt
+  updatedBy   String
 }

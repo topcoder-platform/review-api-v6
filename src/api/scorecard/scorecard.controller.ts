@@ -7,6 +7,8 @@ import {
   Body,
   Param,
   Query,
+  NotFoundException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,14 +23,17 @@ import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
 import {
   ScorecardRequestDto,
   ScorecardResponseDto,
-  sampleScorecardResponse,
+  mapScorecardRequestToDto,
 } from 'src/dto/scorecard.dto';
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
 
 @ApiTags('Scorecard')
 @ApiBearerAuth()
 @Controller('/api/scorecards')
 export class ScorecardController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Post()
   @Roles(UserRole.Admin)
   @ApiOperation({ summary: 'Add a new scorecard', description: 'Roles: Admin' })
@@ -39,8 +44,24 @@ export class ScorecardController {
     type: ScorecardResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  addScorecard(@Body() body: ScorecardRequestDto): ScorecardResponseDto {
-    return sampleScorecardResponse;
+  async addScorecard(
+    @Body() body: ScorecardRequestDto,
+  ): Promise<ScorecardResponseDto> {
+    const data = await this.prisma.scorecard.create({
+      data: mapScorecardRequestToDto(body),
+      include: {
+        scorecardGroups: {
+          include: {
+            sections: {
+              include: {
+                questions: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    return data as ScorecardResponseDto;
   }
 
   @Put('/:id')
@@ -62,11 +83,37 @@ export class ScorecardController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
-  editScorecard(
+  async editScorecard(
     @Param('id') id: string,
     @Body() body: ScorecardRequestDto,
-  ): ScorecardResponseDto {
-    return sampleScorecardResponse;
+  ): Promise<ScorecardResponseDto> {
+    console.log(JSON.stringify(body));
+
+    const data = await this.prisma.scorecard
+      .update({
+        where: { id },
+        data: mapScorecardRequestToDto(body),
+        include: {
+          scorecardGroups: {
+            include: {
+              sections: {
+                include: {
+                  questions: true,
+                },
+              },
+            },
+          },
+        },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Scorecard not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data as ScorecardResponseDto;
   }
 
   @Delete(':id')
@@ -84,7 +131,19 @@ export class ScorecardController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
-  deleteScorecard(@Param('id') id: string) {
+  async deleteScorecard(@Param('id') id: string) {
+    await this.prisma.scorecard
+      .delete({
+        where: { id },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Scorecard not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
     return { message: `Scorecard ${id} deleted successfully.` };
   }
 
@@ -104,8 +163,31 @@ export class ScorecardController {
     type: ScorecardResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
-  viewScorecard(@Param('id') id: string): ScorecardResponseDto {
-    return sampleScorecardResponse;
+  async viewScorecard(@Param('id') id: string): Promise<ScorecardResponseDto> {
+    const data = await this.prisma.scorecard
+      .findUniqueOrThrow({
+        where: { id },
+        include: {
+          scorecardGroups: {
+            include: {
+              sections: {
+                include: {
+                  questions: true,
+                },
+              },
+            },
+          },
+        },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Scorecard not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data as ScorecardResponseDto;
   }
 
   @Get()
@@ -119,7 +201,7 @@ export class ScorecardController {
     description: 'The challenge track to filter by',
     example: 'Data Science',
     required: false,
-    enum: ChallengeTrack
+    enum: ChallengeTrack,
   })
   @ApiQuery({
     name: 'challengeType',
@@ -133,16 +215,53 @@ export class ScorecardController {
     example: 'name',
     required: false,
   })
+  @ApiQuery({
+    name: 'page',
+    description: 'Page number (starts from 1)',
+    required: false,
+    type: Number,
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'perPage',
+    description: 'Number of items per page',
+    required: false,
+    type: Number,
+    example: 10,
+  })
   @ApiResponse({
     status: 200,
     description: 'List of matching scorecards',
     type: [ScorecardResponseDto],
   })
-  searchScorecards(
+  async searchScorecards(
     @Query('challengeTrack') challengeTrack?: ChallengeTrack,
     @Query('challengeType') challengeType?: string,
     @Query('name') name?: string,
+    @Query('page') page: number = 1,
+    @Query('perPage') perPage: number = 10,
   ) {
-    return [sampleScorecardResponse];
+    const skip = (page - 1) * perPage;
+    const data = await this.prisma.scorecard.findMany({
+      where: {
+        ...(challengeTrack && { challengeTrack }),
+        ...(challengeType && { challengeType }),
+        ...(name && { name: { contains: name, mode: 'insensitive' } }),
+      },
+      include: {
+        scorecardGroups: {
+          include: {
+            sections: {
+              include: {
+                questions: true,
+              },
+            },
+          },
+        },
+      },
+      skip,
+      take: perPage,
+    });
+    return data as ScorecardResponseDto[];
   }
 }

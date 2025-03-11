@@ -32,6 +32,11 @@ export DATABASE_URL="postgresql://postgres:mysecretpassword@localhost:5432/postg
 # run migration
 npx prisma migrate dev
 
+# seed data
+npx prisma db seed
+or
+npx prisma migrate reset
+
 # if you modify prisma schema, run migration again
 # and it'll ask
 # Enter a name for the new migration:

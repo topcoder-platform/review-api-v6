@@ -7,6 +7,8 @@ import {
   Body,
   Param,
   Query,
+  NotFoundException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -23,14 +25,17 @@ import {
   AppealResponseDto,
   AppealResponseRequestDto,
   AppealResponseResponseDto,
-  mockAppealDto,
-  mockAppealResponseDto,
+  mapAppealRequestToDto,
+  mapAppealResponseRequestToDto,
 } from 'src/dto/appeal.dto';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
 
 @ApiTags('Appeal')
 @ApiBearerAuth()
 @Controller('/api/appeals')
 export class AppealController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Post()
   @Roles(UserRole.Submitter)
   @ApiOperation({
@@ -44,8 +49,13 @@ export class AppealController {
     type: AppealResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  createAppeal(@Body() body: AppealRequestDto): AppealResponseDto {
-    return mockAppealDto;
+  async createAppeal(
+    @Body() body: AppealRequestDto,
+  ): Promise<AppealResponseDto> {
+    const data = await this.prisma.appeal.create({
+      data: mapAppealRequestToDto(body),
+    });
+    return data as AppealResponseDto;
   }
 
   @Patch('/:appealId')
@@ -62,11 +72,25 @@ export class AppealController {
     type: AppealResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  updateAppeal(
+  @ApiResponse({ status: 404, description: 'Appeal not found.' })
+  async updateAppeal(
     @Param('appealId') appealId: string,
     @Body() body: AppealRequestDto,
-  ): AppealResponseDto {
-    return mockAppealDto;
+  ): Promise<AppealResponseDto> {
+    const data = await this.prisma.appeal
+      .update({
+        where: { id: appealId },
+        data: mapAppealRequestToDto(body),
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Appeal not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data as AppealResponseDto;
   }
 
   @Delete('/:appealId')
@@ -78,7 +102,20 @@ export class AppealController {
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to delete' })
   @ApiResponse({ status: 200, description: 'Appeal deleted successfully.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  deleteAppeal(@Param('appealId') appealId: string) {
+  @ApiResponse({ status: 404, description: 'Appeal not found.' })
+  async deleteAppeal(@Param('appealId') appealId: string) {
+    await this.prisma.appeal
+      .delete({
+        where: { id: appealId },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Appeal not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
     return { message: `Appeal ${appealId} deleted successfully.` };
   }
 
@@ -102,11 +139,34 @@ export class AppealController {
     type: AppealResponseResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  createAppealResponse(
+  @ApiResponse({ status: 404, description: 'Appeal response not found.' })
+  async createAppealResponse(
     @Param('appealId') appealId: string,
     @Body() body: AppealResponseRequestDto,
-  ): AppealResponseResponseDto {
-    return mockAppealResponseDto;
+  ): Promise<AppealResponseResponseDto> {
+    const data = await this.prisma.appeal
+      .update({
+        where: { id: appealId },
+        data: {
+          appealResponse: {
+            create: mapAppealResponseRequestToDto(body),
+          },
+        },
+        include: {
+          appealResponse: true,
+        },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({
+            message: `Appeal response not found.`,
+          });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data.appealResponse as AppealResponseResponseDto;
   }
 
   @Patch('/response/:appealResponseId')
@@ -129,11 +189,27 @@ export class AppealController {
     type: AppealResponseResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  updateAppealResponse(
+  @ApiResponse({ status: 404, description: 'Appeal response not found.' })
+  async updateAppealResponse(
     @Param('appealResponseId') appealResponseId: string,
     @Body() body: AppealResponseRequestDto,
-  ): AppealResponseRequestDto {
-    return mockAppealResponseDto;
+  ): Promise<AppealResponseRequestDto> {
+    const data = await this.prisma.appealResponse
+      .update({
+        where: { id: appealResponseId },
+        data: mapAppealResponseRequestToDto(body),
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({
+            message: `Appeal response not found.`,
+          });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data as AppealResponseRequestDto;
   }
 
   @Get('/')
@@ -163,11 +239,21 @@ export class AppealController {
     type: [AppealResponseDto],
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  getAppeals(
+  async getAppeals(
     @Query('resourceId') resourceId?: string,
     @Query('challengeId') challengeId?: string,
     @Query('reviewId') reviewId?: string,
-  ): AppealResponseDto[] {
-    return [mockAppealDto];
+  ): Promise<AppealResponseDto[]> {
+    const data = await this.prisma.appealResponse.findMany({
+      where: {
+        ...(resourceId && { resourceId }),
+        ...(challengeId && { challengeId }),
+        ...(reviewId && { appealId: reviewId }),
+      },
+    });
+    return data.map((appeal) => ({
+      ...appeal,
+      reviewItemCommentId: '',
+    })) as AppealResponseDto[];
   }
 }

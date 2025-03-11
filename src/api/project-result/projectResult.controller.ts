@@ -7,15 +7,15 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
-import {
-  ProjectResultResponseDto,
-  mockProjectResultResponseDto,
-} from 'src/dto/projectResult.dto';
+import { ProjectResultResponseDto } from 'src/dto/projectResult.dto';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()
 @Controller('/api')
 export class ProjectResultController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Get('/projectResult')
   @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Submitter)
   @ApiOperation({
@@ -33,9 +33,12 @@ export class ProjectResultController {
     type: [ProjectResultResponseDto],
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  getProjectResults(
+  async getProjectResults(
     @Query('challengeId') challengeId: string,
-  ): [ProjectResultResponseDto] {
-    return [mockProjectResultResponseDto];
+  ): Promise<ProjectResultResponseDto[]> {
+    const data = await this.prisma.challengeResult.findMany({
+      where: { challengeId },
+    });
+    return data as ProjectResultResponseDto[];
   }
 }
