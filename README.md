@@ -48,6 +48,17 @@ npx prisma migrate reset
 #- `update_foreign_keys`
 ```
 
+## Data import
+
+- create a .env file `mv .env.sample .env`
+- update the postgres database url in .env file —
+  `DATABASE_URL="postgresql://postgres:mysecretpassword@localhost:5432/postgres?schema=public"`
+- place all the legacy json files in the `prisma/Scorecards` directory or specify it in .env file — `DATA_DIR=/path/to/Scorecards/folder/`
+- install dependencies `pnpm install`
+- run the prisma migration `npx prisma migrate dev`
+- run the prisma seed `npx prisma db seed`
+- run the project `pnpm run start`
+
 ## Run tests
 
 ```bash
