@@ -51,13 +51,14 @@ export class ContactRequestResponseDto extends ContactRequestBaseDto {
   updatedBy: string;
 }
 
-export const mockContactRequestResponse: ContactRequestResponseDto = {
-  id: 'contact123',
-  resourceId: 'resourceId',
-  challengeId: 'challengeId',
-  message: 'I have a question regarding the challenge rules.',
-  createdBy: 'user123',
-  createdAt: new Date(),
-  updatedBy: 'user456',
-  updatedAt: new Date(),
-};
+export function mapContactRequestToDto(request: ContactRequestDto) {
+  const userFields = {
+    createdBy: '',
+    updatedBy: '',
+  };
+
+  return {
+    ...request,
+    ...userFields,
+  };
+}

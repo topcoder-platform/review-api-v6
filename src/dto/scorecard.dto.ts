@@ -27,6 +27,7 @@ export enum ChallengeTrack {
 export enum QuestionType {
   SCALE = 'SCALE',
   YES_NO = 'YES_NO',
+  TEST_CASE = 'TEST_CASE',
 }
 
 export class ScorecardQuestionBaseDto {
@@ -228,126 +229,33 @@ export class ScorecardResponseDto extends ScorecardBaseDto {
   scorecardGroups: ScorecardGroupResponseDto[];
 }
 
-/**
- * This is only for demo purpose
- */
-export const sampleScorecardResponse: ScorecardResponseDto = {
-  id: 'abc123',
-  status: ScorecardStatus.ACTIVE,
-  type: ScorecardType.REVIEW,
-  challengeTrack: ChallengeTrack.DEVELOPMENT,
-  challengeType: 'Code',
-  name: 'Sample Scorecard',
-  version: '1.0',
-  minScore: 0,
-  maxScore: 100,
-  createdAt: new Date('2023-10-01T00:00:00Z'),
-  createdBy: 'user123',
-  updatedAt: new Date('2023-10-01T00:00:00Z'),
-  updatedBy: 'user456',
-  scorecardGroups: [
-    {
-      id: 'g1',
-      name: 'Contest Specification Requirements',
-      weight: 60,
-      sortOrder: 1,
-      sections: [
-        {
-          id: 's1',
-          name: 'Specification Compliance',
-          weight: 100,
-          sortOrder: 1,
-          questions: [
-            {
-              id: 'q1',
-              type: QuestionType.SCALE,
-              description:
-                'Have all major specification requirements been met?',
-              guidelines: 'Grade using a continuous 0 thru 9 scale...',
-              weight: 80,
-              requiresUpload: false,
-              scaleMin: 0,
-              scaleMax: 9,
+export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
+  const userFields = {
+    createdBy: request.createdBy,
+    updatedBy: request.updatedBy,
+  };
+
+  return {
+    ...request,
+    ...userFields,
+    scorecardGroups: {
+      create: request.scorecardGroups.map((group) => ({
+        ...group,
+        ...userFields,
+        sections: {
+          create: group.sections.map((section) => ({
+            ...section,
+            ...userFields,
+            questions: {
+              create: section.questions.map((question) => ({
+                ...question,
+                sortOrder: 1,
+                ...userFields,
+              })),
             },
-            {
-              id: 'q2',
-              type: QuestionType.SCALE,
-              description:
-                'Have all minor specification requirements been met?',
-              guidelines: 'Scale: 0-9 based on minor issues...',
-              weight: 20,
-              requiresUpload: false,
-              scaleMin: 0,
-              scaleMax: 9,
-            },
-          ],
+          })),
         },
-      ],
+      })),
     },
-    {
-      id: 'g2',
-      name: 'Code Best Practices & Technical Requirements',
-      weight: 30,
-      sortOrder: 2,
-      sections: [
-        {
-          id: 's2',
-          name: 'Code Quality',
-          weight: 100,
-          sortOrder: 1,
-          questions: [
-            {
-              id: 'q3',
-              type: QuestionType.SCALE,
-              description:
-                'Does the submission follow standard coding best practices?',
-              guidelines: '0-3 scale based on adherence to best practices...',
-              weight: 30,
-              requiresUpload: false,
-              scaleMin: 0,
-              scaleMax: 3,
-            },
-            {
-              id: 'q4',
-              type: QuestionType.SCALE,
-              description:
-                'Does the submission include an appropriate amount of comments?',
-              guidelines: '0-3 scale based on code comments...',
-              weight: 20,
-              requiresUpload: false,
-              scaleMin: 0,
-              scaleMax: 3,
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'g3',
-      name: 'Deployment Guide',
-      weight: 10,
-      sortOrder: 3,
-      sections: [
-        {
-          id: 's3',
-          name: 'Deployment Documentation',
-          weight: 100,
-          sortOrder: 1,
-          questions: [
-            {
-              id: 'q5',
-              type: QuestionType.SCALE,
-              description:
-                'Can the application be deployed using the Deployment Guide?',
-              guidelines: '0-3 scale based on clarity and completeness...',
-              weight: 60,
-              requiresUpload: false,
-              scaleMin: 0,
-              scaleMax: 3,
-            },
-          ],
-        },
-      ],
-    },
-  ],
-};
+  };
+}

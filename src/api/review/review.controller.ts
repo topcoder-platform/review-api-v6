@@ -7,6 +7,8 @@ import {
   Body,
   Param,
   Query,
+  NotFoundException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -23,13 +25,18 @@ import {
   ReviewResponseDto,
   ReviewItemRequestDto,
   ReviewItemResponseDto,
-  mockReviewResponse,
+  mapReviewRequestToDto,
+  mapReviewItemRequestToDto,
 } from 'src/dto/review.dto';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { ScorecardStatus } from '../../dto/scorecard.dto';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
 @Controller('/api/reviews')
 export class ReviewController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Post()
   @Roles(UserRole.Reviewer)
   @ApiOperation({
@@ -42,8 +49,20 @@ export class ReviewController {
     description: 'Review created successfully.',
     type: ReviewResponseDto,
   })
-  createReview(@Body() body: ReviewRequestDto): ReviewResponseDto {
-    return mockReviewResponse;
+  async createReview(
+    @Body() body: ReviewRequestDto,
+  ): Promise<ReviewResponseDto> {
+    const data = await this.prisma.review.create({
+      data: mapReviewRequestToDto(body),
+      include: {
+        reviewItems: {
+          include: {
+            reviewItemComments: true,
+          },
+        },
+      },
+    });
+    return data as unknown as ReviewResponseDto;
   }
 
   @Post('/items')
@@ -56,12 +75,18 @@ export class ReviewController {
   @ApiResponse({
     status: 201,
     description: 'Review item comments created successfully.',
-    type: ReviewResponseDto,
+    type: ReviewItemResponseDto,
   })
-  createReviewItemComments(
+  async createReviewItemComments(
     @Body() body: ReviewItemRequestDto,
-  ): ReviewResponseDto {
-    return mockReviewResponse;
+  ): Promise<ReviewItemResponseDto> {
+    const data = await this.prisma.reviewItem.create({
+      data: mapReviewItemRequestToDto(body),
+      include: {
+        reviewItemComments: true,
+      },
+    });
+    return data as unknown as ReviewItemResponseDto;
   }
 
   @Patch('/:id')
@@ -82,11 +107,31 @@ export class ReviewController {
     type: ReviewResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
-  updateReview(
+  async updateReview(
     @Param('id') id: string,
     @Body() body: ReviewRequestDto,
-  ): ReviewResponseDto {
-    return mockReviewResponse;
+  ): Promise<ReviewResponseDto> {
+    const data = await this.prisma.review
+      .update({
+        where: { id },
+        data: mapReviewRequestToDto(body),
+        include: {
+          reviewItems: {
+            include: {
+              reviewItemComments: true,
+            },
+          },
+        },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Review not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data as unknown as ReviewResponseDto;
   }
 
   @Patch('/items/:itemId')
@@ -108,11 +153,132 @@ export class ReviewController {
     type: ReviewItemResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Review item not found.' })
-  updateReviewItem(
+  async updateReviewItem(
     @Param('itemId') itemId: string,
     @Body() body: ReviewItemRequestDto,
-  ): ReviewItemResponseDto {
-    return mockReviewResponse.reviewItems![0];
+  ): Promise<ReviewItemResponseDto> {
+    const data = await this.prisma.reviewItem
+      .update({
+        where: { id: itemId },
+        data: mapReviewItemRequestToDto(body),
+        include: {
+          reviewItemComments: true,
+        },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Review item not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data as unknown as ReviewItemResponseDto;
+  }
+
+  @Get()
+  @Roles(
+    UserRole.Reviewer,
+    UserRole.Copilot,
+    UserRole.Admin,
+    UserRole.Submitter,
+  )
+  @ApiOperation({
+    summary: 'Search for pending reviews',
+    description:
+      'Roles: Reviewer, Copilot, Admin, Submitter. For Submitter, only applies to their own review, until challenge completion',
+  })
+  @ApiQuery({
+    name: 'status',
+    description: 'The review status to filter by',
+    example: 'pending',
+    required: false,
+    enum: ScorecardStatus,
+  })
+  @ApiQuery({
+    name: 'challengeId',
+    description: 'The ID of the challenge to filter by',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'submissionId',
+    description: 'The ID of the submission to filter by',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'page',
+    description: 'Page number (starts from 1)',
+    required: false,
+    type: Number,
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'perPage',
+    description: 'Number of items per page',
+    required: false,
+    type: Number,
+    example: 10,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of pending reviews.',
+    type: [ReviewResponseDto],
+  })
+  async getPendingReviews(
+    @Query('status') status?: ScorecardStatus,
+    @Query('challengeId') challengeId?: string,
+    @Query('submissionId') submissionId?: string,
+    @Query('page') page: number = 1,
+    @Query('perPage') perPage: number = 10,
+  ) {
+    const skip = (page - 1) * perPage;
+    const scorecardReviews = status
+      ? (
+          await this.prisma.scorecard.findMany({
+            where: {
+              status: ScorecardStatus[status as keyof typeof ScorecardStatus],
+            },
+            include: {
+              reviews: {
+                where: {
+                  submissionId: submissionId ? submissionId : {},
+                },
+              },
+            },
+            skip,
+            take: perPage,
+          })
+        ).flatMap((d) => d.reviews)
+      : [];
+
+    const challengeSubmissionId = challengeId
+      ? (
+          await this.prisma.challengeResult.findMany({
+            where: {
+              challengeId,
+            },
+          })
+        ).map((c) => c.submissionId)
+      : [];
+
+    if (submissionId) {
+      challengeSubmissionId.push(submissionId);
+    }
+
+    const challengeReviews = challengeSubmissionId
+      ? await this.prisma.review.findMany({
+          where: {
+            submissionId: { in: challengeSubmissionId },
+          },
+          skip,
+          take: perPage,
+        })
+      : [];
+
+    return [...scorecardReviews, ...challengeReviews].reduce((acc, review) => {
+      acc[review.id] = review;
+      return acc;
+    }, {}) as ReviewResponseDto[];
   }
 
   @Get('/:id')
@@ -137,49 +303,27 @@ export class ReviewController {
     type: ReviewResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
-  getReview(@Param('id') id: string): ReviewResponseDto {
-    return mockReviewResponse;
-  }
-
-  @Get()
-  @Roles(
-    UserRole.Reviewer,
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-  )
-  @ApiOperation({
-    summary: 'Search for pending reviews',
-    description:
-      'Roles: Reviewer, Copilot, Admin, Submitter. For Submitter, only applies to their own review, until challenge completion',
-  })
-  @ApiQuery({
-    name: 'status',
-    description: 'The review status to filter by',
-    example: 'pending',
-    required: false,
-  })
-  @ApiQuery({
-    name: 'submissionId',
-    description: 'The ID of the submission to filter by',
-    required: false,
-  })
-  @ApiQuery({
-    name: 'challengeId',
-    description: 'The ID of the challenge to filter by',
-    required: false,
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'List of pending reviews.',
-    type: [ReviewResponseDto],
-  })
-  getPendingReviews(
-    @Query('status') status?: string,
-    @Query('submissionId') submissionId?: string,
-    @Query('challengeId') challengeId?: string,
-  ) {
-    return [mockReviewResponse];
+  async getReview(@Param('id') id: string): Promise<ReviewResponseDto> {
+    const data = await this.prisma.review
+      .findUniqueOrThrow({
+        where: { id },
+        include: {
+          reviewItems: {
+            include: {
+              reviewItemComments: true,
+            },
+          },
+        },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Review not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
+    return data as ReviewResponseDto;
   }
 
   @Delete('/:id')
@@ -196,7 +340,19 @@ export class ReviewController {
   @ApiResponse({ status: 200, description: 'Review deleted successfully.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review not found.' })
-  deleteReview(@Param('id') id: string) {
+  async deleteReview(@Param('id') id: string) {
+    await this.prisma.review
+      .delete({
+        where: { id },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Review not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
     return { message: `Review ${id} deleted successfully.` };
   }
 
@@ -216,8 +372,20 @@ export class ReviewController {
     description: 'Review item deleted successfully.',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  @ApiResponse({ status: 404, description: 'Review item not found.' })
-  deleteReviewItem(@Param('itemId') itemId: string) {
+  @ApiResponse({ status: 404, description: 'Review item  not found.' })
+  async deleteReviewItem(@Param('itemId') itemId: string) {
+    await this.prisma.reviewItem
+      .delete({
+        where: { id: itemId },
+      })
+      .catch((error) => {
+        if (error.code !== 'P2025') {
+          throw new NotFoundException({ message: `Review item not found.` });
+        }
+        throw new InternalServerErrorException({
+          message: `Error: ${error.code}`,
+        });
+      });
     return {
       message: `Review item ${itemId} deleted successfully.`,
     };

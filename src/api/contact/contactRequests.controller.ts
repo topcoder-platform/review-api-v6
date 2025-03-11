@@ -10,13 +10,16 @@ import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
 import {
   ContactRequestDto,
   ContactRequestResponseDto,
-  mockContactRequestResponse,
+  mapContactRequestToDto,
 } from 'src/dto/contactRequest.dto';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
 
 @ApiTags('Contact Requests')
 @ApiBearerAuth()
 @Controller('/api')
 export class ContactRequestsController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Post('/contact-requests')
   @Roles(UserRole.Submitter, UserRole.Reviewer)
   @ApiOperation({ summary: 'Create a new contact request' })
@@ -27,9 +30,12 @@ export class ContactRequestsController {
     type: ContactRequestResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  createContactRequest(
+  async createContactRequest(
     @Body() body: ContactRequestDto,
-  ): ContactRequestResponseDto {
-    return mockContactRequestResponse;
+  ): Promise<ContactRequestResponseDto> {
+    const data = await this.prisma.contactRequest.create({
+      data: mapContactRequestToDto(body),
+    });
+    return data as ContactRequestResponseDto;
   }
 }
