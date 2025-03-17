@@ -11,9 +11,9 @@ async function bootstrap() {
     rawBody: true,
   });
 
-  // Global prefix for all routes in production is configured as `/v5/review`
+  // Global prefix for all routes in production is configured as `/v5/finance`
   if (process.env.NODE_ENV === 'production') {
-    app.setGlobalPrefix('/v5/review');
+    app.setGlobalPrefix('/v5/finance');
   }
 
   // CORS related settings
