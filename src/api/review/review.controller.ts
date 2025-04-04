@@ -35,6 +35,7 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { ScorecardStatus } from '../../dto/scorecard.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
@@ -42,7 +43,10 @@ import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 export class ReviewController {
   private readonly logger: LoggerService;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly prismaErrorService: PrismaErrorService,
+  ) {
     this.logger = LoggerService.forRoot('ReviewController');
   }
 
@@ -77,9 +81,10 @@ export class ReviewController {
       this.logger.log(`Review created with ID: ${data.id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
-      this.logger.error(`Failed to create review: ${error.message}`, error.stack);
+      const errorResponse = this.prismaErrorService.handleError(error, 'creating review');
       throw new InternalServerErrorException({
-        message: `Failed to create review: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
@@ -111,9 +116,10 @@ export class ReviewController {
       this.logger.log(`Review item created with ID: ${data.id}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
-      this.logger.error(`Failed to create review item: ${error.message}`, error.stack);
+      const errorResponse = this.prismaErrorService.handleError(error, 'creating review item');
       throw new InternalServerErrorException({
-        message: `Failed to create review item: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
@@ -157,12 +163,18 @@ export class ReviewController {
       this.logger.log(`Review updated successfully: ${id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
-      this.logger.error(`Failed to update review ${id}: ${error.message}`, error.stack);
-      if (error.code === 'P2025') {
-        throw new NotFoundException({ message: `Review not found with ID: ${id}` });
+      const errorResponse = this.prismaErrorService.handleError(error, `updating review ${id}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Review with ID ${id} was not found`, 
+          code: errorResponse.code 
+        });
       }
+      
       throw new InternalServerErrorException({
-        message: `Error updating review: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
@@ -203,12 +215,18 @@ export class ReviewController {
       this.logger.log(`Review item updated successfully: ${itemId}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
-      this.logger.error(`Failed to update review item ${itemId}: ${error.message}`, error.stack);
-      if (error.code === 'P2025') {
-        throw new NotFoundException({ message: `Review item not found with ID: ${itemId}` });
+      const errorResponse = this.prismaErrorService.handleError(error, `updating review item ${itemId}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Review item with ID ${itemId} was not found`, 
+          code: errorResponse.code 
+        });
       }
+      
       throw new InternalServerErrorException({
-        message: `Error updating review item: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
@@ -377,9 +395,10 @@ export class ReviewController {
         },
       };
     } catch (error) {
-      this.logger.error(`Error getting pending reviews: ${error.message}`, error.stack);
+      const errorResponse = this.prismaErrorService.handleError(error, 'fetching reviews');
       throw new InternalServerErrorException({
-        message: `Failed to fetch reviews: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
@@ -425,12 +444,18 @@ export class ReviewController {
       this.logger.log(`Review found: ${id}`);
       return data as ReviewResponseDto;
     } catch (error) {
-      this.logger.error(`Failed to get review ${id}: ${error.message}`, error.stack);
-      if (error.code === 'P2025') {
-        throw new NotFoundException({ message: `Review not found with ID: ${id}` });
+      const errorResponse = this.prismaErrorService.handleError(error, `fetching review ${id}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Review with ID ${id} was not found`, 
+          code: errorResponse.code 
+        });
       }
+      
       throw new InternalServerErrorException({
-        message: `Error fetching review: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
@@ -462,12 +487,18 @@ export class ReviewController {
       this.logger.log(`Review deleted successfully: ${id}`);
       return { message: `Review ${id} deleted successfully.` };
     } catch (error) {
-      this.logger.error(`Failed to delete review ${id}: ${error.message}`, error.stack);
-      if (error.code === 'P2025') {
-        throw new NotFoundException({ message: `Review not found with ID: ${id}` });
+      const errorResponse = this.prismaErrorService.handleError(error, `deleting review ${id}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Review with ID ${id} was not found`, 
+          code: errorResponse.code 
+        });
       }
+      
       throw new InternalServerErrorException({
-        message: `Error deleting review: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
@@ -499,12 +530,18 @@ export class ReviewController {
       this.logger.log(`Review item deleted successfully: ${itemId}`);
       return { message: `Review item ${itemId} deleted successfully.` };
     } catch (error) {
-      this.logger.error(`Failed to delete review item ${itemId}: ${error.message}`, error.stack);
-      if (error.code === 'P2025') {
-        throw new NotFoundException({ message: `Review item not found with ID: ${itemId}` });
+      const errorResponse = this.prismaErrorService.handleError(error, `deleting review item ${itemId}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Review item with ID ${itemId} was not found`, 
+          code: errorResponse.code 
+        });
       }
+      
       throw new InternalServerErrorException({
-        message: `Error deleting review item: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }

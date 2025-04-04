@@ -34,6 +34,7 @@ import {
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 
 @ApiTags('Appeal')
 @ApiBearerAuth()
@@ -41,7 +42,10 @@ import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 export class AppealController {
   private readonly logger: LoggerService;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly prismaErrorService: PrismaErrorService,
+  ) {
     this.logger = LoggerService.forRoot('AppealController');
   }
 
@@ -62,10 +66,20 @@ export class AppealController {
   async createAppeal(
     @Body() body: AppealRequestDto,
   ): Promise<AppealResponseDto> {
-    const data = await this.prisma.appeal.create({
-      data: mapAppealRequestToDto(body),
-    });
-    return data as AppealResponseDto;
+    this.logger.log(`Creating appeal`);
+    try {
+      const data = await this.prisma.appeal.create({
+        data: mapAppealRequestToDto(body),
+      });
+      this.logger.log(`Appeal created with ID: ${data.id}`);
+      return data as AppealResponseDto;
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(error, 'creating appeal');
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+      });
+    }
   }
 
   @Patch('/:appealId')
@@ -88,20 +102,29 @@ export class AppealController {
     @Param('appealId') appealId: string,
     @Body() body: AppealRequestDto,
   ): Promise<AppealResponseDto> {
-    const data = await this.prisma.appeal
-      .update({
+    this.logger.log(`Updating appeal with ID: ${appealId}`);
+    try {
+      const data = await this.prisma.appeal.update({
         where: { id: appealId },
         data: mapAppealRequestToDto(body),
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Appeal not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return data as AppealResponseDto;
+      this.logger.log(`Appeal updated successfully: ${appealId}`);
+      return data as AppealResponseDto;
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(error, `updating appeal ${appealId}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Appeal with ID ${appealId} was not found`, 
+          code: errorResponse.code 
+        });
+      }
+      
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+      });
+    }
   }
 
   @Delete('/:appealId')
@@ -116,19 +139,28 @@ export class AppealController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Appeal not found.' })
   async deleteAppeal(@Param('appealId') appealId: string) {
-    await this.prisma.appeal
-      .delete({
+    this.logger.log(`Deleting appeal with ID: ${appealId}`);
+    try {
+      await this.prisma.appeal.delete({
         where: { id: appealId },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Appeal not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return { message: `Appeal ${appealId} deleted successfully.` };
+      this.logger.log(`Appeal deleted successfully: ${appealId}`);
+      return { message: `Appeal ${appealId} deleted successfully.` };
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(error, `deleting appeal ${appealId}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Appeal with ID ${appealId} was not found`, 
+          code: errorResponse.code 
+        });
+      }
+      
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+      });
+    }
   }
 
   @Post('/:appealId/response')
@@ -157,8 +189,9 @@ export class AppealController {
     @Param('appealId') appealId: string,
     @Body() body: AppealResponseRequestDto,
   ): Promise<AppealResponseResponseDto> {
-    const data = await this.prisma.appeal
-      .update({
+    this.logger.log(`Creating response for appeal ID: ${appealId}`);
+    try {
+      const data = await this.prisma.appeal.update({
         where: { id: appealId },
         data: {
           appealResponse: {
@@ -168,18 +201,24 @@ export class AppealController {
         include: {
           appealResponse: true,
         },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({
-            message: `Appeal response not found.`,
-          });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return data.appealResponse as AppealResponseResponseDto;
+      this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
+      return data.appealResponse as AppealResponseResponseDto;
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(error, `creating response for appeal ${appealId}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Appeal with ID ${appealId} was not found`, 
+          code: errorResponse.code 
+        });
+      }
+      
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+      });
+    }
   }
 
   @Patch('/response/:appealResponseId')
@@ -208,22 +247,29 @@ export class AppealController {
     @Param('appealResponseId') appealResponseId: string,
     @Body() body: AppealResponseRequestDto,
   ): Promise<AppealResponseRequestDto> {
-    const data = await this.prisma.appealResponse
-      .update({
+    this.logger.log(`Updating appeal response with ID: ${appealResponseId}`);
+    try {
+      const data = await this.prisma.appealResponse.update({
         where: { id: appealResponseId },
         data: mapAppealResponseRequestToDto(body),
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({
-            message: `Appeal response not found.`,
-          });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return data as AppealResponseRequestDto;
+      this.logger.log(`Appeal response updated successfully: ${appealResponseId}`);
+      return data as AppealResponseRequestDto;
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(error, `updating appeal response ${appealResponseId}`);
+      
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({ 
+          message: `Appeal response with ID ${appealResponseId} was not found`, 
+          code: errorResponse.code 
+        });
+      }
+      
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+      });
+    }
   }
 
   @Get('/')
@@ -298,9 +344,10 @@ export class AppealController {
         }
       };
     } catch (error) {
-      this.logger.error(`Error getting appeals: ${error.message}`, error.stack);
+      const errorResponse = this.prismaErrorService.handleError(error, 'fetching appeals');
       throw new InternalServerErrorException({
-        message: `Failed to fetch appeals: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }

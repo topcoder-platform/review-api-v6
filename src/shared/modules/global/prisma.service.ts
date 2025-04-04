@@ -1,12 +1,13 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { LoggerService } from './logger.service';
+import { PrismaErrorService } from './prisma-error.service';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger: LoggerService;
   
-  constructor() {
+  constructor(private readonly prismaErrorService?: PrismaErrorService) {
     super({
       log: [
         { level: 'query', emit: 'event' },
@@ -58,11 +59,20 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       
       // Configure query performance
       if (process.env.NODE_ENV === 'production') {
-        // In production, increase the maximum number of connections (NestJS already sets sensible defaults)
-        await this.$executeRaw`SET max_connections = 100;`;
+        try {
+          // In production, increase the maximum number of connections (NestJS already sets sensible defaults)
+          await this.$executeRaw`SET max_connections = 100;`;
+          this.logger.log('Database connection pool configured');
+        } catch (error) {
+          this.logger.warn(`Could not configure database connections: ${error.message}`);
+        }
       }
     } catch (error) {
-      this.logger.error('Failed to connect to the database', error.stack);
+      const errorMsg = this.prismaErrorService 
+        ? this.prismaErrorService.handleError(error, 'connecting to database').message
+        : error.message;
+        
+      this.logger.error(`Failed to connect to the database: ${errorMsg}`, error.stack);
       throw error;
     }
   }

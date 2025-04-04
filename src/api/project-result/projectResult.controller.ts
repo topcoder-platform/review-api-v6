@@ -14,6 +14,7 @@ import { ProjectResultResponseDto } from 'src/dto/projectResult.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()
@@ -21,7 +22,10 @@ import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 export class ProjectResultController {
   private readonly logger: LoggerService;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly prismaErrorService: PrismaErrorService,
+  ) {
     this.logger = LoggerService.forRoot('ProjectResultController');
   }
 
@@ -76,9 +80,10 @@ export class ProjectResultController {
         }
       };
     } catch (error) {
-      this.logger.error(`Error getting project results: ${error.message}`, error.stack);
+      const errorResponse = this.prismaErrorService.handleError(error, `fetching project results for challenge ${challengeId}`);
       throw new InternalServerErrorException({
-        message: `Failed to fetch project results: ${error.message}`,
+        message: errorResponse.message,
+        code: errorResponse.code,
       });
     }
   }
