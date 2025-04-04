@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { PrismaService } from './prisma.service';
 import { TokenRolesGuard } from '../../guards/tokenRoles.guard';
 import { JwtService } from './jwt.service';
+import { LoggerService } from './logger.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -15,7 +16,13 @@ import { JwtService } from './jwt.service';
     },
     PrismaService,
     JwtService,
+    {
+      provide: LoggerService,
+      useFactory: () => {
+        return new LoggerService('Global');
+      },
+    },
   ],
-  exports: [PrismaService, JwtService],
+  exports: [PrismaService, JwtService, LoggerService],
 })
 export class GlobalProvidersModule {}

@@ -32,12 +32,18 @@ import {
   mapAppealResponseRequestToDto,
 } from 'src/dto/appeal.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 
 @ApiTags('Appeal')
 @ApiBearerAuth()
 @Controller('/api/appeals')
 export class AppealController {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger: LoggerService;
+
+  constructor(private readonly prisma: PrismaService) {
+    this.logger = LoggerService.forRoot('AppealController');
+  }
 
   @Post()
   @Roles(UserRole.Submitter)
@@ -252,17 +258,50 @@ export class AppealController {
     @Query('resourceId') resourceId?: string,
     @Query('challengeId') challengeId?: string,
     @Query('reviewId') reviewId?: string,
-  ): Promise<AppealResponseDto[]> {
-    const data = await this.prisma.appealResponse.findMany({
-      where: {
-        ...(resourceId && { resourceId }),
-        ...(challengeId && { challengeId }),
-        ...(reviewId && { appealId: reviewId }),
-      },
-    });
-    return data.map((appeal) => ({
-      ...appeal,
-      reviewItemCommentId: '',
-    })) as AppealResponseDto[];
+    @Query() paginationDto?: PaginationDto,
+  ): Promise<PaginatedResponse<AppealResponseDto>> {
+    this.logger.log(`Getting appeals with filters - resourceId: ${resourceId}, challengeId: ${challengeId}, reviewId: ${reviewId}`);
+    
+    const { page = 1, perPage = 10 } = paginationDto || {};
+    const skip = (page - 1) * perPage;
+    
+    try {
+      // Build where clause for filtering
+      const whereClause: any = {};
+      if (resourceId) whereClause.resourceId = resourceId;
+      if (challengeId) whereClause.challengeId = challengeId;
+      if (reviewId) whereClause.appealId = reviewId;
+      
+      const [appeals, totalCount] = await Promise.all([
+        this.prisma.appealResponse.findMany({
+          where: whereClause,
+          skip,
+          take: perPage,
+        }),
+        this.prisma.appealResponse.count({
+          where: whereClause,
+        })
+      ]);
+      
+      this.logger.log(`Found ${appeals.length} appeals (page ${page} of ${Math.ceil(totalCount / perPage)})`);
+      
+      return {
+        data: appeals.map((appeal) => ({
+          ...appeal,
+          reviewItemCommentId: '',
+        })) as AppealResponseDto[],
+        meta: {
+          page,
+          perPage,
+          totalCount,
+          totalPages: Math.ceil(totalCount / perPage),
+        }
+      };
+    } catch (error) {
+      this.logger.error(`Error getting appeals: ${error.message}`, error.stack);
+      throw new InternalServerErrorException({
+        message: `Failed to fetch appeals: ${error.message}`,
+      });
+    }
   }
 }

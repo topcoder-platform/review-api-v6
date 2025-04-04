@@ -33,12 +33,18 @@ import {
 } from 'src/dto/review.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { ScorecardStatus } from '../../dto/scorecard.dto';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
 @Controller('/api/reviews')
 export class ReviewController {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger: LoggerService;
+
+  constructor(private readonly prisma: PrismaService) {
+    this.logger = LoggerService.forRoot('ReviewController');
+  }
 
   @Post()
   @Roles(UserRole.Reviewer)
@@ -56,17 +62,26 @@ export class ReviewController {
   async createReview(
     @Body() body: ReviewRequestDto,
   ): Promise<ReviewResponseDto> {
-    const data = await this.prisma.review.create({
-      data: mapReviewRequestToDto(body),
-      include: {
-        reviewItems: {
-          include: {
-            reviewItemComments: true,
+    this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
+    try {
+      const data = await this.prisma.review.create({
+        data: mapReviewRequestToDto(body),
+        include: {
+          reviewItems: {
+            include: {
+              reviewItemComments: true,
+            },
           },
         },
-      },
-    });
-    return data as unknown as ReviewResponseDto;
+      });
+      this.logger.log(`Review created with ID: ${data.id}`);
+      return data as unknown as ReviewResponseDto;
+    } catch (error) {
+      this.logger.error(`Failed to create review: ${error.message}`, error.stack);
+      throw new InternalServerErrorException({
+        message: `Failed to create review: ${error.message}`,
+      });
+    }
   }
 
   @Post('/items')
@@ -85,13 +100,22 @@ export class ReviewController {
   async createReviewItemComments(
     @Body() body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
-    const data = await this.prisma.reviewItem.create({
-      data: mapReviewItemRequestToDto(body),
-      include: {
-        reviewItemComments: true,
-      },
-    });
-    return data as unknown as ReviewItemResponseDto;
+    this.logger.log(`Creating review item for review`);
+    try {
+      const data = await this.prisma.reviewItem.create({
+        data: mapReviewItemRequestToDto(body),
+        include: {
+          reviewItemComments: true,
+        },
+      });
+      this.logger.log(`Review item created with ID: ${data.id}`);
+      return data as unknown as ReviewItemResponseDto;
+    } catch (error) {
+      this.logger.error(`Failed to create review item: ${error.message}`, error.stack);
+      throw new InternalServerErrorException({
+        message: `Failed to create review item: ${error.message}`,
+      });
+    }
   }
 
   @Patch('/:id')
@@ -117,8 +141,9 @@ export class ReviewController {
     @Param('id') id: string,
     @Body() body: ReviewRequestDto,
   ): Promise<ReviewResponseDto> {
-    const data = await this.prisma.review
-      .update({
+    this.logger.log(`Updating review with ID: ${id}`);
+    try {
+      const data = await this.prisma.review.update({
         where: { id },
         data: mapReviewRequestToDto(body),
         include: {
@@ -128,16 +153,18 @@ export class ReviewController {
             },
           },
         },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Review not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return data as unknown as ReviewResponseDto;
+      this.logger.log(`Review updated successfully: ${id}`);
+      return data as unknown as ReviewResponseDto;
+    } catch (error) {
+      this.logger.error(`Failed to update review ${id}: ${error.message}`, error.stack);
+      if (error.code === 'P2025') {
+        throw new NotFoundException({ message: `Review not found with ID: ${id}` });
+      }
+      throw new InternalServerErrorException({
+        message: `Error updating review: ${error.message}`,
+      });
+    }
   }
 
   @Patch('/items/:itemId')
@@ -164,23 +191,26 @@ export class ReviewController {
     @Param('itemId') itemId: string,
     @Body() body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
-    const data = await this.prisma.reviewItem
-      .update({
+    this.logger.log(`Updating review item with ID: ${itemId}`);
+    try {
+      const data = await this.prisma.reviewItem.update({
         where: { id: itemId },
         data: mapReviewItemRequestToDto(body),
         include: {
           reviewItemComments: true,
         },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Review item not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return data as unknown as ReviewItemResponseDto;
+      this.logger.log(`Review item updated successfully: ${itemId}`);
+      return data as unknown as ReviewItemResponseDto;
+    } catch (error) {
+      this.logger.error(`Failed to update review item ${itemId}: ${error.message}`, error.stack);
+      if (error.code === 'P2025') {
+        throw new NotFoundException({ message: `Review item not found with ID: ${itemId}` });
+      }
+      throw new InternalServerErrorException({
+        message: `Error updating review item: ${error.message}`,
+      });
+    }
   }
 
   @Get()
@@ -213,20 +243,6 @@ export class ReviewController {
     description: 'The ID of the submission to filter by',
     required: false,
   })
-  @ApiQuery({
-    name: 'page',
-    description: 'Page number (starts from 1)',
-    required: false,
-    type: Number,
-    example: 1,
-  })
-  @ApiQuery({
-    name: 'perPage',
-    description: 'Number of items per page',
-    required: false,
-    type: Number,
-    example: 10,
-  })
   @ApiResponse({
     status: 200,
     description: 'List of pending reviews.',
@@ -236,57 +252,136 @@ export class ReviewController {
     @Query('status') status?: ScorecardStatus,
     @Query('challengeId') challengeId?: string,
     @Query('submissionId') submissionId?: string,
-    @Query('page') page: number = 1,
-    @Query('perPage') perPage: number = 10,
-  ) {
+    @Query() paginationDto?: PaginationDto,
+  ): Promise<PaginatedResponse<ReviewResponseDto>> {
+    this.logger.log(`Getting pending reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`);
+
+    const { page = 1, perPage = 10 } = paginationDto || {};
     const skip = (page - 1) * perPage;
-    const scorecardReviews = status
-      ? (
-          await this.prisma.scorecard.findMany({
-            where: {
-              status: ScorecardStatus[status as keyof typeof ScorecardStatus],
+
+    try {
+      // Build the where clause for reviews based on available filter parameters
+      const reviewWhereClause: any = {};
+      if (submissionId) {
+        reviewWhereClause.submissionId = submissionId;
+      }
+
+      // Get reviews by status if provided
+      let reviews: any[] = [];
+      let totalCount = 0;
+
+      if (status) {
+        this.logger.debug(`Fetching reviews by scorecard status: ${status}`);
+        const scorecards = await this.prisma.scorecard.findMany({
+          where: {
+            status: ScorecardStatus[status as keyof typeof ScorecardStatus],
+          },
+          include: {
+            reviews: {
+              where: reviewWhereClause,
+              skip,
+              take: perPage,
             },
-            include: {
-              reviews: {
-                where: {
-                  submissionId: submissionId ? submissionId : {},
-                },
-              },
+          },
+        });
+        
+        reviews = scorecards.flatMap((d) => d.reviews);
+        
+        // Count total reviews matching the filter for pagination metadata
+        const scorecardIds = scorecards.map(s => s.id);
+        totalCount = await this.prisma.review.count({
+          where: {
+            ...reviewWhereClause,
+            scorecardId: { in: scorecardIds },
+          },
+        });
+      }
+
+      // Get reviews by challengeId if provided
+      if (challengeId) {
+        this.logger.debug(`Fetching reviews by challengeId: ${challengeId}`);
+        const challengeResults = await this.prisma.challengeResult.findMany({
+          where: { challengeId },
+        });
+
+        const submissionIds = challengeResults.map(c => c.submissionId);
+        
+        if (submissionIds.length > 0) {
+          const challengeReviews = await this.prisma.review.findMany({
+            where: {
+              submissionId: { in: submissionIds },
+              ...reviewWhereClause,
             },
             skip,
             take: perPage,
-          })
-        ).flatMap((d) => d.reviews)
-      : [];
-
-    const challengeSubmissionId = challengeId
-      ? (
-          await this.prisma.challengeResult.findMany({
-            where: {
-              challengeId,
+            include: {
+              reviewItems: {
+                include: {
+                  reviewItemComments: true,
+                },
+              },
             },
-          })
-        ).map((c) => c.submissionId)
-      : [];
-
-    if (submissionId) {
-      challengeSubmissionId.push(submissionId);
-    }
-
-    const challengeReviews = challengeSubmissionId
-      ? await this.prisma.review.findMany({
-          where: {
-            submissionId: { in: challengeSubmissionId },
-          },
+          });
+          
+          reviews = [...reviews, ...challengeReviews];
+          
+          // Count total for this condition separately
+          const challengeReviewCount = await this.prisma.review.count({
+            where: {
+              submissionId: { in: submissionIds },
+              ...reviewWhereClause,
+            },
+          });
+          
+          totalCount += challengeReviewCount;
+        }
+      }
+      
+      // If no specific filters, get all reviews with pagination
+      if (!status && !challengeId && !submissionId) {
+        this.logger.debug('Fetching all reviews with pagination');
+        reviews = await this.prisma.review.findMany({
           skip,
           take: perPage,
-        })
-      : [];
+          include: {
+            reviewItems: {
+              include: {
+                reviewItemComments: true,
+              },
+            },
+          },
+        });
+        
+        totalCount = await this.prisma.review.count();
+      }
 
-    return [...scorecardReviews, ...challengeReviews].reduce((acc, review) => {
-      acc[review.id] = review;
-      return acc;
-    }, {}) as ReviewResponseDto[];
+      // Deduplicate reviews by ID
+      const uniqueReviews = Object.values(
+        reviews.reduce((acc, review) => {
+          if (!acc[review.id]) {
+            acc[review.id] = review;
+          }
+          return acc;
+        }, {})
+      );
+
+      this.logger.log(`Found ${uniqueReviews.length} reviews (page ${page} of ${Math.ceil(totalCount / perPage)})`);
+      
+      return {
+        data: uniqueReviews as ReviewResponseDto[],
+        meta: {
+          page,
+          perPage,
+          totalCount,
+          totalPages: Math.ceil(totalCount / perPage),
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Error getting pending reviews: ${error.message}`, error.stack);
+      throw new InternalServerErrorException({
+        message: `Failed to fetch reviews: ${error.message}`,
+      });
+    }
   }
 
   @Get('/:id')
@@ -314,8 +409,9 @@ export class ReviewController {
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async getReview(@Param('id') id: string): Promise<ReviewResponseDto> {
-    const data = await this.prisma.review
-      .findUniqueOrThrow({
+    this.logger.log(`Getting review with ID: ${id}`);
+    try {
+      const data = await this.prisma.review.findUniqueOrThrow({
         where: { id },
         include: {
           reviewItems: {
@@ -324,16 +420,19 @@ export class ReviewController {
             },
           },
         },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Review not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return data as ReviewResponseDto;
+      
+      this.logger.log(`Review found: ${id}`);
+      return data as ReviewResponseDto;
+    } catch (error) {
+      this.logger.error(`Failed to get review ${id}: ${error.message}`, error.stack);
+      if (error.code === 'P2025') {
+        throw new NotFoundException({ message: `Review not found with ID: ${id}` });
+      }
+      throw new InternalServerErrorException({
+        message: `Error fetching review: ${error.message}`,
+      });
+    }
   }
 
   @Delete('/:id')
@@ -355,19 +454,22 @@ export class ReviewController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async deleteReview(@Param('id') id: string) {
-    await this.prisma.review
-      .delete({
+    this.logger.log(`Deleting review with ID: ${id}`);
+    try {
+      await this.prisma.review.delete({
         where: { id },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Review not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return { message: `Review ${id} deleted successfully.` };
+      this.logger.log(`Review deleted successfully: ${id}`);
+      return { message: `Review ${id} deleted successfully.` };
+    } catch (error) {
+      this.logger.error(`Failed to delete review ${id}: ${error.message}`, error.stack);
+      if (error.code === 'P2025') {
+        throw new NotFoundException({ message: `Review not found with ID: ${id}` });
+      }
+      throw new InternalServerErrorException({
+        message: `Error deleting review: ${error.message}`,
+      });
+    }
   }
 
   @Delete('/items/:itemId')
@@ -389,20 +491,21 @@ export class ReviewController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review item not found.' })
   async deleteReviewItem(@Param('itemId') itemId: string) {
-    await this.prisma.reviewItem
-      .delete({
+    this.logger.log(`Deleting review item with ID: ${itemId}`);
+    try {
+      await this.prisma.reviewItem.delete({
         where: { id: itemId },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Review item not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
-    return {
-      message: `Review item ${itemId} deleted successfully.`,
-    };
+      this.logger.log(`Review item deleted successfully: ${itemId}`);
+      return { message: `Review item ${itemId} deleted successfully.` };
+    } catch (error) {
+      this.logger.error(`Failed to delete review item ${itemId}: ${error.message}`, error.stack);
+      if (error.code === 'P2025') {
+        throw new NotFoundException({ message: `Review item not found with ID: ${itemId}` });
+      }
+      throw new InternalServerErrorException({
+        message: `Error deleting review item: ${error.message}`,
+      });
+    }
   }
 }
