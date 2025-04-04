@@ -33,7 +33,16 @@ const TEST_M2M_TOKENS: Record<string, string[]> = {
   ],
   'm2m-token-scorecard': [
     Scope.AllScorecard
-  ]
+  ],
+  'm2m-token-appeal': [
+    Scope.AllAppeal
+  ],
+  'm2m-token-contact-request': [
+    Scope.AllContactRequest
+  ],
+  'm2m-token-project-result': [
+    Scope.AllProjectResult
+  ],
 };
 
 @Injectable()
