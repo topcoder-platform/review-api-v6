@@ -6,7 +6,10 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
+import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { Scopes } from 'src/shared/decorators/scopes.decorator';
+import { Scope } from 'src/shared/enums/scopes.enum';
 import { ProjectResultResponseDto } from 'src/dto/projectResult.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 
@@ -18,9 +21,10 @@ export class ProjectResultController {
 
   @Get('/projectResult')
   @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Submitter)
+  @Scopes(Scope.ReadProjectResult)
   @ApiOperation({
     summary: 'Get project results',
-    description: 'Retrieve submission results for a given challenge ID',
+    description: 'Roles: Reviewer, Copilot, Submitter | Scopes: read:project-result',
   })
   @ApiQuery({
     name: 'challengeId',

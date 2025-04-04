@@ -19,7 +19,10 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
+import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { Scopes } from 'src/shared/decorators/scopes.decorator';
+import { Scope } from 'src/shared/enums/scopes.enum';
 import {
   ScorecardRequestDto,
   ScorecardResponseDto,
@@ -36,7 +39,11 @@ export class ScorecardController {
 
   @Post()
   @Roles(UserRole.Admin)
-  @ApiOperation({ summary: 'Add a new scorecard', description: 'Roles: Admin' })
+  @Scopes(Scope.CreateScorecard)
+  @ApiOperation({ 
+    summary: 'Add a new scorecard', 
+    description: 'Roles: Admin | Scopes: create:scorecard' 
+  })
   @ApiBody({ description: 'Scorecard data', type: ScorecardRequestDto })
   @ApiResponse({
     status: 201,
@@ -66,9 +73,10 @@ export class ScorecardController {
 
   @Put('/:id')
   @Roles(UserRole.Admin)
+  @Scopes(Scope.UpdateScorecard)
   @ApiOperation({
     summary: 'Edit an existing scorecard',
-    description: 'Roles: Admin',
+    description: 'Roles: Admin | Scopes: update:scorecard',
   })
   @ApiParam({
     name: 'id',
@@ -118,7 +126,11 @@ export class ScorecardController {
 
   @Delete(':id')
   @Roles(UserRole.Admin)
-  @ApiOperation({ summary: 'Delete a scorecard', description: 'Roles: Admin' })
+  @Scopes(Scope.DeleteScorecard)
+  @ApiOperation({ 
+    summary: 'Delete a scorecard', 
+    description: 'Roles: Admin | Scopes: delete:scorecard' 
+  })
   @ApiParam({
     name: 'id',
     description: 'The ID of the scorecard',
@@ -148,9 +160,10 @@ export class ScorecardController {
   }
 
   @Get('/:id')
+  @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'View a scorecard',
-    description: 'Roles: All Topcoder',
+    description: 'Scopes: read:scorecard',
   })
   @ApiParam({
     name: 'id',
@@ -192,9 +205,10 @@ export class ScorecardController {
 
   @Get()
   @Roles(UserRole.Admin, UserRole.Copilot)
+  @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'Search scorecards',
-    description: 'Search by challenge track, challenge type, or name',
+    description: 'Search by challenge track, challenge type, or name. Roles: Admin, Copilot | Scopes: read:scorecard',
   })
   @ApiQuery({
     name: 'challengeTrack',

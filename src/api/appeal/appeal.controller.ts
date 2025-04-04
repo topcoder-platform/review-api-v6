@@ -19,7 +19,10 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
+import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { Scopes } from 'src/shared/decorators/scopes.decorator';
+import { Scope } from 'src/shared/enums/scopes.enum';
 import {
   AppealRequestDto,
   AppealResponseDto,
@@ -38,9 +41,10 @@ export class AppealController {
 
   @Post()
   @Roles(UserRole.Submitter)
+  @Scopes(Scope.CreateAppeal)
   @ApiOperation({
     summary: 'Create an appeal for a specific review item comment',
-    description: 'Roles: Submitter',
+    description: 'Roles: Submitter | Scopes: create:appeal',
   })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
   @ApiResponse({
@@ -60,9 +64,10 @@ export class AppealController {
 
   @Patch('/:appealId')
   @Roles(UserRole.Submitter)
+  @Scopes(Scope.UpdateAppeal)
   @ApiOperation({
     summary: 'Update an appeal',
-    description: 'Roles: Submitter',
+    description: 'Roles: Submitter | Scopes: update:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to update' })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
@@ -95,9 +100,10 @@ export class AppealController {
 
   @Delete('/:appealId')
   @Roles(UserRole.Submitter)
+  @Scopes(Scope.DeleteAppeal)
   @ApiOperation({
     summary: 'Delete an appeal',
-    description: 'Roles: Submitter',
+    description: 'Roles: Submitter | Scopes: delete:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to delete' })
   @ApiResponse({ status: 200, description: 'Appeal deleted successfully.' })
@@ -121,9 +127,10 @@ export class AppealController {
 
   @Post('/:appealId/response')
   @Roles(UserRole.Reviewer)
+  @Scopes(Scope.CreateAppealResponse)
   @ApiOperation({
     summary: 'Create a response for an appeal',
-    description: 'Roles: Reviewer',
+    description: 'Roles: Reviewer | Scopes: create:appeal-response',
   })
   @ApiParam({
     name: 'appealId',
@@ -171,9 +178,10 @@ export class AppealController {
 
   @Patch('/response/:appealResponseId')
   @Roles(UserRole.Reviewer)
+  @Scopes(Scope.UpdateAppealResponse)
   @ApiOperation({
     summary: 'Update a response for an appeal',
-    description: 'Roles: Reviewer',
+    description: 'Roles: Reviewer | Scopes: update:appeal-response',
   })
   @ApiParam({
     name: 'appealResponseId',
@@ -214,9 +222,10 @@ export class AppealController {
 
   @Get('/')
   @Roles(UserRole.Admin, UserRole.Copilot)
+  @Scopes(Scope.ReadAppeal)
   @ApiOperation({
     summary: 'Get appeals',
-    description: 'Filter appeals by submission ID and challenge ID',
+    description: 'Roles: Admin, Copilot | Scopes: read:appeal',
   })
   @ApiQuery({
     name: 'resourceId',

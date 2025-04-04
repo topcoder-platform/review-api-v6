@@ -6,7 +6,10 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
+import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { Scopes } from 'src/shared/decorators/scopes.decorator';
+import { Scope } from 'src/shared/enums/scopes.enum';
 import {
   ContactRequestDto,
   ContactRequestResponseDto,
@@ -22,7 +25,11 @@ export class ContactRequestsController {
 
   @Post('/contact-requests')
   @Roles(UserRole.Submitter, UserRole.Reviewer)
-  @ApiOperation({ summary: 'Create a new contact request' })
+  @Scopes(Scope.CreateContactRequest)
+  @ApiOperation({ 
+    summary: 'Create a new contact request',
+    description: 'Roles: Submitter, Reviewer | Scopes: create:contact-request' 
+  })
   @ApiBody({ description: 'Contact request body', type: ContactRequestDto })
   @ApiResponse({
     status: 201,

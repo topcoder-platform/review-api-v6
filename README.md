@@ -1,4 +1,4 @@
-# TC Review API
+# Topcoder Review API
 
 Review API built on modern frameworks for managing all review-related Topcoder needs.
 

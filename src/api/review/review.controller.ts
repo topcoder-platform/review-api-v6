@@ -19,7 +19,10 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { Roles, UserRole } from 'src/shared/guards/tokenRoles.guard';
+import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { Scopes } from 'src/shared/decorators/scopes.decorator';
+import { Scope } from 'src/shared/enums/scopes.enum';
 import {
   ReviewRequestDto,
   ReviewResponseDto,
@@ -39,9 +42,10 @@ export class ReviewController {
 
   @Post()
   @Roles(UserRole.Reviewer)
+  @Scopes(Scope.CreateReview)
   @ApiOperation({
     summary: 'Create a new review',
-    description: 'Roles: Reviewer',
+    description: 'Roles: Reviewer | Scopes: create:review',
   })
   @ApiBody({ description: 'Review data', type: ReviewRequestDto })
   @ApiResponse({
@@ -67,9 +71,10 @@ export class ReviewController {
 
   @Post('/items')
   @Roles(UserRole.Reviewer, UserRole.Copilot)
+  @Scopes(Scope.CreateReviewItem)
   @ApiOperation({
     summary: 'Create review item',
-    description: 'Roles: Reviewer',
+    description: 'Roles: Reviewer, Copilot | Scopes: create:review-item',
   })
   @ApiBody({ description: 'Review item data', type: ReviewItemRequestDto })
   @ApiResponse({
@@ -91,9 +96,10 @@ export class ReviewController {
 
   @Patch('/:id')
   @Roles(UserRole.Reviewer)
+  @Scopes(Scope.UpdateReview)
   @ApiOperation({
     summary: 'Update a review partially',
-    description: 'Roles: Reviewer',
+    description: 'Roles: Reviewer | Scopes: update:review',
   })
   @ApiParam({
     name: 'id',
@@ -136,10 +142,11 @@ export class ReviewController {
 
   @Patch('/items/:itemId')
   @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Admin)
+  @Scopes(Scope.UpdateReviewItem)
   @ApiOperation({
     summary:
       'Update a specific review item, if copilot is patching, manager comment is required',
-    description: 'Roles: Reviewer, Copilot, Admin',
+    description: 'Roles: Reviewer, Copilot, Admin | Scopes: update:review-item',
   })
   @ApiParam({
     name: 'itemId',
@@ -183,10 +190,11 @@ export class ReviewController {
     UserRole.Admin,
     UserRole.Submitter,
   )
+  @Scopes(Scope.ReadReview)
   @ApiOperation({
     summary: 'Search for pending reviews',
     description:
-      'Roles: Reviewer, Copilot, Admin, Submitter. For Submitter, only applies to their own review, until challenge completion',
+      'Roles: Reviewer, Copilot, Admin, Submitter. For Submitter, only applies to their own review, until challenge completion. | Scopes: read:review',
   })
   @ApiQuery({
     name: 'status',
@@ -288,9 +296,11 @@ export class ReviewController {
     UserRole.Submitter,
     UserRole.Admin,
   )
+  @Scopes(Scope.ReadReview)
   @ApiOperation({
     summary: 'View a specific review',
-    description: 'Roles: Reviewer, Copilot, Submitter, Admin',
+    description:
+      'Roles: Reviewer, Copilot, Submitter, Admin | Scopes: read:review',
   })
   @ApiParam({
     name: 'id',
@@ -328,16 +338,20 @@ export class ReviewController {
 
   @Delete('/:id')
   @Roles(UserRole.Copilot, UserRole.Admin)
+  @Scopes(Scope.DeleteReview)
   @ApiOperation({
     summary: 'Delete a review',
-    description: 'Roles: Copilot, Admin',
+    description: 'Roles: Copilot, Admin | Scopes: delete:review',
   })
   @ApiParam({
     name: 'id',
     description: 'The ID of the review',
     example: 'mock-review-id',
   })
-  @ApiResponse({ status: 200, description: 'Review deleted successfully.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Review deleted successfully.',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async deleteReview(@Param('id') id: string) {
@@ -358,9 +372,10 @@ export class ReviewController {
 
   @Delete('/items/:itemId')
   @Roles(UserRole.Copilot, UserRole.Admin)
+  @Scopes(Scope.DeleteReviewItem)
   @ApiOperation({
     summary: 'Delete a review item',
-    description: 'Roles: Copilot, Admin',
+    description: 'Roles: Copilot, Admin | Scopes: delete:review-item',
   })
   @ApiParam({
     name: 'itemId',
@@ -372,7 +387,7 @@ export class ReviewController {
     description: 'Review item deleted successfully.',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  @ApiResponse({ status: 404, description: 'Review item  not found.' })
+  @ApiResponse({ status: 404, description: 'Review item not found.' })
   async deleteReviewItem(@Param('itemId') itemId: string) {
     await this.prisma.reviewItem
       .delete({

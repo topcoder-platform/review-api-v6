@@ -38,8 +38,32 @@ async function bootstrap() {
   // Setup swagger
   // TODO: finish this and make it so this block only runs in non-prod
   const config = new DocumentBuilder()
-    .setTitle('API')
-    .setDescription('TC Review API documentation')
+    .setTitle('Topcoder Review API')
+    .setDescription(`
+    Topcoder Review API Documentation
+    
+    Authentication
+    
+    The API supports two authentication methods:
+    
+    User Token (JWT)
+    - Regular user authentication using role-based access control
+    - Tokens should include 'roles' claim with the appropriate role(s)
+    - Available roles: Admin, Copilot, Reviewer, Submitter
+    
+    Machine-to-Machine (M2M) Token
+    - For service-to-service authentication
+    - Uses scope-based access control
+    - Available scopes: create:appeal, read:appeal, update:appeal, delete:appeal, create:appeal-response, update:appeal-response, all:appeal, create:contact-request, all:contact-request, read:project-result, all:project-result, create:review, read:review, update:review, delete:review, create:review-item, update:review-item, delete:review-item, all:review, create:scorecard, read:scorecard, update:scorecard, delete:scorecard, all:scorecard
+    
+    To get an M2M token (example for development environment):
+
+    curl --request POST \\
+      --url https://topcoder-dev.auth0.com/oauth/token \\
+      --header 'content-type: application/json' \\
+      --data '{"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://m2m.topcoder-dev.com/","grant_type":"client_credentials"}'
+
+    `)
     .setVersion('1.0')
     .addTag('TC Review')
     .addBearerAuth({
