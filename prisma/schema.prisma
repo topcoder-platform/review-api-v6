@@ -162,6 +162,8 @@ model reviewItem {
 
   review             review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewItemComments reviewItemComment[]
+  @@index([reviewId]) // Index for resourceId field
+  @@index([id]) // Index for id field
 }
 
 model reviewItemComment {
@@ -179,6 +181,8 @@ model reviewItemComment {
 
   reviewItem reviewItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
   appeal     appeal?
+  @@index([reviewItemId]) // Index for resourceId field
+  @@index([id]) // Index for id field
 }
 
 enum ReviewItemCommentType {
