@@ -37,6 +37,9 @@ model scorecard {
   @@index([challengeTrack])
   @@index([challengeType])
   @@index([name])
+  @@index([id]) // Index for direct ID lookups
+  @@index([type]) // Index for filtering by scorecard type
+  @@index([status]) // Index for filtering by status (e.g. ACTIVE scorecards)
 }
 
 enum ScorecardStatus {
@@ -77,6 +80,10 @@ model scorecardGroup {
 
   scorecard scorecard          @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
   sections  scorecardSection[]
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardId]) // Index for joining with scorecard table
+  @@index([sortOrder]) // Index for ordering groups
 }
 
 model scorecardSection {
@@ -93,6 +100,10 @@ model scorecardSection {
 
   group     scorecardGroup      @relation(fields: [scorecardGroupId], references: [id], onDelete: Cascade)
   questions scorecardQuestion[]
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardGroupId]) // Index for joining with scorecardGroup table
+  @@index([sortOrder]) // Index for ordering sections
 }
 
 enum QuestionType {
@@ -121,6 +132,11 @@ model scorecardQuestion {
   scaleMax Int? // Maximum value for scale (used when type is SCALE)
 
   section scorecardSection @relation(fields: [scorecardSectionId], references: [id], onDelete: Cascade)
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardSectionId]) // Index for joining with scorecardSection table
+  @@index([type]) // Index for filtering questions by type
+  @@index([sortOrder]) // Index for ordering questions
 }
 
 model review {
@@ -141,9 +157,12 @@ model review {
   scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
   reviewItems reviewItem[]
 
-  @@index([committed]) // Add index for the committed field
-  @@index([submissionId]) // Index for submissionId field
-  @@index([resourceId]) // Index for resourceId field
+  @@index([committed]) // Index for filtering by committed status
+  @@index([submissionId]) // Index for filtering by submission
+  @@index([resourceId]) // Index for filtering by resource (reviewer)
+  @@index([id]) // Index for direct ID lookups
+  @@index([phaseId]) // Index for filtering by phase
+  @@index([scorecardId]) // Index for joining with scorecard table
 }
 
 model reviewItem {
@@ -162,8 +181,9 @@ model reviewItem {
 
   review             review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewItemComments reviewItemComment[]
-  @@index([reviewId]) // Index for reviewId field
-  @@index([id]) // Index for id field
+  @@index([reviewId]) // Index for joining with review table
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardQuestionId]) // Index for joining with scorecardQuestion table
 }
 
 model reviewItemComment {
@@ -181,8 +201,10 @@ model reviewItemComment {
 
   reviewItem reviewItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
   appeal     appeal?
-  @@index([reviewItemId]) // Index for reviewItemId field
-  @@index([id]) // Index for id field
+  @@index([reviewItemId]) // Index for joining with reviewItem table
+  @@index([id]) // Index for direct ID lookups
+  @@index([resourceId]) // Index for filtering by resource (commenter)
+  @@index([type]) // Index for filtering by comment type
 }
 
 enum ReviewItemCommentType {
@@ -214,7 +236,9 @@ model appeal {
   reviewItemComment reviewItemComment @relation(fields: [reviewItemCommentId], references: [id], onDelete: Cascade) // Define fields and references here
   appealResponse    appealResponse?
 
-  @@index([resourceId]) // Index for resourceId field
+  @@index([resourceId]) // Index for resource ID
+  @@index([id]) // Index for direct ID lookups
+  @@index([reviewItemCommentId]) // Index for joining with reviewItemComment table
 }
 
 model appealResponse {
@@ -230,6 +254,10 @@ model appealResponse {
   updatedBy  String
 
   appeal appeal @relation(fields: [appealId], references: [id], onDelete: Cascade)
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([appealId]) // Index for joining with appeal table
+  @@index([resourceId]) // Index for filtering by resource (responder)
 }
 
 model challengeResult {
@@ -254,6 +282,9 @@ model challengeResult {
   updatedBy String
 
   @@id([challengeId, userId])
+  @@index([challengeId]) // Index for filtering by challenge
+  @@index([userId]) // Index for filtering by user
+  @@index([submissionId]) // Index for filtering by submission
 }
 
 model contactRequest {
@@ -265,4 +296,8 @@ model contactRequest {
   createdBy   String
   updatedAt   DateTime @updatedAt
   updatedBy   String
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([resourceId]) // Index for filtering by resource (requester)
+  @@index([challengeId]) // Index for filtering by challenge
 }
