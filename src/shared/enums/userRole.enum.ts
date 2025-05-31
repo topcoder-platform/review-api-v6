@@ -2,8 +2,9 @@
  * Enum defining user roles for role-based access control
  */
 export enum UserRole {
-  Admin = 'Admin',
-  Copilot = 'Copilot',
-  Reviewer = 'Reviewer',
+  Admin = 'administrator',
+  Copilot = 'copilot',
+  Reviewer = 'reviewer',
   Submitter = 'Submitter',
-} 
+  User = 'Topcoder User'
+}

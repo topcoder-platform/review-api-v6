@@ -21,12 +21,15 @@
     "postinstall": "npx prisma generate"
   },
   "dependencies": {
+    "@nestjs/axios": "^4.0.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
+    "@nestjs/mapped-types": "^2.1.0",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.0.3",
     "@prisma/client": "^6.3.1",
     "@types/jsonwebtoken": "^9.0.9",
+    "axios": "^1.9.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "cors": "^2.8.5",
@@ -34,7 +37,8 @@
     "jwks-rsa": "^3.2.0",
     "nanoid": "~5.1.2",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "tc-core-library-js": "appirio-tech/tc-core-library-js.git#v3.0.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -51,6 +55,7 @@
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
+    "express": "^5.1.0",
     "globals": "^15.14.0",
     "jest": "^29.7.0",
     "prettier": "^3.4.2",
@@ -62,7 +67,8 @@
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
-    "typescript-eslint": "^8.20.0"
+    "typescript-eslint": "^8.20.0",
+    "winston": "^3.17.0"
   },
   "prisma": {
     "seed": "ts-node prisma/migrate.ts"

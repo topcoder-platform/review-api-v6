@@ -301,3 +301,83 @@ model contactRequest {
   @@index([resourceId]) // Index for filtering by resource (requester)
   @@index([challengeId]) // Index for filtering by challenge
 }
+
+enum ReviewOpportunityStatus {
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum ReviewApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ReviewOpportunityType {
+  REGULAR_REVIEW
+  COMPONENT_DEV_REVIEW
+  SPEC_REVIEW
+  ITERATIVE_REVIEW
+  SCENARIOS_REVIEW
+}
+
+enum ReviewApplicationRole {
+  PRIMARY_REVIEWER
+  SECONDARY_REVIEWER
+  PRIMARY_FAILURE_REVIEWER
+  ACCURACY_REVIEWER
+  STRESS_REVIEWER
+  FAILURE_REVIEWER
+  SPECIFICATION_REVIEWER
+  ITERATIVE_REVIEWER
+  REVIEWER
+}
+
+model reviewOpportunity {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  challengeId String
+  status      ReviewOpportunityStatus
+  type        ReviewOpportunityType
+  openPositions Int
+  startDate   DateTime
+  duration    Int
+  basePayment Float
+  incrementalPayment  Float
+
+  applications reviewApplication[]
+
+  createdAt   DateTime @default(now())
+  createdBy   String
+  updatedAt   DateTime @updatedAt
+  updatedBy   String
+
+  @@unique([challengeId, type])
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([challengeId]) // Index for filtering by challenge
+}
+
+
+model reviewApplication {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  userId      String
+  handle      String
+  opportunityId String
+  role        ReviewApplicationRole
+  status      ReviewApplicationStatus
+
+  opportunity reviewOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  createdBy   String
+  updatedAt   DateTime @updatedAt
+  updatedBy   String
+
+  @@unique([opportunityId, userId, role])
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([userId])
+  @@index([opportunityId])
+}

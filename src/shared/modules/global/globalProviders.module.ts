@@ -1,15 +1,21 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { HttpModule } from '@nestjs/axios';
 import { PrismaService } from './prisma.service';
 import { TokenRolesGuard } from '../../guards/tokenRoles.guard';
 import { JwtService } from './jwt.service';
 import { LoggerService } from './logger.service';
 import { PrismaErrorService } from './prisma-error.service';
+import { M2MService } from './m2m.service';
+import { ChallengeApiService } from './challenge.service';
+import { EventBusService } from './eventBus.service';
+import { MemberService } from './member.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
 @Global()
 @Module({
+  imports: [HttpModule],
   providers: [
     {
       provide: APP_GUARD,
@@ -24,7 +30,20 @@ import { PrismaErrorService } from './prisma-error.service';
       },
     },
     PrismaErrorService,
+    M2MService,
+    ChallengeApiService,
+    EventBusService,
+    MemberService,
   ],
-  exports: [PrismaService, JwtService, LoggerService, PrismaErrorService],
+  exports: [
+    PrismaService,
+    JwtService,
+    LoggerService,
+    PrismaErrorService,
+    M2MService,
+    ChallengeApiService,
+    EventBusService,
+    MemberService,
+  ],
 })
 export class GlobalProvidersModule {}
