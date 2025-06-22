@@ -80,7 +80,7 @@ export class ReviewOpportunityService {
     }
     // sort list
     responseList = [...responseList].sort((a, b) => {
-      return dto.sortOrder === 'asc' ? (a[dto.sortBy] - b[dto.sortBy]) : (a[dto.sortBy] - b[dto.sortBy]);
+      return dto.sortOrder === 'asc' ? (a[dto.sortBy] - b[dto.sortBy]) : (b[dto.sortBy] - a[dto.sortBy]);
     });
     // pagination
     const start = Math.max(0, dto.offset as number);

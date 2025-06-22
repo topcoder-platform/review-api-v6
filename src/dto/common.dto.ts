@@ -57,7 +57,7 @@ export const FailResponse = function (
 ): ResponseDto<string> {
   const ret = new ResponseDto<string>();
   const result = new ResultDto<string>();
-  result.success = true;
+  result.success = false;
   result.status = status ?? 500;
   result.content = message ?? 'Internal Error';
   ret.result = result;

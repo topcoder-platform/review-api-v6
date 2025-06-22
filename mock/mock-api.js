@@ -26,7 +26,8 @@ app.post('/eventBus', (req, res) => {
   res.json({})
 })
 
-const m2mToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL3RvcGNvZGVyLWRldi5hdXRoMC5jb20vIiwic3ViIjoiakdJZjJwZDNmNDRCMWpxdk9haTMwQklLVFphbllCZlVAY2xpZW50cyIsImF1ZCI6Imh0dHBzOi8vbTJtLnRvcGNvZGVyLWRldi5jb20vIiwiaWF0IjoxNzQ4MDk5NDk4LCJleHAiOjE4NDgxODU4OTgsInNjb3BlIjoid3JpdGU6YnVzX2FwaSxhbGw6Y2hhbGxlbmdlcyIsImd0eSI6ImNsaWVudC1jcmVkZW50aWFscyIsImF6cCI6ImpHSWYycGQzZjQ0QjFqcXZPYWkzMEJJS1RaYW5ZQmZVIn0.h3ksdsdJm5USGF1VgROrpkTtStmCzv5ZA6y8bd8AnGY';
+// Use environment variable for M2M token instead of hardcoding
+const m2mToken = process.env.M2M_MOCK_TOKEN || 'dummy-token';
 
 const m2mScope = 'write:bus_api,all:challenges';
 

@@ -30,7 +30,7 @@ export class ReviewHistoryController {
   })
   @ApiResponse({ status: 400, description: 'Bad Request' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @ApiBearerAuth()
   @Roles(UserRole.Reviewer, UserRole.Admin)

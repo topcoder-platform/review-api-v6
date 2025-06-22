@@ -136,7 +136,7 @@ export class ReviewOpportunityController {
     required: false
   })
   @ApiQuery({
-    name: 'limit',
+    name: 'offset',
     description: 'pagination offset',
     type: 'number',
     example: 0,

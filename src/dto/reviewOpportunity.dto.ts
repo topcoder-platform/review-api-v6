@@ -106,6 +106,7 @@ export class CreateReviewOpportunityDto {
     example: '50.0',
   })
   @IsNumber()
+  @IsPositive()
   incrementalPayment: number;
 }
 
@@ -133,6 +134,8 @@ export class ReviewPaymentDto {
       'Review payment. Should be base payment if there is 1 submission.',
     example: 180.0,
   })
+  @IsNumber()
+  @IsPositive()
   payment: number;
 }
 

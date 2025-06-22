@@ -23,7 +23,7 @@ CREATE TABLE "reviewOpportunity" (
     "incrementalPayment" DOUBLE PRECISION NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdBy" TEXT NOT NULL,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedBy" TEXT NOT NULL,
 
     CONSTRAINT "reviewOpportunity_pkey" PRIMARY KEY ("id")
@@ -34,12 +34,12 @@ CREATE TABLE "reviewApplication" (
     "id" VARCHAR(14) NOT NULL DEFAULT nanoid(),
     "userId" TEXT NOT NULL,
     "handle" TEXT NOT NULL,
-    "opportunityId" TEXT NOT NULL,
+    "opportunityId" VARCHAR(14) NOT NULL,
     "role" "ReviewApplicationRole" NOT NULL,
     "status" "ReviewApplicationStatus" NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdBy" TEXT NOT NULL,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedBy" TEXT NOT NULL,
 
     CONSTRAINT "reviewApplication_pkey" PRIMARY KEY ("id")

@@ -107,7 +107,7 @@ export class ReviewApplicationResponseDto {
   @ApiProperty({
     description: 'Review Application Role',
   })
-  role: string;
+  role: ReviewApplicationRole;
 
   @ApiProperty({
     description: 'Review Application Status',
