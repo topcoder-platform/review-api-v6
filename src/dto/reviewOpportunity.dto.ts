@@ -143,6 +143,9 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   @ApiProperty({
     description: 'Review opportunity id',
   })
+  @IsString()
+  @IsNotEmpty()
+  @IsUUID()
   id: string;
 
   @ApiProperty({
