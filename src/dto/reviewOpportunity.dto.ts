@@ -46,8 +46,6 @@ export class CreateReviewOpportunityDto {
   @ApiProperty({
     description: 'Challenge id',
   })
-  @IsString()
-  @IsNotEmpty()
   @IsUUID()
   challengeId: string;
 
@@ -143,8 +141,6 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   @ApiProperty({
     description: 'Review opportunity id',
   })
-  @IsString()
-  @IsNotEmpty()
   @IsUUID()
   id: string;
 
