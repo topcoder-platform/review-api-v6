@@ -172,10 +172,10 @@ export class ReviewApplicationService {
   /**
    * Get user approved review application list within date range.
    * @param userId user id
-   * @param range date range in days. 180 days default.
+   * @param range date range in days. 60 days default.
    * @returns application list
    */
-  async getHistory(userId: string, range: number = 180) {
+  async getHistory(userId: string, range: number = 60) {
     // calculate begin date
     const beginDate = new Date();
     beginDate.setDate(beginDate.getDate() - range);
