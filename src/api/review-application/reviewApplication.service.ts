@@ -261,7 +261,7 @@ export class ReviewApplicationService {
     ret.userId = entity.userId;
     ret.handle = entity.handle;
     ret.opportunityId = entity.opportunityId;
-    ret.role = convertRoleName(entity.role);
+    ret.role = entity.role;
     ret.status = entity.status;
     ret.applicationDate = entity.createdAt;
     return ret;
