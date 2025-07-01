@@ -11,8 +11,14 @@ import { AuthConfig } from '../../config/auth.config';
 
 export interface JwtUser {
   userId?: string;
+  handle?: string;
   roles?: UserRole[];
   scopes?: string[];
+  isMachine: boolean;
+}
+
+export const isAdmin = (user: JwtUser): boolean => {
+  return user.isMachine || (user.roles ?? []).includes(UserRole.Admin);
 }
 
 // Map for testing tokens, will be removed in production
@@ -63,14 +69,14 @@ export class JwtService implements OnModuleInit {
     try {
       // First check if it's a test token
       if (TOKEN_ROLE_MAP[token]) {
-        return { roles: TOKEN_ROLE_MAP[token] as UserRole[] };
+        return { roles: TOKEN_ROLE_MAP[token] as UserRole[], isMachine: false };
       }
 
       // Check if it's a test M2M token
       if (TEST_M2M_TOKENS[token]) {
         const rawScopes = TEST_M2M_TOKENS[token];
         const scopes = this.expandScopes(rawScopes);
-        return { scopes };
+        return { scopes, isMachine: false };
       }
 
       let decodedToken: any;
@@ -111,21 +117,29 @@ export class JwtService implements OnModuleInit {
         throw new UnauthorizedException('Invalid token');
       }
 
-      const user: JwtUser = {};
+      const user: JwtUser = {isMachine: false};
 
       // Check for M2M token from Auth0
       if (decodedToken.scope) {
         const scopeString = decodedToken.scope as string;
         const rawScopes = scopeString.split(' ');
         user.scopes = this.expandScopes(rawScopes);
-      }
-
-      // Check for roles in a user token
-      if (decodedToken.roles) {
-        user.roles = decodedToken.roles as UserRole[];
         user.userId = decodedToken.sub;
+        user.isMachine = true;
+      } else {
+        // Check for roles, userId and handle in a user token
+        for (const key of Object.keys(decodedToken)) {
+          if (key.endsWith('handle')) {
+            user.handle = decodedToken[key] as string;
+          }
+          if (key.endsWith('userId')) {
+            user.userId = decodedToken[key] as string;
+          }
+          if (key.endsWith('roles')) {
+            user.roles = decodedToken[key] as UserRole[]
+          }
+        }
       }
-
       return user;
     } catch (error) {
       console.error('Token validation failed:', error);

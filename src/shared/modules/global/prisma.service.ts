@@ -11,6 +11,9 @@ export class PrismaService
   private readonly logger: LoggerService;
 
   constructor(private readonly prismaErrorService?: PrismaErrorService) {
+    // Get the schema name from environment variable or use 'public' as default
+    const schema = process.env.POSTGRES_SCHEMA || 'public';
+
     super({
       log: [
         { level: 'query', emit: 'event' },
@@ -27,6 +30,7 @@ export class PrismaService
     });
 
     this.logger = LoggerService.forRoot('PrismaService');
+    this.logger.log(`Using PostgreSQL schema: ${schema}`);
 
     // Setup logging for Prisma queries and errors
     this.$on('query' as never, (e: Prisma.QueryEvent) => {

@@ -21,6 +21,10 @@ interface ProjectTypeMap {
   type: ChallengeTrack;
 }
 
+// Get the schema name from environment variable or use 'public' as default
+const schema = process.env.POSTGRES_SCHEMA || 'public';
+console.log(`Using PostgreSQL schema: ${schema}`);
+
 const prisma = new PrismaClient();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'Scorecards');
 const batchSize = 1000;

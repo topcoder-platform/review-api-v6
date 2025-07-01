@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { GlobalProvidersModule } from 'src/shared/modules/global/globalProviders.module';
 import { FileUploadModule } from 'src/shared/modules/global/file-upload.module';
 import { HealthCheckController } from './health-check/healthCheck.controller';
@@ -7,12 +8,19 @@ import { AppealController } from './appeal/appeal.controller';
 import { ContactRequestsController } from './contact/contactRequests.controller';
 import { ReviewController } from './review/review.controller';
 import { ProjectResultController } from './project-result/projectResult.controller';
+
 import { ReviewTypeController } from './review-type/review-type.controller';
 import { SubmissionController } from './submission/submission.controller';
 import { ReviewSummationController } from './review-summation/review-summation.controller';
+import { ReviewOpportunityController } from './review-opportunity/reviewOpportunity.controller';
+import { ReviewApplicationController } from './review-application/reviewApplication.controller';
+import { ReviewOpportunityService } from './review-opportunity/reviewOpportunity.service';
+import { ReviewApplicationService } from './review-application/reviewApplication.service';
+import { ReviewHistoryController } from './review-history/reviewHistory.controller';
+import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 
 @Module({
-  imports: [GlobalProvidersModule, FileUploadModule],
+  imports: [HttpModule, GlobalProvidersModule, FileUploadModule],
   controllers: [
     HealthCheckController,
     ScorecardController,
@@ -23,8 +31,10 @@ import { ReviewSummationController } from './review-summation/review-summation.c
     ReviewTypeController,
     SubmissionController,
     ReviewSummationController,
+    ReviewOpportunityController,
+    ReviewApplicationController,
+    ReviewHistoryController
   ],
-  providers: [],
-  exports: [],
+  providers: [ReviewOpportunityService, ReviewApplicationService, ChallengeApiService],
 })
 export class ApiModule {}
