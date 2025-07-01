@@ -4,9 +4,12 @@ import { LoggerService } from './logger.service';
 import { PrismaErrorService } from './prisma-error.service';
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger: LoggerService;
-  
+
   constructor(private readonly prismaErrorService?: PrismaErrorService) {
     super({
       log: [
@@ -22,32 +25,36 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         },
       },
     });
-    
+
     this.logger = LoggerService.forRoot('PrismaService');
-    
+
     // Setup logging for Prisma queries and errors
     this.$on('query' as never, (e: Prisma.QueryEvent) => {
       const queryTime = e.duration;
-      
+
       // Log query details - full query for dev, just time for production
       if (process.env.NODE_ENV !== 'production') {
-        this.logger.debug(`Query: ${e.query} | Params: ${e.params} | Duration: ${queryTime}ms`);
+        this.logger.debug(
+          `Query: ${e.query} | Params: ${e.params} | Duration: ${queryTime}ms`,
+        );
       } else if (queryTime > 500) {
         // In production, only log slow queries (> 500ms)
-        this.logger.warn(`Slow query detected! Duration: ${queryTime}ms | Query: ${e.query}`);
+        this.logger.warn(
+          `Slow query detected! Duration: ${queryTime}ms | Query: ${e.query}`,
+        );
       }
     });
-    
+
     this.$on('info' as never, (e: Prisma.LogEvent) => {
       this.logger.log(`Prisma Info: ${e.message}`);
     });
-    
+
     this.$on('warn' as never, (e: Prisma.LogEvent) => {
       this.logger.warn(`Prisma Warning: ${e.message}`);
     });
-    
+
     this.$on('error' as never, (e: Prisma.LogEvent) => {
-      this.logger.error(`Prisma Error: ${e.message}`, e.target as string);
+      this.logger.error(`Prisma Error: ${e.message}`, e.target);
     });
   }
 
@@ -56,7 +63,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     try {
       await this.$connect();
       this.logger.log('Prisma connected successfully');
-      
+
       // Configure query performance
       if (process.env.NODE_ENV === 'production') {
         try {
@@ -64,19 +71,25 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           await this.$executeRaw`SET max_connections = 100;`;
           this.logger.log('Database connection pool configured');
         } catch (error) {
-          this.logger.warn(`Could not configure database connections: ${error.message}`);
+          this.logger.warn(
+            `Could not configure database connections: ${error.message}`,
+          );
         }
       }
     } catch (error) {
-      const errorMsg = this.prismaErrorService 
-        ? this.prismaErrorService.handleError(error, 'connecting to database').message
+      const errorMsg = this.prismaErrorService
+        ? this.prismaErrorService.handleError(error, 'connecting to database')
+            .message
         : error.message;
-        
-      this.logger.error(`Failed to connect to the database: ${errorMsg}`, error.stack);
+
+      this.logger.error(
+        `Failed to connect to the database: ${errorMsg}`,
+        error.stack,
+      );
       throw error;
     }
   }
-  
+
   async onModuleDestroy() {
     this.logger.log('Disconnecting Prisma');
     await this.$disconnect();

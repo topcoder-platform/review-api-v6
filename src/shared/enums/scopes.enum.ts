@@ -35,6 +35,27 @@ export enum Scope {
   UpdateScorecard = 'update:scorecard',
   DeleteScorecard = 'delete:scorecard',
   AllScorecard = 'all:scorecard',
+
+  // Review type scopes
+  CreateReviewType = 'create:review_type',
+  ReadReviewType = 'read:review_type',
+  UpdateReviewType = 'update:review_type',
+  DeleteReviewType = 'delete:review_type',
+  AllReviewType = 'all:review_type',
+
+  // Review summation scopes
+  CreateReviewSummation = 'create:review_summation',
+  ReadReviewSummation = 'read:review_summation',
+  UpdateReviewSummation = 'update:review_summation',
+  DeleteReviewSummation = 'delete:review_summation',
+  AllReviewSummation = 'all:review_summation',
+
+  // Submission scopes
+  CreateSubmission = 'create:submission',
+  ReadSubmission = 'read:submission',
+  UpdateSubmission = 'update:submission',
+  DeleteSubmission = 'delete:submission',
+  AllSubmission = 'all:submission',
 }
 
 /**
@@ -49,12 +70,8 @@ export const ALL_SCOPE_MAPPINGS: Record<string, string[]> = {
     Scope.CreateAppealResponse,
     Scope.UpdateAppealResponse,
   ],
-  [Scope.AllContactRequest]: [
-    Scope.CreateContactRequest,
-  ],
-  [Scope.AllProjectResult]: [
-    Scope.ReadProjectResult,
-  ],
+  [Scope.AllContactRequest]: [Scope.CreateContactRequest],
+  [Scope.AllProjectResult]: [Scope.ReadProjectResult],
   [Scope.AllReview]: [
     Scope.CreateReview,
     Scope.ReadReview,
@@ -70,4 +87,22 @@ export const ALL_SCOPE_MAPPINGS: Record<string, string[]> = {
     Scope.UpdateScorecard,
     Scope.DeleteScorecard,
   ],
-}; 
+  [Scope.AllReviewType]: [
+    Scope.CreateReviewType,
+    Scope.ReadReviewType,
+    Scope.UpdateReviewType,
+    Scope.DeleteReviewType,
+  ],
+  [Scope.AllReviewSummation]: [
+    Scope.CreateReviewSummation,
+    Scope.ReadReviewSummation,
+    Scope.UpdateReviewSummation,
+    Scope.DeleteReviewSummation,
+  ],
+  [Scope.AllSubmission]: [
+    Scope.CreateSubmission,
+    Scope.ReadSubmission,
+    Scope.UpdateSubmission,
+    Scope.DeleteSubmission,
+  ],
+};

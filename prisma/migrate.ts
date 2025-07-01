@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import * as path from 'path';
 import * as fs from 'fs';
 import {
@@ -45,6 +45,120 @@ const lookupKeys: string[] = [
   'project_category_lu',
 ];
 
+const reviewTypeData: Prisma.reviewTypeCreateInput[] = [
+  {
+    id: 'c56a4180-65aa-42ec-a945-5fd21dec0501',
+    name: 'Screening',
+    isActive: true,
+  },
+  {
+    id: 'c56a4180-65aa-42ec-a945-5fd21dec0502',
+    name: 'Checkpoint Review',
+    isActive: true,
+  },
+  {
+    id: 'c56a4180-65aa-42ec-a945-5fd21dec0503',
+    name: 'Review',
+    isActive: true,
+  },
+  {
+    id: 'c56a4180-65aa-42ec-a945-5fd21dec0504',
+    name: 'Appeals Response',
+    isActive: true,
+  },
+  {
+    id: 'c56a4180-65aa-42ec-a945-5fd21dec0505',
+    name: 'Iterative Review',
+    isActive: true,
+  },
+  {
+    id: 'f28b2725-ef90-4495-af59-ceb2bd98fc10',
+    name: 'AV Scan',
+    isActive: false,
+  },
+];
+
+const scorecardData: Prisma.scorecardCreateInput = {
+  status: 'ACTIVE',
+  type: 'REVIEW',
+  challengeTrack: 'DEVELOPMENT',
+  challengeType: 'Code Development',
+  name: 'Topcoder Review API - Migrate Submissions API into the new Review API',
+  version: '1.0',
+  minScore: 80.0,
+  maxScore: 100.0,
+  createdAt: '2018-05-20T07:00:30.123Z',
+  updatedAt: '2018-06-01T07:36:28.178Z',
+  createdBy: 'admin',
+  updatedBy: 'admin',
+};
+
+const reviewData = [
+  {
+    id: 'd24d4180-65aa-42ec-a945-5fd21dec0501',
+    resourceId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
+    phaseId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
+    initialScore: 95.5,
+    finalScore: 96.5,
+    typeId: 'c56a4180-65aa-42ec-a945-5fd21dec0503',
+    status: 'Review',
+    reviewDate: '2025-05-20T07:00:30.123Z',
+    createdAt: '2018-05-20T07:00:30.123Z',
+    updatedAt: '2018-06-01T07:36:28.178Z',
+    createdBy: 'admin',
+    updatedBy: 'admin',
+  },
+  {
+    id: 'd24d4180-65aa-42ec-a945-5fd21dec0502',
+    resourceId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
+    phaseId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
+    initialScore: 92.0,
+    finalScore: 93.5,
+    typeId: 'c56a4180-65aa-42ec-a945-5fd21dec0501',
+    metadata: {
+      public: 'public data',
+      private: 'private data',
+    },
+    status: 'Appeal',
+    reviewDate: '2025-05-20T07:00:30.123Z',
+    createdAt: '2018-05-20T07:00:30.123Z',
+    updatedAt: '2018-06-01T07:36:28.178Z',
+    createdBy: 'admin',
+    updatedBy: 'admin',
+  },
+];
+
+const reviewSummationData: Prisma.reviewSummationCreateWithoutSubmissionInput[] =
+  [
+    {
+      id: 'e45e4180-65aa-42ec-a945-5fd21dec1504',
+      aggregateScore: 99.0,
+      scorecardId: '123456789',
+      isPassing: true,
+      isFinal: false,
+      reviewedDate: '2025-06-01T07:36:28.178Z',
+      createdAt: '2018-05-20T07:00:30.123Z',
+      updatedAt: '2018-06-01T07:36:28.178Z',
+      createdBy: 'copilot',
+      updatedBy: 'copilot',
+    },
+  ];
+
+const submissionData: Prisma.submissionCreateInput[] = [
+  {
+    id: 'a12a4180-65aa-42ec-a945-5fd21dec0501',
+    type: 'ContestSubmission',
+    url: 'https://software.topcoder.com/review/actions/DownloadContestSubmission?uid=123456',
+    memberId: 'b24d4180-65aa-42ec-a945-5fd21dec0501',
+    challengeId: 'c3564180-65aa-42ec-a945-5fd21dec0502',
+    submittedDate: '2018-05-20T07:00:30.123Z',
+    createdAt: '2018-05-20T07:00:30.123Z',
+    updatedAt: '2018-06-01T07:36:28.178Z',
+    createdBy: 'topcoder user',
+    updatedBy: 'topcoder user',
+  },
+];
+
 // Global lookup maps
 let scorecardStatusMap: Record<string, ScorecardStatus> = {};
 let scorecardTypeMap: Record<string, ScorecardType> = {};
@@ -53,7 +167,7 @@ let projectCategoryMap: Record<string, ProjectTypeMap> = {};
 let reviewItemCommentTypeMap: Record<string, string> = {};
 
 // Global submission map to store submission information.
-let submissionMap: Record<string, Record<string, string>> = {};
+const submissionMap: Record<string, Record<string, string>> = {};
 
 // Data lookup maps
 // Initialize maps from files if they exist, otherwise create new maps
@@ -283,6 +397,7 @@ function processLookupFiles() {
 /**
  * Read submission data from resource_xxx.json, upload_xxx.json and submission_xxx.json.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 async function initSubmissionMap() {
   // read submission_x.json, read {uploadId -> submissionId} map.
   const submissionRegex = new RegExp(`^submission_\\d+\\.json`);
@@ -291,7 +406,7 @@ async function initSubmissionMap() {
   const submissionFiles: string[] = [];
   const uploadFiles: string[] = [];
   const resourceFiles: string[] = [];
-  fs.readdirSync(DATA_DIR).filter(f => {
+  fs.readdirSync(DATA_DIR).filter((f) => {
     if (submissionRegex.test(f)) {
       submissionFiles.push(f);
     }
@@ -309,14 +424,14 @@ async function initSubmissionMap() {
     const filePath = path.join(DATA_DIR, f);
     console.log(`Reading submission data from ${f}`);
     const jsonData = readJson(filePath)['submission'];
-    for (let d of jsonData) {
+    for (const d of jsonData) {
       if (d['submission_status_id'] === '1' && d['upload_id']) {
         submissionCount += 1;
         // find submission has score and most recent
         const item = {
           score: d['screening_score'] || d['initial_score'] || d['final_score'],
           created: d['create_date'],
-          submissionId: d['submission_id']
+          submissionId: d['submission_id'],
         };
         if (uploadSubmissionMap[d['upload_id']]) {
           // existing submission info
@@ -338,12 +453,17 @@ async function initSubmissionMap() {
     const filePath = path.join(DATA_DIR, f);
     console.log(`Reading upload data from ${f}`);
     const jsonData = readJson(filePath)['upload'];
-    for (let d of jsonData) {
-      if (d['upload_status_id'] === '1' && d['upload_type_id'] === '1' && d['resource_id']) {
+    for (const d of jsonData) {
+      if (
+        d['upload_status_id'] === '1' &&
+        d['upload_type_id'] === '1' &&
+        d['resource_id']
+      ) {
         // get submission info
-        uploadCount += 1
+        uploadCount += 1;
         if (uploadSubmissionMap[d['upload_id']]) {
-          resourceSubmissionMap[d['resource_id']] = uploadSubmissionMap[d['upload_id']];
+          resourceSubmissionMap[d['resource_id']] =
+            uploadSubmissionMap[d['upload_id']];
         }
       }
     }
@@ -357,7 +477,7 @@ async function initSubmissionMap() {
     const filePath = path.join(DATA_DIR, f);
     console.log(`Reading resource data from ${f}`);
     const jsonData = readJson(filePath)['resource'];
-    for (let d of jsonData) {
+    for (const d of jsonData) {
       const projectId = d['project_id'];
       const userId = d['user_id'];
       const resourceId = d['resource_id'];
@@ -383,15 +503,16 @@ async function initSubmissionMap() {
       }
     }
   }
-  console.log(`Read resource count: ${resourceCount}, submission resource count: ${validResourceCount}`);
+  console.log(
+    `Read resource count: ${resourceCount}, submission resource count: ${validResourceCount}`,
+  );
   // print summary
   let totalSubmissions = 0;
-  Object.keys(submissionMap).forEach(c => {
+  Object.keys(submissionMap).forEach((c) => {
     totalSubmissions += Object.keys(submissionMap[c]).length;
   });
   console.log(`Found total submissions: ${totalSubmissions}`);
 }
-
 
 // Process a single type: find matching files, transform them one by one, and then insert in batches.
 async function processType(type: string, subtype?: string) {
@@ -1039,6 +1160,53 @@ async function processAllTypes() {
   }
 }
 
+async function seed() {
+  // console.log('Start seeding ...');
+
+  // delete existing data
+  await prisma.reviewSummation.deleteMany({});
+  await prisma.review.deleteMany({});
+  await prisma.submission.deleteMany({});
+  await prisma.scorecard.deleteMany({});
+  await prisma.reviewType.deleteMany({});
+
+  await prisma.reviewType.createMany({
+    data: reviewTypeData,
+  });
+  console.log('Created reviewType data successfully');
+
+  const scorecardIns = await prisma.scorecard.create({
+    data: scorecardData,
+  });
+  console.log(`Created scorecard with id: ${scorecardIns.id}`);
+
+  const submissionIns = await prisma.submission.createManyAndReturn({
+    data: submissionData,
+  });
+  console.log('Created submission data successfully');
+
+  for (const rd of reviewData) {
+    const review = await prisma.review.create({
+      data: {
+        ...rd,
+        submissionId: submissionIns[0].id,
+        scorecardId: scorecardIns.id,
+      },
+    });
+    console.log(`Created review with id: ${review.id}`);
+  }
+
+  for (const rsd of reviewSummationData) {
+    const reviewSummation = await prisma.reviewSummation.create({
+      data: {
+        ...rsd,
+        submissionId: submissionIns[0].id,
+      },
+    });
+    console.log(`Created review summationData with id: ${reviewSummation.id}`);
+  }
+}
+
 async function migrate() {
   console.log('Starting lookup import...');
   processLookupFiles();
@@ -1052,6 +1220,11 @@ async function migrate() {
   console.log('Starting data import...');
   await processAllTypes();
   console.log('Data import completed.');
+
+  // init submission data
+  console.log('Start seeding ...');
+  await seed();
+  console.log('Seeding finished.');
 }
 
 migrate()

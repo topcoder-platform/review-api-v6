@@ -19,39 +19,42 @@ export class PrismaErrorService {
   handleError(error: any, context?: string): { message: string; code: string } {
     // Log the original error for debugging
     this.logger.error(
-      `Prisma error ${context ? `while ${context}` : ''}: ${error.message}`, 
-      error.stack
+      `Prisma error ${context ? `while ${context}` : ''}: ${error.message}`,
+      error.stack,
     );
 
     // Handle known Prisma errors
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       return this.handleKnownRequestError(error);
-    } 
-    
+    }
+
     if (error instanceof Prisma.PrismaClientUnknownRequestError) {
       return {
-        message: 'An unexpected database error occurred. Please try again later.',
+        message:
+          'An unexpected database error occurred. Please try again later.',
         code: 'DATABASE_ERROR',
       };
     }
-    
+
     if (error instanceof Prisma.PrismaClientRustPanicError) {
       return {
         message: 'A critical database error occurred. Please try again later.',
         code: 'CRITICAL_DATABASE_ERROR',
       };
     }
-    
+
     if (error instanceof Prisma.PrismaClientInitializationError) {
       return {
-        message: 'The application failed to connect to the database. Please try again later.',
+        message:
+          'The application failed to connect to the database. Please try again later.',
         code: 'DATABASE_CONNECTION_ERROR',
       };
     }
-    
+
     if (error instanceof Prisma.PrismaClientValidationError) {
       return {
-        message: 'The request contains invalid data that could not be processed.',
+        message:
+          'The request contains invalid data that could not be processed.',
         code: 'VALIDATION_ERROR',
       };
     }
@@ -69,13 +72,13 @@ export class PrismaErrorService {
    * @returns User-friendly error object with message and code
    */
   private handleKnownRequestError(
-    error: Prisma.PrismaClientKnownRequestError
+    error: Prisma.PrismaClientKnownRequestError,
   ): { message: string; code: string } {
     // Extract target field information if available
-    const targetField = error.meta?.target ? 
-      Array.isArray(error.meta.target) ? 
-        error.meta.target.join(', ') : 
-        String(error.meta.target) 
+    const targetField = error.meta?.target
+      ? Array.isArray(error.meta.target)
+        ? error.meta.target.join(', ')
+        : String(error.meta.target) // eslint-disable-line @typescript-eslint/no-base-to-string
       : null;
 
     switch (error.code) {
@@ -94,8 +97,8 @@ export class PrismaErrorService {
       // Unique constraint violations
       case 'P2002':
         return {
-          message: targetField 
-            ? `A record with the same ${targetField} already exists.` 
+          message: targetField
+            ? `A record with the same ${targetField} already exists.`
             : 'A record with the same unique fields already exists.',
           code: 'UNIQUE_CONSTRAINT_FAILED',
         };
@@ -103,8 +106,8 @@ export class PrismaErrorService {
       // Foreign key constraint failures
       case 'P2003':
         return {
-          message: targetField 
-            ? `The operation failed because the referenced ${targetField} does not exist.` 
+          message: targetField
+            ? `The operation failed because the referenced ${targetField} does not exist.`
             : 'The operation failed because a referenced record does not exist.',
           code: 'FOREIGN_KEY_CONSTRAINT_FAILED',
         };
@@ -140,20 +143,23 @@ export class PrismaErrorService {
 
       case 'P1008':
         return {
-          message: 'The operation timed out. Please try again later or with a simpler query.',
+          message:
+            'The operation timed out. Please try again later or with a simpler query.',
           code: 'OPERATION_TIMEOUT',
         };
 
       case 'P2024':
       case 'P2034':
         return {
-          message: 'The request timed out due to high database load. Please try again later.',
+          message:
+            'The request timed out due to high database load. Please try again later.',
           code: 'TIMEOUT',
         };
 
       case 'P2037':
         return {
-          message: 'The server is experiencing high load. Please try again later.',
+          message:
+            'The server is experiencing high load. Please try again later.',
           code: 'TOO_MANY_CONNECTIONS',
         };
 
@@ -169,9 +175,10 @@ export class PrismaErrorService {
 
       default:
         return {
-          message: 'An unexpected database error occurred. Please try again later.',
+          message:
+            'An unexpected database error occurred. Please try again later.',
           code: 'DATABASE_ERROR',
         };
     }
   }
-} 
+}

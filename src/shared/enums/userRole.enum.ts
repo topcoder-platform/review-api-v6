@@ -6,4 +6,4 @@ export enum UserRole {
   Copilot = 'Copilot',
   Reviewer = 'Reviewer',
   Submitter = 'Submitter',
-} 
+}

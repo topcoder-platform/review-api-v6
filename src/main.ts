@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import * as cors from 'cors';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -22,6 +22,12 @@ async function bootstrap() {
     logger.log('Setting global prefix to /v5/review in production mode');
   }
 
+  console.log(
+    '===============process.env.NODE_EN============',
+    process.env.NODE_ENV,
+  );
+  logger.log('=========================' + process.env.NODE_ENV);
+
   // CORS related settings
   const corsConfig: cors.CorsOptions = {
     allowedHeaders:
@@ -40,7 +46,7 @@ async function bootstrap() {
     const requestLogger = LoggerService.forRoot('HttpRequest');
     const startTime = Date.now();
     const { method, originalUrl, ip, headers } = req;
-    
+
     // Log request
     requestLogger.log({
       type: 'request',
@@ -49,13 +55,13 @@ async function bootstrap() {
       ip,
       userAgent: headers['user-agent'],
     });
-    
+
     // Intercept response to log it
     const originalSend = res.send;
-    res.send = function(body) {
+    res.send = function (body) {
       const responseTime = Date.now() - startTime;
       const statusCode = res.statusCode;
-      
+
       // Log response
       requestLogger.log({
         type: 'response',
@@ -64,16 +70,17 @@ async function bootstrap() {
         url: originalUrl,
         responseTime: `${responseTime}ms`,
       });
-      
+
       // If there's a 500+ error, log it as an error
       if (statusCode >= 500) {
         let responseBody;
         try {
           responseBody = typeof body === 'string' ? JSON.parse(body) : body;
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
         } catch (error) {
           responseBody = body;
         }
-        
+
         requestLogger.error({
           message: 'Server error response',
           statusCode,
@@ -81,10 +88,10 @@ async function bootstrap() {
           body: responseBody,
         });
       }
-      
-      return originalSend.call(this, body);
+
+      return originalSend.call(this, body); // eslint-disable-line @typescript-eslint/no-unsafe-return
     };
-    
+
     next();
   });
 
@@ -100,23 +107,24 @@ async function bootstrap() {
   // TODO: finish this and make it so this block only runs in non-prod
   const config = new DocumentBuilder()
     .setTitle('Topcoder Review API')
-    .setDescription(`
+    .setDescription(
+      `
     Topcoder Review API Documentation
-    
+
     Authentication
-    
+
     The API supports two authentication methods:
-    
+
     User Token (JWT)
     - Regular user authentication using role-based access control
     - Tokens should include 'roles' claim with the appropriate role(s)
     - Available roles: Admin, Copilot, Reviewer, Submitter
-    
+
     Machine-to-Machine (M2M) Token
     - For service-to-service authentication
     - Uses scope-based access control
-    - Available scopes: create:appeal, read:appeal, update:appeal, delete:appeal, create:appeal-response, update:appeal-response, all:appeal, create:contact-request, all:contact-request, read:project-result, all:project-result, create:review, read:review, update:review, delete:review, create:review-item, update:review-item, delete:review-item, all:review, create:scorecard, read:scorecard, update:scorecard, delete:scorecard, all:scorecard
-    
+    - Available scopes: create:appeal, read:appeal, update:appeal, delete:appeal, create:appeal-response, update:appeal-response, all:appeal, create:contact-request, all:contact-request, read:project-result, all:project-result, create:review, read:review, update:review, delete:review, create:review-item, update:review-item, delete:review-item, all:review, create:scorecard, read:scorecard, update:scorecard, delete:scorecard, all:scorecard create:review_type read:review_type update:review_type delete:review_type all:review_type create:review_summation read:review_summation update:review_summation delete:review_summation all:review_summation create:submission read:submission update:submission delete:submission all:submission
+
     To get an M2M token (example for development environment):
 
     curl --request POST \\
@@ -124,7 +132,8 @@ async function bootstrap() {
       --header 'content-type: application/json' \\
       --data '{"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://m2m.topcoder-dev.com/","grant_type":"client_credentials"}'
 
-    `)
+    `,
+    )
     .setVersion('1.0')
     .addTag('TC Review')
     .addBearerAuth({
@@ -139,20 +148,25 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config, {
     include: [ApiModule],
   });
-  SwaggerModule.setup('/v5/review/api-docs', app, document);
+  if (process.env.NODE_ENV === 'production') {
+    SwaggerModule.setup('/v5/review/api-docs', app, document);
+  } else {
+    SwaggerModule.setup('/api-docs', app, document);
+  }
   logger.log('Swagger documentation configured');
 
   // Add an event handler to log uncaught promise rejections and prevent the server from crashing
   process.on('unhandledRejection', (reason, promise) => {
-    logger.error(`Unhandled Promise Rejection at: ${promise}`, reason as string);
+    logger.error(
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+      `Unhandled Promise Rejection at: ${promise}`, // eslint-disable-line @typescript-eslint/no-base-to-string
+      reason as string,
+    );
   });
 
   // Add an event handler to log uncaught errors and prevent the server from crashing
   process.on('uncaughtException', (error: Error) => {
-    logger.error(
-      `Uncaught Exception: ${error.message}`,
-      error.stack,
-    );
+    logger.error(`Uncaught Exception: ${error.message}`, error.stack);
   });
 
   // Listen on port

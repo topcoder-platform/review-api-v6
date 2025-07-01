@@ -140,21 +140,26 @@ model scorecardQuestion {
 }
 
 model review {
-  id           String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
   legacyId     String?
   resourceId   String
   phaseId      String
-  submissionId String
-  scorecardId  String
+  submissionId String // Associated submission
+  scorecardId  String // Associated scorecard
   committed    Boolean  @default(false)
   finalScore   Float
   initialScore Float
+  typeId       String
+  metadata     Json?
+  status       String
+  reviewDate   DateTime
   createdAt    DateTime @default(now())
   createdBy    String
   updatedAt    DateTime @updatedAt
   updatedBy    String
 
   scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+  submission  submission   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   reviewItems reviewItem[]
 
   @@index([committed]) // Index for filtering by committed status
@@ -300,4 +305,56 @@ model contactRequest {
   @@index([id]) // Index for direct ID lookups
   @@index([resourceId]) // Index for filtering by resource (requester)
   @@index([challengeId]) // Index for filtering by challenge
+}
+
+model reviewType {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  name         String
+  isActive     Boolean
+
+  @@index([id]) // Index for direct ID lookups
+  // Indexes for faster searches
+  @@index([name])
+  @@index([isActive])
+}
+
+model reviewSummation {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  submissionId    String // Associated submission
+  aggregateScore  Float
+  scorecardId     String
+  isPassing       Boolean
+  isFinal         Boolean
+  reviewedDate    DateTime
+  createdAt       DateTime @default(now())
+  createdBy       String
+  updatedAt       DateTime @updatedAt
+  updatedBy       String
+
+  submission      submission   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([submissionId]) // Index for joining with submission table
+  @@index([scorecardId]) // Index for joining with scorecard table
+}
+
+model submission {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  type                String
+  url                 String
+  memberId            String
+  challengeId         String
+  legacySubmissionId  String?
+  legacyUploadId      String?
+  submissionPhaseId   String?
+  submittedDate       DateTime
+  createdAt           DateTime @default(now())
+  createdBy           String
+  updatedAt           DateTime @updatedAt
+  updatedBy           String
+
+  review          review[]
+  reviewSummation reviewSummation[]
+
+  @@index([id]) // Index for direct ID lookups
 }
