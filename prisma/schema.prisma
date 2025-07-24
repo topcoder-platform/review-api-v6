@@ -15,31 +15,35 @@ datasource db {
 }
 
 model scorecard {
-  id             String          @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  legacyId       String?
-  status         ScorecardStatus
-  type           ScorecardType
-  challengeTrack ChallengeTrack
-  challengeType  String
-  name           String
-  version        String
-  minScore       Float
-  maxScore       Float
-  createdAt      DateTime        @default(now())
-  createdBy      String
-  updatedAt      DateTime        @updatedAt
-  updatedBy      String
-
-  scorecardGroups scorecardGroup[]
-  reviews         review[]
+  id             String          @id @default(dbgenerated("nanoid()")) @db.VarChar(14)   # Primary key with auto-generation using nanoid()
+  legacyId       String?         # Optional unique identifier from legacy system
+  status         ScorecardStatus # Enum: ACTIVE, INACTIVE, DELETED (for overall scorecard status)
+  type           ScorecardType  # Enum: SCREENING, REVIEW, APPROVAL, POST_MORTEM, etc. for scorecard purpose
+  challengeTrack ChallengeTrack   # Enum: DEVELOPMENT, DATA_SCIENCE, DESIGN, QUALITY_ASSURANCE tracking challenge domain
+  challengeType  String?          # Optional field specifying type of challenge (e.g., 'coding', 'design')
+  name           String          # Display name of the scorecard
+  version        String          # Version identifier for the scorecard template
+  minScore       Float           # Minimum possible score value for this scorecard
+  maxScore       Float?           # Optional maximum possible score value (if not set, use defaults)
+  createdAt      DateTime         @default(now())   # Timestamp of creation
+  createdBy      String          # ID or handle of user who created the scorecard
+  updatedAt       DateTime        # Timestamp for last update
+  updatedBy      String          # User ID or handle making changes
 
   // Indexes for faster searches
-  @@index([challengeTrack])
-  @@index([challengeType])
-  @@index([name])
-  @@index([id]) // Index for direct ID lookups
-  @@index([type]) // Index for filtering by scorecard type
-  @@index([status]) // Index for filtering by status (e.g. ACTIVE scorecards)
+  @@index([challengeTrack])    # Index on challenge track enum for filtering by domain
+  @@index([challengeType])     # Index on optional challenge type field (if present, enables fast lookups)
+  @@index([name])               # Index on display name to improve search performance
+
+  // Additional indexes specific to relationships and common queries:
+  @@index([id])                 # Standard index for direct ID lookups
+  @@index([type])               # Index for filtering by scorecard type (e.g., 'REVIEW')
+  @@index([status])             # Index for efficient status-based filtering
+
+  // Relations: a scorecard can have multiple groups and reviews
+  scorecardGroups scorecardGroup[]   # One-to-many relation with scorecardGroup model
+  reviews         review[]          # One-to-many relation with review model (each review belongs to one scorecard)
+
 }
 
 enum ScorecardStatus {
@@ -67,23 +71,29 @@ enum ChallengeTrack {
 }
 
 model scorecardGroup {
-  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  legacyId    String?
-  scorecardId String
-  name        String
-  weight      Float
-  sortOrder   Int
-  createdAt   DateTime @default(now())
-  createdBy   String
-  updatedAt   DateTime @updatedAt
-  updatedBy   String
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)         # Auto-generated ID using nanoid()
+  legacyId    String?                                              # Optional historical identifier
+  scorecardId String                                                    # References the parent scorecard's ID (one-to-one relation)
+  name        String                                                 # Name of this group within a scorecard
+  weight      Float                                                  # Weightage assigned to this group in percentage terms
+  sortOrder   Int                                                    # Order position for sorting sections/ questions
+  createdAt   DateTime @default(now())                             # Timestamp when record was created
+  createdBy    String                                                # User who created this scorecard group
+  updatedAt    DateTime                                               # Automatic timestamp on each update
+  updatedBy    String                                                 # User making the most recent change
 
+  // Relation with parent scorecard (using nanoid() for unique ID)
+  scorecardId: String   @unique   # Unique constraint to maintain relation integrity
   scorecard scorecard          @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+
+  // Child relations:
   sections  scorecardSection[]
 
-  @@index([id]) // Index for direct ID lookups
-  @@index([scorecardId]) // Index for joining with scorecard table
-  @@index([sortOrder]) // Index for ordering groups
+  // Indexes and search optimizations:
+  @@index([id])                 # Standard index for direct ID lookups
+  @@index([scorecardId])        # Index to join with parent scorecard model efficiently
+  @@index([sortOrder])          # Index for ordering groups (e.g., by creation time or manual order)
+
 }
 
 model scorecardSection {
@@ -187,24 +197,33 @@ model reviewItem {
 }
 
 model reviewItemComment {
-  id           String                @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  legacyId     String?
-  resourceId   String
-  reviewItemId String
-  content      String
-  type         ReviewItemCommentType
-  sortOrder    Int                   @default(0)
-  createdAt    DateTime              @default(now())
-  createdBy    String
-  updatedAt    DateTime              @updatedAt
-  updatedBy    String
+  id           String                @id @default(dbgenerated("nanoid()")) @db.VarChar(14) # Auto-generated ID using nanoid()
+  legacyId     String?                             # Optional historical identifier (from previous systems)
+  resourceId   String                               # User or resource who authored the comment
+  reviewItemId String                                # Links to specific review item being commented on
+  content      String                              # Actual text/content of the comment
+  type         ReviewItemCommentType                 # Enum indicating the nature/role of this comment (e.g., 'COMMENT', 'REQUIRED')
+  sortOrder    Int                                    # Default:0; used for ordering comments in UI display
+  
+  // Timestamps:
+  createdAt    DateTime @default(now())              # Automatic creation timestamp
+  createdBy     String                               # User who created this review item comment
+  updatedAt     DateTime                             # Automatic update timestamp on each change
+  updatedBy      String                              # User making the most recent modification
 
-  reviewItem reviewItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
-  appeal     appeal?
-  @@index([reviewItemId]) // Index for joining with reviewItem table
-  @@index([id]) // Index for direct ID lookups
-  @@index([resourceId]) // Index for filtering by resource (commenter)
-  @@index([type]) // Index for filtering by comment type
+  // Relations to other models:
+  reviewItemCommentId: String @unique                # Unique constraint for relation mapping
+  
+  reviewItem reviewItem @relation(fields: [reviewItemId], references: [id])   # Relation to specific review item (one-to-one)
+  
+  // Optional relations:
+  appeal     appeal?          # One-to-zero-or-one relation with an appeal comment
+  
+  // Indexes for search and filtering performance:
+  @@index([reviewItemId])      # Optimizes joins and queries by review item ID
+  @@index([id])                 # Standard index for direct lookups by ID
+  @@index([resourceId])         # Enables faster queries by resource (commenter) or user
+  
 }
 
 enum ReviewItemCommentType {
