@@ -33,16 +33,16 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 
 @ApiTags('Scorecard')
 @ApiBearerAuth()
-@Controller('/api/scorecards')
+@Controller('/scorecards')
 export class ScorecardController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Post()
   @Roles(UserRole.Admin)
   @Scopes(Scope.CreateScorecard)
-  @ApiOperation({ 
-    summary: 'Add a new scorecard', 
-    description: 'Roles: Admin | Scopes: create:scorecard' 
+  @ApiOperation({
+    summary: 'Add a new scorecard',
+    description: 'Roles: Admin | Scopes: create:scorecard',
   })
   @ApiBody({ description: 'Scorecard data', type: ScorecardRequestDto })
   @ApiResponse({
@@ -127,9 +127,9 @@ export class ScorecardController {
   @Delete(':id')
   @Roles(UserRole.Admin)
   @Scopes(Scope.DeleteScorecard)
-  @ApiOperation({ 
-    summary: 'Delete a scorecard', 
-    description: 'Roles: Admin | Scopes: delete:scorecard' 
+  @ApiOperation({
+    summary: 'Delete a scorecard',
+    description: 'Roles: Admin | Scopes: delete:scorecard',
   })
   @ApiParam({
     name: 'id',
@@ -208,7 +208,8 @@ export class ScorecardController {
   @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'Search scorecards',
-    description: 'Search by challenge track, challenge type, or name. Roles: Admin, Copilot | Scopes: read:scorecard',
+    description:
+      'Search by challenge track, challenge type, or name. Roles: Admin, Copilot | Scopes: read:scorecard',
   })
   @ApiQuery({
     name: 'challengeTrack',

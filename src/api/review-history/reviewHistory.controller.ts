@@ -1,16 +1,28 @@
-import { Controller, ForbiddenException, Get, Param, Query, Req } from "@nestjs/common";
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
-import { ReviewApplicationService } from "../review-application/reviewApplication.service";
-import { OkResponse, ResponseDto } from "src/dto/common.dto";
-import { ReviewApplicationResponseDto } from "src/dto/reviewApplication.dto";
-import { Roles } from "src/shared/guards/tokenRoles.guard";
-import { UserRole } from "src/shared/enums/userRole.enum";
-import { isAdmin, JwtUser } from "src/shared/modules/global/jwt.service";
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Query,
+  Req,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { ReviewApplicationService } from '../review-application/reviewApplication.service';
+import { OkResponse, ResponseDto } from 'src/dto/common.dto';
+import { ReviewApplicationResponseDto } from 'src/dto/reviewApplication.dto';
+import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { isAdmin, JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('Review History')
-@Controller('/api/review-history')
+@Controller('/review-history')
 export class ReviewHistoryController {
-
   constructor(private readonly service: ReviewApplicationService) {}
 
   @ApiOperation({
@@ -35,11 +47,17 @@ export class ReviewHistoryController {
   @ApiBearerAuth()
   @Roles(UserRole.Reviewer, UserRole.Admin)
   @Get('/:userId')
-  async getHistory(@Req() req: Request, @Param('userId') userId: string, @Query('range') range: number): Promise<ResponseDto<ReviewApplicationResponseDto[]>> {
+  async getHistory(
+    @Req() req: Request,
+    @Param('userId') userId: string,
+    @Query('range') range: number,
+  ): Promise<ResponseDto<ReviewApplicationResponseDto[]>> {
     // Check user permission
     const authUser: JwtUser = req['user'] as JwtUser;
     if (authUser.userId !== userId && !isAdmin(authUser)) {
-      throw new ForbiddenException('You cannot check this user\'s review history')
+      throw new ForbiddenException(
+        "You cannot check this user's review history",
+      );
     }
     return OkResponse(await this.service.getHistory(userId, range));
   }

@@ -49,12 +49,8 @@ export const ALL_SCOPE_MAPPINGS: Record<string, string[]> = {
     Scope.CreateAppealResponse,
     Scope.UpdateAppealResponse,
   ],
-  [Scope.AllContactRequest]: [
-    Scope.CreateContactRequest,
-  ],
-  [Scope.AllProjectResult]: [
-    Scope.ReadProjectResult,
-  ],
+  [Scope.AllContactRequest]: [Scope.CreateContactRequest],
+  [Scope.AllProjectResult]: [Scope.ReadProjectResult],
   [Scope.AllReview]: [
     Scope.CreateReview,
     Scope.ReadReview,
@@ -70,4 +66,4 @@ export const ALL_SCOPE_MAPPINGS: Record<string, string[]> = {
     Scope.UpdateScorecard,
     Scope.DeleteScorecard,
   ],
-}; 
+};

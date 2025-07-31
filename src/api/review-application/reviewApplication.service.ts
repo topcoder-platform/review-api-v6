@@ -1,6 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  convertRoleName,
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
   CreateReviewApplicationDto,
   ReviewApplicationResponseDto,
   ReviewApplicationRoleOpportunityTypeMap,
@@ -8,7 +12,10 @@ import {
 } from 'src/dto/reviewApplication.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
-import { EventBusSendEmailPayload, EventBusService } from 'src/shared/modules/global/eventBus.service';
+import {
+  EventBusSendEmailPayload,
+  EventBusService,
+} from 'src/shared/modules/global/eventBus.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { MemberService } from 'src/shared/modules/global/member.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
@@ -19,7 +26,7 @@ export class ReviewApplicationService {
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
     private readonly memberService: MemberService,
-    private readonly eventBusService: EventBusService
+    private readonly eventBusService: EventBusService,
   ) {}
 
   /**
@@ -36,22 +43,26 @@ export class ReviewApplicationService {
     const handle = authUser.handle as string;
     // make sure review opportunity exists
     const opportunity = await this.prisma.reviewOpportunity.findUnique({
-      where: { id: dto.opportunityId}
-    })
+      where: { id: dto.opportunityId },
+    });
     if (!opportunity || !opportunity.id) {
-      throw new BadRequestException('Opportunity doesn\'t exist');
+      throw new BadRequestException("Opportunity doesn't exist");
     }
     // make sure application role matches
-    if (ReviewApplicationRoleOpportunityTypeMap[dto.role] !== opportunity.type) {
-      throw new BadRequestException('Review application role doesn\'t match opportunity type');
+    if (
+      ReviewApplicationRoleOpportunityTypeMap[dto.role] !== opportunity.type
+    ) {
+      throw new BadRequestException(
+        "Review application role doesn't match opportunity type",
+      );
     }
     // check existing
     const existing = await this.prisma.reviewApplication.findMany({
       where: {
         userId,
         opportunityId: dto.opportunityId,
-        role: dto.role
-      }
+        role: dto.role,
+      },
     });
     if (existing && existing.length > 0) {
       throw new ConflictException('Reviewer has submitted application before.');
@@ -155,7 +166,7 @@ export class ReviewApplicationService {
     // select all pending
     const entityList = await this.prisma.reviewApplication.findMany({
       where: { opportunityId, status: ReviewApplicationStatus.PENDING },
-      include: { opportunity: true }
+      include: { opportunity: true },
     });
     // update all pending
     await this.prisma.reviewApplication.updateMany({
@@ -184,9 +195,9 @@ export class ReviewApplicationService {
         userId,
         status: ReviewApplicationStatus.APPROVED,
         createdAt: {
-          gte: beginDate
-        }
-      }
+          gte: beginDate,
+        },
+      },
     });
     return entityList.map((e) => this.buildResponse(e));
   }
@@ -196,43 +207,50 @@ export class ReviewApplicationService {
    * @param entityList review application entity list
    * @param status application status
    */
-  private async sendEmails(entityList, status: ReviewApplicationStatus) {
+  private async sendEmails(
+    entityList: any[],
+    status: ReviewApplicationStatus,
+  ): Promise<void> {
     // All review application has same review opportunity and same challenge id.
     const challengeId = entityList[0].opportunity.challengeId;
     // get member id list
-    const userIds = entityList.map(e => e.userId);
+    const userIds: string[] = entityList.map((e: any) => e.userId as string);
     // Get challenge data and member emails.
     const [challengeData, memberInfoList] = await Promise.all([
       this.challengeService.getChallengeDetail(challengeId),
-      this.memberService.getUserEmails(userIds)
+      this.memberService.getUserEmails(userIds),
     ]);
     // Get sendgrid template id
-    const sendgridTemplateId = status === ReviewApplicationStatus.APPROVED ?
-      CommonConfig.sendgridConfig.acceptEmailTemplate :
-      CommonConfig.sendgridConfig.rejectEmailTemplate;
+    const sendgridTemplateId =
+      status === ReviewApplicationStatus.APPROVED
+        ? CommonConfig.sendgridConfig.acceptEmailTemplate
+        : CommonConfig.sendgridConfig.rejectEmailTemplate;
     // build userId -> email map
     const userEmailMap = new Map();
-    memberInfoList.forEach(e => userEmailMap.set(e.userId, e.email));
+    memberInfoList.forEach((e) => userEmailMap.set(e.userId, e.email));
     // prepare challenge data
     const challengeName = challengeData.name;
-    const challengeUrl = CommonConfig.apis.onlineReviewUrlBase + challengeData.legacyId;
+    const challengeUrl =
+      CommonConfig.apis.onlineReviewUrlBase + challengeData.legacyId;
     // build event bus message payload
     const eventBusPayloads: EventBusSendEmailPayload[] = [];
-    for (let entity of entityList) {
-      const payload:EventBusSendEmailPayload = new EventBusSendEmailPayload();
+    for (const entity of entityList) {
+      const payload: EventBusSendEmailPayload = new EventBusSendEmailPayload();
       payload.sendgrid_template_id = sendgridTemplateId;
       payload.recipients = [userEmailMap.get(entity.userId)];
       payload.data = {
         handle: entity.handle,
         reviewPhaseStart: entity.startDate,
         challengeUrl,
-        challengeName
+        challengeName,
       };
       eventBusPayloads.push(payload);
     }
     // send all emails
-    await Promise.all(eventBusPayloads.map(e => this.eventBusService.sendEmail(e)));
-  } 
+    await Promise.all(
+      eventBusPayloads.map((e) => this.eventBusService.sendEmail(e)),
+    );
+  }
 
   /**
    * Make sure review application exists.
@@ -242,7 +260,7 @@ export class ReviewApplicationService {
   private async checkExists(id: string) {
     const entity = await this.prisma.reviewApplication.findUnique({
       where: { id },
-      include: { opportunity: true }
+      include: { opportunity: true },
     });
     if (!entity || !entity.id) {
       throw new NotFoundException('Review application not found.');

@@ -1,4 +1,13 @@
-import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -18,7 +27,7 @@ import { isAdmin, JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ReviewApplicationService } from './reviewApplication.service';
 
 @ApiTags('Review Application')
-@Controller('/api/review-applications')
+@Controller('/review-applications')
 export class ReviewApplicationController {
   constructor(private readonly service: ReviewApplicationService) {}
 
@@ -89,7 +98,9 @@ export class ReviewApplicationController {
     // Check user permission. Only admin and user himself can access
     const authUser: JwtUser = req['user'] as JwtUser;
     if (authUser.userId !== userId && !isAdmin(authUser)) {
-      throw new ForbiddenException('You cannot check this user\'s review applications')
+      throw new ForbiddenException(
+        "You cannot check this user's review applications",
+      );
     }
     return OkResponse(await this.service.listByUser(userId));
   }

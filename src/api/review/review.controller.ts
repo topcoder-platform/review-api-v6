@@ -39,7 +39,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
-@Controller('/api/reviews')
+@Controller('/reviews')
 export class ReviewController {
   private readonly logger: LoggerService;
 
@@ -81,7 +81,10 @@ export class ReviewController {
       this.logger.log(`Review created with ID: ${data.id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, 'creating review');
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        'creating review',
+      );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -116,7 +119,10 @@ export class ReviewController {
       this.logger.log(`Review item created with ID: ${data.id}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, 'creating review item');
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        'creating review item',
+      );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -163,15 +169,18 @@ export class ReviewController {
       this.logger.log(`Review updated successfully: ${id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `updating review ${id}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `updating review ${id}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Review with ID ${id} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Review with ID ${id} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -215,15 +224,18 @@ export class ReviewController {
       this.logger.log(`Review item updated successfully: ${itemId}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `updating review item ${itemId}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `updating review item ${itemId}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Review item with ID ${itemId} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Review item with ID ${itemId} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -272,7 +284,9 @@ export class ReviewController {
     @Query('submissionId') submissionId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<ReviewResponseDto>> {
-    this.logger.log(`Getting pending reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`);
+    this.logger.log(
+      `Getting pending reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
+    );
 
     const { page = 1, perPage = 10 } = paginationDto || {};
     const skip = (page - 1) * perPage;
@@ -302,11 +316,11 @@ export class ReviewController {
             },
           },
         });
-        
+
         reviews = scorecards.flatMap((d) => d.reviews);
-        
+
         // Count total reviews matching the filter for pagination metadata
-        const scorecardIds = scorecards.map(s => s.id);
+        const scorecardIds = scorecards.map((s) => s.id);
         totalCount = await this.prisma.review.count({
           where: {
             ...reviewWhereClause,
@@ -322,8 +336,8 @@ export class ReviewController {
           where: { challengeId },
         });
 
-        const submissionIds = challengeResults.map(c => c.submissionId);
-        
+        const submissionIds = challengeResults.map((c) => c.submissionId);
+
         if (submissionIds.length > 0) {
           const challengeReviews = await this.prisma.review.findMany({
             where: {
@@ -340,9 +354,9 @@ export class ReviewController {
               },
             },
           });
-          
+
           reviews = [...reviews, ...challengeReviews];
-          
+
           // Count total for this condition separately
           const challengeReviewCount = await this.prisma.review.count({
             where: {
@@ -350,11 +364,11 @@ export class ReviewController {
               ...reviewWhereClause,
             },
           });
-          
+
           totalCount += challengeReviewCount;
         }
       }
-      
+
       // If no specific filters, get all reviews with pagination
       if (!status && !challengeId && !submissionId) {
         this.logger.debug('Fetching all reviews with pagination');
@@ -369,22 +383,24 @@ export class ReviewController {
             },
           },
         });
-        
+
         totalCount = await this.prisma.review.count();
       }
 
       // Deduplicate reviews by ID
       const uniqueReviews = Object.values(
-        reviews.reduce((acc, review) => {
+        reviews.reduce((acc: Record<string, any>, review) => {
           if (!acc[review.id]) {
             acc[review.id] = review;
           }
           return acc;
-        }, {})
+        }, {}),
       );
 
-      this.logger.log(`Found ${uniqueReviews.length} reviews (page ${page} of ${Math.ceil(totalCount / perPage)})`);
-      
+      this.logger.log(
+        `Found ${uniqueReviews.length} reviews (page ${page} of ${Math.ceil(totalCount / perPage)})`,
+      );
+
       return {
         data: uniqueReviews as ReviewResponseDto[],
         meta: {
@@ -395,7 +411,10 @@ export class ReviewController {
         },
       };
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, 'fetching reviews');
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        'fetching reviews',
+      );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -440,19 +459,22 @@ export class ReviewController {
           },
         },
       });
-      
+
       this.logger.log(`Review found: ${id}`);
       return data as ReviewResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `fetching review ${id}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `fetching review ${id}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Review with ID ${id} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Review with ID ${id} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -487,15 +509,18 @@ export class ReviewController {
       this.logger.log(`Review deleted successfully: ${id}`);
       return { message: `Review ${id} deleted successfully.` };
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `deleting review ${id}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `deleting review ${id}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Review with ID ${id} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Review with ID ${id} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -530,15 +555,18 @@ export class ReviewController {
       this.logger.log(`Review item deleted successfully: ${itemId}`);
       return { message: `Review item ${itemId} deleted successfully.` };
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `deleting review item ${itemId}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `deleting review item ${itemId}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Review item with ID ${itemId} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Review item with ID ${itemId} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,

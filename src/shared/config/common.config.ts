@@ -48,7 +48,8 @@ export const CommonConfig = {
     challengeApiUrl:
       process.env.CHALLENGE_API_URL ?? 'http://localhost:4000/challenges/',
     memberApiUrl: process.env.MEMBER_API_URL ?? 'http://localhost:4000/members',
-    onlineReviewUrlBase: 'https://software.topcoder.com/review/actions/ViewProjectDetails?pid='
+    onlineReviewUrlBase:
+      'https://software.topcoder.com/review/actions/ViewProjectDetails?pid=',
   },
   // configs of payment for each review type
   reviewPaymentConfig: paymentConfig,

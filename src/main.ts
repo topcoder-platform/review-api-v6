@@ -1,11 +1,12 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import * as cors from 'cors';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ApiModule } from './api/api.module';
 import { LoggerService } from './shared/modules/global/logger.service';
+import { Response } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -40,7 +41,7 @@ async function bootstrap() {
     const requestLogger = LoggerService.forRoot('HttpRequest');
     const startTime = Date.now();
     const { method, originalUrl, ip, headers } = req;
-    
+
     // Log request
     requestLogger.log({
       type: 'request',
@@ -49,13 +50,13 @@ async function bootstrap() {
       ip,
       userAgent: headers['user-agent'],
     });
-    
+
     // Intercept response to log it
     const originalSend = res.send;
-    res.send = function(body) {
+    res.send = function (body: any): Response {
       const responseTime = Date.now() - startTime;
       const statusCode = res.statusCode;
-      
+
       // Log response
       requestLogger.log({
         type: 'response',
@@ -64,16 +65,16 @@ async function bootstrap() {
         url: originalUrl,
         responseTime: `${responseTime}ms`,
       });
-      
+
       // If there's a 500+ error, log it as an error
       if (statusCode >= 500) {
         let responseBody;
         try {
           responseBody = typeof body === 'string' ? JSON.parse(body) : body;
-        } catch (error) {
+        } catch {
           responseBody = body;
         }
-        
+
         requestLogger.error({
           message: 'Server error response',
           statusCode,
@@ -81,10 +82,10 @@ async function bootstrap() {
           body: responseBody,
         });
       }
-      
-      return originalSend.call(this, body);
+
+      return originalSend.call(this, body) as Response;
     };
-    
+
     next();
   });
 
@@ -100,7 +101,8 @@ async function bootstrap() {
   // TODO: finish this and make it so this block only runs in non-prod
   const config = new DocumentBuilder()
     .setTitle('Topcoder Review API')
-    .setDescription(`
+    .setDescription(
+      `
     Topcoder Review API Documentation
     
     Authentication
@@ -124,7 +126,8 @@ async function bootstrap() {
       --header 'content-type: application/json' \\
       --data '{"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://m2m.topcoder-dev.com/","grant_type":"client_credentials"}'
 
-    `)
+    `,
+    )
     .setVersion('1.0')
     .addTag('TC Review')
     .addBearerAuth({
@@ -143,16 +146,13 @@ async function bootstrap() {
   logger.log('Swagger documentation configured');
 
   // Add an event handler to log uncaught promise rejections and prevent the server from crashing
-  process.on('unhandledRejection', (reason, promise) => {
-    logger.error(`Unhandled Promise Rejection at: ${promise}`, reason as string);
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled Promise Rejection', reason as string);
   });
 
   // Add an event handler to log uncaught errors and prevent the server from crashing
   process.on('uncaughtException', (error: Error) => {
-    logger.error(
-      `Uncaught Exception: ${error.message}`,
-      error.stack,
-    );
+    logger.error(`Uncaught Exception: ${error.message}`, error.stack);
   });
 
   // Listen on port

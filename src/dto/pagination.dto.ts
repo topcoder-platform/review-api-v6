@@ -36,4 +36,4 @@ export interface PaginatedResponse<T> {
     totalCount: number;
     totalPages: number;
   };
-} 
+}
