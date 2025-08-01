@@ -8,6 +8,8 @@ import { ApiModule } from './api/api.module';
 import { LoggerService } from './shared/modules/global/logger.service';
 import { Response } from 'express';
 
+const API_PREFIX = '/v6/review'; // Global prefix for all routes in production
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
@@ -17,10 +19,10 @@ async function bootstrap() {
   // Create logger instance for application bootstrap
   const logger = LoggerService.forRoot('Bootstrap');
 
-  // Global prefix for all routes in production is configured as `/v6/review`
+  // Global prefix for all routes in production
   if (process.env.NODE_ENV === 'production') {
-    app.setGlobalPrefix('/v6/review');
-    logger.log('Setting global prefix to /v6/review in production mode');
+    app.setGlobalPrefix(API_PREFIX);
+    logger.log(`Setting global prefix to ${API_PREFIX} in production mode`);
   }
 
   // CORS related settings
@@ -142,7 +144,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config, {
     include: [ApiModule],
   });
-  SwaggerModule.setup('/v5/review/api-docs', app, document);
+  SwaggerModule.setup(`${API_PREFIX}/api-docs`, app, document);
   logger.log('Swagger documentation configured');
 
   // Add an event handler to log uncaught promise rejections and prevent the server from crashing
