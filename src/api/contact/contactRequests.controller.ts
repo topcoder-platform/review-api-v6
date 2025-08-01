@@ -19,16 +19,16 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 
 @ApiTags('Contact Requests')
 @ApiBearerAuth()
-@Controller('/api')
+@Controller('/')
 export class ContactRequestsController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Post('/contact-requests')
   @Roles(UserRole.Submitter, UserRole.Reviewer)
   @Scopes(Scope.CreateContactRequest)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Create a new contact request',
-    description: 'Roles: Submitter, Reviewer | Scopes: create:contact-request' 
+    description: 'Roles: Submitter, Reviewer | Scopes: create:contact-request',
   })
   @ApiBody({ description: 'Contact request body', type: ContactRequestDto })
   @ApiResponse({

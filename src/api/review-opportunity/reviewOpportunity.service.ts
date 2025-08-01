@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   convertRoleName,
   ReviewApplicationRole,
@@ -21,14 +27,12 @@ import { PrismaService } from 'src/shared/modules/global/prisma.service';
 
 @Injectable()
 export class ReviewOpportunityService {
-
   private readonly logger: Logger = new Logger(ReviewOpportunityService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
   ) {}
-
 
   /**
    * Search Review Opportunities
@@ -38,49 +42,69 @@ export class ReviewOpportunityService {
     // filter data with payment, duration and start date
     const prismaFilter = {
       include: { applications: true },
-      where: { AND: [{
-        status: ReviewOpportunityStatus.OPEN
-      }] as any[] }
-    }
+      where: {
+        AND: [
+          {
+            status: ReviewOpportunityStatus.OPEN,
+          },
+        ] as any[],
+      },
+    };
     if (dto.paymentFrom) {
-      prismaFilter.where.AND.push({ basePayment: { gte: dto.paymentFrom } })
+      prismaFilter.where.AND.push({ basePayment: { gte: dto.paymentFrom } });
     }
     if (dto.paymentTo) {
-      prismaFilter.where.AND.push({ basePayment: { lte: dto.paymentTo } })
+      prismaFilter.where.AND.push({ basePayment: { lte: dto.paymentTo } });
     }
     if (dto.durationFrom) {
-      prismaFilter.where.AND.push({ duration: { gte: dto.durationFrom } })
+      prismaFilter.where.AND.push({ duration: { gte: dto.durationFrom } });
     }
     if (dto.durationTo) {
-      prismaFilter.where.AND.push({ duration: { lte: dto.durationTo } })
+      prismaFilter.where.AND.push({ duration: { lte: dto.durationTo } });
     }
     if (dto.startDateFrom) {
-      prismaFilter.where.AND.push({ startDate: { gte: dto.startDateFrom } })
+      prismaFilter.where.AND.push({ startDate: { gte: dto.startDateFrom } });
     }
     if (dto.startDateTo) {
-      prismaFilter.where.AND.push({ startDate: { lte: dto.startDateTo } })
+      prismaFilter.where.AND.push({ startDate: { lte: dto.startDateTo } });
     }
     // query data from db
-    const entityList = await this.prisma.reviewOpportunity.findMany(prismaFilter);
+    const entityList =
+      await this.prisma.reviewOpportunity.findMany(prismaFilter);
     // build result with challenge data
     let responseList = await this.assembleList(entityList);
     // filter with challenge fields
     if (dto.numSubmissionsFrom) {
-      responseList = responseList.filter(r => (r.submissions ?? 0) >= (dto.numSubmissionsFrom ?? 0))
+      responseList = responseList.filter(
+        (r) => (r.submissions ?? 0) >= (dto.numSubmissionsFrom ?? 0),
+      );
     }
     if (dto.numSubmissionsTo) {
-      responseList = responseList.filter(r => (r.submissions ?? 0) <= (dto.numSubmissionsTo ?? 0))
+      responseList = responseList.filter(
+        (r) => (r.submissions ?? 0) <= (dto.numSubmissionsTo ?? 0),
+      );
     }
     if (dto.tracks && dto.tracks.length > 0) {
-      responseList = responseList.filter(r => r.challengeData && dto.tracks?.includes(r.challengeData['track'] as string))
+      responseList = responseList.filter(
+        (r) =>
+          r.challengeData &&
+          dto.tracks?.includes(r.challengeData['track'] as string),
+      );
     }
     if (dto.skills && dto.skills.length > 0) {
-      responseList = responseList.filter(r => r.challengeData && 
-        (r.challengeData['technologies'] as string[]).some(e => dto.skills?.includes(e)))
+      responseList = responseList.filter(
+        (r) =>
+          r.challengeData &&
+          (r.challengeData['technologies'] as string[]).some((e) =>
+            dto.skills?.includes(e),
+          ),
+      );
     }
     // sort list
     responseList = [...responseList].sort((a, b) => {
-      return dto.sortOrder === 'asc' ? (a[dto.sortBy] - b[dto.sortBy]) : (b[dto.sortBy] - a[dto.sortBy]);
+      return dto.sortOrder === 'asc'
+        ? a[dto.sortBy] - b[dto.sortBy]
+        : b[dto.sortBy] - a[dto.sortBy];
     });
     // pagination
     const start = Math.max(0, dto.offset as number);
@@ -108,18 +132,20 @@ export class ReviewOpportunityService {
       );
     } catch (e) {
       // challenge doesn't exist. Return 400
-      this.logger.error('Can\'t get challenge:', e)
+      this.logger.error("Can't get challenge:", e);
       throw new BadRequestException("Challenge doesn't exist");
     }
     // check existing
     const existing = await this.prisma.reviewOpportunity.findMany({
       where: {
         challengeId: dto.challengeId,
-        type: dto.type
-      }
+        type: dto.type,
+      },
     });
     if (existing && existing.length > 0) {
-      throw new ConflictException('Review opportunity exists for challenge and type');
+      throw new ConflictException(
+        'Review opportunity exists for challenge and type',
+      );
     }
     const entity = await this.prisma.reviewOpportunity.create({
       data: {
@@ -128,7 +154,7 @@ export class ReviewOpportunityService {
         updatedBy: authUser.userId ?? '',
       },
     });
-    return await this.buildResponse(entity, challengeData);
+    return this.buildResponse(entity, challengeData);
   }
 
   /**
@@ -197,23 +223,22 @@ export class ReviewOpportunityService {
    * @returns response list
    */
   private async assembleList(
-    entityList,
+    entityList: any[],
   ): Promise<ReviewOpportunityResponseDto[]> {
     // get challenge id and remove duplicated
-    const challengeIdList = [...new Set(entityList.map((e) => e.challengeId))];
+    const challengeIdList: string[] = [
+      ...new Set(entityList.map((e: any) => e.challengeId as string)),
+    ];
     // get all challenge data
-    const challengeList = await this.challengeService.getChallenges(
-      challengeIdList as string[],
-    );
+    const challengeList =
+      await this.challengeService.getChallenges(challengeIdList);
     // build challenge id -> challenge data map
     const challengeMap = new Map();
     challengeList.forEach((c) => challengeMap.set(c.id, c));
     // build response list.
     return entityList.map((e) => {
-      return this.buildResponse(e, challengeMap.get(e.challengeId))
-    }
-      
-    );
+      return this.buildResponse(e, challengeMap.get(e.challengeId));
+    });
   }
 
   /**
@@ -235,7 +260,7 @@ export class ReviewOpportunityService {
    * @returns response dto
    */
   private buildResponse(
-    entity,
+    entity: any,
     challengeData: ChallengeData,
   ): ReviewOpportunityResponseDto {
     const ret = new ReviewOpportunityResponseDto();
@@ -272,7 +297,7 @@ export class ReviewOpportunityService {
         applicationDate: e.createdBy,
       }));
     }
-    
+
     // payments
     ret.payments = [];
     const paymentConfig = CommonConfig.reviewPaymentConfig;

@@ -1,4 +1,9 @@
-import { Controller, Get, Query, InternalServerErrorException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -18,7 +23,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()
-@Controller('/api')
+@Controller('/')
 export class ProjectResultController {
   private readonly logger: LoggerService;
 
@@ -34,7 +39,8 @@ export class ProjectResultController {
   @Scopes(Scope.ReadProjectResult)
   @ApiOperation({
     summary: 'Get project results',
-    description: 'Roles: Reviewer, Copilot, Submitter | Scopes: read:project-result',
+    description:
+      'Roles: Reviewer, Copilot, Submitter | Scopes: read:project-result',
   })
   @ApiQuery({
     name: 'challengeId',
@@ -52,10 +58,10 @@ export class ProjectResultController {
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<ProjectResultResponseDto>> {
     this.logger.log(`Getting project results for challengeId: ${challengeId}`);
-    
+
     const { page = 1, perPage = 10 } = paginationDto || {};
     const skip = (page - 1) * perPage;
-    
+
     try {
       const [projectResults, totalCount] = await Promise.all([
         this.prisma.challengeResult.findMany({
@@ -65,22 +71,27 @@ export class ProjectResultController {
         }),
         this.prisma.challengeResult.count({
           where: { challengeId },
-        })
+        }),
       ]);
-      
-      this.logger.log(`Found ${projectResults.length} project results (page ${page} of ${Math.ceil(totalCount / perPage)})`);
-      
+
+      this.logger.log(
+        `Found ${projectResults.length} project results (page ${page} of ${Math.ceil(totalCount / perPage)})`,
+      );
+
       return {
         data: projectResults as ProjectResultResponseDto[],
         meta: {
           page,
-          perPage, 
+          perPage,
           totalCount,
           totalPages: Math.ceil(totalCount / perPage),
-        }
+        },
       };
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `fetching project results for challenge ${challengeId}`);
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `fetching project results for challenge ${challengeId}`,
+      );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,

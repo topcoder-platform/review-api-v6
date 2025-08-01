@@ -57,7 +57,7 @@ let projectCategoryMap: Record<string, ProjectTypeMap> = {};
 let reviewItemCommentTypeMap: Record<string, string> = {};
 
 // Global submission map to store submission information.
-let submissionMap: Record<string, Record<string, string>> = {};
+const submissionMap: Record<string, Record<string, string>> = {};
 
 // Data lookup maps
 // Initialize maps from files if they exist, otherwise create new maps
@@ -287,7 +287,7 @@ function processLookupFiles() {
 /**
  * Read submission data from resource_xxx.json, upload_xxx.json and submission_xxx.json.
  */
-async function initSubmissionMap() {
+function initSubmissionMap() {
   // read submission_x.json, read {uploadId -> submissionId} map.
   const submissionRegex = new RegExp(`^submission_\\d+\\.json`);
   const uploadRegex = new RegExp(`^upload_\\d+\\.json`);
@@ -295,7 +295,7 @@ async function initSubmissionMap() {
   const submissionFiles: string[] = [];
   const uploadFiles: string[] = [];
   const resourceFiles: string[] = [];
-  fs.readdirSync(DATA_DIR).filter(f => {
+  fs.readdirSync(DATA_DIR).filter((f) => {
     if (submissionRegex.test(f)) {
       submissionFiles.push(f);
     }
@@ -313,14 +313,14 @@ async function initSubmissionMap() {
     const filePath = path.join(DATA_DIR, f);
     console.log(`Reading submission data from ${f}`);
     const jsonData = readJson(filePath)['submission'];
-    for (let d of jsonData) {
+    for (const d of jsonData) {
       if (d['submission_status_id'] === '1' && d['upload_id']) {
         submissionCount += 1;
         // find submission has score and most recent
         const item = {
           score: d['screening_score'] || d['initial_score'] || d['final_score'],
           created: d['create_date'],
-          submissionId: d['submission_id']
+          submissionId: d['submission_id'],
         };
         if (uploadSubmissionMap[d['upload_id']]) {
           // existing submission info
@@ -342,12 +342,17 @@ async function initSubmissionMap() {
     const filePath = path.join(DATA_DIR, f);
     console.log(`Reading upload data from ${f}`);
     const jsonData = readJson(filePath)['upload'];
-    for (let d of jsonData) {
-      if (d['upload_status_id'] === '1' && d['upload_type_id'] === '1' && d['resource_id']) {
+    for (const d of jsonData) {
+      if (
+        d['upload_status_id'] === '1' &&
+        d['upload_type_id'] === '1' &&
+        d['resource_id']
+      ) {
         // get submission info
-        uploadCount += 1
+        uploadCount += 1;
         if (uploadSubmissionMap[d['upload_id']]) {
-          resourceSubmissionMap[d['resource_id']] = uploadSubmissionMap[d['upload_id']];
+          resourceSubmissionMap[d['resource_id']] =
+            uploadSubmissionMap[d['upload_id']];
         }
       }
     }
@@ -361,7 +366,7 @@ async function initSubmissionMap() {
     const filePath = path.join(DATA_DIR, f);
     console.log(`Reading resource data from ${f}`);
     const jsonData = readJson(filePath)['resource'];
-    for (let d of jsonData) {
+    for (const d of jsonData) {
       const projectId = d['project_id'];
       const userId = d['user_id'];
       const resourceId = d['resource_id'];
@@ -387,15 +392,16 @@ async function initSubmissionMap() {
       }
     }
   }
-  console.log(`Read resource count: ${resourceCount}, submission resource count: ${validResourceCount}`);
+  console.log(
+    `Read resource count: ${resourceCount}, submission resource count: ${validResourceCount}`,
+  );
   // print summary
   let totalSubmissions = 0;
-  Object.keys(submissionMap).forEach(c => {
+  Object.keys(submissionMap).forEach((c) => {
     totalSubmissions += Object.keys(submissionMap[c]).length;
   });
   console.log(`Found total submissions: ${totalSubmissions}`);
 }
-
 
 // Process a single type: find matching files, transform them one by one, and then insert in batches.
 async function processType(type: string, subtype?: string) {
@@ -1050,7 +1056,7 @@ async function migrate() {
 
   // init resource-submission data
   console.log('Starting resource/submission import...');
-  await initSubmissionMap();
+  initSubmissionMap();
   console.log('Resource/Submission import completed.');
 
   console.log('Starting data import...');

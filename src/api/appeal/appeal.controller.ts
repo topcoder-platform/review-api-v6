@@ -38,7 +38,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('Appeal')
 @ApiBearerAuth()
-@Controller('/api/appeals')
+@Controller('/appeals')
 export class AppealController {
   private readonly logger: LoggerService;
 
@@ -74,7 +74,10 @@ export class AppealController {
       this.logger.log(`Appeal created with ID: ${data.id}`);
       return data as AppealResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, 'creating appeal');
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        'creating appeal',
+      );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -111,15 +114,18 @@ export class AppealController {
       this.logger.log(`Appeal updated successfully: ${appealId}`);
       return data as AppealResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `updating appeal ${appealId}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `updating appeal ${appealId}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Appeal with ID ${appealId} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -147,15 +153,18 @@ export class AppealController {
       this.logger.log(`Appeal deleted successfully: ${appealId}`);
       return { message: `Appeal ${appealId} deleted successfully.` };
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `deleting appeal ${appealId}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `deleting appeal ${appealId}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Appeal with ID ${appealId} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -205,15 +214,18 @@ export class AppealController {
       this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
       return data.appealResponse as AppealResponseResponseDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `creating response for appeal ${appealId}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `creating response for appeal ${appealId}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Appeal with ID ${appealId} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -253,18 +265,23 @@ export class AppealController {
         where: { id: appealResponseId },
         data: mapAppealResponseRequestToDto(body),
       });
-      this.logger.log(`Appeal response updated successfully: ${appealResponseId}`);
+      this.logger.log(
+        `Appeal response updated successfully: ${appealResponseId}`,
+      );
       return data as AppealResponseRequestDto;
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, `updating appeal response ${appealResponseId}`);
-      
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `updating appeal response ${appealResponseId}`,
+      );
+
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({ 
-          message: `Appeal response with ID ${appealResponseId} was not found`, 
-          code: errorResponse.code 
+        throw new NotFoundException({
+          message: `Appeal response with ID ${appealResponseId} was not found`,
+          code: errorResponse.code,
         });
       }
-      
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -306,18 +323,20 @@ export class AppealController {
     @Query('reviewId') reviewId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<AppealResponseDto>> {
-    this.logger.log(`Getting appeals with filters - resourceId: ${resourceId}, challengeId: ${challengeId}, reviewId: ${reviewId}`);
-    
+    this.logger.log(
+      `Getting appeals with filters - resourceId: ${resourceId}, challengeId: ${challengeId}, reviewId: ${reviewId}`,
+    );
+
     const { page = 1, perPage = 10 } = paginationDto || {};
     const skip = (page - 1) * perPage;
-    
+
     try {
       // Build where clause for filtering
       const whereClause: any = {};
       if (resourceId) whereClause.resourceId = resourceId;
       if (challengeId) whereClause.challengeId = challengeId;
       if (reviewId) whereClause.appealId = reviewId;
-      
+
       const [appeals, totalCount] = await Promise.all([
         this.prisma.appealResponse.findMany({
           where: whereClause,
@@ -326,11 +345,13 @@ export class AppealController {
         }),
         this.prisma.appealResponse.count({
           where: whereClause,
-        })
+        }),
       ]);
-      
-      this.logger.log(`Found ${appeals.length} appeals (page ${page} of ${Math.ceil(totalCount / perPage)})`);
-      
+
+      this.logger.log(
+        `Found ${appeals.length} appeals (page ${page} of ${Math.ceil(totalCount / perPage)})`,
+      );
+
       return {
         data: appeals.map((appeal) => ({
           ...appeal,
@@ -341,10 +362,13 @@ export class AppealController {
           perPage,
           totalCount,
           totalPages: Math.ceil(totalCount / perPage),
-        }
+        },
       };
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(error, 'fetching appeals');
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        'fetching appeals',
+      );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,

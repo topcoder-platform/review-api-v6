@@ -1,9 +1,13 @@
-import { Injectable, LoggerService as NestLoggerService, LogLevel } from '@nestjs/common';
+import {
+  Injectable,
+  LoggerService as NestLoggerService,
+  LogLevel,
+} from '@nestjs/common';
 
 @Injectable()
 export class LoggerService implements NestLoggerService {
   private context?: string;
-  
+
   constructor(context?: string) {
     this.context = context;
   }
@@ -43,11 +47,11 @@ export class LoggerService implements NestLoggerService {
   private printMessage(level: LogLevel, message: any, context?: string) {
     const timestamp = new Date().toISOString();
     let logMessage: string;
-    
+
     if (typeof message === 'object') {
       try {
         logMessage = JSON.stringify(message);
-      } catch (e) {
+      } catch {
         logMessage = String(message);
       }
     } else {
@@ -55,7 +59,7 @@ export class LoggerService implements NestLoggerService {
     }
 
     const formattedMessage = `[${timestamp}] [${level.toUpperCase()}] ${context ? `[${context}] ` : ''}${logMessage}`;
-    
+
     switch (level) {
       case 'error':
         console.error(formattedMessage);
@@ -73,4 +77,4 @@ export class LoggerService implements NestLoggerService {
         console.log(formattedMessage);
     }
   }
-} 
+}

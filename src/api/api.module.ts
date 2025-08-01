@@ -25,8 +25,12 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
     ProjectResultController,
     ReviewOpportunityController,
     ReviewApplicationController,
-    ReviewHistoryController
+    ReviewHistoryController,
   ],
-  providers: [ReviewOpportunityService, ReviewApplicationService, ChallengeApiService],
+  providers: [
+    ReviewOpportunityService,
+    ReviewApplicationService,
+    ChallengeApiService,
+  ],
 })
 export class ApiModule {}
