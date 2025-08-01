@@ -17,10 +17,10 @@ async function bootstrap() {
   // Create logger instance for application bootstrap
   const logger = LoggerService.forRoot('Bootstrap');
 
-  // Global prefix for all routes in production is configured as `/v5/review`
+  // Global prefix for all routes in production is configured as `/v6/review`
   if (process.env.NODE_ENV === 'production') {
-    app.setGlobalPrefix('/v5/review');
-    logger.log('Setting global prefix to /v5/review in production mode');
+    app.setGlobalPrefix('/v6/review');
+    logger.log('Setting global prefix to /v6/review in production mode');
   }
 
   // CORS related settings
