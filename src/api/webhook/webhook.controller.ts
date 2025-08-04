@@ -13,7 +13,7 @@ import {
   WebhookEventDto,
   WebhookResponseDto,
 } from '../../dto/webhook-event.dto';
-import { GiteaSignatureGuard } from '../../shared/guards/gitea-signature.guard';
+import { GiteaWebhookAuthGuard } from '../../shared/guards/gitea-webhook-auth.guard';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 
 @ApiTags('Webhooks')
@@ -25,7 +25,7 @@ export class WebhookController {
 
   @Post('gitea')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(GiteaSignatureGuard)
+  @UseGuards(GiteaWebhookAuthGuard)
   @ApiOperation({
     summary: 'Gitea Webhook Endpoint',
     description:
@@ -42,8 +42,8 @@ export class WebhookController {
     required: true,
   })
   @ApiHeader({
-    name: 'X-Hub-Signature-256',
-    description: 'HMAC-SHA256 signature for request verification',
+    name: 'authorization',
+    description: 'Authorization header for Gitea webhook',
     required: true,
   })
   @ApiResponse({

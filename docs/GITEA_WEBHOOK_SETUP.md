@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Topcoder Review API includes a secure Gitea webhook integration that receives webhook events from Gitea repositories, validates them using HMAC-SHA256 signature verification, and stores them in the database for audit and future processing.
+The Topcoder Review API includes a secure Gitea webhook integration that receives webhook events from Gitea repositories, validates them using Authorization header validation, and stores them in the database for audit and future processing.
 
 ## Table of Contents
 
@@ -21,7 +21,7 @@ The Topcoder Review API includes a secure Gitea webhook integration that receive
 
 For immediate setup, follow these steps:
 
-1. Generate a secure webhook secret
+1. Generate a secure webhook auth secret
 2. Configure environment variables
 3. Set up Gitea webhook in repository settings
 4. Test with a sample event
@@ -34,7 +34,7 @@ Add the following environment variable to your application configuration:
 
 ```bash
 # .env file
-GITEA_WEBHOOK_SECRET=your_generated_secret_here
+GITEA_WEBHOOK_AUTH=your_generated_secret_here
 ```
 
 ### Generate Webhook Secret
@@ -51,7 +51,7 @@ openssl rand -hex 32
 a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
 ```
 
-⚠️ **Important:** Store this secret securely and use the same value in both your application environment and Gitea webhook configuration.
+⚠️ **Important:** Store this auth secret securely and use the same value in both your application environment and Gitea webhook configuration.
 
 ### Database Setup
 
@@ -92,10 +92,10 @@ Note: The `/v6/review` prefix is only added in production when `NODE_ENV=product
 
 - Select `application/json`
 
-#### Secret
+#### Authorization
 
-- Enter the webhook secret you generated earlier
-- This must exactly match your `GITEA_WEBHOOK_SECRET` environment variable
+- Enter the webhook auth secret you generated earlier
+- This must exactly match your `GITEA_WEBHOOK_AUTH` environment variable
 
 #### SSL Verification
 
@@ -192,33 +192,7 @@ git push origin main
 3. Push branch: `git push origin test-webhook`
 4. Open pull request on Gitea
 
-### Testing with curl
-
-You can test the webhook endpoint directly using curl with proper signature generation:
-
-```bash
-#!/bin/bash
-
-# Configuration
-WEBHOOK_URL="http://localhost:3000/webhooks/gitea"  # Adjust for your environment
-WEBHOOK_SECRET="your_webhook_secret_here"
-PAYLOAD='{"test": "data", "repository": {"name": "test-repo"}}'
-DELIVERY_ID="test-delivery-$(date +%s)"
-EVENT_TYPE="push"
-
-# Generate signature
-SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')"
-
-# Send test webhook
-curl -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -H "X-Gitea-Event: $EVENT_TYPE" \
-  -H "X-Gitea-Delivery: $DELIVERY_ID" \
-  -H "X-Hub-Signature-256: $SIGNATURE" \
-  -d "$PAYLOAD"
-```
-
-## API Endpoint Reference
+### API Endpoint Reference
 
 ### Webhook Endpoint
 
@@ -229,7 +203,7 @@ curl -X POST "$WEBHOOK_URL" \
 - `Content-Type: application/json`
 - `X-Gitea-Event: {event_type}` - Gitea event type (push, pull_request, etc.)
 - `X-Gitea-Delivery: {delivery_id}` - Unique delivery identifier from Gitea
-- `X-Hub-Signature-256: sha256={signature}` - HMAC-SHA256 signature for verification
+- `Authorization: Bearer {GITEA_WEBHOOK_AUTH}` - Token used to verify authorization
 
 **Request Body:**
 
@@ -323,10 +297,8 @@ WHERE "eventId" = 'your-delivery-id';
 
 The webhook implementation uses Gitea's recommended security practices:
 
-1. **HMAC-SHA256 Signature:** All incoming webhooks are verified using HMAC-SHA256
-2. **Timing-Safe Comparison:** Uses `crypto.timingSafeEqual()` to prevent timing attacks
-3. **Secret Protection:** Webhook secrets are stored as environment variables
-4. **Header Validation:** Validates all required Gitea headers
+1. **Secret Protection:** Webhook auth secrets are stored as environment variables
+2. **Header Validation:** Validates all required Gitea headers
 
 ### Best Practices
 
@@ -338,22 +310,7 @@ The webhook implementation uses Gitea's recommended security practices:
 
 ### Environment Security
 
-- Store `GITEA_WEBHOOK_SECRET` securely using your deployment platform's secret management
+- Store `GITEA_WEBHOOK_AUTH` securely using your deployment platform's secret management
 - Never commit secrets to version control
 - Use different secrets for different environments
 - Implement proper secret rotation procedures
-
-### Log Analysis
-
-Key log messages to monitor:
-
-```
-# Successful webhook processing
-[WebhookController] Successfully processed Gitea webhook
-
-# Signature validation failures
-[GiteaSignatureGuard] Invalid webhook signature for delivery
-
-# Configuration errors
-[GiteaSignatureGuard] Gitea_WEBHOOK_SECRET environment variable is not configured
-```
