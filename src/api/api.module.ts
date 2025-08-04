@@ -18,6 +18,8 @@ import { ReviewOpportunityService } from './review-opportunity/reviewOpportunity
 import { ReviewApplicationService } from './review-application/reviewApplication.service';
 import { ReviewHistoryController } from './review-history/reviewHistory.controller';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { SubmissionService } from './submission/submission.service';
+import { ReviewSummationService } from './review-summation/review-summation.service';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule, FileUploadModule],
@@ -35,6 +37,12 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
     ReviewApplicationController,
     ReviewHistoryController
   ],
-  providers: [ReviewOpportunityService, ReviewApplicationService, ChallengeApiService],
+  providers: [
+    ReviewOpportunityService,
+    ReviewApplicationService,
+    ChallengeApiService,
+    SubmissionService,
+    ReviewSummationService,
+  ],
 })
 export class ApiModule {}

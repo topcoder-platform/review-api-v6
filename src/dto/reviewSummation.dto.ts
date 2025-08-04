@@ -74,9 +74,10 @@ export class ReviewSummationBaseRequestDto {
     description: 'The scorecard id',
     example: 'd24d4180-65aa-42ec-a945-5fd21dec0501',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  scorecardId: string;
+  scorecardId?: string;
 
   @ApiProperty({
     description: 'The isPassing flag for review summation',
@@ -87,43 +88,25 @@ export class ReviewSummationBaseRequestDto {
   @ApiProperty({
     description: 'The isFinal flag for review summation',
   })
+  @IsOptional()
   @IsBoolean()
-  isFinal: boolean;
+  isFinal?: boolean;
 
   @ApiProperty({
     description: 'The reviewed date',
     example: '2024-10-01T00:00:00Z',
   })
+  @IsOptional()
   @IsDateString()
-  reviewedDate: string;
+  reviewedDate?: string;
 }
 
 export class ReviewSummationRequestDto extends ReviewSummationBaseRequestDto {
-  @ApiProperty({
-    description: 'The user who created the review summation',
-    example: 'user123',
-  })
-  @IsString()
-  @IsNotEmpty()
-  createdBy: string;
 
-  @ApiProperty({
-    description: 'The user who last updated the review summation',
-    example: 'user456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  updatedBy: string;
 }
 
 export class ReviewSummationPutRequestDto extends ReviewSummationBaseRequestDto {
-  @ApiProperty({
-    description: 'The user who last updated the review summation',
-    example: 'user456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  updatedBy: string;
+
 }
 
 export class ReviewSummationUpdateRequestDto {
@@ -179,14 +162,6 @@ export class ReviewSummationUpdateRequestDto {
   @IsOptional()
   @IsDateString()
   reviewedDate?: string;
-
-  @ApiProperty({
-    description: 'The user who last updated the submission',
-    example: 'user456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  updatedBy: string;
 }
 
 export class ReviewSummationResponseDto {
@@ -212,7 +187,7 @@ export class ReviewSummationResponseDto {
     description: 'The scorecard id',
     example: 'd24d4180-65aa-42ec-a945-5fd21dec0501',
   })
-  scorecardId: string;
+  scorecardId: string | null;
 
   @ApiProperty({
     description: 'The isPassing flag for review summation',
@@ -222,13 +197,13 @@ export class ReviewSummationResponseDto {
   @ApiProperty({
     description: 'The isFinal flag for review summation',
   })
-  isFinal: boolean;
+  isFinal: boolean | null;
 
   @ApiProperty({
     description: 'The reviewed date',
     example: '2024-10-01T00:00:00Z',
   })
-  reviewedDate: Date;
+  reviewedDate: Date | null;
 
   @ApiProperty({
     description: 'The creation timestamp',
@@ -246,11 +221,11 @@ export class ReviewSummationResponseDto {
     description: 'The last update timestamp',
     example: '2023-10-01T00:00:00Z',
   })
-  updatedAt: Date;
+  updatedAt: Date | null;
 
   @ApiProperty({
     description: 'The user who last updated the review summation',
     example: 'user456',
   })
-  updatedBy: string;
+  updatedBy: string | null;
 }

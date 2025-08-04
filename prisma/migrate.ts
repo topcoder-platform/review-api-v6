@@ -1,6 +1,7 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as readline from 'readline';
 import {
   ScorecardStatus,
   ScorecardType,
@@ -9,6 +10,8 @@ import {
 } from '../src/dto/scorecard.dto';
 import { ReviewItemCommentType } from '../src/dto/review.dto';
 import { nanoid } from 'nanoid';
+import { UploadType, UploadStatus } from '../src/dto/upload.dto';
+import { SubmissionStatus, SubmissionType } from '../src/dto/submission.dto';
 
 interface QuestionTypeMap {
   name: QuestionType;
@@ -28,6 +31,9 @@ console.log(`Using PostgreSQL schema: ${schema}`);
 const prisma = new PrismaClient();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'Scorecards');
 const batchSize = 1000;
+const logSize = 20000;
+const esFileName = 'dev-submissions-api.data.json';
+
 const modelMappingKeys = [
   'project_result',
   'scorecard',
@@ -47,120 +53,10 @@ const lookupKeys: string[] = [
   'scorecard_question_type_lu',
   'comment_type_lu',
   'project_category_lu',
-];
-
-const reviewTypeData: Prisma.reviewTypeCreateInput[] = [
-  {
-    id: 'c56a4180-65aa-42ec-a945-5fd21dec0501',
-    name: 'Screening',
-    isActive: true,
-  },
-  {
-    id: 'c56a4180-65aa-42ec-a945-5fd21dec0502',
-    name: 'Checkpoint Review',
-    isActive: true,
-  },
-  {
-    id: 'c56a4180-65aa-42ec-a945-5fd21dec0503',
-    name: 'Review',
-    isActive: true,
-  },
-  {
-    id: 'c56a4180-65aa-42ec-a945-5fd21dec0504',
-    name: 'Appeals Response',
-    isActive: true,
-  },
-  {
-    id: 'c56a4180-65aa-42ec-a945-5fd21dec0505',
-    name: 'Iterative Review',
-    isActive: true,
-  },
-  {
-    id: 'f28b2725-ef90-4495-af59-ceb2bd98fc10',
-    name: 'AV Scan',
-    isActive: false,
-  },
-];
-
-const scorecardData: Prisma.scorecardCreateInput = {
-  status: 'ACTIVE',
-  type: 'REVIEW',
-  challengeTrack: 'DEVELOPMENT',
-  challengeType: 'Code Development',
-  name: 'Topcoder Review API - Migrate Submissions API into the new Review API',
-  version: '1.0',
-  minScore: 80.0,
-  maxScore: 100.0,
-  createdAt: '2018-05-20T07:00:30.123Z',
-  updatedAt: '2018-06-01T07:36:28.178Z',
-  createdBy: 'admin',
-  updatedBy: 'admin',
-};
-
-const reviewData = [
-  {
-    id: 'd24d4180-65aa-42ec-a945-5fd21dec0501',
-    resourceId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
-    phaseId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
-    initialScore: 95.5,
-    finalScore: 96.5,
-    typeId: 'c56a4180-65aa-42ec-a945-5fd21dec0503',
-    status: 'Review',
-    reviewDate: '2025-05-20T07:00:30.123Z',
-    createdAt: '2018-05-20T07:00:30.123Z',
-    updatedAt: '2018-06-01T07:36:28.178Z',
-    createdBy: 'admin',
-    updatedBy: 'admin',
-  },
-  {
-    id: 'd24d4180-65aa-42ec-a945-5fd21dec0502',
-    resourceId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
-    phaseId: 'c56a4180-65aa-42ec-a001-5fd21dec0001',
-    initialScore: 92.0,
-    finalScore: 93.5,
-    typeId: 'c56a4180-65aa-42ec-a945-5fd21dec0501',
-    metadata: {
-      public: 'public data',
-      private: 'private data',
-    },
-    status: 'Appeal',
-    reviewDate: '2025-05-20T07:00:30.123Z',
-    createdAt: '2018-05-20T07:00:30.123Z',
-    updatedAt: '2018-06-01T07:36:28.178Z',
-    createdBy: 'admin',
-    updatedBy: 'admin',
-  },
-];
-
-const reviewSummationData: Prisma.reviewSummationCreateWithoutSubmissionInput[] =
-  [
-    {
-      id: 'e45e4180-65aa-42ec-a945-5fd21dec1504',
-      aggregateScore: 99.0,
-      scorecardId: '123456789',
-      isPassing: true,
-      isFinal: false,
-      reviewedDate: '2025-06-01T07:36:28.178Z',
-      createdAt: '2018-05-20T07:00:30.123Z',
-      updatedAt: '2018-06-01T07:36:28.178Z',
-      createdBy: 'copilot',
-      updatedBy: 'copilot',
-    },
-  ];
-
-const submissionData: Prisma.submissionCreateInput[] = [
-  {
-    id: 'a12a4180-65aa-42ec-a945-5fd21dec0501',
-    type: 'ContestSubmission',
-    url: 'https://software.topcoder.com/review/actions/DownloadContestSubmission?uid=123456',
-    memberId: 'b24d4180-65aa-42ec-a945-5fd21dec0501',
-    challengeId: 'c3564180-65aa-42ec-a945-5fd21dec0502',
-    submittedDate: '2018-05-20T07:00:30.123Z',
-    createdAt: '2018-05-20T07:00:30.123Z',
-    updatedAt: '2018-06-01T07:36:28.178Z',
-    createdBy: 'topcoder user',
-    updatedBy: 'topcoder user',
-  },
+  'upload_type_lu',
+  'upload_status_lu',
+  'submission_type_lu',
+  'submission_status_lu',
 ];
 
 // Global lookup maps
@@ -169,111 +65,47 @@ let scorecardTypeMap: Record<string, ScorecardType> = {};
 let questionTypeMap: Record<string, QuestionTypeMap> = {};
 let projectCategoryMap: Record<string, ProjectTypeMap> = {};
 let reviewItemCommentTypeMap: Record<string, string> = {};
+let uploadTypeMap: Record<string, UploadType> = {};
+let uploadStatusMap: Record<string, UploadStatus> = {};
+let submissionTypeMap: Record<string, SubmissionType> = {};
+let submissionStatusMap: Record<string, SubmissionStatus> = {};
+let resourceSubmissionSet = new Set<string>();
 
 // Global submission map to store submission information.
 const submissionMap: Record<string, Record<string, string>> = {};
 
 // Data lookup maps
 // Initialize maps from files if they exist, otherwise create new maps
-const projectIdMap = fs.existsSync('.tmp/projectIdMap.json')
+function readIdMap(filename) {
+  return fs.existsSync(`.tmp/${filename}.json`)
   ? new Map(
       Object.entries(
-        JSON.parse(fs.readFileSync('.tmp/projectIdMap.json', 'utf-8')),
+        JSON.parse(fs.readFileSync(`.tmp/${filename}.json`, 'utf-8')),
       ),
     )
   : new Map<string, string>();
+}
 
-const scorecardIdMap = fs.existsSync('.tmp/scorecardIdMap.json')
-  ? new Map(
-      Object.entries(
-        JSON.parse(fs.readFileSync('.tmp/scorecardIdMap.json', 'utf-8')),
-      ),
-    )
-  : new Map<string, string>();
+const projectIdMap = readIdMap('projectIdMap');
+const scorecardIdMap = readIdMap('scorecardIdMap');
+const scorecardGroupIdMap = readIdMap('scorecardGroupIdMap');
+const scorecardSectionIdMap = readIdMap('scorecardSectionIdMap');
+const scorecardQuestionIdMap = readIdMap('scorecardQuestionIdMap');
+const reviewIdMap = readIdMap('reviewIdMap');
+const reviewItemIdMap = readIdMap('reviewItemIdMap');
+const reviewItemCommentReviewItemCommentIdMap = readIdMap('reviewItemCommentReviewItemCommentIdMap');
+const reviewItemCommentAppealIdMap = readIdMap('reviewItemCommentAppealIdMap');
+const reviewItemCommentAppealResponseIdMap = readIdMap('reviewItemCommentAppealResponseIdMap');
+const uploadIdMap = readIdMap('uploadIdMap');
+const submissionIdMap = readIdMap('submissionIdMap');
 
-const scorecardGroupIdMap = fs.existsSync('.tmp/scorecardGroupIdMap.json')
-  ? new Map(
-      Object.entries(
-        JSON.parse(fs.readFileSync('.tmp/scorecardGroupIdMap.json', 'utf-8')),
-      ),
-    )
-  : new Map<string, string>();
-
-const scorecardSectionIdMap = fs.existsSync('.tmp/scorecardSectionIdMap.json')
-  ? new Map(
-      Object.entries(
-        JSON.parse(fs.readFileSync('.tmp/scorecardSectionIdMap.json', 'utf-8')),
-      ),
-    )
-  : new Map<string, string>();
-
-const scorecardQuestionIdMap = fs.existsSync('.tmp/scorecardQuestionIdMap.json')
-  ? new Map(
-      Object.entries(
-        JSON.parse(
-          fs.readFileSync('.tmp/scorecardQuestionIdMap.json', 'utf-8'),
-        ),
-      ),
-    )
-  : new Map<string, string>();
-
-const reviewIdMap = fs.existsSync('.tmp/reviewIdMap.json')
-  ? new Map(
-      Object.entries(
-        JSON.parse(fs.readFileSync('.tmp/reviewIdMap.json', 'utf-8')),
-      ),
-    )
-  : new Map<string, string>();
-
-const reviewItemIdMap = fs.existsSync('.tmp/reviewItemIdMap.json')
-  ? new Map(
-      Object.entries(
-        JSON.parse(fs.readFileSync('.tmp/reviewItemIdMap.json', 'utf-8')),
-      ),
-    )
-  : new Map<string, string>();
-
-const reviewItemCommentReviewItemCommentIdMap = fs.existsSync(
-  '.tmp/reviewItemCommentReviewItemCommentIdMap.json',
-)
-  ? new Map(
-      Object.entries(
-        JSON.parse(
-          fs.readFileSync(
-            '.tmp/reviewItemCommentReviewItemCommentIdMap.json',
-            'utf-8',
-          ),
-        ),
-      ),
-    )
-  : new Map<string, string>();
-
-const reviewItemCommentAppealIdMap = fs.existsSync(
-  '.tmp/reviewItemCommentAppealIdMap.json',
-)
-  ? new Map(
-      Object.entries(
-        JSON.parse(
-          fs.readFileSync('.tmp/reviewItemCommentAppealIdMap.json', 'utf-8'),
-        ),
-      ),
-    )
-  : new Map<string, string>();
-
-const reviewItemCommentAppealResponseIdMap = fs.existsSync(
-  '.tmp/reviewItemCommentAppealResponseIdMap.json',
-)
-  ? new Map(
-      Object.entries(
-        JSON.parse(
-          fs.readFileSync(
-            '.tmp/reviewItemCommentAppealResponseIdMap.json',
-            'utf-8',
-          ),
-        ),
-      ),
-    )
-  : new Map<string, string>();
+// read resourceSubmissionSet
+const rsSetFile = '.tmp/resourceSubmissionSet.json';
+if (fs.existsSync(rsSetFile)) {
+  resourceSubmissionSet = new Set<string>([
+    ...(JSON.parse(fs.readFileSync(rsSetFile, 'utf-8')) as string[])
+  ]);
+}
 
 // Legacy enum mappings
 enum LegacyScorecardStatus {
@@ -312,6 +144,39 @@ enum LegacyCommentType {
   'Approval Review Comment' = ReviewItemCommentType.APPROVAL_REVIEW_COMMENT,
   'Approval Review Comment - Other Fixes' = ReviewItemCommentType.APPROVAL_REVIEW_COMMENT_OTHER_FIXES,
   'Specification Review Comment' = ReviewItemCommentType.SPECIFICATION_REVIEW_COMMENT,
+}
+
+enum LegacyUploadType {
+  'Submission' = UploadType.SUBMISSION,
+  'Test Case' = UploadType.TEST_CASE,
+  'Final Fix' = UploadType.FINAL_FIX,
+  'Review Document' = UploadType.REVIEW_DOCUMENT,
+}
+
+enum LegacyUploadStatus {
+  'Active' = UploadStatus.ACTIVE,
+  'Deleted' = UploadStatus.DELETED
+}
+
+enum LegacySubmissionType {
+  // compatible for ES
+  'ContestSubmission' = SubmissionType.CONTEST_SUBMISSION,
+  'challengesubmission' = SubmissionType.CONTEST_SUBMISSION,
+  // enum values
+  'Contest Submission' = SubmissionType.CONTEST_SUBMISSION,
+  'Specification Submission' = SubmissionType.SPECIFICATION_SUBMISSION,
+  'Checkpoint Submission' = SubmissionType.CHECKPOINT_SUBMISSION,
+  'Studio Final Fix Submission' = SubmissionType.STUDIO_FINAL_FIX_SUBMISSION
+}
+
+enum LegacySubmissionStatus {
+  'Active' = SubmissionStatus.ACTIVE,
+  'Failed Screening' = SubmissionStatus.FAILED_SCREENING,
+  'Failed Review' = SubmissionStatus.FAILED_REVIEW,
+  'Completed Without Win' = SubmissionStatus.COMPLETED_WITHOUT_WIN,
+  'Deleted' = SubmissionStatus.DELETED,
+  'Failed Checkpoint Screening' = SubmissionStatus.FAILED_CHECKPOINT_SCREENING,
+  'Failed Checkpoint Review' = SubmissionStatus.FAILED_CHECKPOINT_REVIEW
 }
 
 const LegacyChallengeTrack: Record<string, ChallengeTrack> = {
@@ -394,6 +259,293 @@ function processLookupFiles() {
           ),
         );
         break;
+      case 'upload_type_lu':
+        uploadTypeMap = Object.fromEntries(
+          (jsonData.upload_type_lu as any[]).map(
+            ({ upload_type_id, name }) => [
+              upload_type_id,
+              LegacyUploadType[name]
+            ]
+          )
+        );
+        break;
+      case 'upload_status_lu':
+        uploadStatusMap = Object.fromEntries(
+          (jsonData.upload_status_lu as any[]).map(
+            ({ upload_status_id, name }) => [
+              upload_status_id,
+              LegacyUploadStatus[name]
+            ]
+          )
+        );
+        break;
+      case 'submission_type_lu':
+        submissionTypeMap = Object.fromEntries(
+          (jsonData.submission_type_lu as any[]).map(
+            ({ submission_type_id, name }) => [
+              submission_type_id,
+              LegacySubmissionType[name]
+            ]
+          )
+        );
+        break;
+      case 'submission_status_lu':
+        submissionStatusMap = Object.fromEntries(
+          (jsonData.submission_status_lu as any[]).map(
+            ({ submission_status_id, name }) => [
+              submission_status_id,
+              LegacySubmissionStatus[name]
+            ]
+          )
+        );
+        break;
+    }
+  }
+}
+
+const filenameComp = (a, b) => {
+  const numA = parseInt(a.match(/_(\d+)\.json$/)?.[1] || '0', 10);
+  const numB = parseInt(b.match(/_(\d+)\.json$/)?.[1] || '0', 10);
+  return numA - numB;
+}
+
+
+function convertSubmissionES(esData) {
+  let challengeId = null;
+  let legacyChallengeId = null;
+  if (esData.legacyChallengeId) {
+    legacyChallengeId = esData.legacyChallengeId;
+  }
+  if (esData.challengeId) {
+    if (typeof esData.challengeId === 'number') {
+      legacyChallengeId = esData.challengeId;
+    } else {
+      challengeId = esData.challengeId;
+    }
+  }
+  const submission: any = {
+    legacySubmissionId: String(esData.legacySubmissionId),
+    url: esData.url,
+    memberId: String(esData.memberId),
+    challengeId,
+    legacyChallengeId,
+    submissionPhaseId: String(esData.submissionPhaseId),
+    fileType: esData.fileType,
+    esId: esData.id,
+    submittedDate: esData.submittedDate ? new Date(esData.submittedDate) : null,
+    updatedBy: esData.updatedBy ?? null,
+    updatedAt: esData.updated ? new Date(esData.updated) : null,
+  };
+  if (esData.reviewSummation && esData.reviewSummation.length > 0) {
+    const summation = esData.reviewSummation[0];
+    submission.reviewSummation = {
+      create: {
+        id: summation.id,
+        legacySubmissionId: String(esData.legacySubmissionId),
+        aggregateScore: summation.aggregateScore,
+        scorecardId: scorecardIdMap.get(summation.scoreCardId),
+        scorecardLegacyId: String(summation.scoreCardId),
+        isPassing: summation.isPassing,
+        reviewedDate: summation.reviewedDate ? new Date(summation.reviewedDate) : null,
+        createdBy: summation.createdBy,
+        createdAt: new Date(summation.created),
+        updatedBy: summation.updatedBy,
+        updatedAt: summation.updated ? new Date(summation.updated) : null,
+      }
+    };
+  }
+  return submission;
+}
+
+async function migrateElasticSearch() {
+  // migrate elastic search data
+  const filepath = path.join(DATA_DIR, esFileName);
+  const fileStream = fs.createReadStream(filepath);
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity,
+  });
+  // read file line by line and handle it
+  let lineCount = 0;
+  for await (const line of rl) {
+    lineCount += 1;
+    try {
+      const data = JSON.parse(line);
+      const source = data['_source'];
+      // only process 'submission' data for now
+      if (source['resource'] === 'submission') {
+        await handleElasticSearchSubmission(source);
+      }
+    } catch (err) {
+      console.log(`Failed to process ES line ${lineCount}`);
+    }
+    if (lineCount % logSize === 0) {
+      console.log(`ES data processed ${lineCount} lines`);
+    }
+  }
+  // migrate remaining submissions
+  await importSubmissionES();
+  console.log(`ES data imported with total line: ${lineCount}`);
+}
+
+
+let currentSubmissions: any[] = [];
+async function handleElasticSearchSubmission(item) {
+  // ignore records without legacySubmissionId field.
+  if (item['legacySubmissionId'] == null) {
+    return;
+  } 
+  currentSubmissions.push(item);
+  // if we can batch insert data, +
+  if (currentSubmissions.length >= batchSize) {
+    await importSubmissionES();
+    currentSubmissions = [];
+  }
+}
+
+async function importSubmissionES() {
+  if (currentSubmissions.length === 0) {
+    return;
+  }
+  for (const item of currentSubmissions) {
+    const submission = convertSubmissionES(item);
+
+    let newSubmission = false;
+    try {
+      if (submissionIdMap.has(submission.legacySubmissionId)) {
+        newSubmission = false;
+        await prisma.submission.update({
+          data: submission,
+          where: { id: submissionIdMap.get(submission.legacySubmissionId) as string }
+        });
+      } else {
+        newSubmission = true;
+        const newId = nanoid(14);
+        projectIdMap.set(submission.legacySubmissionId, newId);
+        let type = LegacySubmissionType[item.type];
+        if (!LegacySubmissionType[item.type]) {
+          type = LegacySubmissionType.ContestSubmission;
+        }
+        await prisma.submission.create({
+          data: {
+            ...submission,
+            id: newId,
+            status: SubmissionStatus.ACTIVE,
+            type,
+            createdBy: item.createdBy || 'migration',
+            createdAt: item.created ? new Date(item.created) : new Date()
+          },
+        });
+      }
+    } catch (err) {
+      if (newSubmission) {
+        projectIdMap.delete(submission.legacySubmissionId);
+      }
+      console.error(`Failed to import submission from ES: ${submission.esId}`);
+    }
+  }
+}
+
+function convertUpload(jsonData) {
+  return {
+    id: nanoid(14),
+    legacyId: jsonData['upload_id'],
+    projectId: jsonData['project_id'],
+    resourceId: jsonData['resource_id'],
+    type: uploadTypeMap[jsonData['upload_type_id']],
+    status: uploadStatusMap[jsonData['upload_status_id']],
+    parameter: jsonData['parameter'],
+    url: jsonData['url'],
+    desc: jsonData['upload_desc'],
+    projectPhaseId: jsonData['project_phase_id'],
+    createdBy: jsonData['create_user'],
+    createdAt: new Date(jsonData['create_date']),
+    updatedBy: jsonData['modify_user'],
+    updatedAt: new Date(jsonData['modify_date']),
+  };
+}
+
+let uploadDataList: any[] = [];
+async function importUploadData(uploadData) {
+  uploadDataList.push(uploadData);
+  if (uploadDataList.length >= batchSize) {
+    await doImportUploadData();
+    uploadDataList = [];  
+  }
+}
+
+async function doImportUploadData() {
+  if (uploadDataList.length === 0) {
+    return;
+  }
+  try {
+    await prisma.upload.createMany({
+      data: uploadDataList
+    });
+  } catch {
+    // import data one by one
+    for (const u of uploadDataList) {
+      try {
+        await prisma.upload.create({ data: u });
+      } catch (err) {
+        console.error(`Cannot import upload data id: ${u.legacyId}`);
+        uploadIdMap.delete(u.legacyId);
+      }
+    }
+  }
+}
+
+function convertSubmission(jsonData) {
+  return {
+    id: nanoid(14),
+    legacySubmissionId: jsonData['submission_id'],
+    legacyUploadId: jsonData['upload_id'],
+    uploadId: uploadIdMap.get(jsonData['upload_id']),
+    status: submissionStatusMap[jsonData['submission_status_id']],
+    type: submissionTypeMap[jsonData['submission_type_id']],
+    screeningScore: jsonData['screening_score'],
+    initialScore: jsonData['initial_score'],
+    finalScore: jsonData['final_score'],
+    placement: jsonData['placement'] ? Number(jsonData['placement']) : null,
+    userRank: jsonData['user_rank'] ? Number(jsonData['user_rank']) : null,
+    markForPurchase: jsonData['mark_for_purchase'],
+    prizeId: jsonData['prize_id'],
+    fileSize: jsonData['file_size'] ? Number(jsonData['file_size']) : null,
+    viewCount: jsonData['view_count'] ? Number(jsonData['view_count']) : null,
+    systemFileName: jsonData['system_file_name'],
+    thurgoodJobId: jsonData['thurgood_job_id'],
+    createdBy: jsonData['create_user'],
+    createdAt: new Date(jsonData['create_date']),
+    updatedBy: jsonData['modify_user'],
+    updatedAt: new Date(jsonData['modify_date']),
+  };
+}
+
+let submissionDataList: any[] = [];
+async function importSubmissionData(submissionData) {
+  submissionDataList.push(submissionData);
+  if (submissionDataList.length >= batchSize) {
+    await doImportSubmissionData();
+    submissionDataList = [];  
+  }
+}
+
+async function doImportSubmissionData() {
+  if (submissionDataList.length === 0) {
+    return;
+  }
+  try {
+    await prisma.submission.createMany({
+      data: submissionDataList
+    });
+  } catch {
+    for (const s of submissionDataList) {
+      try {
+        await prisma.submission.create({ data: s });
+      } catch (err) {
+        console.error(`Failed to import submission ${s.legacySubmissionId}`);
+        submissionIdMap.delete(s.legacySubmissionId);
+      }
     }
   }
 }
@@ -410,7 +562,7 @@ async function initSubmissionMap() {
   const submissionFiles: string[] = [];
   const uploadFiles: string[] = [];
   const resourceFiles: string[] = [];
-  fs.readdirSync(DATA_DIR).filter((f) => {
+  fs.readdirSync(DATA_DIR).forEach((f) => {
     if (submissionRegex.test(f)) {
       submissionFiles.push(f);
     }
@@ -421,58 +573,100 @@ async function initSubmissionMap() {
       resourceFiles.push(f);
     }
   });
-  // read submission files. Get {upload_id -> submission} map.
-  const uploadSubmissionMap: Record<string, any> = {};
-  let submissionCount = 0;
-  for (const f of submissionFiles) {
-    const filePath = path.join(DATA_DIR, f);
-    console.log(`Reading submission data from ${f}`);
-    const jsonData = readJson(filePath)['submission'];
-    for (const d of jsonData) {
-      if (d['submission_status_id'] === '1' && d['upload_id']) {
-        submissionCount += 1;
-        // find submission has score and most recent
-        const item = {
-          score: d['screening_score'] || d['initial_score'] || d['final_score'],
-          created: d['create_date'],
-          submissionId: d['submission_id'],
-        };
-        if (uploadSubmissionMap[d['upload_id']]) {
-          // existing submission info
-          const existing = uploadSubmissionMap[d['upload_id']];
-          if (!existing.score || item.created > existing.created) {
-            uploadSubmissionMap[d['upload_id']] = item;
-          }
-        } else {
-          uploadSubmissionMap[d['upload_id']] = item;
-        }
-      }
-    }
-  }
-  console.log(`Submission total count: ${submissionCount}`);
-  // read upload files. Get {resource_id -> submission_id} map.
-  let uploadCount = 0;
-  const resourceSubmissionMap: Record<string, any> = {};
+  // sort files by filename
+  uploadFiles.sort(filenameComp);
+  submissionFiles.sort(filenameComp);
+  // import upload data, get { resource_id -> upload_id } map.
+  const resourceUploadMap: Record<string, string> = {};
+  let uploadTotalCount = 0;
   for (const f of uploadFiles) {
     const filePath = path.join(DATA_DIR, f);
     console.log(`Reading upload data from ${f}`);
     const jsonData = readJson(filePath)['upload'];
+    let dataCount = 0;
     for (const d of jsonData) {
+      dataCount += 1;
+      const uploadData = convertUpload(d);
+      // import upload data if any
+      if (!uploadIdMap.has(uploadData.legacyId)) {
+        uploadIdMap.set(uploadData.legacyId, uploadData.id);
+        await importUploadData(uploadData);
+      }
+      // collect data to resourceUploadMap
       if (
-        d['upload_status_id'] === '1' &&
-        d['upload_type_id'] === '1' &&
-        d['resource_id']
+        uploadData.type === UploadType.SUBMISSION &&
+        uploadData.status === UploadStatus.ACTIVE &&
+        uploadData.resourceId != null
       ) {
-        // get submission info
-        uploadCount += 1;
-        if (uploadSubmissionMap[d['upload_id']]) {
-          resourceSubmissionMap[d['resource_id']] =
-            uploadSubmissionMap[d['upload_id']];
-        }
+        resourceUploadMap[uploadData.resourceId] = uploadData.legacyId;
+      }
+      if (dataCount % logSize === 0) {
+        console.log(`Imported upload count: ${dataCount}`);
       }
     }
+    uploadTotalCount += dataCount;
   }
-  console.log(`Upload total count: ${uploadCount}`);
+  // import remaining upload data
+  await doImportUploadData();
+  console.log(`Upload data import complete. Total count: ${uploadTotalCount}`);
+
+  // import submission data, get {upload_id -> submission} map
+  const uploadSubmissionMap: Record<string, any> = {};
+  let submissionTotalCount = 0;
+  for (const f of submissionFiles) {
+    const filePath = path.join(DATA_DIR, f);
+    console.log(`Reading submission data from ${f}`);
+    const jsonData = readJson(filePath)['submission'];
+    let dataCount = 0;
+    for (const d of jsonData) {
+      dataCount += 1;
+      const dbData = convertSubmission(d);
+      if (!submissionIdMap.has(dbData.legacySubmissionId)) {
+        submissionIdMap.set(dbData.legacySubmissionId, dbData.id);
+        await importSubmissionData(dbData);
+      }
+      // collect data to uploadSubmissionMap
+      if (dbData.status === SubmissionStatus.ACTIVE &&
+        dbData.legacyUploadId != null
+      ) {
+        const item = {
+          score: dbData.screeningScore || dbData.initialScore || dbData.finalScore,
+          created: dbData.createdAt,
+          submissionId: dbData.legacySubmissionId,
+        };
+        // pick the latest valid submission for each upload
+        if (uploadSubmissionMap[dbData.legacyUploadId]) {
+          const existing = uploadSubmissionMap[dbData.legacyUploadId];
+          if (!existing.score || 
+            item.created.getTime() > existing.created.getTime()
+          ) {
+            uploadSubmissionMap[dbData.legacyUploadId] = item;
+          }
+        } else {
+          uploadSubmissionMap[dbData.legacyUploadId] = item;
+        }
+      }
+      if (dataCount % logSize === 0) {
+        console.log(`Imported submission count: ${dataCount}`);
+      }
+    }
+    submissionTotalCount += dataCount;
+  }
+  // import remaining submission data
+  await doImportSubmissionData();
+  console.log(`Submission total count: ${submissionTotalCount}`);
+
+  // build {resource_id -> submission} map
+  const resourceSubmissionMap = Object.entries(resourceUploadMap).reduce(
+    (acc, [resourceId, uploadId]) => {
+      const submission = uploadSubmissionMap[uploadId];
+      if (submission) {
+        acc[resourceId] = submission;
+      }
+      return acc;
+    }, {} as Record<string, any>
+  );
+  
   // read resource files
   const challengeSubmissionMap: Record<string, Record<string, any>> = {};
   let resourceCount = 0;
@@ -515,7 +709,7 @@ async function initSubmissionMap() {
   Object.keys(submissionMap).forEach((c) => {
     totalSubmissions += Object.keys(submissionMap[c]).length;
   });
-  console.log(`Found total submissions: ${totalSubmissions}`);
+  console.log(`Found total project result submissions: ${totalSubmissions}`);
 }
 
 // Process a single type: find matching files, transform them one by one, and then insert in batches.
@@ -524,11 +718,7 @@ async function processType(type: string, subtype?: string) {
   const files = fs
     .readdirSync(DATA_DIR)
     .filter((file) => regex.test(file))
-    .sort((a, b) => {
-      const numA = parseInt(a.match(/_(\d+)\.json$/)?.[1] || '0', 10);
-      const numB = parseInt(b.match(/_(\d+)\.json$/)?.[1] || '0', 10);
-      return numA - numB;
-    });
+    .sort(filenameComp);
   if (files.length === 0) {
     console.log(`[${type}] No files found.`);
     return;
@@ -843,15 +1033,16 @@ async function processType(type: string, subtype?: string) {
               const id = nanoid(14);
               reviewIdMap.set(review.review_id, id);
               return {
-                id: id,
+                id,
                 legacyId: review.review_id,
                 resourceId: review.resource_id,
                 phaseId: review.project_phase_id,
-                submissionId: review.submission_id || '',
+                submissionId: submissionIdMap.get(review.submission_id) || null,
+                legacySubmissionId: review.submission_id,
                 scorecardId: scorecardIdMap.get(review.scorecard_id),
                 committed: review.committed === '1',
-                finalScore: parseFloat(review.score || '0.0'),
-                initialScore: parseFloat(review.initial_score || '0.0'),
+                finalScore: review.score ? parseFloat(review.score) : null,
+                initialScore: review.initial_score ? parseFloat(review.initial_score) : null,
                 createdAt: new Date(review.create_date),
                 createdBy: review.create_user,
                 updatedAt: new Date(review.modify_date),
@@ -1164,51 +1355,72 @@ async function processAllTypes() {
   }
 }
 
-async function seed() {
-  // console.log('Start seeding ...');
+function convertResourceSubmission(jsonData) {
+  return {
+    id: nanoid(14),
+    resourceId: jsonData['resource_id'],
+    legacySubmissionId: jsonData['submission_id'],
+    submissionId: submissionIdMap[jsonData['submission_id']] || null,
+    createdAt: new Date(jsonData['create_date']),
+    createdBy: jsonData['create_user'],
+    updatedAt: new Date(jsonData['modify_date']),
+    updatedBy: jsonData['modify_user']
+  };
+}
 
-  // delete existing data
-  await prisma.reviewSummation.deleteMany({});
-  await prisma.review.deleteMany({});
-  await prisma.submission.deleteMany({});
-  await prisma.scorecard.deleteMany({});
-  await prisma.reviewType.deleteMany({});
-
-  await prisma.reviewType.createMany({
-    data: reviewTypeData,
-  });
-  console.log('Created reviewType data successfully');
-
-  const scorecardIns = await prisma.scorecard.create({
-    data: scorecardData,
-  });
-  console.log(`Created scorecard with id: ${scorecardIns.id}`);
-
-  const submissionIns = await prisma.submission.createManyAndReturn({
-    data: submissionData,
-  });
-  console.log('Created submission data successfully');
-
-  for (const rd of reviewData) {
-    const review = await prisma.review.create({
-      data: {
-        ...rd,
-        submissionId: submissionIns[0].id,
-        scorecardId: scorecardIns.id,
-      },
-    });
-    console.log(`Created review with id: ${review.id}`);
+let resourceSubmissions: any[] = [];
+async function handleResourceSubmission(data) {
+  resourceSubmissions.push(data);
+  if (resourceSubmissions.length > batchSize) {
+    await doImportResourceSubmission();
+    resourceSubmissions = [];
   }
+}
 
-  for (const rsd of reviewSummationData) {
-    const reviewSummation = await prisma.reviewSummation.create({
-      data: {
-        ...rsd,
-        submissionId: submissionIns[0].id,
-      },
+async function doImportResourceSubmission() {
+  try {
+    await prisma.resourceSubmission.createMany({
+      data: resourceSubmissions
     });
-    console.log(`Created review summationData with id: ${reviewSummation.id}`);
+  } catch {
+    for (const rs of resourceSubmissions) {
+      try {
+        await prisma.resourceSubmission.create({
+          data: rs
+        });
+      } catch {
+        console.error(`Failed to import resource_submission ${rs.resourceId}_${rs.legacySubmissionId}`);
+      }
+    }
   }
+}
+
+async function migrateResourceSubmissions() {
+  const filenameRegex = new RegExp(`^resource_submission_\\d+\\.json`);
+  const filenames = fs.readdirSync(DATA_DIR).filter(f => filenameRegex.test(f));
+  filenames.sort(filenameComp);
+  // start importing data
+  let totalCount = 0;
+  for (const f of filenames) {
+    const filePath = path.join(DATA_DIR, f);
+    console.log(`Reading resource_submission data from ${f}`);
+    const jsonData = readJson(filePath)['resource_submission'];
+    let dataCount = 0;
+    for (const d of jsonData) {
+      dataCount += 1;
+      const data = convertResourceSubmission(d);
+      const key = `${data.resourceId}:${data.legacySubmissionId}`;
+      if (!resourceSubmissionSet.has(key)) {
+        resourceSubmissionSet.add(key);
+        await handleResourceSubmission(data);
+      }
+      if (dataCount % logSize === 0) {
+        console.log(`Imported resource_submission count: ${dataCount}`);
+      }
+    }
+    totalCount += dataCount;
+  }
+  console.log(`resource_submission total count: ${totalCount}`);
 }
 
 async function migrate() {
@@ -1216,23 +1428,29 @@ async function migrate() {
   processLookupFiles();
   console.log('Lookup import completed.');
 
-  // init resource-submission data
-  console.log('Starting resource/submission import...');
+  // import upload and submision data, init {challengeId -> submission} map
+  console.log('Starting submission import...');
   await initSubmissionMap();
-  console.log('Resource/Submission import completed.');
-
-  console.log('Starting data import...');
+  console.log('Submission import completed.');
+  
+  console.log('Starting review import...');
   await processAllTypes();
-  console.log('Data import completed.');
+  console.log('Review data import completed.');
+  
+  // import Elastic Search data
+  console.log('Starting Elastic Search data migration...');
+  await migrateElasticSearch();
+  console.log('Elastic Search data imported.');
 
-  // init submission data
-  console.log('Start seeding ...');
-  await seed();
-  console.log('Seeding finished.');
+  // import resource_submission data
+  console.log('Starting importing resource-submissions...');
+  await migrateResourceSubmissions();
+  console.log('Resource-submissions import completed.');
 }
 
 migrate()
   .then(async () => {
+    console.log('---------------- ALL DONE ----------------');
     await prisma.$disconnect();
   })
   .catch(async (e) => {
@@ -1276,6 +1494,8 @@ migrate()
         key: 'reviewItemCommentAppealResponseIdMap',
         value: reviewItemCommentAppealResponseIdMap,
       },
+      { key: 'uploadIdMap', value: uploadIdMap, }, 
+      { key: 'submissionIdMap', value: submissionIdMap },
     ].forEach((f) => {
       if (!fs.existsSync('.tmp')) {
         fs.mkdirSync('.tmp');
@@ -1285,4 +1505,6 @@ migrate()
         JSON.stringify(Object.fromEntries(f.value)),
       );
     });
+    // write resourceSubmissionSet to file
+    fs.writeFileSync(rsSetFile, JSON.stringify([...resourceSubmissionSet]));
   });

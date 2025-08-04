@@ -8,13 +8,12 @@ import {
   Body,
   Param,
   Query,
-  NotFoundException,
-  InternalServerErrorException,
   UseInterceptors,
   UploadedFile,
   StreamableFile,
   HttpCode,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -45,11 +44,11 @@ import {
   ArtifactsCreateResponseDto,
   ArtifactsListResponseDto,
 } from 'src/dto/artifacts.dto';
-import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
-import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { SubmissionService } from './submission.service';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('Submissions')
 @ApiBearerAuth()
@@ -58,8 +57,7 @@ export class SubmissionController {
   private readonly logger: LoggerService;
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly prismaErrorService: PrismaErrorService,
+    private readonly service: SubmissionService,
   ) {
     this.logger = LoggerService.forRoot('SubmissionController');
   }
@@ -84,27 +82,14 @@ export class SubmissionController {
     type: SubmissionResponseDto,
   })
   async createSubmission(
+    @Req() req: Request,
     @Body() body: SubmissionRequestDto,
   ): Promise<SubmissionResponseDto> {
     this.logger.log(
       `Creating submission with request boy: ${JSON.stringify(body)}`,
     );
-    try {
-      const data = await this.prisma.submission.create({
-        data: body,
-      });
-      this.logger.log(`Submission created with ID: ${data.id}`);
-      return data as SubmissionResponseDto;
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        'creating submission',
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-      });
-    }
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.createSubmission(authUser, body);
   }
 
   @Patch('/:submissionId')
@@ -126,10 +111,12 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
   async patchSubmission(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
     @Body() body: SubmissionUpdateRequestDto,
   ): Promise<SubmissionResponseDto> {
-    return this._updateSubmission(submissionId, body);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.updateSubmission(authUser, submissionId, body);
   }
 
   @Put('/:submissionId')
@@ -151,34 +138,12 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
   async updateSubmission(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
     @Body() body: SubmissionPutRequestDto,
   ): Promise<SubmissionResponseDto> {
-    return this._updateSubmission(submissionId, body);
-  }
-
-  /**
-   * The inner update method for entity
-   */
-  async _updateSubmission(
-    submissionId: string,
-    body: SubmissionUpdateRequestDto,
-  ): Promise<SubmissionResponseDto> {
-    this.logger.log(`Updating submission with ID: ${submissionId}`);
-    try {
-      const data = await this.prisma.submission.update({
-        where: { id: submissionId },
-        data: body,
-      });
-      this.logger.log(`Submission updated successfully: ${submissionId}`);
-      return data as SubmissionResponseDto;
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        submissionId,
-        `updating submission ${submissionId}`,
-      );
-    }
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.updateSubmission(authUser, submissionId, body);
   }
 
   @Get()
@@ -207,83 +172,7 @@ export class SubmissionController {
     this.logger.log(
       `Getting submissions with filters - ${JSON.stringify(queryDto)}`,
     );
-
-    const { page = 1, perPage = 10 } = paginationDto || {};
-    const skip = (page - 1) * perPage;
-    let orderBy;
-
-    if (sortDto && sortDto.orderBy && sortDto.sortBy) {
-      orderBy = {
-        [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
-      };
-    }
-
-    try {
-      // Build the where clause for submissions based on available filter parameters
-      const submissionWhereClause: any = {};
-      if (queryDto.type) {
-        submissionWhereClause.type = queryDto.type;
-      }
-      if (queryDto.url) {
-        submissionWhereClause.url = queryDto.url;
-      }
-      if (queryDto.challengeId) {
-        submissionWhereClause.challengeId = queryDto.challengeId;
-      }
-      if (queryDto.legacySubmissionId) {
-        submissionWhereClause.legacySubmissionId = queryDto.legacySubmissionId;
-      }
-      if (queryDto.legacyUploadId) {
-        submissionWhereClause.legacyUploadId = queryDto.legacyUploadId;
-      }
-      if (queryDto.submissionPhaseId) {
-        submissionWhereClause.submissionPhaseId = queryDto.submissionPhaseId;
-      }
-
-      // find entities by filters
-      const submissions = await this.prisma.submission.findMany({
-        where: {
-          ...submissionWhereClause,
-        },
-        include: {
-          review: {},
-          reviewSummation: {},
-        },
-        skip,
-        take: perPage,
-        orderBy,
-      });
-
-      // Count total entities matching the filter for pagination metadata
-      const totalCount = await this.prisma.submission.count({
-        where: {
-          ...submissionWhereClause,
-        },
-      });
-
-      this.logger.log(
-        `Found ${submissions.length} submissions (page ${page} of ${Math.ceil(totalCount / perPage)})`,
-      );
-
-      return {
-        data: submissions as SubmissionResponseDto[],
-        meta: {
-          page,
-          perPage,
-          totalCount,
-          totalPages: Math.ceil(totalCount / perPage),
-        },
-      };
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        'fetching submissions',
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-      });
-    }
+    return this.service.listSubmission(queryDto, paginationDto, sortDto);
   }
 
   @Get('/:submissionId')
@@ -313,24 +202,7 @@ export class SubmissionController {
     @Param('submissionId') submissionId: string,
   ): Promise<SubmissionResponseDto> {
     this.logger.log(`Getting submission with ID: ${submissionId}`);
-    try {
-      const data = await this.prisma.submission.findUniqueOrThrow({
-        where: { id: submissionId },
-        include: {
-          review: {},
-          reviewSummation: {},
-        },
-      });
-
-      this.logger.log(`Review type found: ${submissionId}`);
-      return data as SubmissionResponseDto;
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        submissionId,
-        `fetching submission ${submissionId}`,
-      );
-    }
+    return this.service.getSubmission(submissionId);
   }
 
   @Delete('/:submissionId')
@@ -359,19 +231,8 @@ export class SubmissionController {
   @ApiResponse({ status: 404, description: 'Submission not found.' })
   async deleteSubmission(@Param('submissionId') submissionId: string) {
     this.logger.log(`Deleting review type with ID: ${submissionId}`);
-    try {
-      await this.prisma.submission.delete({
-        where: { id: submissionId },
-      });
-      this.logger.log(`Submission deleted successfully: ${submissionId}`);
-      return { message: `Submission ${submissionId} deleted successfully.` };
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        submissionId,
-        `deleting submission ${submissionId}`,
-      );
-    }
+    await this.service.deleteSubmission(submissionId);
+    return { message: `Submission ${submissionId} deleted successfully.` };
   }
 
   @Get('/:submissionId/download')
@@ -414,25 +275,6 @@ export class SubmissionController {
         disposition: 'attachment; filename="submission-123.zip"',
       }),
     );
-  }
-
-  /**
-   * Build exception by error code
-   */
-  _rethrowError(error: any, submissionId: string, message: string) {
-    const errorResponse = this.prismaErrorService.handleError(error, message);
-
-    if (errorResponse.code === 'RECORD_NOT_FOUND') {
-      return new NotFoundException({
-        message: `Review type with ID ${submissionId} was not found`,
-        code: errorResponse.code,
-      });
-    }
-
-    return new InternalServerErrorException({
-      message: errorResponse.message,
-      code: errorResponse.code,
-    });
   }
 
   @Post('/:submissionId/artifacts')

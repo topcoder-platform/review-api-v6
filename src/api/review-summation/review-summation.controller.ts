@@ -8,10 +8,9 @@ import {
   Body,
   Param,
   Query,
-  NotFoundException,
-  InternalServerErrorException,
   HttpCode,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -33,11 +32,11 @@ import {
   ReviewSummationPutRequestDto,
   ReviewSummationUpdateRequestDto,
 } from 'src/dto/reviewSummation.dto';
-import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
-import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ReviewSummationService } from './review-summation.service';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('ReviewSummations')
 @ApiBearerAuth()
@@ -46,10 +45,9 @@ export class ReviewSummationController {
   private readonly logger: LoggerService;
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly prismaErrorService: PrismaErrorService,
+    private readonly service: ReviewSummationService,
   ) {
-    this.logger = LoggerService.forRoot('ReviewSummationController');
+    this.logger = LoggerService.forRoot(ReviewSummationController.name);
   }
 
   @Post()
@@ -59,34 +57,21 @@ export class ReviewSummationController {
     summary: 'Create a new review summation',
     description: 'Roles: Admin, Copilot | Scopes: create:review_summation',
   })
-  @ApiBody({ description: 'Review type data', type: ReviewSummationRequestDto })
+  @ApiBody({ description: 'Review summation data', type: ReviewSummationRequestDto })
   @ApiResponse({
     status: 201,
-    description: 'Review type created successfully.',
+    description: 'Review summation created successfully.',
     type: ReviewSummationResponseDto,
   })
   async createReviewSummation(
+    @Req() req: Request,
     @Body() body: ReviewSummationRequestDto,
   ): Promise<ReviewSummationResponseDto> {
     this.logger.log(
       `Creating review summation with request boy: ${JSON.stringify(body)}`,
     );
-    try {
-      const data = await this.prisma.reviewSummation.create({
-        data: body,
-      });
-      this.logger.log(`Review type created with ID: ${data.id}`);
-      return data as ReviewSummationResponseDto;
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        'creating review summation',
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-      });
-    }
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.createSummation(authUser, body);
   }
 
   @Patch('/:reviewSummationId')
@@ -111,10 +96,12 @@ export class ReviewSummationController {
   })
   @ApiResponse({ status: 404, description: 'Review type not found.' })
   async patchReviewSummation(
+    @Req() req: Request,
     @Param('reviewSummationId') reviewSummationId: string,
     @Body() body: ReviewSummationUpdateRequestDto,
   ): Promise<ReviewSummationResponseDto> {
-    return this._updateReviewSummation(reviewSummationId, body);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.updateSummation(authUser, reviewSummationId, body);
   }
 
   @Put('/:reviewSummationId')
@@ -139,34 +126,12 @@ export class ReviewSummationController {
   })
   @ApiResponse({ status: 404, description: 'Review type not found.' })
   async updateReviewSummation(
+    @Req() req: Request,
     @Param('reviewSummationId') reviewSummationId: string,
     @Body() body: ReviewSummationPutRequestDto,
   ): Promise<ReviewSummationResponseDto> {
-    return this._updateReviewSummation(reviewSummationId, body);
-  }
-
-  /**
-   * The inner update method for entity
-   */
-  async _updateReviewSummation(
-    reviewSummationId: string,
-    body: ReviewSummationUpdateRequestDto,
-  ): Promise<ReviewSummationResponseDto> {
-    this.logger.log(`Updating review summation with ID: ${reviewSummationId}`);
-    try {
-      const data = await this.prisma.reviewSummation.update({
-        where: { id: reviewSummationId },
-        data: body,
-      });
-      this.logger.log(`Review type updated successfully: ${reviewSummationId}`);
-      return data as ReviewSummationResponseDto;
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        reviewSummationId,
-        `updating review summation ${reviewSummationId}`,
-      );
-    }
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.updateSummation(authUser, reviewSummationId, body);
   }
 
   @Get()
@@ -189,80 +154,7 @@ export class ReviewSummationController {
     this.logger.log(
       `Getting review summations with filters - ${JSON.stringify(queryDto)}`,
     );
-
-    const { page = 1, perPage = 10 } = paginationDto || {};
-    const skip = (page - 1) * perPage;
-    let orderBy;
-
-    if (sortDto && sortDto.orderBy && sortDto.sortBy) {
-      orderBy = {
-        [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
-      };
-    }
-
-    try {
-      // Build the where clause for review summations based on available filter parameters
-      const reviewSummationWhereClause: any = {};
-      if (queryDto.submissionId) {
-        reviewSummationWhereClause.submissionId = queryDto.submissionId;
-      }
-      if (queryDto.aggregateScore) {
-        reviewSummationWhereClause.aggregateScore = parseFloat(
-          queryDto.aggregateScore,
-        );
-      }
-      if (queryDto.scorecardId) {
-        reviewSummationWhereClause.scorecardId = queryDto.scorecardId;
-      }
-      if (queryDto.isPassing !== undefined) {
-        reviewSummationWhereClause.isPassing =
-          queryDto.isPassing.toLowerCase() === 'true';
-      }
-      if (queryDto.isFinal !== undefined) {
-        reviewSummationWhereClause.isFinal =
-          queryDto.isFinal.toLowerCase() === 'true';
-      }
-
-      // find entities by filters
-      const reviewSummations = await this.prisma.reviewSummation.findMany({
-        where: {
-          ...reviewSummationWhereClause,
-        },
-        skip,
-        take: perPage,
-        orderBy,
-      });
-
-      // Count total entities matching the filter for pagination metadata
-      const totalCount = await this.prisma.reviewSummation.count({
-        where: {
-          ...reviewSummationWhereClause,
-        },
-      });
-
-      this.logger.log(
-        `Found ${reviewSummations.length} review summations (page ${page} of ${Math.ceil(totalCount / perPage)})`,
-      );
-
-      return {
-        data: reviewSummations as ReviewSummationResponseDto[],
-        meta: {
-          page,
-          perPage,
-          totalCount,
-          totalPages: Math.ceil(totalCount / perPage),
-        },
-      };
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        'fetching review summations',
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-      });
-    }
+    return this.service.searchSummation(queryDto, paginationDto, sortDto);
   }
 
   @Get('/:reviewSummationId')
@@ -286,20 +178,7 @@ export class ReviewSummationController {
     @Param('reviewSummationId') reviewSummationId: string,
   ): Promise<ReviewSummationResponseDto> {
     this.logger.log(`Getting review summation with ID: ${reviewSummationId}`);
-    try {
-      const data = await this.prisma.reviewSummation.findUniqueOrThrow({
-        where: { id: reviewSummationId },
-      });
-
-      this.logger.log(`Review summation found: ${reviewSummationId}`);
-      return data as ReviewSummationResponseDto;
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        reviewSummationId,
-        `fetching review summation ${reviewSummationId}`,
-      );
-    }
+    return this.service.getSummation(reviewSummationId);
   }
 
   @Delete('/:reviewSummationId')
@@ -324,39 +203,9 @@ export class ReviewSummationController {
     @Param('reviewSummationId') reviewSummationId: string,
   ) {
     this.logger.log(`Deleting review summation with ID: ${reviewSummationId}`);
-    try {
-      await this.prisma.reviewSummation.delete({
-        where: { id: reviewSummationId },
-      });
-      this.logger.log(`Review type deleted successfully: ${reviewSummationId}`);
-      return {
-        message: `Review type ${reviewSummationId} deleted successfully.`,
-      };
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        reviewSummationId,
-        `deleting review summation ${reviewSummationId}`,
-      );
-    }
-  }
-
-  /**
-   * Build exception by error code
-   */
-  _rethrowError(error: any, reviewSummationId: string, message: string) {
-    const errorResponse = this.prismaErrorService.handleError(error, message);
-
-    if (errorResponse.code === 'RECORD_NOT_FOUND') {
-      return new NotFoundException({
-        message: `Review type with ID ${reviewSummationId} was not found`,
-        code: errorResponse.code,
-      });
-    }
-
-    return new InternalServerErrorException({
-      message: errorResponse.message,
-      code: errorResponse.code,
-    });
+    await this.service.deleteSummation(reviewSummationId);
+    return {
+      message: `Review type ${reviewSummationId} deleted successfully.`,
+    };
   }
 }

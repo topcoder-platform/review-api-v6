@@ -4,9 +4,27 @@ import {
   IsNotEmpty,
   IsOptional,
   IsDateString,
+  IsIn,
 } from 'class-validator';
 
 import { ReviewResponseDto } from './review.dto';
+
+export enum SubmissionType {
+  CONTEST_SUBMISSION = 'CONTEST_SUBMISSION',
+  SPECIFICATION_SUBMISSION = 'SPECIFICATION_SUBMISSION',
+  CHECKPOINT_SUBMISSION = 'CHECKPOINT_SUBMISSION',
+  STUDIO_FINAL_FIX_SUBMISSION = 'STUDIO_FINAL_FIX_SUBMISSION',
+}
+
+export enum SubmissionStatus {
+  ACTIVE = 'ACTIVE',
+  FAILED_SCREENING = 'FAILED_SCREENING',
+  FAILED_REVIEW = 'FAILED_REVIEW',
+  COMPLETED_WITHOUT_WIN = 'COMPLETED_WITHOUT_WIN',
+  DELETED = 'DELETED',
+  FAILED_CHECKPOINT_SCREENING = 'FAILED_CHECKPOINT_SCREENING',
+  FAILED_CHECKPOINT_REVIEW = 'FAILED_CHECKPOINT_REVIEW',
+}
 
 export class SubmissionQueryDto {
   @ApiProperty({
@@ -74,31 +92,36 @@ export class SubmissionRequestBaseDto {
   @ApiProperty({
     description: 'The submission type',
     example: 'ContestSubmission',
+    enum: Object.values(SubmissionType)
   })
   @IsString()
   @IsNotEmpty()
+  @IsIn(Object.values(SubmissionType))
   type: string;
 
   @ApiProperty({
     description: 'The submission url',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  url: string;
+  url?: string;
 
   @ApiProperty({
     description: 'The member id',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  memberId: string;
+  memberId?: string;
 
   @ApiProperty({
     description: 'The challenge id',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  challengeId: string;
+  challengeId?: string;
 
   @ApiProperty({
     description: 'The legacy submission id',
@@ -128,47 +151,30 @@ export class SubmissionRequestBaseDto {
     description: 'The submitted date',
     example: '2024-10-01T00:00:00Z',
   })
+  @IsOptional()
   @IsDateString()
-  submittedDate: string;
+  submittedDate?: string;
 }
 
 export class SubmissionRequestDto extends SubmissionRequestBaseDto {
-  @ApiProperty({
-    description: 'The user who created the submission',
-    example: 'user123',
-  })
-  @IsString()
-  @IsNotEmpty()
-  createdBy: string;
 
-  @ApiProperty({
-    description: 'The user who last updated the submission',
-    example: 'user456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  updatedBy: string;
 }
 
 export class SubmissionPutRequestDto extends SubmissionRequestBaseDto {
-  @ApiProperty({
-    description: 'The user who last updated the submission',
-    example: 'user456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  updatedBy: string;
+
 }
 
 export class SubmissionUpdateRequestDto {
   @ApiProperty({
     description: 'The submission type',
     example: 'ContestSubmission',
+    enum: Object.values(SubmissionType),
     required: false,
   })
   @IsOptional()
   @IsString()
   @IsNotEmpty()
+  @IsIn(Object.values(SubmissionType))
   type?: string;
 
   @ApiProperty({
@@ -232,20 +238,12 @@ export class SubmissionUpdateRequestDto {
   @IsOptional()
   @IsDateString()
   submittedDate?: string;
-
-  @ApiProperty({
-    description: 'The user who last updated the submission',
-    example: 'user456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  updatedBy: string;
 }
 
 export class SubmissionResponseDto {
   @ApiProperty({
     description: 'The ID of the submission',
-    example: 'c56a4180-65aa-42ec-a945-5fd21dec0501',
+    example: 'CbgrlhpRMzh6j-',
   })
   id: string;
 
@@ -258,37 +256,47 @@ export class SubmissionResponseDto {
   @ApiProperty({
     description: 'The submission url',
   })
-  url: string;
+  url: string | null;
 
   @ApiProperty({
     description: 'The member id',
   })
-  memberId: string;
+  memberId: string | null;
 
   @ApiProperty({
     description: 'The challenge id',
   })
-  challengeId: string;
+  challengeId: string | null;
 
   @ApiProperty({
     description: 'The legacy submission id',
   })
-  legacySubmissionId?: string;
+  legacySubmissionId?: string | null;
 
   @ApiProperty({
     description: 'The legacy upload id',
   })
-  legacyUploadId?: string;
+  legacyUploadId?: string | null;
 
   @ApiProperty({
     description: 'The submission phase id',
   })
-  submissionPhaseId?: string;
+  submissionPhaseId?: string | null;
 
   @ApiProperty({
     description: 'The submitted date',
   })
-  submittedDate: Date;
+  submittedDate: Date | null;
+
+  @ApiProperty({
+    description: 'Legacy challenge id',
+  })
+  legacyChallengeId?: number | null;
+
+  @ApiProperty({
+    description: 'prize id',
+  })
+  prizeId?: number | null;
 
   @ApiProperty({
     description: 'The creation timestamp',
@@ -306,13 +314,13 @@ export class SubmissionResponseDto {
     description: 'The last update timestamp',
     example: '2023-10-01T00:00:00Z',
   })
-  updatedAt: Date;
+  updatedAt: Date | null;
 
   @ApiProperty({
     description: 'The user who last updated the submission',
     example: 'user456',
   })
-  updatedBy: string;
+  updatedBy: string | null;
 
   review?: ReviewResponseDto[];
   reviewSummation?: any[];
