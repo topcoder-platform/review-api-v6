@@ -13,7 +13,7 @@ import {
   WebhookEventDto,
   WebhookResponseDto,
 } from '../../dto/webhook-event.dto';
-import { GitHubSignatureGuard } from '../../shared/guards/github-signature.guard';
+import { GiteaSignatureGuard } from '../../shared/guards/gitea-signature.guard';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 
 @ApiTags('Webhooks')
@@ -23,22 +23,22 @@ export class WebhookController {
 
   constructor(private readonly webhookService: WebhookService) {}
 
-  @Post('git')
+  @Post('gitea')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(GitHubSignatureGuard)
+  @UseGuards(GiteaSignatureGuard)
   @ApiOperation({
-    summary: 'GitHub Webhook Endpoint',
+    summary: 'Gitea Webhook Endpoint',
     description:
-      'Receives and processes GitHub webhook events with signature verification',
+      'Receives and processes Gitea webhook events with signature verification',
   })
   @ApiHeader({
-    name: 'X-GitHub-Delivery',
-    description: 'GitHub delivery UUID',
+    name: 'X-Gitea-Delivery',
+    description: 'Gitea delivery UUID',
     required: true,
   })
   @ApiHeader({
-    name: 'X-GitHub-Event',
-    description: 'GitHub event type',
+    name: 'X-Gitea-Event',
+    description: 'Gitea event type',
     required: true,
   })
   @ApiHeader({
@@ -63,14 +63,14 @@ export class WebhookController {
     status: 500,
     description: 'Internal Server Error - Processing failed',
   })
-  async handleGitHubWebhook(
+  async handleGiteaWebhook(
     @Body() payload: any,
-    @Headers('x-github-delivery') delivery: string,
-    @Headers('x-github-event') event: string,
+    @Headers('x-gitea-delivery') delivery: string,
+    @Headers('x-gitea-event') event: string,
   ): Promise<WebhookResponseDto> {
     try {
       this.logger.log({
-        message: 'Received GitHub webhook',
+        message: 'Received Gitea webhook',
         delivery,
         event,
         timestamp: new Date().toISOString(),
@@ -87,7 +87,7 @@ export class WebhookController {
       const result = await this.webhookService.processWebhook(webhookEvent);
 
       this.logger.log({
-        message: 'Successfully processed GitHub webhook',
+        message: 'Successfully processed Gitea webhook',
         delivery,
         event,
         success: result.success,
@@ -96,7 +96,7 @@ export class WebhookController {
       return result;
     } catch (error) {
       this.logger.error({
-        message: 'Failed to process GitHub webhook',
+        message: 'Failed to process Gitea webhook',
         delivery,
         event,
         error: error.message,

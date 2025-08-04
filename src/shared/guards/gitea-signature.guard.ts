@@ -11,20 +11,20 @@ import * as crypto from 'crypto';
 import { LoggerService } from '../modules/global/logger.service';
 
 @Injectable()
-export class GitHubSignatureGuard implements CanActivate {
-  private readonly logger = LoggerService.forRoot('GitHubSignatureGuard');
+export class GiteaSignatureGuard implements CanActivate {
+  private readonly logger = LoggerService.forRoot('GiteaSignatureGuard');
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     const signature = request.headers['x-hub-signature-256'] as string;
-    const delivery = request.headers['x-github-delivery'] as string;
-    const event = request.headers['x-github-event'] as string;
+    const delivery = request.headers['x-gitea-delivery'] as string;
+    const event = request.headers['x-gitea-event'] as string;
 
-    // Check if GITHUB_WEBHOOK_SECRET is configured
-    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+    // Check if GITEA_WEBHOOK_SECRET is configured
+    const secret = process.env.GITEA_WEBHOOK_SECRET;
     if (!secret) {
       this.logger.error(
-        'GITHUB_WEBHOOK_SECRET environment variable is not configured',
+        'GITEA_WEBHOOK_SECRET environment variable is not configured',
       );
       throw new InternalServerErrorException('Webhook secret not configured');
     }
@@ -36,12 +36,12 @@ export class GitHubSignatureGuard implements CanActivate {
     }
 
     if (!delivery) {
-      this.logger.error('Missing X-GitHub-Delivery header');
+      this.logger.error('Missing X-Gitea-Delivery header');
       throw new BadRequestException('Missing delivery header');
     }
 
     if (!event) {
-      this.logger.error('Missing X-GitHub-Event header');
+      this.logger.error('Missing X-Gitea-Event header');
       throw new BadRequestException('Missing event header');
     }
 

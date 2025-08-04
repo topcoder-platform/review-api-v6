@@ -1,14 +1,14 @@
-# GitHub Webhook Integration Setup and Testing Guide
+# Gitea Webhook Integration Setup and Testing Guide
 
 ## Overview
 
-The Topcoder Review API includes a secure GitHub webhook integration that receives webhook events from GitHub repositories, validates them using HMAC-SHA256 signature verification, and stores them in the database for audit and future processing.
+The Topcoder Review API includes a secure Gitea webhook integration that receives webhook events from Gitea repositories, validates them using HMAC-SHA256 signature verification, and stores them in the database for audit and future processing.
 
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
 2. [Environment Setup](#environment-setup)
-3. [GitHub Repository Configuration](#github-repository-configuration)
+3. [Gitea Repository Configuration](#Gitea-repository-configuration)
 4. [Local Development Setup](#local-development-setup)
 5. [Testing the Integration](#testing-the-integration)
 6. [API Endpoint Reference](#api-endpoint-reference)
@@ -23,7 +23,7 @@ For immediate setup, follow these steps:
 
 1. Generate a secure webhook secret
 2. Configure environment variables
-3. Set up GitHub webhook in repository settings
+3. Set up Gitea webhook in repository settings
 4. Test with a sample event
 
 ## Environment Setup
@@ -34,22 +34,24 @@ Add the following environment variable to your application configuration:
 
 ```bash
 # .env file
-GITHUB_WEBHOOK_SECRET=your_generated_secret_here
+GITEA_WEBHOOK_SECRET=your_generated_secret_here
 ```
 
 ### Generate Webhook Secret
 
 **Using OpenSSL:**
+
 ```bash
 openssl rand -hex 32
 ```
 
 **Example Output:**
+
 ```
 a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
 ```
 
-⚠️ **Important:** Store this secret securely and use the same value in both your application environment and GitHub webhook configuration.
+⚠️ **Important:** Store this secret securely and use the same value in both your application environment and Gitea webhook configuration.
 
 ### Database Setup
 
@@ -59,11 +61,11 @@ The webhook integration requires the `gitWebhookLog` table. If not already creat
 npx prisma migrate dev
 ```
 
-## GitHub Repository Configuration
+## Gitea Repository Configuration
 
 ### Step 1: Access Repository Settings
 
-1. Navigate to your GitHub repository
+1. Navigate to your Gitea repository
 2. Click on the **Settings** tab (requires admin permissions)
 3. In the left sidebar, click **Webhooks**
 4. Click **Add webhook**
@@ -73,25 +75,30 @@ npx prisma migrate dev
 #### Payload URL
 
 **Production/Staging Environment:**
+
 ```
-https://your-api-domain.com/v6/review/webhooks/git
+https://your-api-domain.com/v6/review/webhooks/gitea
 ```
 
 **Development Environment:**
+
 ```
-https://your-dev-domain.com/webhooks/git
+https://your-dev-domain.com/webhooks/gitea
 ```
 
 Note: The `/v6/review` prefix is only added in production when `NODE_ENV=production`.
 
 #### Content Type
+
 - Select `application/json`
 
 #### Secret
+
 - Enter the webhook secret you generated earlier
-- This must exactly match your `GITHUB_WEBHOOK_SECRET` environment variable
+- This must exactly match your `GITEA_WEBHOOK_SECRET` environment variable
 
 #### SSL Verification
+
 - Keep **Enable SSL verification** checked (recommended for production)
 - For development with proper HTTPS setup, this should remain enabled
 
@@ -100,10 +107,12 @@ Note: The `/v6/review` prefix is only added in production when `NODE_ENV=product
 Choose one of the following options:
 
 **Option A: Send Everything (Recommended for Testing)**
-- Select "Send me everything" to receive all GitHub event types
+
+- Select "Send me everything" to receive all Gitea event types
 
 **Option B: Select Individual Events**
 Common events for development workflows:
+
 - **Pushes** - Code pushes to repository
 - **Pull requests** - PR creation, updates, merges
 - **Issues** - Issue creation, updates, comments
@@ -116,18 +125,20 @@ Common events for development workflows:
 
 1. Ensure **Active** checkbox is checked
 2. Click **Add webhook**
-3. GitHub will automatically send a `ping` event to test the webhook
+3. Gitea will automatically send a `ping` event to test the webhook
 
 ## Local Development Setup
 
-Since GitHub webhooks require a publicly accessible URL, local development requires exposing your local server to the internet.
+Since Gitea webhooks require a publicly accessible URL, local development requires exposing your local server to the internet.
 
 **Install ngrok:**
+
 ```bash
 npm install -g ngrok
 ```
 
 **Setup process:**
+
 ```bash
 # 1. Start your local API server
 pnpm run start:dev
@@ -138,16 +149,17 @@ ngrok http 3000
 # 3. Copy the HTTPS URL from ngrok output
 # Example: https://abc123.ngrok.io
 
-# 4. Use this URL in GitHub webhook settings
-# https://abc123.ngrok.io/webhooks/git
+# 4. Use this URL in Gitea webhook settings
+# https://abc123.ngrok.io/webhooks/gitea
 ```
+
 ## Testing the Integration
 
 ### Manual Testing
 
 #### 1. Verify Initial Setup
 
-After creating the webhook, GitHub automatically sends a `ping` event:
+After creating the webhook, Gitea automatically sends a `ping` event:
 
 1. Go to your repository's webhook settings
 2. Click on your webhook
@@ -157,6 +169,7 @@ After creating the webhook, GitHub automatically sends a `ping` event:
 #### 2. Trigger Test Events
 
 **Create a Push Event:**
+
 ```bash
 # Make a small change
 echo "webhook test" >> test-webhook.txt
@@ -166,16 +179,18 @@ git push origin main
 ```
 
 **Create an Issue:**
-1. Go to your repository on GitHub
+
+1. Go to your repository on Gitea
 2. Click **Issues** tab
 3. Click **New issue**
 4. Create a test issue
 
 **Create a Pull Request:**
+
 1. Create a new branch: `git checkout -b test-webhook`
 2. Make changes and commit
 3. Push branch: `git push origin test-webhook`
-4. Open pull request on GitHub
+4. Open pull request on Gitea
 
 ### Testing with curl
 
@@ -185,7 +200,7 @@ You can test the webhook endpoint directly using curl with proper signature gene
 #!/bin/bash
 
 # Configuration
-WEBHOOK_URL="http://localhost:3000/webhooks/git"  # Adjust for your environment
+WEBHOOK_URL="http://localhost:3000/webhooks/gitea"  # Adjust for your environment
 WEBHOOK_SECRET="your_webhook_secret_here"
 PAYLOAD='{"test": "data", "repository": {"name": "test-repo"}}'
 DELIVERY_ID="test-delivery-$(date +%s)"
@@ -197,8 +212,8 @@ SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SE
 # Send test webhook
 curl -X POST "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
-  -H "X-GitHub-Event: $EVENT_TYPE" \
-  -H "X-GitHub-Delivery: $DELIVERY_ID" \
+  -H "X-Gitea-Event: $EVENT_TYPE" \
+  -H "X-Gitea-Delivery: $DELIVERY_ID" \
   -H "X-Hub-Signature-256: $SIGNATURE" \
   -d "$PAYLOAD"
 ```
@@ -207,24 +222,28 @@ curl -X POST "$WEBHOOK_URL" \
 
 ### Webhook Endpoint
 
-**URL:** `POST /webhooks/git` (development) or `POST /v6/review/webhooks/git` (production)
+**URL:** `POST /webhooks/gitea` (development) or `POST /v6/review/webhooks/gitea` (production)
 
 **Required Headers:**
+
 - `Content-Type: application/json`
-- `X-GitHub-Event: {event_type}` - GitHub event type (push, pull_request, etc.)
-- `X-GitHub-Delivery: {delivery_id}` - Unique delivery identifier from GitHub
+- `X-Gitea-Event: {event_type}` - Gitea event type (push, pull_request, etc.)
+- `X-Gitea-Delivery: {delivery_id}` - Unique delivery identifier from Gitea
 - `X-Hub-Signature-256: sha256={signature}` - HMAC-SHA256 signature for verification
 
 **Request Body:**
-- GitHub webhook payload (varies by event type)
+
+- Gitea webhook payload (varies by event type)
 
 **Response Codes:**
+
 - `200 OK` - Webhook processed successfully
 - `400 Bad Request` - Missing required headers or invalid payload
 - `403 Forbidden` - Invalid signature verification
 - `500 Internal Server Error` - Processing error or configuration issue
 
 **Success Response:**
+
 ```json
 {
   "success": true,
@@ -233,13 +252,14 @@ curl -X POST "$WEBHOOK_URL" \
 ```
 
 **Error Response:**
+
 ```json
 {
   "statusCode": 403,
   "message": "Invalid signature",
   "error": "Forbidden",
   "timestamp": "2024-01-01T00:00:00.000Z",
-  "path": "/webhooks/git"
+  "path": "/webhooks/gitea"
 }
 ```
 
@@ -254,7 +274,7 @@ CREATE TABLE "gitWebhookLog" (
   "event" TEXT NOT NULL,
   "eventPayload" JSONB NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  
+
   CONSTRAINT "gitWebhookLog_pkey" PRIMARY KEY ("id")
 );
 
@@ -267,30 +287,33 @@ CREATE INDEX "gitWebhookLog_createdAt_idx" ON "gitWebhookLog"("createdAt");
 ### Query Examples
 
 **View recent webhook events:**
+
 ```sql
-SELECT 
+SELECT
   id,
   "eventId",
   event,
   "createdAt"
-FROM "gitWebhookLog" 
-ORDER BY "createdAt" DESC 
+FROM "gitWebhookLog"
+ORDER BY "createdAt" DESC
 LIMIT 10;
 ```
 
 **Filter by event type:**
+
 ```sql
-SELECT * FROM "gitWebhookLog" 
-WHERE event = 'push' 
+SELECT * FROM "gitWebhookLog"
+WHERE event = 'push'
 ORDER BY "createdAt" DESC;
 ```
 
 **View specific webhook payload:**
+
 ```sql
-SELECT 
+SELECT
   event,
   "eventPayload"
-FROM "gitWebhookLog" 
+FROM "gitWebhookLog"
 WHERE "eventId" = 'your-delivery-id';
 ```
 
@@ -298,12 +321,12 @@ WHERE "eventId" = 'your-delivery-id';
 
 ### Signature Verification
 
-The webhook implementation uses GitHub's recommended security practices:
+The webhook implementation uses Gitea's recommended security practices:
 
 1. **HMAC-SHA256 Signature:** All incoming webhooks are verified using HMAC-SHA256
 2. **Timing-Safe Comparison:** Uses `crypto.timingSafeEqual()` to prevent timing attacks
 3. **Secret Protection:** Webhook secrets are stored as environment variables
-4. **Header Validation:** Validates all required GitHub headers
+4. **Header Validation:** Validates all required Gitea headers
 
 ### Best Practices
 
@@ -315,7 +338,7 @@ The webhook implementation uses GitHub's recommended security practices:
 
 ### Environment Security
 
-- Store `GITHUB_WEBHOOK_SECRET` securely using your deployment platform's secret management
+- Store `GITEA_WEBHOOK_SECRET` securely using your deployment platform's secret management
 - Never commit secrets to version control
 - Use different secrets for different environments
 - Implement proper secret rotation procedures
@@ -326,25 +349,11 @@ Key log messages to monitor:
 
 ```
 # Successful webhook processing
-[WebhookController] Successfully processed GitHub webhook
+[WebhookController] Successfully processed Gitea webhook
 
 # Signature validation failures
-[GitHubSignatureGuard] Invalid webhook signature for delivery
+[GiteaSignatureGuard] Invalid webhook signature for delivery
 
 # Configuration errors
-[GitHubSignatureGuard] GITHUB_WEBHOOK_SECRET environment variable is not configured
-```
-
-Example
-
-```
-[2025-08-02T01:06:48.312Z] [LOG] [Bootstrap] Server started on port 3000
-[2025-08-02T01:07:15.700Z] [LOG] [HttpRequest] {"type":"request","method":"POST","url":"/webhooks/git","ip":"::1","userAgent":"GitHub-Hookshot/4f8bd7a"}
-[2025-08-02T01:07:15.739Z] [LOG] [GitHubSignatureGuard] Valid webhook signature verified for delivery 0722d0bc-6f3d-11f0-8a2d-6cc18966c098, event push
-[2025-08-02T01:07:15.740Z] [LOG] [WebhookController] {"message":"Received GitHub webhook","delivery":"0722d0bc-6f3d-11f0-8a2d-6cc18966c098","event":"push","timestamp":"2025-08-02T01:07:15.740Z"}
-[2025-08-02T01:07:15.740Z] [LOG] [WebhookService] {"message":"Processing GitHub webhook event","eventId":"0722d0bc-6f3d-11f0-8a2d-6cc18966c098","event":"push","timestamp":"2025-08-02T01:07:15.740Z"}
-[2025-08-02T01:07:15.804Z] [LOG] [WebhookService] {"message":"Successfully stored webhook event","eventId":"0722d0bc-6f3d-11f0-8a2d-6cc18966c098","event":"push","storedId":"9aHvEgDYPCYYnU","createdAt":"2025-08-02T01:07:15.747Z"}
-[2025-08-02T01:07:15.804Z] [LOG] [WebhookService] {"message":"Event-specific processing placeholder","event":"push","payloadSize":7979}
-[2025-08-02T01:07:15.804Z] [LOG] [WebhookController] {"message":"Successfully processed GitHub webhook","delivery":"0722d0bc-6f3d-11f0-8a2d-6cc18966c098","event":"push","success":true}
-[2025-08-02T01:07:15.804Z] [LOG] [HttpRequest] {"type":"response","statusCode":200,"method":"POST","url":"/webhooks/git","responseTime":"104ms"}
+[GiteaSignatureGuard] Gitea_WEBHOOK_SECRET environment variable is not configured
 ```

@@ -15,7 +15,7 @@ import { ReviewHistoryController } from './review-history/reviewHistory.controll
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { WebhookController } from './webhook/webhook.controller';
 import { WebhookService } from './webhook/webhook.service';
-import { GitHubSignatureGuard } from '../shared/guards/github-signature.guard';
+import { GiteaSignatureGuard } from '../shared/guards/gitea-signature.guard';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule],
@@ -36,7 +36,7 @@ import { GitHubSignatureGuard } from '../shared/guards/github-signature.guard';
     ReviewApplicationService,
     ChallengeApiService,
     WebhookService,
-    GitHubSignatureGuard,
+    GiteaSignatureGuard,
   ],
 })
 export class ApiModule {}
