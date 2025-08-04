@@ -13,6 +13,9 @@ import { ReviewOpportunityService } from './review-opportunity/reviewOpportunity
 import { ReviewApplicationService } from './review-application/reviewApplication.service';
 import { ReviewHistoryController } from './review-history/reviewHistory.controller';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { WebhookController } from './webhook/webhook.controller';
+import { WebhookService } from './webhook/webhook.service';
+import { GiteaSignatureGuard } from '../shared/guards/gitea-signature.guard';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule],
@@ -26,11 +29,14 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
     ReviewOpportunityController,
     ReviewApplicationController,
     ReviewHistoryController,
+    WebhookController,
   ],
   providers: [
     ReviewOpportunityService,
     ReviewApplicationService,
     ChallengeApiService,
+    WebhookService,
+    GiteaSignatureGuard,
   ],
 })
 export class ApiModule {}
