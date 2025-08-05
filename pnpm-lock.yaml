@@ -62,9 +62,6 @@ importers:
       nanoid:
         specifier: ~5.1.2
         version: 5.1.2
-      querystring:
-        specifier: ^0.2.1
-        version: 0.2.1
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -7560,8 +7557,6 @@ snapshots:
   qs@6.14.0:
     dependencies:
       side-channel: 1.1.0
-
-  querystring@0.2.1: {}
 
   queue-microtask@1.2.3: {}
 

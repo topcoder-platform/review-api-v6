@@ -6,7 +6,6 @@ import { CommonConfig } from 'src/shared/config/common.config';
 import { ResourceRole } from 'src/shared/models/ResourceRole.model';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 import { JwtUser } from './jwt.service';
-import * as querystring from 'querystring';
 import { some } from 'lodash';
 import { M2MService } from './m2m.service';
 
@@ -63,7 +62,11 @@ export class ResourceApiService {
   }): Promise<ResourceInfo[]> {
     try {
       // Send request to resource api
-      const url = `${CommonConfig.apis.resourceApiUrl}resources?${querystring.stringify(query)}`;
+      const params = new URLSearchParams();
+      if (query.challengeId) params.append('challengeId', query.challengeId);
+      if (query.memberId) params.append('memberId', query.memberId);
+
+      const url = `${CommonConfig.apis.resourceApiUrl}resources?${params.toString()}`;
       const token = await this.m2mService.getM2MToken();
       const response = await firstValueFrom(
         this.httpService.get<ResourceInfo[]>(url, {
