@@ -7,4 +7,5 @@ export enum UserRole {
   Reviewer = 'reviewer',
   Submitter = 'Submitter',
   User = 'Topcoder User',
+  Talent = 'Topcoder Talent',
 }

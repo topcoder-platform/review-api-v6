@@ -1,4 +1,9 @@
-import { ApiProperty, ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
+import {
+  ApiProperty,
+  ApiPropertyOptional,
+  OmitType,
+  PartialType,
+} from '@nestjs/swagger';
 import {
   IsArray,
   IsDateString,
@@ -110,11 +115,9 @@ export class CreateReviewOpportunityDto {
   incrementalPayment: number;
 }
 
-
 export class UpdateReviewOpportunityDto extends PartialType(
-  OmitType(CreateReviewOpportunityDto, ['challengeId', 'type'])
+  OmitType(CreateReviewOpportunityDto, ['challengeId', 'type']),
 ) {}
-
 
 export class ReviewPaymentDto {
   @ApiProperty({

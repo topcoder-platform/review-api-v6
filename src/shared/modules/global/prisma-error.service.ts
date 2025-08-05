@@ -78,7 +78,9 @@ export class PrismaErrorService {
     const targetField = error.meta?.target
       ? Array.isArray(error.meta.target)
         ? error.meta.target.join(', ')
-        : String(error.meta.target) // eslint-disable-line @typescript-eslint/no-base-to-string
+        : typeof error.meta.target === 'string'
+          ? error.meta.target
+          : JSON.stringify(error.meta.target)
       : null;
 
     switch (error.code) {

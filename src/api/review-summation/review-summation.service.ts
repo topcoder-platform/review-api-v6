@@ -1,11 +1,14 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { PaginationDto } from "src/dto/pagination.dto";
-import { ReviewSummationQueryDto, ReviewSummationRequestDto, ReviewSummationResponseDto, ReviewSummationUpdateRequestDto } from "src/dto/reviewSummation.dto";
-import { SortDto } from "src/dto/sort.dto";
-import { JwtUser } from "src/shared/modules/global/jwt.service";
-import { PrismaService } from "src/shared/modules/global/prisma.service";
-
-
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { PaginationDto } from 'src/dto/pagination.dto';
+import {
+  ReviewSummationQueryDto,
+  ReviewSummationRequestDto,
+  ReviewSummationResponseDto,
+  ReviewSummationUpdateRequestDto,
+} from 'src/dto/reviewSummation.dto';
+import { SortDto } from 'src/dto/sort.dto';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { PrismaService } from 'src/shared/modules/global/prisma.service';
 
 @Injectable()
 export class ReviewSummationService {
@@ -20,7 +23,7 @@ export class ReviewSummationService {
         createdBy: String(authUser.userId) || '',
         createdAt: new Date(),
         updatedBy: String(authUser.userId) || '',
-      }
+      },
     });
     this.logger.log(`Review summation created with ID: ${data.id}`);
     return data as ReviewSummationResponseDto;
@@ -102,7 +105,7 @@ export class ReviewSummationService {
   async updateSummation(
     authUser: JwtUser,
     id: string,
-    body: ReviewSummationUpdateRequestDto
+    body: ReviewSummationUpdateRequestDto,
   ) {
     await this.checkSummation(id);
     const data = await this.prisma.reviewSummation.update({
@@ -110,8 +113,8 @@ export class ReviewSummationService {
       data: {
         ...body,
         updatedBy: String(authUser.userId) || '',
-        updatedAt: new Date()
-      }
+        updatedAt: new Date(),
+      },
     });
     this.logger.log(`Review type updated successfully: ${id}`);
     return data as ReviewSummationResponseDto;
@@ -120,13 +123,13 @@ export class ReviewSummationService {
   async deleteSummation(id: string) {
     await this.checkSummation(id);
     await this.prisma.reviewSummation.delete({
-      where: { id }
+      where: { id },
     });
   }
 
   private async checkSummation(id: string) {
     const data = await this.prisma.reviewSummation.findUnique({
-      where: { id }
+      where: { id },
     });
     if (!data || !data.id) {
       throw new NotFoundException(`Review summation not found with id ${id}`);

@@ -33,7 +33,7 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 
 @ApiTags('Scorecard')
 @ApiBearerAuth()
-@Controller('/api/scorecards')
+@Controller('/scorecards')
 export class ScorecardController {
   constructor(private readonly prisma: PrismaService) {}
 

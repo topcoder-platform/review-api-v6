@@ -47,8 +47,11 @@ export const CommonConfig = {
     busApiUrl: process.env.BUS_API_URL ?? 'http://localhost:4000/eventBus',
     challengeApiUrl:
       process.env.CHALLENGE_API_URL ?? 'http://localhost:4000/challenges/',
+    resourceApiUrl:
+      process.env.RESOURCE_API_URL ?? 'https://api.topcoder-dev.com/v6/',
     memberApiUrl: process.env.MEMBER_API_URL ?? 'http://localhost:4000/members',
-    onlineReviewUrlBase: 'https://software.topcoder.com/review/actions/ViewProjectDetails?pid='
+    onlineReviewUrlBase:
+      'https://software.topcoder.com/review/actions/ViewProjectDetails?pid=',
   },
   // configs of payment for each review type
   reviewPaymentConfig: paymentConfig,

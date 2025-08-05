@@ -101,13 +101,9 @@ export class ReviewSummationBaseRequestDto {
   reviewedDate?: string;
 }
 
-export class ReviewSummationRequestDto extends ReviewSummationBaseRequestDto {
+export class ReviewSummationRequestDto extends ReviewSummationBaseRequestDto {}
 
-}
-
-export class ReviewSummationPutRequestDto extends ReviewSummationBaseRequestDto {
-
-}
+export class ReviewSummationPutRequestDto extends ReviewSummationBaseRequestDto {}
 
 export class ReviewSummationUpdateRequestDto {
   @ApiProperty({

@@ -42,7 +42,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
-@Controller('/api/reviews')
+@Controller('/reviews')
 export class ReviewController {
   private readonly logger: LoggerService;
 
@@ -428,11 +428,11 @@ export class ReviewController {
 
       // Deduplicate reviews by ID
       const uniqueReviews = Object.values(
-        reviews.reduce((acc, review) => {
+        reviews.reduce((acc: Record<string, any>, review) => {
           if (!acc[review.id]) {
             acc[review.id] = review;
           }
-          return acc; // eslint-disable-line @typescript-eslint/no-unsafe-return
+          return acc;
         }, {}),
       );
 

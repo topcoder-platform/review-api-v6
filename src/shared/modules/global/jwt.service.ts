@@ -19,7 +19,7 @@ export interface JwtUser {
 
 export const isAdmin = (user: JwtUser): boolean => {
   return user.isMachine || (user.roles ?? []).includes(UserRole.Admin);
-}
+};
 
 // Map for testing tokens, will be removed in production
 const TOKEN_ROLE_MAP: Record<string, string[]> = {
@@ -117,7 +117,7 @@ export class JwtService implements OnModuleInit {
         throw new UnauthorizedException('Invalid token');
       }
 
-      const user: JwtUser = {isMachine: false};
+      const user: JwtUser = { isMachine: false };
 
       // Check for M2M token from Auth0
       if (decodedToken.scope) {
@@ -136,7 +136,7 @@ export class JwtService implements OnModuleInit {
             user.userId = decodedToken[key] as string;
           }
           if (key.endsWith('roles')) {
-            user.roles = decodedToken[key] as UserRole[]
+            user.roles = decodedToken[key] as UserRole[];
           }
         }
       }

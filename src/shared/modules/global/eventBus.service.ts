@@ -29,7 +29,7 @@ export class EventBusSendEmailPayload {
     challengeName: string;
   };
   from: Record<string, string> = {
-    email: 'Topcoder <noreply@topcoder.com>'
+    email: 'Topcoder <noreply@topcoder.com>',
   };
   version: string = 'v3';
   sendgrid_template_id: string;
@@ -68,9 +68,10 @@ export class EventBusService {
           },
         }),
       );
+      const responseStatus: HttpStatus = response.status as HttpStatus;
       if (
-        response.status !== HttpStatus.OK &&
-        response.status !== HttpStatus.NO_CONTENT
+        responseStatus !== HttpStatus.OK &&
+        responseStatus !== HttpStatus.NO_CONTENT
       ) {
         throw new Error(`Event bus status code: ${response.status}`);
       }

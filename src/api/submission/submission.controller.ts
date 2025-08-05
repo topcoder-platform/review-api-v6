@@ -56,9 +56,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 export class SubmissionController {
   private readonly logger: LoggerService;
 
-  constructor(
-    private readonly service: SubmissionService,
-  ) {
+  constructor(private readonly service: SubmissionService) {
     this.logger = LoggerService.forRoot('SubmissionController');
   }
 

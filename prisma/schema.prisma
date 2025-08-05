@@ -535,3 +535,14 @@ model resourceSubmission {
   submissions submission? @relation(fields: [submissionId], references: [id])
 }
 
+model gitWebhookLog {
+  id           String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  eventId      String   // X-GitHub-Delivery header
+  event        String   // X-GitHub-Event header
+  eventPayload Json     // Complete webhook payload
+  createdAt    DateTime @default(now())
+
+  @@index([eventId])
+  @@index([event])
+  @@index([createdAt])
+}

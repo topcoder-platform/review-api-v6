@@ -18,8 +18,12 @@ import { ReviewOpportunityService } from './review-opportunity/reviewOpportunity
 import { ReviewApplicationService } from './review-application/reviewApplication.service';
 import { ReviewHistoryController } from './review-history/reviewHistory.controller';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { SubmissionService } from './submission/submission.service';
 import { ReviewSummationService } from './review-summation/review-summation.service';
+import { WebhookController } from './webhook/webhook.controller';
+import { WebhookService } from './webhook/webhook.service';
+import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule, FileUploadModule],
@@ -35,12 +39,16 @@ import { ReviewSummationService } from './review-summation/review-summation.serv
     ReviewSummationController,
     ReviewOpportunityController,
     ReviewApplicationController,
-    ReviewHistoryController
+    ReviewHistoryController,
+    WebhookController,
   ],
   providers: [
     ReviewOpportunityService,
     ReviewApplicationService,
     ChallengeApiService,
+    ResourceApiService,
+    WebhookService,
+    GiteaWebhookAuthGuard,
     SubmissionService,
     ReviewSummationService,
   ],

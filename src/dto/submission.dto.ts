@@ -92,7 +92,7 @@ export class SubmissionRequestBaseDto {
   @ApiProperty({
     description: 'The submission type',
     example: 'ContestSubmission',
-    enum: Object.values(SubmissionType)
+    enum: Object.values(SubmissionType),
   })
   @IsString()
   @IsNotEmpty()
@@ -156,13 +156,9 @@ export class SubmissionRequestBaseDto {
   submittedDate?: string;
 }
 
-export class SubmissionRequestDto extends SubmissionRequestBaseDto {
+export class SubmissionRequestDto extends SubmissionRequestBaseDto {}
 
-}
-
-export class SubmissionPutRequestDto extends SubmissionRequestBaseDto {
-
-}
+export class SubmissionPutRequestDto extends SubmissionRequestBaseDto {}
 
 export class SubmissionUpdateRequestDto {
   @ApiProperty({

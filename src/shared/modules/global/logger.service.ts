@@ -51,8 +51,7 @@ export class LoggerService implements NestLoggerService {
     if (typeof message === 'object') {
       try {
         logMessage = JSON.stringify(message);
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      } catch (e) {
+      } catch {
         logMessage = String(message);
       }
     } else {

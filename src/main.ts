@@ -6,6 +6,9 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ApiModule } from './api/api.module';
 import { LoggerService } from './shared/modules/global/logger.service';
+import { Response } from 'express';
+
+const API_PREFIX = '/v6/review'; // Global prefix for all routes in production
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -16,10 +19,10 @@ async function bootstrap() {
   // Create logger instance for application bootstrap
   const logger = LoggerService.forRoot('Bootstrap');
 
-  // Global prefix for all routes in production is configured as `/v5/review`
+  // Global prefix for all routes in production
   if (process.env.NODE_ENV === 'production') {
-    app.setGlobalPrefix('/v5/review');
-    logger.log('Setting global prefix to /v5/review in production mode');
+    app.setGlobalPrefix(API_PREFIX);
+    logger.log(`Setting global prefix to ${API_PREFIX} in production mode`);
   }
 
   console.log(
@@ -58,7 +61,7 @@ async function bootstrap() {
 
     // Intercept response to log it
     const originalSend = res.send;
-    res.send = function (body) {
+    res.send = function (body: any): Response {
       const responseTime = Date.now() - startTime;
       const statusCode = res.statusCode;
 
@@ -76,8 +79,7 @@ async function bootstrap() {
         let responseBody;
         try {
           responseBody = typeof body === 'string' ? JSON.parse(body) : body;
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (error) {
+        } catch {
           responseBody = body;
         }
 
@@ -89,7 +91,7 @@ async function bootstrap() {
         });
       }
 
-      return originalSend.call(this, body); // eslint-disable-line @typescript-eslint/no-unsafe-return
+      return originalSend.call(this, body) as Response;
     };
 
     next();
@@ -148,20 +150,12 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config, {
     include: [ApiModule],
   });
-  if (process.env.NODE_ENV === 'production') {
-    SwaggerModule.setup('/v5/review/api-docs', app, document);
-  } else {
-    SwaggerModule.setup('/api-docs', app, document);
-  }
+  SwaggerModule.setup(`${API_PREFIX}/api-docs`, app, document);
   logger.log('Swagger documentation configured');
 
   // Add an event handler to log uncaught promise rejections and prevent the server from crashing
-  process.on('unhandledRejection', (reason, promise) => {
-    logger.error(
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-      `Unhandled Promise Rejection at: ${promise}`, // eslint-disable-line @typescript-eslint/no-base-to-string
-      reason as string,
-    );
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled Promise Rejection', reason as string);
   });
 
   // Add an event handler to log uncaught errors and prevent the server from crashing

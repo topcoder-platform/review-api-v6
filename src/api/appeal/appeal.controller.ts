@@ -38,7 +38,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('Appeal')
 @ApiBearerAuth()
-@Controller('/api/appeals')
+@Controller('/appeals')
 export class AppealController {
   private readonly logger: LoggerService;
 

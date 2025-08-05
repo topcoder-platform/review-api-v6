@@ -30,7 +30,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ReviewOpportunityService } from './reviewOpportunity.service';
 
 @ApiTags('Review Opportunity')
-@Controller('/api/review-opportunities')
+@Controller('/review-opportunities')
 export class ReviewOpportunityController {
   constructor(private readonly service: ReviewOpportunityService) {}
 
@@ -44,70 +44,70 @@ export class ReviewOpportunityController {
     description: 'payment min value',
     type: 'number',
     example: 0.0,
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'paymentTo',
     description: 'payment max value',
     type: 'number',
     example: 200.0,
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'startDateFrom',
     description: 'Start date min value',
     type: 'string',
     example: '2022-05-22T12:34:56',
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'startDateTo',
     description: 'Start date max value',
     type: 'string',
     example: '2022-05-22T12:34:56',
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'durationFrom',
     description: 'duration min value (seconds)',
     type: 'number',
     example: 86400,
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'durationTo',
     description: 'duration max value (seconds)',
     type: 'number',
     example: 86400,
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'numSubmissionsFrom',
     description: 'min number of submissions',
     type: 'number',
     example: 1,
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'numSubmissionsTo',
     description: 'max number of submissions',
     type: 'number',
     example: 5,
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'tracks',
     description: 'Challenge tracks',
     type: 'array',
     example: ['CODE'],
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'skills',
     description: 'Skills of challenges',
     type: 'array',
     example: ['TypeScript'],
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'sortBy',
@@ -116,7 +116,7 @@ export class ReviewOpportunityController {
     type: 'string',
     example: 'basePayment',
     default: 'startDate',
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'sortOrder',
@@ -125,7 +125,7 @@ export class ReviewOpportunityController {
     type: 'string',
     example: 'asc',
     default: 'asc',
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'limit',
@@ -133,7 +133,7 @@ export class ReviewOpportunityController {
     type: 'number',
     example: 10,
     default: 10,
-    required: false
+    required: false,
   })
   @ApiQuery({
     name: 'offset',
@@ -141,7 +141,7 @@ export class ReviewOpportunityController {
     type: 'number',
     example: 0,
     default: 0,
-    required: false
+    required: false,
   })
   @ApiResponse({
     status: 200,

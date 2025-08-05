@@ -44,9 +44,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 export class ReviewSummationController {
   private readonly logger: LoggerService;
 
-  constructor(
-    private readonly service: ReviewSummationService,
-  ) {
+  constructor(private readonly service: ReviewSummationService) {
     this.logger = LoggerService.forRoot(ReviewSummationController.name);
   }
 
@@ -57,7 +55,10 @@ export class ReviewSummationController {
     summary: 'Create a new review summation',
     description: 'Roles: Admin, Copilot | Scopes: create:review_summation',
   })
-  @ApiBody({ description: 'Review summation data', type: ReviewSummationRequestDto })
+  @ApiBody({
+    description: 'Review summation data',
+    type: ReviewSummationRequestDto,
+  })
   @ApiResponse({
     status: 201,
     description: 'Review summation created successfully.',

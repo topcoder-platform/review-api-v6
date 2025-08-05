@@ -1,20 +1,24 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { SubmissionStatus, SubmissionType } from "@prisma/client";
-import { PaginationDto } from "src/dto/pagination.dto";
-import { ReviewResponseDto } from "src/dto/review.dto";
-import { SortDto } from "src/dto/sort.dto";
-import { SubmissionQueryDto, SubmissionRequestDto, SubmissionResponseDto, SubmissionUpdateRequestDto } from "src/dto/submission.dto";
-import { JwtUser } from "src/shared/modules/global/jwt.service";
-import { PrismaService } from "src/shared/modules/global/prisma.service";
-import { Utils } from "src/shared/modules/global/utils.service";
-
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { SubmissionStatus, SubmissionType } from '@prisma/client';
+import { PaginationDto } from 'src/dto/pagination.dto';
+import { ReviewResponseDto } from 'src/dto/review.dto';
+import { SortDto } from 'src/dto/sort.dto';
+import {
+  SubmissionQueryDto,
+  SubmissionRequestDto,
+  SubmissionResponseDto,
+  SubmissionUpdateRequestDto,
+} from 'src/dto/submission.dto';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { PrismaService } from 'src/shared/modules/global/prisma.service';
+import { Utils } from 'src/shared/modules/global/utils.service';
 
 @Injectable()
 export class SubmissionService {
   private readonly logger = new Logger(SubmissionService.name);
 
   constructor(private readonly prisma: PrismaService) {}
-  
+
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
     const data = await this.prisma.submission.create({
       data: {
@@ -22,7 +26,7 @@ export class SubmissionService {
         status: SubmissionStatus.ACTIVE,
         type: body.type as SubmissionType,
         createdBy: String(authUser.userId) || '',
-        createdAt: new Date()
+        createdAt: new Date(),
       },
     });
     this.logger.log(`Submission created with ID: ${data.id}`);
@@ -91,7 +95,7 @@ export class SubmissionService {
     );
 
     return {
-      data: submissions.map(this.buildResponse),
+      data: submissions.map((submission) => this.buildResponse(submission)),
       meta: {
         page,
         perPage,
@@ -107,32 +111,31 @@ export class SubmissionService {
   }
 
   async updateSubmission(
-    authUser: JwtUser, 
-    submissionId: string, 
-    body: SubmissionUpdateRequestDto
+    authUser: JwtUser,
+    submissionId: string,
+    body: SubmissionUpdateRequestDto,
   ) {
     const existing = await this.checkSubmission(submissionId);
     const data = await this.prisma.submission.update({
       where: { id: submissionId },
       data: {
         ...body,
-        type: body.type as SubmissionType || existing.type,
+        type: (body.type as SubmissionType) || existing.type,
         updatedBy: String(authUser.userId) || '',
-        updatedAt: new Date()
-      }
+        updatedAt: new Date(),
+      },
     });
     this.logger.log(`Submission updated successfully: ${submissionId}`);
     return this.buildResponse(data);
   }
-  
+
   async deleteSubmission(id: string) {
     await this.checkSubmission(id);
     await this.prisma.submission.delete({
-      where: { id }
+      where: { id },
     });
   }
 
-  
   private async checkSubmission(id: string) {
     const data = await this.prisma.submission.findUnique({
       where: { id },
@@ -144,8 +147,8 @@ export class SubmissionService {
     return data;
   }
 
-  private buildResponse(data): SubmissionResponseDto {
-    const dto = {
+  private buildResponse(data: any): SubmissionResponseDto {
+    const dto: SubmissionResponseDto = {
       ...data,
       legacyChallengeId: Utils.bigIntToNumber(data.legacyChallengeId),
       prizeId: Utils.bigIntToNumber(data.prizeId),

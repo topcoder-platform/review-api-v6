@@ -12,7 +12,8 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/src/main",
-    "lint": "eslint \"{src,apps,libs,test,prisma}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,apps,libs,test,prisma}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,apps,libs,test,prisma}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -35,11 +36,14 @@
     "cors": "^2.8.5",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.2.0",
+    "lodash": "^4.17.21",
     "multer": "^2.0.1",
     "nanoid": "~5.1.2",
+    "querystring": "^0.2.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "tc-core-library-js": "appirio-tech/tc-core-library-js.git#v3.0.1"
+    "tc-core-library-js": "appirio-tech/tc-core-library-js.git#v3.0.1",
+    "kafkajs": "^2.2.4"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
