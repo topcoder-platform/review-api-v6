@@ -15,6 +15,7 @@ docker compose -f docker-compose.kafka.yml ps
 ```
 
 This will start:
+
 - **Zookeeper** on port 2181
 - **Kafka** on port 9092
 - **Kafka UI** on port 8080 (web interface)
@@ -40,6 +41,7 @@ pnpm run start:dev
 ```
 
 The application will automatically:
+
 - Connect to Kafka on startup
 - Subscribe to registered topics
 - Start consuming messages
@@ -80,9 +82,13 @@ docker exec -it kafka kafka-console-consumer --topic avscan.action.scan --from-b
 ### Adding New Event Handlers
 
 1. Create a new handler class extending `BaseEventHandler`:
+
    ```typescript
    @Injectable()
-   export class MyCustomHandler extends BaseEventHandler implements OnModuleInit {
+   export class MyCustomHandler
+     extends BaseEventHandler
+     implements OnModuleInit
+   {
      private readonly topic = 'my.custom.topic';
 
      constructor(private readonly handlerRegistry: KafkaHandlerRegistry) {
@@ -103,14 +109,15 @@ docker exec -it kafka kafka-console-consumer --topic avscan.action.scan --from-b
    }
    ```
 
-2. Register the handler in the KafkaModule providers array
-3. The handler will automatically be registered and start consuming messages
+2. Register the handler in the `src/shared/modules/kafka/handlers/registered-handlers.config.ts` config handlers array.
+3. The handler will automatically be registered and start consuming messages.
 
 ### Dead Letter Queue (DLQ) Support
 
 The application includes a robust Dead Letter Queue implementation for handling message processing failures:
 
 1. **Configuration**:
+
    ```
    # DLQ Configuration in .env
    KAFKA_DLQ_ENABLED=true
@@ -119,11 +126,13 @@ The application includes a robust Dead Letter Queue implementation for handling 
    ```
 
 2. **Retry Mechanism**:
+
    - Failed messages are automatically retried up to the configured maximum number of retries
    - Retry count is tracked per message using a unique key based on topic, partition, and offset
    - Exponential backoff is applied between retries
 
 3. **DLQ Processing**:
+
    - After exhausting retries, messages are sent to a DLQ topic (original topic name + configured suffix)
    - DLQ messages include:
      - Original message content
@@ -133,6 +142,7 @@ The application includes a robust Dead Letter Queue implementation for handling 
      - Original message headers
 
 4. **Monitoring DLQ**:
+
    - Use Kafka UI to monitor DLQ topics (they follow the pattern `<original-topic>.dlq`)
    - Check application logs for messages with "Message sent to DLQ" or "Failed to send message to DLQ"
 
