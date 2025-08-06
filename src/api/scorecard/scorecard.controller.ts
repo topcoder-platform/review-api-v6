@@ -9,6 +9,8 @@ import {
   Query,
   NotFoundException,
   InternalServerErrorException,
+  Res,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -24,18 +26,24 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import {
+  ScorecardPaginatedResponseDto,
   ScorecardRequestDto,
   ScorecardResponseDto,
+  ScorecardWithGroupResponseDto,
   mapScorecardRequestToDto,
 } from 'src/dto/scorecard.dto';
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { ScoreCardService } from './scorecard.service';
+import { OkResponse } from 'src/dto/common.dto';
+import { Response } from 'express';
+import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderInterceptor';
 
 @ApiTags('Scorecard')
 @ApiBearerAuth()
 @Controller('/scorecards')
 export class ScorecardController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly scorecardService: ScoreCardService) {}
 
   @Post()
   @Roles(UserRole.Admin)
@@ -48,12 +56,12 @@ export class ScorecardController {
   @ApiResponse({
     status: 201,
     description: 'Scorecard added successfully.',
-    type: ScorecardResponseDto,
+    type: ScorecardWithGroupResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async addScorecard(
     @Body() body: ScorecardRequestDto,
-  ): Promise<ScorecardResponseDto> {
+  ): Promise<ScorecardWithGroupResponseDto> {
     const data = await this.prisma.scorecard.create({
       data: mapScorecardRequestToDto(body),
       include: {
@@ -68,7 +76,7 @@ export class ScorecardController {
         },
       },
     });
-    return data as ScorecardResponseDto;
+    return data as ScorecardWithGroupResponseDto;
   }
 
   @Put('/:id')
@@ -87,14 +95,14 @@ export class ScorecardController {
   @ApiResponse({
     status: 200,
     description: 'Scorecard updated successfully.',
-    type: ScorecardResponseDto,
+    type: ScorecardWithGroupResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
   async editScorecard(
     @Param('id') id: string,
-    @Body() body: ScorecardRequestDto,
-  ): Promise<ScorecardResponseDto> {
+    @Body() body: ScorecardWithGroupResponseDto,
+  ): Promise<ScorecardWithGroupResponseDto> {
     console.log(JSON.stringify(body));
 
     const data = await this.prisma.scorecard
@@ -121,7 +129,7 @@ export class ScorecardController {
           message: `Error: ${error.code}`,
         });
       });
-    return data as ScorecardResponseDto;
+    return data as ScorecardWithGroupResponseDto;
   }
 
   @Delete(':id')
@@ -139,7 +147,7 @@ export class ScorecardController {
   @ApiResponse({
     status: 200,
     description: 'Scorecard deleted successfully.',
-    type: ScorecardResponseDto,
+    type: ScorecardWithGroupResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
@@ -173,10 +181,10 @@ export class ScorecardController {
   @ApiResponse({
     status: 200,
     description: 'Scorecard retrieved successfully.',
-    type: ScorecardResponseDto,
+    type: ScorecardWithGroupResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
-  async viewScorecard(@Param('id') id: string): Promise<ScorecardResponseDto> {
+  async viewScorecard(@Param('id') id: string): Promise<ScorecardWithGroupResponseDto> {
     const data = await this.prisma.scorecard
       .findUniqueOrThrow({
         where: { id },
@@ -200,11 +208,11 @@ export class ScorecardController {
           message: `Error: ${error.code}`,
         });
       });
-    return data as ScorecardResponseDto;
+    return data as ScorecardWithGroupResponseDto;
   }
 
   @Get()
-  @Roles(UserRole.Admin, UserRole.Copilot)
+  @Roles(UserRole.Admin)
   @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'Search scorecards',
@@ -249,34 +257,31 @@ export class ScorecardController {
     description: 'List of matching scorecards',
     type: [ScorecardResponseDto],
   })
+  @UseInterceptors(PaginationHeaderInterceptor)
   async searchScorecards(
-    @Query('challengeTrack') challengeTrack?: ChallengeTrack,
-    @Query('challengeType') challengeType?: string,
+    @Query('challengeTrack') challengeTrack?: ChallengeTrack | ChallengeTrack[],
+    @Query('challengeType') challengeType?: string | string[],
     @Query('name') name?: string,
     @Query('page') page: number = 1,
     @Query('perPage') perPage: number = 10,
-  ) {
-    const skip = (page - 1) * perPage;
-    const data = await this.prisma.scorecard.findMany({
-      where: {
-        ...(challengeTrack && { challengeTrack }),
-        ...(challengeType && { challengeType }),
-        ...(name && { name: { contains: name, mode: 'insensitive' } }),
-      },
-      include: {
-        scorecardGroups: {
-          include: {
-            sections: {
-              include: {
-                questions: true,
-              },
-            },
-          },
-        },
-      },
-      skip,
-      take: perPage,
+  ): Promise<ScorecardPaginatedResponseDto> {
+    const challengeTrackArray = Array.isArray(challengeTrack)
+    ? challengeTrack
+    : challengeTrack
+    ? [challengeTrack]
+    : [];
+    const challengeTypeArray = Array.isArray(challengeType)
+    ? challengeType
+    : challengeType
+    ? [challengeType]
+    : [];
+    const result = await this.scorecardService.getScoreCards({
+      challengeTrack: challengeTrackArray,
+      challengeType: challengeTypeArray,
+      name,
+      page,
+      perPage,
     });
-    return data as ScorecardResponseDto[];
+    return result;
   }
 }

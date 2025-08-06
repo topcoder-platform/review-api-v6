@@ -16,6 +16,7 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
 import { WebhookController } from './webhook/webhook.controller';
 import { WebhookService } from './webhook/webhook.service';
 import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard';
+import { ScoreCardService } from './scorecard/scorecard.service';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule],
@@ -37,6 +38,7 @@ import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard
     ChallengeApiService,
     WebhookService,
     GiteaWebhookAuthGuard,
+    ScoreCardService,
   ],
 })
 export class ApiModule {}
