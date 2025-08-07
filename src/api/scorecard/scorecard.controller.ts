@@ -27,7 +27,6 @@ import {
   ScorecardRequestDto,
   ScorecardResponseDto,
   ScorecardWithGroupResponseDto,
-  mapScorecardRequestToDto,
 } from 'src/dto/scorecard.dto';
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
@@ -38,7 +37,7 @@ import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderIn
 @ApiBearerAuth()
 @Controller('/scorecards')
 export class ScorecardController {
-  constructor(private readonly prisma: PrismaService, private readonly scorecardService: ScoreCardService) {}
+  constructor(private readonly scorecardService: ScoreCardService) {}
 
   @Post()
   @Roles(UserRole.Admin)
