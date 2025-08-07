@@ -7,9 +7,6 @@ import {
   Body,
   Param,
   Query,
-  NotFoundException,
-  InternalServerErrorException,
-  Res,
   UseInterceptors,
 } from '@nestjs/common';
 import {
@@ -35,8 +32,6 @@ import {
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { ScoreCardService } from './scorecard.service';
-import { OkResponse } from 'src/dto/common.dto';
-import { Response } from 'express';
 import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderInterceptor';
 
 @ApiTags('Scorecard')
@@ -62,21 +57,7 @@ export class ScorecardController {
   async addScorecard(
     @Body() body: ScorecardRequestDto,
   ): Promise<ScorecardWithGroupResponseDto> {
-    const data = await this.prisma.scorecard.create({
-      data: mapScorecardRequestToDto(body),
-      include: {
-        scorecardGroups: {
-          include: {
-            sections: {
-              include: {
-                questions: true,
-              },
-            },
-          },
-        },
-      },
-    });
-    return data as ScorecardWithGroupResponseDto;
+    return await this.scorecardService.addScorecard(body);
   }
 
   @Put('/:id')
@@ -102,34 +83,8 @@ export class ScorecardController {
   async editScorecard(
     @Param('id') id: string,
     @Body() body: ScorecardWithGroupResponseDto,
-  ): Promise<ScorecardWithGroupResponseDto> {
-    console.log(JSON.stringify(body));
-
-    const data = await this.prisma.scorecard
-      .update({
-        where: { id },
-        data: mapScorecardRequestToDto(body),
-        include: {
-          scorecardGroups: {
-            include: {
-              sections: {
-                include: {
-                  questions: true,
-                },
-              },
-            },
-          },
-        },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Scorecard not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
-      });
-    return data as ScorecardWithGroupResponseDto;
+  ): Promise<ScorecardWithGroupResponseDto> {    
+    return await this.scorecardService.editScorecard(id, body);
   }
 
   @Delete(':id')
@@ -152,19 +107,7 @@ export class ScorecardController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
   async deleteScorecard(@Param('id') id: string) {
-    await this.prisma.scorecard
-      .delete({
-        where: { id },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Scorecard not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
-      });
-    return { message: `Scorecard ${id} deleted successfully.` };
+    return await this.scorecardService.deleteScorecard(id);
   }
 
   @Get('/:id')
@@ -185,30 +128,7 @@ export class ScorecardController {
   })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
   async viewScorecard(@Param('id') id: string): Promise<ScorecardWithGroupResponseDto> {
-    const data = await this.prisma.scorecard
-      .findUniqueOrThrow({
-        where: { id },
-        include: {
-          scorecardGroups: {
-            include: {
-              sections: {
-                include: {
-                  questions: true,
-                },
-              },
-            },
-          },
-        },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Scorecard not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
-      });
-    return data as ScorecardWithGroupResponseDto;
+    return await this.scorecardService.viewScorecard(id);
   }
 
   @Get()
