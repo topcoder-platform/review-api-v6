@@ -29,7 +29,6 @@ import {
   ScorecardWithGroupResponseDto,
 } from 'src/dto/scorecard.dto';
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
-import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { ScoreCardService } from './scorecard.service';
 import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderInterceptor';
 
