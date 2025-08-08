@@ -203,11 +203,13 @@ export class ScorecardBaseDto {
     example: 'user456',
   })
   updatedBy: string;
+}
 
+export class ScorecardBaseWithGroupsDto extends ScorecardBaseDto {
   scorecardGroups: any[];
 }
 
-export class ScorecardRequestDto extends ScorecardBaseDto {
+export class ScorecardRequestDto extends ScorecardBaseWithGroupsDto {
   @ApiProperty({ description: 'The ID of the scorecard', example: 'abc123' })
   id: string;
 
@@ -221,12 +223,50 @@ export class ScorecardRequestDto extends ScorecardBaseDto {
 export class ScorecardResponseDto extends ScorecardBaseDto {
   @ApiProperty({ description: 'The ID of the scorecard', example: 'abc123' })
   id: string;
+}
+
+export class ScorecardWithGroupResponseDto extends ScorecardBaseDto {
+  @ApiProperty({ description: 'The ID of the scorecard', example: 'abc123' })
+  id: string;
 
   @ApiProperty({
     description: 'The list of groups associated with the scorecard',
     type: [ScorecardGroupResponseDto],
   })
   scorecardGroups: ScorecardGroupResponseDto[];
+}
+
+export class PaginationMetaDto {
+  @ApiProperty({ example: 100 })
+  total: number;
+
+  @ApiProperty({ example: 1 })
+  page: number;
+
+  @ApiProperty({ example: 10 })
+  perPage: number;
+
+  @ApiProperty({ example: 10 })
+  totalPages: number;
+}
+
+export class ScorecardPaginatedResponseDto {
+  @ApiProperty({ description: 'This contains pagination metadata' })
+  metadata: PaginationMetaDto;
+
+  @ApiProperty({
+    description: 'The list of score cards',
+    type: [ScorecardGroupResponseDto],
+  })
+  scoreCards: ScorecardResponseDto[];
+}
+
+export class ScorecardQueryDto {
+  challengeTrack?: ChallengeTrack[];
+  challengeType?: string[];
+  name?: string;
+  page?: number;
+  perPage?: number;
 }
 
 export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
