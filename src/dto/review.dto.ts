@@ -1,4 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
+import {
+  IsString,
+  IsNumber,
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsDateString,
+  IsObject,
+} from 'class-validator';
 
 export enum ReviewItemCommentType {
   COMMENT = 'COMMENT',
@@ -149,39 +158,79 @@ export class ReviewBaseDto {
     description: 'Resource ID associated with the review',
     example: 'resource123',
   })
+  @IsString()
+  @IsNotEmpty()
   resourceId: string;
 
   @ApiProperty({
     description: 'Phase ID of the challenge',
     example: 'phase456',
   })
+  @IsString()
+  @IsNotEmpty()
   phaseId: string;
 
   @ApiProperty({
     description: 'Submission ID being reviewed',
     example: 'submission789',
   })
+  @IsString()
+  @IsNotEmpty()
   submissionId: string;
 
   @ApiProperty({
     description: 'Scorecard ID used for the review',
     example: 'scorecard101',
   })
+  @IsString()
+  @IsNotEmpty()
   scorecardId: string;
 
   @ApiProperty({ description: 'Final score of the review', example: 85.5 })
+  @IsNumber()
   finalScore: number;
 
   @ApiProperty({
     description: 'Initial score before finalization',
     example: 80.0,
   })
+  @IsNumber()
   initialScore: number;
 
-  @ApiProperty({ description: 'Is the review committed?', example: false })
-  committed?: boolean;
+  @ApiProperty({
+    description: 'Type ID used for the review',
+    example: 'type101',
+  })
+  @IsString()
+  @IsNotEmpty()
+  typeId: string;
 
-  reviewItems?: any[];
+  @ApiProperty({
+    description: 'The metadata for the review',
+  })
+  @IsOptional()
+  @IsObject()
+  metadata?: object;
+
+  @ApiProperty({
+    description: 'Status for the review',
+    example: 'Review',
+  })
+  @IsString()
+  @IsNotEmpty()
+  status: string;
+
+  @ApiProperty({
+    description: 'Review date for the review',
+    example: '2023-10-01T00:00:00Z',
+  })
+  @IsDateString()
+  reviewDate: Date;
+
+  @ApiProperty({ description: 'Is the review committed?', example: false })
+  @IsOptional()
+  @IsBoolean()
+  committed?: boolean;
 }
 
 export class ReviewRequestDto extends ReviewBaseDto {
@@ -194,6 +243,97 @@ export class ReviewRequestDto extends ReviewBaseDto {
     required: false,
   })
   reviewItems?: ReviewItemRequestDto[];
+}
+
+export class ReviewPutRequestDto extends ReviewBaseDto {}
+
+export class ReviewPatchRequestDto {
+  @ApiProperty({
+    description: 'Resource ID associated with the review',
+    example: 'resource123',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  resourceId?: string;
+
+  @ApiProperty({
+    description: 'Phase ID of the challenge',
+    example: 'phase456',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  phaseId?: string;
+
+  @ApiProperty({
+    description: 'Submission ID being reviewed',
+    example: 'submission789',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  submissionId?: string;
+
+  @ApiProperty({
+    description: 'Scorecard ID used for the review',
+    example: 'scorecard101',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  scorecardId?: string;
+
+  @ApiProperty({ description: 'Final score of the review', example: 85.5 })
+  @IsOptional()
+  @IsNumber()
+  finalScore?: number;
+
+  @ApiProperty({
+    description: 'Initial score before finalization',
+    example: 80.0,
+  })
+  @IsOptional()
+  @IsNumber()
+  initialScore?: number;
+
+  @ApiProperty({
+    description: 'Type ID used for the review',
+    example: 'type101',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  typeId?: string;
+
+  @ApiProperty({
+    description: 'Status for the review',
+    example: 'Review',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  status?: string;
+
+  @ApiProperty({
+    description: 'Review date for the review',
+    example: '2023-10-01T00:00:00Z',
+  })
+  @IsOptional()
+  @IsDateString()
+  reviewDate?: string;
+
+  @ApiProperty({
+    description: 'The metadata for the review',
+  })
+  @IsOptional()
+  @IsObject()
+  metadata?: object;
+
+  @ApiProperty({ description: 'Is the review committed?', example: false })
+  @IsOptional()
+  @IsBoolean()
+  committed?: boolean;
 }
 
 export class ReviewResponseDto extends ReviewBaseDto {
@@ -232,21 +372,30 @@ export class ReviewResponseDto extends ReviewBaseDto {
   updatedBy: string;
 }
 
-export function mapReviewRequestToDto(request: ReviewRequestDto) {
+export function mapReviewRequestToDto(
+  request: ReviewRequestDto | ReviewPatchRequestDto,
+) {
   const userFields = {
     createdBy: '',
     updatedBy: '',
   };
 
-  return {
-    ...request,
-    ...userFields,
-    reviewItems: {
-      create: request.reviewItems?.map((item) =>
-        mapReviewItemRequestToDto(item),
-      ),
-    },
-  };
+  if (request instanceof ReviewRequestDto) {
+    return {
+      ...request,
+      ...userFields,
+      reviewItems: {
+        create: request.reviewItems?.map((item) =>
+          mapReviewItemRequestToDto(item),
+        ),
+      },
+    };
+  } else {
+    return {
+      ...request,
+      ...userFields,
+    };
+  }
 }
 
 export function mapReviewItemRequestToDto(request: ReviewItemRequestDto) {

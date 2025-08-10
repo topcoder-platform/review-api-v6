@@ -140,27 +140,32 @@ model scorecardQuestion {
 }
 
 model review {
-  id           String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
   legacyId     String?
   resourceId   String
   phaseId      String
-  submissionId String
-  scorecardId  String
+  submissionId String? @db.VarChar(14) // Associated submission
+  legacySubmissionId  String?
+  scorecardId  String // Associated scorecard
   committed    Boolean  @default(false)
-  finalScore   Float
-  initialScore Float
+  finalScore   Float?
+  initialScore Float?
+  typeId       String?
+  metadata     Json?
+  status       String?
+  reviewDate   DateTime?
   createdAt    DateTime @default(now())
   createdBy    String
   updatedAt    DateTime @updatedAt
   updatedBy    String
 
   scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+  submission  submission?  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   reviewItems reviewItem[]
 
   @@index([committed]) // Index for filtering by committed status
   @@index([submissionId]) // Index for filtering by submission
   @@index([resourceId]) // Index for filtering by resource (reviewer)
-  @@index([id]) // Index for direct ID lookups
   @@index([phaseId]) // Index for filtering by phase
   @@index([scorecardId]) // Index for joining with scorecard table
 }
@@ -302,6 +307,85 @@ model contactRequest {
   @@index([challengeId]) // Index for filtering by challenge
 }
 
+model reviewType {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  name         String
+  isActive     Boolean
+
+  @@index([id]) // Index for direct ID lookups
+  // Indexes for faster searches
+  @@index([name])
+  @@index([isActive])
+}
+
+model reviewSummation {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  submissionId    String @db.VarChar(14) // Associated submission
+  legacySubmissionId  String?
+  aggregateScore  Float
+  scorecardId     String?
+  scorecardLegacyId String?
+  isPassing       Boolean
+  isFinal         Boolean?
+  reviewedDate    DateTime?
+  createdAt       DateTime @default(now())
+  createdBy       String
+  updatedAt       DateTime @updatedAt
+  updatedBy       String
+
+  submission      submission   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId]) // Index for joining with submission table
+  @@index([scorecardId]) // Index for joining with scorecard table
+}
+
+model submission {
+  id                  String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  // informix data
+  legacySubmissionId  String?
+  type                SubmissionType
+  status              SubmissionStatus
+  screeningScore      Decimal?
+  initialScore        Decimal?
+  finalScore          Decimal?
+  placement           Int?
+  userRank            Int?
+  markForPurchase     Boolean?
+  prizeId             BigInt?
+  fileSize            Int?
+  viewCount           Int?
+  systemFileName      String?
+  thurgoodJobId       String?
+
+  // ES data
+  url                 String?
+  memberId            String?
+  challengeId         String?
+  legacyChallengeId   BigInt?
+  submissionPhaseId   String?
+  fileType            String?
+  esId                String? @db.Uuid
+  submittedDate       DateTime?
+
+  createdAt           DateTime @default(now())
+  createdBy           String
+  updatedAt           DateTime? @updatedAt
+  updatedBy           String?
+
+  // relation
+  legacyUploadId      String?
+  uploadId            String? @db.VarChar(14)
+  upload          upload? @relation(fields: [uploadId], references: [id])
+
+  review          review[]
+  reviewSummation reviewSummation[]
+  resourceSubmissions resourceSubmission[]
+
+  @@index([memberId])
+  @@index([challengeId])
+  @@index([legacySubmissionId])
+}
+
 enum ReviewOpportunityStatus {
   OPEN
   CLOSED
@@ -380,6 +464,75 @@ model reviewApplication {
   @@index([id]) // Index for direct ID lookups
   @@index([userId])
   @@index([opportunityId])
+}
+
+
+enum UploadType {
+  SUBMISSION
+  TEST_CASE
+  FINAL_FIX
+  REVIEW_DOCUMENT
+}
+
+enum UploadStatus {
+  ACTIVE
+  DELETED
+}
+
+enum SubmissionType {
+  CONTEST_SUBMISSION
+  SPECIFICATION_SUBMISSION
+  CHECKPOINT_SUBMISSION
+  STUDIO_FINAL_FIX_SUBMISSION
+}
+
+enum SubmissionStatus {
+  ACTIVE
+  FAILED_SCREENING
+  FAILED_REVIEW
+  COMPLETED_WITHOUT_WIN
+  DELETED
+  FAILED_CHECKPOINT_SCREENING
+  FAILED_CHECKPOINT_REVIEW
+}
+
+
+model upload {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId    String?
+  projectId   String
+  resourceId  String
+  type        UploadType
+  status      UploadStatus
+  parameter   String?
+  url         String?
+  desc        String?
+  projectPhaseId  String?
+
+  createdAt   DateTime @default(now())
+  createdBy   String
+  updatedAt   DateTime? @updatedAt
+  updatedBy   String?
+
+  submissions submission[]
+
+  @@index([projectId])
+  @@index([legacyId])
+}
+
+
+model resourceSubmission {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  resourceId  String
+  submissionId  String?
+  legacySubmissionId  String?
+
+  createdAt   DateTime @default(now())
+  createdBy   String
+  updatedAt   DateTime? @updatedAt
+  updatedBy   String?
+
+  submissions submission? @relation(fields: [submissionId], references: [id])
 }
 
 model gitWebhookLog {

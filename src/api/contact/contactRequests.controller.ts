@@ -1,4 +1,4 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Req } from '@nestjs/common';
 import {
   ApiOperation,
   ApiResponse,
@@ -16,15 +16,20 @@ import {
   mapContactRequestToDto,
 } from 'src/dto/contactRequest.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('Contact Requests')
 @ApiBearerAuth()
 @Controller('/')
 export class ContactRequestsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly resourceApiService: ResourceApiService,
+  ) {}
 
   @Post('/contact-requests')
-  @Roles(UserRole.Submitter, UserRole.Reviewer)
+  @Roles(UserRole.User, UserRole.Talent)
   @Scopes(Scope.CreateContactRequest)
   @ApiOperation({
     summary: 'Create a new contact request',
@@ -38,8 +43,17 @@ export class ContactRequestsController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async createContactRequest(
+    @Req() req: Request,
     @Body() body: ContactRequestDto,
   ): Promise<ContactRequestResponseDto> {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    await this.resourceApiService.validateResourcesRoles(
+      [UserRole.Reviewer, UserRole.Submitter],
+      authUser,
+      body.challengeId,
+      body.resourceId,
+    );
+
     const data = await this.prisma.contactRequest.create({
       data: mapContactRequestToDto(body),
     });

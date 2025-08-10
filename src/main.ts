@@ -25,6 +25,12 @@ async function bootstrap() {
     logger.log(`Setting global prefix to ${API_PREFIX} in production mode`);
   }
 
+  console.log(
+    '===============process.env.NODE_EN============',
+    process.env.NODE_ENV,
+  );
+  logger.log('=========================' + process.env.NODE_ENV);
+
   // CORS related settings
   const corsConfig: cors.CorsOptions = {
     allowedHeaders:
@@ -106,21 +112,21 @@ async function bootstrap() {
     .setDescription(
       `
     Topcoder Review API Documentation
-    
+
     Authentication
-    
+
     The API supports two authentication methods:
-    
+
     User Token (JWT)
     - Regular user authentication using role-based access control
     - Tokens should include 'roles' claim with the appropriate role(s)
     - Available roles: Admin, Copilot, Reviewer, Submitter
-    
+
     Machine-to-Machine (M2M) Token
     - For service-to-service authentication
     - Uses scope-based access control
-    - Available scopes: create:appeal, read:appeal, update:appeal, delete:appeal, create:appeal-response, update:appeal-response, all:appeal, create:contact-request, all:contact-request, read:project-result, all:project-result, create:review, read:review, update:review, delete:review, create:review-item, update:review-item, delete:review-item, all:review, create:scorecard, read:scorecard, update:scorecard, delete:scorecard, all:scorecard
-    
+    - Available scopes: create:appeal, read:appeal, update:appeal, delete:appeal, create:appeal-response, update:appeal-response, all:appeal, create:contact-request, all:contact-request, read:project-result, all:project-result, create:review, read:review, update:review, delete:review, create:review-item, update:review-item, delete:review-item, all:review, create:scorecard, read:scorecard, update:scorecard, delete:scorecard, all:scorecard create:review_type read:review_type update:review_type delete:review_type all:review_type create:review_summation read:review_summation update:review_summation delete:review_summation all:review_summation create:submission read:submission update:submission delete:submission all:submission
+
     To get an M2M token (example for development environment):
 
     curl --request POST \\
