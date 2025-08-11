@@ -1,20 +1,31 @@
-import { Injectable, InternalServerErrorException, NotFoundException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { mapScorecardRequestToDto, ScorecardPaginatedResponseDto, ScorecardQueryDto, ScorecardRequestDto, ScorecardResponseDto, ScorecardWithGroupResponseDto } from "src/dto/scorecard.dto";
-import { PrismaService } from "src/shared/modules/global/prisma.service";
+import {
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import {
+  mapScorecardRequestToDto,
+  ScorecardPaginatedResponseDto,
+  ScorecardQueryDto,
+  ScorecardRequestDto,
+  ScorecardResponseDto,
+  ScorecardWithGroupResponseDto,
+} from 'src/dto/scorecard.dto';
+import { PrismaService } from 'src/shared/modules/global/prisma.service';
 
 @Injectable()
 export class ScoreCardService {
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   /**
    * Adds score card
    * @param body body from request
    * @returns ScorecardWithGroupResponseDto
    */
-  async addScorecard(body: ScorecardRequestDto): Promise<ScorecardWithGroupResponseDto> {
+  async addScorecard(
+    body: ScorecardRequestDto,
+  ): Promise<ScorecardWithGroupResponseDto> {
     const data = await this.prisma.scorecard.create({
       data: mapScorecardRequestToDto(body),
       include: {
@@ -38,7 +49,10 @@ export class ScoreCardService {
    * @param body body from request
    * @returns ScorecardWithGroupResponseDto
    */
-  async editScorecard(id: string, body: ScorecardWithGroupResponseDto): Promise<ScorecardWithGroupResponseDto> {
+  async editScorecard(
+    id: string,
+    body: ScorecardWithGroupResponseDto,
+  ): Promise<ScorecardWithGroupResponseDto> {
     const data = await this.prisma.scorecard
       .update({
         where: { id },
@@ -126,9 +140,15 @@ export class ScoreCardService {
    * @returns response dto
    */
   async getScoreCards(
-    query: ScorecardQueryDto
+    query: ScorecardQueryDto,
   ): Promise<ScorecardPaginatedResponseDto> {
-    const { page = 1, perPage = 10, challengeTrack, challengeType, name } = query;
+    const {
+      page = 1,
+      perPage = 10,
+      challengeTrack,
+      challengeType,
+      name,
+    } = query;
     const skip = (page - 1) * perPage;
     const where: Prisma.scorecardWhereInput = {
       ...(challengeTrack?.length && {
@@ -161,7 +181,7 @@ export class ScoreCardService {
         total: totalCount,
         page,
         perPage,
-        totalPages: Math.ceil(totalCount/perPage),
+        totalPages: Math.ceil(totalCount / perPage),
       },
       scoreCards: data as ScorecardResponseDto[],
     };

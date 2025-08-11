@@ -81,7 +81,7 @@ export class ScorecardController {
   async editScorecard(
     @Param('id') id: string,
     @Body() body: ScorecardWithGroupResponseDto,
-  ): Promise<ScorecardWithGroupResponseDto> {    
+  ): Promise<ScorecardWithGroupResponseDto> {
     return await this.scorecardService.editScorecard(id, body);
   }
 
@@ -125,7 +125,9 @@ export class ScorecardController {
     type: ScorecardWithGroupResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
-  async viewScorecard(@Param('id') id: string): Promise<ScorecardWithGroupResponseDto> {
+  async viewScorecard(
+    @Param('id') id: string,
+  ): Promise<ScorecardWithGroupResponseDto> {
     return await this.scorecardService.viewScorecard(id);
   }
 
@@ -184,15 +186,15 @@ export class ScorecardController {
     @Query('perPage') perPage: number = 10,
   ): Promise<ScorecardPaginatedResponseDto> {
     const challengeTrackArray = Array.isArray(challengeTrack)
-    ? challengeTrack
-    : challengeTrack
-    ? [challengeTrack]
-    : [];
+      ? challengeTrack
+      : challengeTrack
+        ? [challengeTrack]
+        : [];
     const challengeTypeArray = Array.isArray(challengeType)
-    ? challengeType
-    : challengeType
-    ? [challengeType]
-    : [];
+      ? challengeType
+      : challengeType
+        ? [challengeType]
+        : [];
     const result = await this.scorecardService.getScoreCards({
       challengeTrack: challengeTrackArray,
       challengeType: challengeTypeArray,
