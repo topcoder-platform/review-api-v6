@@ -94,7 +94,6 @@ export class JwtService implements OnModuleInit {
           // Get the signing key from Auth0
           const signingKey = await this.getSigningKey(tokenHeader.kid);
 
-
           console.log(`Signing key: ${JSON.stringify(signingKey)}`);
 
           // Verify options
@@ -114,7 +113,6 @@ export class JwtService implements OnModuleInit {
       } else {
         // In development, just decode the token without verification
         decodedToken = decode(token);
-
       }
 
       if (!decodedToken) {
