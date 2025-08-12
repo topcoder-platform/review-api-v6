@@ -31,6 +31,7 @@ import {
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 import { ScoreCardService } from './scorecard.service';
 import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderInterceptor';
+import { $Enums } from '@prisma/client';
 
 @ApiTags('Scorecard')
 @ApiBearerAuth()
@@ -153,6 +154,18 @@ export class ScorecardController {
     required: false,
   })
   @ApiQuery({
+    name: 'scorecardType',
+    description: 'The scorecard type to filter by',
+    example: 'SCREENING',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'status',
+    description: 'The status to filter by',
+    example: 'ACTIVE',
+    required: false,
+  })
+  @ApiQuery({
     name: 'name',
     description: 'The challenge name to filter by (partial match)',
     example: 'name',
@@ -181,6 +194,9 @@ export class ScorecardController {
   async searchScorecards(
     @Query('challengeTrack') challengeTrack?: ChallengeTrack | ChallengeTrack[],
     @Query('challengeType') challengeType?: string | string[],
+    @Query('status') status?: $Enums.ScorecardStatus | $Enums.ScorecardStatus[],
+    @Query('scorecardType')
+    scorecardType?: $Enums.ScorecardType | $Enums.ScorecardType[],
     @Query('name') name?: string,
     @Query('page') page: number = 1,
     @Query('perPage') perPage: number = 10,
@@ -195,12 +211,21 @@ export class ScorecardController {
       : challengeType
         ? [challengeType]
         : [];
+    const scorecardTypesArray = Array.isArray(scorecardType)
+      ? scorecardType
+      : scorecardType
+        ? [scorecardType]
+        : [];
+    const statusArray = Array.isArray(status) ? status : status ? [status] : [];
+
     const result = await this.scorecardService.getScoreCards({
       challengeTrack: challengeTrackArray,
       challengeType: challengeTypeArray,
       name,
       page,
       perPage,
+      scorecardTypesArray,
+      statusArray,
     });
     return result;
   }

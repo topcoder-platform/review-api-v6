@@ -147,6 +147,8 @@ export class ScoreCardService {
       perPage = 10,
       challengeTrack,
       challengeType,
+      scorecardTypesArray,
+      statusArray,
       name,
     } = query;
     const skip = (page - 1) * perPage;
@@ -161,8 +163,19 @@ export class ScoreCardService {
           in: challengeType,
         },
       }),
+      ...(scorecardTypesArray?.length && {
+        type: {
+          in: scorecardTypesArray,
+        },
+      }),
+      ...(statusArray?.length && {
+        status: {
+          in: statusArray,
+        },
+      }),
       ...(name && { name: { contains: name, mode: 'insensitive' } }),
     };
+    console.log(where, 'asdkjalsd');
     const data = await this.prisma.scorecard.findMany({
       where,
       skip,
