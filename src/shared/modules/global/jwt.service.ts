@@ -98,7 +98,7 @@ export class JwtService implements OnModuleInit {
 
           // Verify options
           const verifyOptions: VerifyOptions = {
-            issuer: AuthConfig.jwt.issuer,
+            //issuer: AuthConfig.jwt.issuer,
             //audience: AuthConfig.jwt.audience,
             clockTolerance: AuthConfig.jwt.clockTolerance,
             ignoreExpiration: AuthConfig.jwt.ignoreExpiration,
