@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { $Enums } from '@prisma/client';
 
 export enum ScorecardStatus {
   ACTIVE = 'ACTIVE',
@@ -267,6 +268,8 @@ export class ScorecardQueryDto {
   name?: string;
   page?: number;
   perPage?: number;
+  statusArray?: $Enums.ScorecardStatus[];
+  scorecardTypesArray?: $Enums.ScorecardType[];
 }
 
 export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
