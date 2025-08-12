@@ -217,14 +217,20 @@ export class ScoreCardService {
     const cloneGroups = original.scorecardGroups.map((group: ScorecardGroupBaseDto) => ({
       ...group,
       id: undefined,
+      createdAt: undefined,
+      updatedAt: undefined,
       scorecardId: undefined,
       sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
         ...section,
         id: undefined,
+        createdAt: undefined,
+        updatedAt: undefined,
         scorecardGroupId: undefined,
         questions: section.questions.map((question: ScorecardQuestionBaseDto) => ({
           ...question,
           id: undefined,
+          createdAt: undefined,
+          updatedAt: undefined,
           sectionId: undefined,
           scorecardSectionId: undefined,
         })),
