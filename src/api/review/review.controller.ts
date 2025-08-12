@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Patch,
+  Put,
   Get,
   Delete,
   Body,
@@ -25,6 +26,8 @@ import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import {
   ReviewRequestDto,
+  ReviewPutRequestDto,
+  ReviewPatchRequestDto,
   ReviewResponseDto,
   ReviewItemRequestDto,
   ReviewItemResponseDto,
@@ -69,7 +72,7 @@ export class ReviewController {
     this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
     try {
       const data = await this.prisma.review.create({
-        data: mapReviewRequestToDto(body),
+        data: mapReviewRequestToDto(body) as any,
         include: {
           reviewItems: {
             include: {
@@ -130,7 +133,7 @@ export class ReviewController {
     }
   }
 
-  @Patch('/:id')
+  @Patch('/:reviewId')
   @Roles(UserRole.Reviewer)
   @Scopes(Scope.UpdateReview)
   @ApiOperation({
@@ -138,11 +141,11 @@ export class ReviewController {
     description: 'Roles: Reviewer | Scopes: update:review',
   })
   @ApiParam({
-    name: 'id',
+    name: 'reviewId',
     description: 'The ID of the review',
     example: 'review123',
   })
-  @ApiBody({ description: 'Review data', type: ReviewRequestDto })
+  @ApiBody({ description: 'Review data', type: ReviewPatchRequestDto })
   @ApiResponse({
     status: 200,
     description: 'Review updated successfully.',
@@ -150,14 +153,50 @@ export class ReviewController {
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async updateReview(
-    @Param('id') id: string,
-    @Body() body: ReviewRequestDto,
+    @Param('reviewId') reviewId: string,
+    @Body() body: ReviewPatchRequestDto,
   ): Promise<ReviewResponseDto> {
+    return this._updateReview(reviewId, body);
+  }
+
+  @Put('/:reviewId')
+  @Roles(UserRole.Reviewer)
+  @Scopes(Scope.UpdateReview)
+  @ApiOperation({
+    summary: 'Update a review partially',
+    description: 'Roles: Reviewer | Scopes: update:review',
+  })
+  @ApiParam({
+    name: 'reviewId',
+    description: 'The ID of the review',
+    example: 'review123',
+  })
+  @ApiBody({ description: 'Review data', type: ReviewPutRequestDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Review updated successfully.',
+    type: ReviewResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Review not found.' })
+  async updatePutReview(
+    @Param('reviewId') reviewId: string,
+    @Body() body: ReviewPutRequestDto,
+  ): Promise<ReviewResponseDto> {
+    return this._updateReview(reviewId, body);
+  }
+
+  /**
+   * The inner update method for entity
+   */
+  async _updateReview(
+    id: string,
+    body: ReviewPatchRequestDto | ReviewPutRequestDto,
+  ) {
     this.logger.log(`Updating review with ID: ${id}`);
     try {
       const data = await this.prisma.review.update({
         where: { id },
-        data: mapReviewRequestToDto(body),
+        data: mapReviewRequestToDto(body as ReviewPatchRequestDto),
         include: {
           reviewItems: {
             include: {
@@ -422,7 +461,7 @@ export class ReviewController {
     }
   }
 
-  @Get('/:id')
+  @Get('/:reviewId')
   @Roles(
     UserRole.Reviewer,
     UserRole.Copilot,
@@ -436,7 +475,7 @@ export class ReviewController {
       'Roles: Reviewer, Copilot, Submitter, Admin | Scopes: read:review',
   })
   @ApiParam({
-    name: 'id',
+    name: 'reviewId',
     description: 'The ID of the review',
     example: 'review123',
   })
@@ -446,11 +485,13 @@ export class ReviewController {
     type: ReviewResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
-  async getReview(@Param('id') id: string): Promise<ReviewResponseDto> {
-    this.logger.log(`Getting review with ID: ${id}`);
+  async getReview(
+    @Param('reviewId') reviewId: string,
+  ): Promise<ReviewResponseDto> {
+    this.logger.log(`Getting review with ID: ${reviewId}`);
     try {
       const data = await this.prisma.review.findUniqueOrThrow({
-        where: { id },
+        where: { id: reviewId },
         include: {
           reviewItems: {
             include: {
@@ -460,17 +501,17 @@ export class ReviewController {
         },
       });
 
-      this.logger.log(`Review found: ${id}`);
+      this.logger.log(`Review found: ${reviewId}`);
       return data as ReviewResponseDto;
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `fetching review ${id}`,
+        `fetching review ${reviewId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${id} was not found`,
+          message: `Review with ID ${reviewId} was not found`,
           code: errorResponse.code,
         });
       }
@@ -482,7 +523,7 @@ export class ReviewController {
     }
   }
 
-  @Delete('/:id')
+  @Delete('/:reviewId')
   @Roles(UserRole.Copilot, UserRole.Admin)
   @Scopes(Scope.DeleteReview)
   @ApiOperation({
@@ -490,7 +531,7 @@ export class ReviewController {
     description: 'Roles: Copilot, Admin | Scopes: delete:review',
   })
   @ApiParam({
-    name: 'id',
+    name: 'reviewId',
     description: 'The ID of the review',
     example: 'mock-review-id',
   })
@@ -500,23 +541,23 @@ export class ReviewController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review not found.' })
-  async deleteReview(@Param('id') id: string) {
-    this.logger.log(`Deleting review with ID: ${id}`);
+  async deleteReview(@Param('reviewId') reviewId: string) {
+    this.logger.log(`Deleting review with ID: ${reviewId}`);
     try {
       await this.prisma.review.delete({
-        where: { id },
+        where: { id: reviewId },
       });
-      this.logger.log(`Review deleted successfully: ${id}`);
-      return { message: `Review ${id} deleted successfully.` };
+      this.logger.log(`Review deleted successfully: ${reviewId}`);
+      return { message: `Review ${reviewId} deleted successfully.` };
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `deleting review ${id}`,
+        `deleting review ${reviewId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${id} was not found`,
+          message: `Review with ID ${reviewId} was not found`,
           code: errorResponse.code,
         });
       }

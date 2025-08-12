@@ -10,6 +10,7 @@ import { M2MService } from './m2m.service';
 import { ChallengeApiService } from './challenge.service';
 import { EventBusService } from './eventBus.service';
 import { MemberService } from './member.service';
+import { ResourceApiService } from './resource.service';
 import { KafkaModule } from '../kafka/kafka.module';
 
 // Global module for providing global providers
@@ -33,6 +34,7 @@ import { KafkaModule } from '../kafka/kafka.module';
     PrismaErrorService,
     M2MService,
     ChallengeApiService,
+    ResourceApiService,
     EventBusService,
     MemberService,
   ],
@@ -43,6 +45,7 @@ import { KafkaModule } from '../kafka/kafka.module';
     PrismaErrorService,
     M2MService,
     ChallengeApiService,
+    ResourceApiService,
     EventBusService,
     MemberService,
   ],

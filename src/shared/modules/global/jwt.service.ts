@@ -94,10 +94,12 @@ export class JwtService implements OnModuleInit {
           // Get the signing key from Auth0
           const signingKey = await this.getSigningKey(tokenHeader.kid);
 
+          console.log(`Signing key: ${JSON.stringify(signingKey)}`);
+
           // Verify options
           const verifyOptions: VerifyOptions = {
-            issuer: AuthConfig.jwt.issuer,
-            audience: AuthConfig.jwt.audience,
+            //issuer: AuthConfig.jwt.issuer,
+            //audience: AuthConfig.jwt.audience,
             clockTolerance: AuthConfig.jwt.clockTolerance,
             ignoreExpiration: AuthConfig.jwt.ignoreExpiration,
           };
@@ -117,6 +119,7 @@ export class JwtService implements OnModuleInit {
         throw new UnauthorizedException('Invalid token');
       }
 
+      console.log(`Decoded token: ${JSON.stringify(decodedToken)}`);
       const user: JwtUser = { isMachine: false };
 
       // Check for M2M token from Auth0
