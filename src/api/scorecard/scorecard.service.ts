@@ -6,10 +6,13 @@ import {
 import { Prisma } from '@prisma/client';
 import {
   mapScorecardRequestToDto,
+  ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
   ScorecardQueryDto,
+  ScorecardQuestionBaseDto,
   ScorecardRequestDto,
   ScorecardResponseDto,
+  ScorecardSectionBaseDto,
   ScorecardWithGroupResponseDto,
 } from 'src/dto/scorecard.dto';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
@@ -204,14 +207,6 @@ export class ScoreCardService {
             },
           },
         },
-      })
-      .catch((error) => {
-        if (error.code !== 'P2025') {
-          throw new NotFoundException({ message: `Scorecard not found.` });
-        }
-        throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
-        });
       });
 
     if (!original) {
@@ -219,15 +214,15 @@ export class ScoreCardService {
     }
 
     // Remove id fields from nested objects for cloning
-    const cloneGroups = original.scorecardGroups.map((group: any) => ({
+    const cloneGroups = original.scorecardGroups.map((group: ScorecardGroupBaseDto) => ({
       ...group,
       id: undefined,
       scorecardId: undefined,
-      sections: group.sections.map((section: any) => ({
+      sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
         ...section,
         id: undefined,
         scorecardGroupId: undefined,
-        questions: section.questions.map((question: any) => ({
+        questions: section.questions.map((question: ScorecardQuestionBaseDto) => ({
           ...question,
           id: undefined,
           sectionId: undefined,
@@ -244,25 +239,7 @@ export class ScoreCardService {
         createdAt: undefined,
         updatedAt: undefined,
         scorecardGroups: {
-          create: cloneGroups.map((group: any) => ({
-            ...group,
-            createdAt: undefined,
-            updatedAt: undefined,
-            sections: {
-              create: group.sections.map((section: any) => ({
-                ...section,
-                createdAt: undefined,
-                updatedAt: undefined,
-                questions: {
-                  create: section.questions.map((question: any) => ({
-                    ...question,
-                    createdAt: undefined,
-                    updatedAt: undefined,
-                  })),
-                },
-              })),
-            },
-          })),
+          create: cloneGroups,
         },
       },
       include: {
