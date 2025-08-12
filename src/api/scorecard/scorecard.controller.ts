@@ -229,4 +229,27 @@ export class ScorecardController {
     });
     return result;
   }
+
+  @Post('/:id/clone')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.CreateScorecard)
+  @ApiOperation({
+    summary: 'Clone a scorecard',
+    description: 'Roles: Admin | Scopes: create:scorecard',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'The ID of the scorecard to clone',
+    example: 'abc123',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Scorecard cloned successfully.',
+    type: ScorecardResponseDto,
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Scorecard not found.' })
+  async cloneScorecard(@Param('id') id: string): Promise<ScorecardResponseDto> {
+    return this.scorecardService.cloneScorecard(id);
+  }
 }

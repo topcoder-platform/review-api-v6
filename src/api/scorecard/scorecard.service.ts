@@ -6,10 +6,13 @@ import {
 import { Prisma } from '@prisma/client';
 import {
   mapScorecardRequestToDto,
+  ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
   ScorecardQueryDto,
+  ScorecardQuestionBaseDto,
   ScorecardRequestDto,
   ScorecardResponseDto,
+  ScorecardSectionBaseDto,
   ScorecardWithGroupResponseDto,
 } from 'src/dto/scorecard.dto';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
@@ -197,5 +200,79 @@ export class ScoreCardService {
       },
       scoreCards: data as ScorecardResponseDto[],
     };
+  }
+
+  async cloneScorecard(
+    id: string
+  ): Promise<ScorecardResponseDto> {
+    const original = await this.prisma.scorecard
+      .findUnique({
+        where: { id },
+        include: {
+          scorecardGroups: {
+            include: {
+              sections: {
+                include: {
+                  questions: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    if (!original) {
+      throw new NotFoundException({ message: `Scorecard not found.` });
+    }
+
+    // Remove id fields from nested objects for cloning
+    const cloneGroups = original.scorecardGroups.map((group: ScorecardGroupBaseDto) => ({
+      ...group,
+      id: undefined,
+      createdAt: undefined,
+      updatedAt: undefined,
+      scorecardId: undefined,
+      sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
+        ...section,
+        id: undefined,
+        createdAt: undefined,
+        updatedAt: undefined,
+        scorecardGroupId: undefined,
+        questions: section.questions.map((question: ScorecardQuestionBaseDto) => ({
+          ...question,
+          id: undefined,
+          createdAt: undefined,
+          updatedAt: undefined,
+          sectionId: undefined,
+          scorecardSectionId: undefined,
+        })),
+      })),
+    }));
+
+    const clonedScorecard = await this.prisma.scorecard.create({
+      data: {
+        ...original,
+        id: undefined,
+        name: `${original.name} (Clone)`,
+        createdAt: undefined,
+        updatedAt: undefined,
+        scorecardGroups: {
+          create: cloneGroups,
+        },
+      },
+      include: {
+        scorecardGroups: {
+          include: {
+            sections: {
+              include: {
+                questions: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return clonedScorecard as ScorecardResponseDto;
   }
 }
