@@ -175,7 +175,6 @@ export class ScoreCardService {
       }),
       ...(name && { name: { contains: name, mode: 'insensitive' } }),
     };
-    console.log(where, 'asdkjalsd');
     const data = await this.prisma.scorecard.findMany({
       where,
       skip,
