@@ -110,6 +110,7 @@ export class ScorecardController {
   }
 
   @Get('/:id')
+  @Roles(UserRole.Admin)
   @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'View a scorecard',
