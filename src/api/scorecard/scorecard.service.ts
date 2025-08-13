@@ -203,76 +203,77 @@ export class ScoreCardService {
   }
 
   async cloneScorecard(id: string): Promise<ScorecardResponseDto> {
-    const original = await this.prisma.scorecard.findUnique({
-      where: { id },
-      include: {
-        scorecardGroups: {
-          include: {
-            sections: {
-              include: {
-                questions: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    // const original = await this.prisma.scorecard.findUnique({
+    //   where: { id },
+    //   include: {
+    //     scorecardGroups: {
+    //       include: {
+    //         sections: {
+    //           include: {
+    //             questions: true,
+    //           },
+    //         },
+    //       },
+    //     },
+    //   },
+    // });
 
-    if (!original) {
-      throw new NotFoundException({ message: `Scorecard not found.` });
-    }
+    // if (!original) {
+    //   throw new NotFoundException({ message: `Scorecard not found.` });
+    // }
 
-    // Remove id fields from nested objects for cloning
-    const cloneGroups = original.scorecardGroups.map(
-      (group: ScorecardGroupBaseDto) => ({
-        ...group,
-        id: undefined,
-        createdAt: undefined,
-        updatedAt: undefined,
-        scorecardId: undefined,
-        sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
-          ...section,
-          id: undefined,
-          createdAt: undefined,
-          updatedAt: undefined,
-          scorecardGroupId: undefined,
-          questions: section.questions.map(
-            (question: ScorecardQuestionBaseDto) => ({
-              ...question,
-              id: undefined,
-              createdAt: undefined,
-              updatedAt: undefined,
-              sectionId: undefined,
-              scorecardSectionId: undefined,
-            }),
-          ),
-        })),
-      }),
-    );
+    // // Remove id fields from nested objects for cloning
+    // const cloneGroups = original.scorecardGroups.map(
+    //   (group: ScorecardGroupBaseDto) => ({
+    //     ...group,
+    //     id: undefined,
+    //     createdAt: undefined,
+    //     updatedAt: undefined,
+    //     scorecardId: undefined,
+    //     sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
+    //       ...section,
+    //       id: undefined,
+    //       createdAt: undefined,
+    //       updatedAt: undefined,
+    //       scorecardGroupId: undefined,
+    //       questions: section.questions.map(
+    //         (question: ScorecardQuestionBaseDto) => ({
+    //           ...question,
+    //           id: undefined,
+    //           createdAt: undefined,
+    //           updatedAt: undefined,
+    //           sectionId: undefined,
+    //           scorecardSectionId: undefined,
+    //         }),
+    //       ),
+    //     })),
+    //   }),
+    // );
 
-    const clonedScorecard = await this.prisma.scorecard.create({
-      data: {
-        ...original,
-        id: undefined,
-        name: `${original.name} (Clone)`,
-        createdAt: undefined,
-        updatedAt: undefined,
-        scorecardGroups: {
-          create: cloneGroups,
-        },
-      },
-      include: {
-        scorecardGroups: {
-          include: {
-            sections: {
-              include: {
-                questions: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    // const clonedScorecard = await this.prisma.scorecard.create({
+    //   data: {
+    //     ...original,
+    //     id: undefined,
+    //     name: `${original.name} (Clone)`,
+    //     createdAt: undefined,
+    //     updatedAt: undefined,
+    //     scorecardGroups: {
+    //       create: cloneGroups,
+    //     },
+    //   },
+    //   include: {
+    //     scorecardGroups: {
+    //       include: {
+    //         sections: {
+    //           include: {
+    //             questions: true,
+    //           },
+    //         },
+    //       },
+    //     },
+    //   },
+    // });
+    const clonedScorecard = {};
 
     return clonedScorecard as ScorecardResponseDto;
   }
