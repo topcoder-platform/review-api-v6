@@ -6,13 +6,13 @@ import {
 import { Prisma } from '@prisma/client';
 import {
   mapScorecardRequestToDto,
-  ScorecardGroupBaseDto,
+  // ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
   ScorecardQueryDto,
-  ScorecardQuestionBaseDto,
+  // ScorecardQuestionBaseDto,
   ScorecardRequestDto,
   ScorecardResponseDto,
-  ScorecardSectionBaseDto,
+  // ScorecardSectionBaseDto,
   ScorecardWithGroupResponseDto,
 } from 'src/dto/scorecard.dto';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
@@ -202,6 +202,7 @@ export class ScoreCardService {
     };
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/require-await
   async cloneScorecard(id: string): Promise<ScorecardResponseDto> {
     // const original = await this.prisma.scorecard.findUnique({
     //   where: { id },
