@@ -202,52 +202,53 @@ export class ScoreCardService {
     };
   }
 
-  async cloneScorecard(
-    id: string
-  ): Promise<ScorecardResponseDto> {
-    const original = await this.prisma.scorecard
-      .findUnique({
-        where: { id },
-        include: {
-          scorecardGroups: {
-            include: {
-              sections: {
-                include: {
-                  questions: true,
-                },
+  async cloneScorecard(id: string): Promise<ScorecardResponseDto> {
+    const original = await this.prisma.scorecard.findUnique({
+      where: { id },
+      include: {
+        scorecardGroups: {
+          include: {
+            sections: {
+              include: {
+                questions: true,
               },
             },
           },
         },
-      });
+      },
+    });
 
     if (!original) {
       throw new NotFoundException({ message: `Scorecard not found.` });
     }
 
     // Remove id fields from nested objects for cloning
-    const cloneGroups = original.scorecardGroups.map((group: ScorecardGroupBaseDto) => ({
-      ...group,
-      id: undefined,
-      createdAt: undefined,
-      updatedAt: undefined,
-      scorecardId: undefined,
-      sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
-        ...section,
+    const cloneGroups = original.scorecardGroups.map(
+      (group: ScorecardGroupBaseDto) => ({
+        ...group,
         id: undefined,
         createdAt: undefined,
         updatedAt: undefined,
-        scorecardGroupId: undefined,
-        questions: section.questions.map((question: ScorecardQuestionBaseDto) => ({
-          ...question,
+        scorecardId: undefined,
+        sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
+          ...section,
           id: undefined,
           createdAt: undefined,
           updatedAt: undefined,
-          sectionId: undefined,
-          scorecardSectionId: undefined,
+          scorecardGroupId: undefined,
+          questions: section.questions.map(
+            (question: ScorecardQuestionBaseDto) => ({
+              ...question,
+              id: undefined,
+              createdAt: undefined,
+              updatedAt: undefined,
+              sectionId: undefined,
+              scorecardSectionId: undefined,
+            }),
+          ),
         })),
-      })),
-    }));
+      }),
+    );
 
     const clonedScorecard = await this.prisma.scorecard.create({
       data: {
