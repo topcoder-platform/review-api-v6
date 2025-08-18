@@ -9,7 +9,6 @@ import {
   SubmissionResponseDto,
   SubmissionUpdateRequestDto,
 } from 'src/dto/submission.dto';
-import { MockedData } from 'src/mock/mock.data';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
@@ -107,9 +106,6 @@ export class SubmissionService {
   }
 
   async getSubmission(submissionId: string): Promise<SubmissionResponseDto> {
-    // TODO mocked data only, remove when challenge is concluded
-    return MockedData.getSubmissionById(submissionId);
-
     const data = await this.checkSubmission(submissionId);
     return this.buildResponse(data);
   }
