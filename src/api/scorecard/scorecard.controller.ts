@@ -32,6 +32,8 @@ import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 import { ScoreCardService } from './scorecard.service';
 import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderInterceptor';
 import { $Enums } from '@prisma/client';
+import { User } from 'src/shared/decorators/user.decorator';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('Scorecard')
 @ApiBearerAuth()
@@ -55,8 +57,9 @@ export class ScorecardController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async addScorecard(
     @Body() body: ScorecardRequestDto,
+    @User() user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
-    return await this.scorecardService.addScorecard(body);
+    return await this.scorecardService.addScorecard(body, user);
   }
 
   @Put('/:id')
@@ -81,9 +84,10 @@ export class ScorecardController {
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
   async editScorecard(
     @Param('id') id: string,
-    @Body() body: ScorecardWithGroupResponseDto,
+    @Body() body: ScorecardRequestDto,
+    @User() user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
-    return await this.scorecardService.editScorecard(id, body);
+    return await this.scorecardService.editScorecard(id, body, user);
   }
 
   @Delete(':id')
@@ -249,7 +253,10 @@ export class ScorecardController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
-  async cloneScorecard(@Param('id') id: string): Promise<ScorecardResponseDto> {
-    return this.scorecardService.cloneScorecard(id);
+  async cloneScorecard(
+    @Param('id') id: string,
+    @User() user: JwtUser,
+  ): Promise<ScorecardResponseDto> {
+    return this.scorecardService.cloneScorecard(id, user);
   }
 }
