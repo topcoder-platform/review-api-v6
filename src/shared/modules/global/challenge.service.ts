@@ -6,6 +6,7 @@ import { AxiosError } from 'axios';
 import { M2MService } from './m2m.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { MockedData } from 'src/mock/mock.data';
 
 export class ChallengeData {
   id: string;
@@ -18,6 +19,13 @@ export class ChallengeData {
   track: string;
   legacyId: number;
   tags?: string[] | undefined;
+  workflows?: WorkflowData[] | undefined;
+}
+
+export class WorkflowData {
+  worflowId: string;
+  ref: string;
+  params: Record<string, any>;
 }
 
 @Injectable()
@@ -38,6 +46,9 @@ export class ChallengeApiService {
   }
 
   async getChallengeDetail(challengeId: string): Promise<ChallengeData> {
+    // TODO mocked data only, remove when challenge is concluded
+    return MockedData.getChallengeDetail(challengeId);
+
     // Get M2m token
     const token = await this.m2mService.getM2MToken();
     // Send request to challenge api
