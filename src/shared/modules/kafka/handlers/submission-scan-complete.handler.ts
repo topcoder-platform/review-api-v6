@@ -45,6 +45,13 @@ export class SubmissionScanCompleteHandler
       this.logger.log('Payload: ' + JSON.stringify(message, null, 2));
       this.logger.log('==============================');
 
+      if (process.env.DISPATCH_AI_REVIEW_WORKFLOWS !== 'true') {
+        this.logger.log(
+          'AI Review Workflows are disabled. Skipping orchestration.',
+        );
+        return;
+      }
+
       if (!message.isInfected) {
         // delegate to orchestrator for further processing
         await this.orchestrator.orchestrateScanComplete(message.submissionId);

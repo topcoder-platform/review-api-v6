@@ -44,7 +44,10 @@ export class SubmissionScanCompleteOrchestrator {
         );
       this.logger.log(`Challenge details: ${JSON.stringify(challenge)}`);
 
-      await this.giteaService.checkAndCreateRepository(challenge.id);
+      await this.giteaService.checkAndCreateRepository(
+        process.env.GITEA_SUBMISSION_REVIEWS_ORG || 'TC-Reviews-Tests',
+        challenge.id,
+      );
       this.logger.log(`Retrieved or created repository`);
 
       // iterate available workflows for the challenge
@@ -52,7 +55,11 @@ export class SubmissionScanCompleteOrchestrator {
         let allErrors = '';
         for (const workflow of challenge.workflows) {
           try {
-            await this.giteaService.runDispatchWorkflow(workflow, challenge.id);
+            await this.giteaService.runDispatchWorkflow(
+              process.env.GITEA_SUBMISSION_REVIEWS_ORG || 'TC-Reviews-Tests',
+              workflow,
+              challenge.id,
+            );
           } catch (error) {
             const errorMessage = `Error processing workflow: ${workflow.workflowId}. Error: ${error.message}.`;
             this.logger.error(errorMessage, error);

@@ -4,8 +4,8 @@ New environment properties were added to support Gitea Workflows. These new prop
 
 - GITEA_TOKEN - the gitea token
 - GITEA_BASE_URL - gitea base URL which will be used by generated gitea client
-- GITEA_ORG - the gitea Org name
-- GITEA_REPO_DEF_BRANCH - default branch name to use when creating new repositories
+- GITEA_SUBMISSION_REVIEWS_ORG - the gitea Org name used for submission reviews
+- GITEA_SUBMISSION_REVIEW_NEW_REPO_DEF_BRANCH - default branch name to use when creating new repositories for submission reviews via AI
 
 These new properties are added in .env.sample.
 

@@ -9,7 +9,6 @@ import { WorkflowData } from './challenge.service';
 export class GiteaService {
   private readonly logger: Logger = new Logger(GiteaService.name);
   private readonly giteaClient: Api<any>;
-  private readonly giteaOrg: string;
 
   /**
    * Initializes the Gitea client with the base URL and authorization token.
@@ -22,22 +21,25 @@ export class GiteaService {
         Authorization: `Bearer ${process.env.GITEA_TOKEN}`,
       },
     });
-    this.giteaOrg = process.env.GITEA_ORG || 'TC-Reviews-Tests';
+
     this.logger.log('GiteaService initialized');
   }
 
   /**
-   * Checks if a repository exists for the given challenge ID and creates it if it does not exist.
+   * Checks if a repository exists for the given challenge ID under owner and creates it if it does not exist.
    * @param challengeId The ID of the challenge.
    */
-  async checkAndCreateRepository(challengeId: string): Promise<void> {
+  async checkAndCreateRepository(
+    owner: string,
+    challengeId: string,
+  ): Promise<void> {
     this.logger.log(
       `Check and create repository for challengeId: ${challengeId}`,
     );
     let repository: Repository | undefined;
     try {
       const axRespRepo = await this.giteaClient.repos.repoGet(
-        this.giteaOrg,
+        owner,
         challengeId,
       );
       repository = axRespRepo.data;
@@ -57,7 +59,9 @@ export class GiteaService {
         this.logger.log(`Trying to create ${challengeId} repository.`);
         const axRespRepo = await this.giteaClient.user.createCurrentUserRepo({
           auto_init: true,
-          default_branch: process.env.GITEA_REPO_DEF_BRANCH || 'develop',
+          default_branch:
+            process.env.GITEA_SUBMISSION_REVIEW_NEW_REPO_DEF_BRANCH ||
+            'develop',
           name: challengeId,
           private: false,
           description: `Repository for challenge ${challengeId}`,
@@ -82,6 +86,7 @@ export class GiteaService {
    * @param challengeId The ID of the challenge (same as repo).
    */
   async runDispatchWorkflow(
+    owner: string,
     workflow: WorkflowData,
     challengeId: string,
   ): Promise<void> {
@@ -90,7 +95,7 @@ export class GiteaService {
     );
     try {
       const response = await this.giteaClient.repos.actionsDispatchWorkflow(
-        this.giteaOrg,
+        owner,
         challengeId,
         workflow.workflowId,
         {
