@@ -35,7 +35,12 @@ export class ProjectResultController {
   }
 
   @Get('/projectResult')
-  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Submitter, UserRole.Admin)
+  @Roles(
+    UserRole.Reviewer,
+    UserRole.Copilot,
+    UserRole.Submitter,
+    UserRole.Admin,
+  )
   @Scopes(Scope.ReadProjectResult)
   @ApiOperation({
     summary: 'Get project results',
