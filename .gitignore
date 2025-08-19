@@ -3,6 +3,9 @@
 /node_modules
 /build
 
+# migration files
+/prisma/Scorecards
+
 # Logs
 logs
 *.log

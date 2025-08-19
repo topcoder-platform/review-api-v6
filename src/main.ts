@@ -38,7 +38,14 @@ async function bootstrap() {
     credentials: true,
     origin: process.env.CORS_ALLOWED_ORIGIN
       ? new RegExp(process.env.CORS_ALLOWED_ORIGIN)
-      : ['http://localhost:3000', /\.localhost:3000$/],
+      : [
+          'http://localhost:3000',
+          /\.localhost:3000$/,
+          'https://topcoder.com',
+          'https://topcoder-dev.com',
+          /\.topcoder-dev\.com$/,
+          /\.topcoder\.com$/,
+        ],
     methods: 'GET, POST, OPTIONS, PUT, DELETE, PATCH',
   };
   app.use(cors(corsConfig));
