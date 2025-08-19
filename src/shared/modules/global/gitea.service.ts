@@ -86,13 +86,13 @@ export class GiteaService {
     challengeId: string,
   ): Promise<void> {
     this.logger.log(
-      `Running workflow: ${workflow.worflowId} with ref: ${workflow.ref}`,
+      `Running workflow: ${workflow.workflowId} with ref: ${workflow.ref}`,
     );
     try {
       const response = await this.giteaClient.repos.actionsDispatchWorkflow(
         this.giteaOrg,
         challengeId,
-        workflow.worflowId,
+        workflow.workflowId,
         {
           ref: workflow.ref,
           inputs: workflow.params,
@@ -102,7 +102,7 @@ export class GiteaService {
       this.logger.log(`Workflow dispatched successfully: ${response.status}`);
     } catch (error) {
       this.logger.error(
-        `Error dispatching workflow ${workflow.worflowId}: ${error.message}`,
+        `Error dispatching workflow ${workflow.workflowId}: ${error.message}`,
       );
       throw error;
     }

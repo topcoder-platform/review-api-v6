@@ -22,7 +22,7 @@ export class ChallengeData {
 }
 
 export class WorkflowData {
-  worflowId: string;
+  workflowId: string;
   ref: string;
   params: Record<string, any>;
 }

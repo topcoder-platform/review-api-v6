@@ -54,7 +54,7 @@ export class SubmissionScanCompleteOrchestrator {
           try {
             await this.giteaService.runDispatchWorkflow(workflow, challenge.id);
           } catch (error) {
-            const errorMessage = `Error processing workflow: ${workflow.worflowId}. Error: ${error.message}.`;
+            const errorMessage = `Error processing workflow: ${workflow.workflowId}. Error: ${error.message}.`;
             this.logger.error(errorMessage, error);
             // don't rethrow error as we want to continue processing other workflows
             allErrors += `${errorMessage}. `;
