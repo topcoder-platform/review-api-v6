@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  mapScorecardRequestForCreate,
   mapScorecardRequestToDto,
   ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
@@ -33,7 +34,7 @@ export class ScoreCardService {
   ): Promise<ScorecardWithGroupResponseDto> {
     const data = await this.prisma.scorecard.create({
       data: {
-        ...(mapScorecardRequestToDto({
+        ...(mapScorecardRequestForCreate({
           ...body,
           createdBy: user.isMachine ? 'System' : (user.userId as string),
           updatedBy: user.isMachine ? 'System' : (user.userId as string),

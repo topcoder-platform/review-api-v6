@@ -322,6 +322,37 @@ export class ScorecardQueryDto {
   scorecardTypesArray?: $Enums.ScorecardType[];
 }
 
+export function mapScorecardRequestForCreate(request: ScorecardRequestDto) {
+  const userFields = {
+    ...(request.createdBy ? { createdBy: request.createdBy } : {}),
+    updatedBy: request.updatedBy,
+  };
+
+  return {
+    ...request,
+    ...userFields,
+    scorecardGroups: {
+      create: request.scorecardGroups.map((group) => ({
+        ...group,
+        ...userFields,
+        sections: {
+          create: group.sections.map((section) => ({
+            ...section,
+            ...userFields,
+            questions: {
+              create: section.questions.map((question) => ({
+                ...question,
+                sortOrder: 1,
+                ...userFields,
+              })),
+            },
+          })),
+        },
+      })),
+    },
+  };
+}
+
 export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
   const userFields = {
     ...(request.createdBy ? { createdBy: request.createdBy } : {}),

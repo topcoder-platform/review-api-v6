@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseInterceptors,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -56,7 +57,8 @@ export class ScorecardController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async addScorecard(
-    @Body() body: ScorecardRequestDto,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: ScorecardRequestDto,
     @User() user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
     return await this.scorecardService.addScorecard(body, user);
@@ -84,7 +86,8 @@ export class ScorecardController {
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
   async editScorecard(
     @Param('id') id: string,
-    @Body() body: ScorecardRequestDto,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: ScorecardRequestDto,
     @User() user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
     return await this.scorecardService.editScorecard(id, body, user);
@@ -114,6 +117,7 @@ export class ScorecardController {
   }
 
   @Get('/:id')
+  @Roles(UserRole.Admin)
   @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'View a scorecard',
