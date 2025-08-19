@@ -12,6 +12,10 @@ import { EventBusService } from './eventBus.service';
 import { MemberService } from './member.service';
 import { ResourceApiService } from './resource.service';
 import { KafkaModule } from '../kafka/kafka.module';
+import { SubmissionBaseService } from './submission-base.service';
+import { GiteaService } from './gitea.service';
+import { SubmissionScanCompleteOrchestrator } from './submission-scan-complete.orchestrator';
+import { SubmissionService } from 'src/api/submission/submission.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -37,6 +41,10 @@ import { KafkaModule } from '../kafka/kafka.module';
     ResourceApiService,
     EventBusService,
     MemberService,
+    SubmissionBaseService,
+    GiteaService,
+    SubmissionScanCompleteOrchestrator,
+    SubmissionService,
   ],
   exports: [
     PrismaService,
@@ -48,6 +56,9 @@ import { KafkaModule } from '../kafka/kafka.module';
     ResourceApiService,
     EventBusService,
     MemberService,
+    SubmissionBaseService,
+    GiteaService,
+    SubmissionScanCompleteOrchestrator,
   ],
 })
 export class GlobalProvidersModule {}
