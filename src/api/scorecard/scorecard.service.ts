@@ -153,7 +153,7 @@ export class ScoreCardService {
           throw new NotFoundException({ message: `Scorecard not found.` });
         }
         throw new InternalServerErrorException({
-          message: `Error: ${error.code}`,
+          message: `Invalid scorecard id`,
         });
       });
     return data as ScorecardWithGroupResponseDto;
