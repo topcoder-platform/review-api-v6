@@ -139,6 +139,8 @@ export class ScorecardController {
   }
 
   @Get()
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'Search scorecards',
     description:
