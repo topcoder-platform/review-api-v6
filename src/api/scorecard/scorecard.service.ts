@@ -5,16 +5,18 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  mapScorecardRequestForCreate,
   mapScorecardRequestToDto,
-  // ScorecardGroupBaseDto,
+  ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
   ScorecardQueryDto,
-  // ScorecardQuestionBaseDto,
+  ScorecardQuestionBaseDto,
   ScorecardRequestDto,
   ScorecardResponseDto,
-  // ScorecardSectionBaseDto,
+  ScorecardSectionBaseDto,
   ScorecardWithGroupResponseDto,
 } from 'src/dto/scorecard.dto';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 
 @Injectable()
@@ -28,9 +30,16 @@ export class ScoreCardService {
    */
   async addScorecard(
     body: ScorecardRequestDto,
+    user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
     const data = await this.prisma.scorecard.create({
-      data: mapScorecardRequestToDto(body),
+      data: {
+        ...(mapScorecardRequestForCreate({
+          ...body,
+          createdBy: user.isMachine ? 'System' : (user.userId as string),
+          updatedBy: user.isMachine ? 'System' : (user.userId as string),
+        }) as any),
+      },
       include: {
         scorecardGroups: {
           include: {
@@ -44,7 +53,7 @@ export class ScoreCardService {
       },
     });
 
-    return data as ScorecardWithGroupResponseDto;
+    return data as unknown as ScorecardWithGroupResponseDto;
   }
 
   /**
@@ -54,12 +63,17 @@ export class ScoreCardService {
    */
   async editScorecard(
     id: string,
-    body: ScorecardWithGroupResponseDto,
+    body: ScorecardRequestDto,
+    user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
     const data = await this.prisma.scorecard
       .update({
         where: { id },
-        data: mapScorecardRequestToDto(body),
+        data: mapScorecardRequestToDto({
+          ...body,
+          createdBy: user.isMachine ? 'System' : (user.userId as string),
+          updatedBy: user.isMachine ? 'System' : (user.userId as string),
+        }) as any,
         include: {
           scorecardGroups: {
             include: {
@@ -81,7 +95,7 @@ export class ScoreCardService {
         });
       });
 
-    return data as ScorecardWithGroupResponseDto;
+    return data as unknown as ScorecardWithGroupResponseDto;
   }
 
   /**
@@ -202,79 +216,87 @@ export class ScoreCardService {
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/require-await
-  async cloneScorecard(id: string): Promise<ScorecardResponseDto> {
-    // const original = await this.prisma.scorecard.findUnique({
-    //   where: { id },
-    //   include: {
-    //     scorecardGroups: {
-    //       include: {
-    //         sections: {
-    //           include: {
-    //             questions: true,
-    //           },
-    //         },
-    //       },
-    //     },
-    //   },
-    // });
+  async cloneScorecard(
+    id: string,
+    user: { userId?: string; isMachine: boolean },
+  ): Promise<ScorecardResponseDto> {
+    const original = await this.prisma.scorecard.findUnique({
+      where: { id },
+      include: {
+        scorecardGroups: {
+          include: {
+            sections: {
+              include: {
+                questions: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
-    // if (!original) {
-    //   throw new NotFoundException({ message: `Scorecard not found.` });
-    // }
+    if (!original) {
+      throw new NotFoundException({ message: `Scorecard not found.` });
+    }
 
-    // // Remove id fields from nested objects for cloning
-    // const cloneGroups = original.scorecardGroups.map(
-    //   (group: ScorecardGroupBaseDto) => ({
-    //     ...group,
-    //     id: undefined,
-    //     createdAt: undefined,
-    //     updatedAt: undefined,
-    //     scorecardId: undefined,
-    //     sections: group.sections.map((section: ScorecardSectionBaseDto) => ({
-    //       ...section,
-    //       id: undefined,
-    //       createdAt: undefined,
-    //       updatedAt: undefined,
-    //       scorecardGroupId: undefined,
-    //       questions: section.questions.map(
-    //         (question: ScorecardQuestionBaseDto) => ({
-    //           ...question,
-    //           id: undefined,
-    //           createdAt: undefined,
-    //           updatedAt: undefined,
-    //           sectionId: undefined,
-    //           scorecardSectionId: undefined,
-    //         }),
-    //       ),
-    //     })),
-    //   }),
-    // );
+    const auditFields = {
+      createdBy: user.isMachine ? 'System' : (user.userId as string),
+      updatedBy: user.isMachine ? 'System' : (user.userId as string),
+      createdAt: undefined,
+      updatedAt: undefined,
+    };
 
-    // const clonedScorecard = await this.prisma.scorecard.create({
-    //   data: {
-    //     ...original,
-    //     id: undefined,
-    //     name: `${original.name} (Clone)`,
-    //     createdAt: undefined,
-    //     updatedAt: undefined,
-    //     scorecardGroups: {
-    //       create: cloneGroups,
-    //     },
-    //   },
-    //   include: {
-    //     scorecardGroups: {
-    //       include: {
-    //         sections: {
-    //           include: {
-    //             questions: true,
-    //           },
-    //         },
-    //       },
-    //     },
-    //   },
-    // });
-    const clonedScorecard = {};
+    // Remove id fields from nested objects for cloning
+    const cloneGroups = original.scorecardGroups.map(
+      (group: ScorecardGroupBaseDto) => ({
+        ...group,
+        id: undefined,
+        ...auditFields,
+        scorecardId: undefined,
+        sections: {
+          create: group.sections.map((section: ScorecardSectionBaseDto) => ({
+            ...section,
+            id: undefined,
+            ...auditFields,
+            scorecardGroupId: undefined,
+            questions: {
+              create: section.questions.map(
+                (question: ScorecardQuestionBaseDto) => ({
+                  ...question,
+                  id: undefined,
+                  ...auditFields,
+                  sectionId: undefined,
+                  scorecardSectionId: undefined,
+                }),
+              ),
+            },
+          })),
+        },
+      }),
+    ) as any;
+
+    const clonedScorecard = await this.prisma.scorecard.create({
+      data: {
+        ...original,
+        id: undefined,
+        name: `${original.name} (Clone)`,
+        ...auditFields,
+        scorecardGroups: {
+          create: cloneGroups,
+        },
+      },
+      include: {
+        scorecardGroups: {
+          include: {
+            sections: {
+              include: {
+                questions: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
     return clonedScorecard as ScorecardResponseDto;
   }

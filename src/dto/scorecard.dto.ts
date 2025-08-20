@@ -1,5 +1,20 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { $Enums } from '@prisma/client';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import {
+  IsGreaterThan,
+  IsSmallerThan,
+} from 'src/shared/validators/customValidators';
 
 export enum ScorecardStatus {
   ACTIVE = 'ACTIVE',
@@ -32,28 +47,39 @@ export enum QuestionType {
 }
 
 export class ScorecardQuestionBaseDto {
+  @ApiProperty({ description: 'The id of the question', example: 'abc' })
+  @IsOptional()
+  @IsString()
+  id: string;
+
   @ApiProperty({ description: 'The type of the question', enum: QuestionType })
+  @IsEnum(QuestionType)
   type: QuestionType;
 
   @ApiProperty({
     description: 'The description of the question',
     example: 'What is the challenge?',
   })
+  @IsString()
   description: string;
 
   @ApiProperty({
     description: 'Guidelines for the question',
     example: 'Provide detailed information.',
   })
+  @IsString()
   guidelines: string;
 
   @ApiProperty({ description: 'The weight of the question', example: 10 })
+  @IsNumber()
   weight: number;
 
   @ApiProperty({
     description: 'Indicates whether the question requires an upload',
     example: true,
   })
+  @IsOptional()
+  @IsBoolean()
   requiresUpload: boolean;
 
   @ApiProperty({
@@ -61,6 +87,8 @@ export class ScorecardQuestionBaseDto {
     example: 0,
     required: false,
   })
+  @IsOptional()
+  @IsNumber()
   scaleMin?: number;
 
   @ApiProperty({
@@ -68,6 +96,8 @@ export class ScorecardQuestionBaseDto {
     example: 9,
     required: false,
   })
+  @IsOptional()
+  @IsNumber()
   scaleMax?: number;
 }
 
@@ -79,16 +109,24 @@ export class ScorecardQuestionResponseDto extends ScorecardQuestionBaseDto {
 }
 
 export class ScorecardSectionBaseDto {
+  @ApiProperty({ description: 'The id of the section', example: 'abc' })
+  @IsOptional()
+  @IsString()
+  id: string;
+
   @ApiProperty({
     description: 'The name of the section',
     example: 'Technical Skills',
   })
+  @IsString()
   name: string;
 
   @ApiProperty({ description: 'The weight of the section', example: 20 })
+  @IsNumber()
   weight: number;
 
   @ApiProperty({ description: 'Sort order of the section', example: 1 })
+  @IsNumber()
   sortOrder: number;
 
   questions: any[];
@@ -99,6 +137,9 @@ export class ScorecardSectionRequestDto extends ScorecardSectionBaseDto {
     description: 'The list of questions within this section',
     type: [ScorecardQuestionRequestDto],
   })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ScorecardQuestionRequestDto)
   questions: ScorecardQuestionRequestDto[];
 }
 
@@ -114,13 +155,21 @@ export class ScorecardSectionResponseDto extends ScorecardSectionBaseDto {
 }
 
 export class ScorecardGroupBaseDto {
+  @ApiProperty({ description: 'The id of the group', example: 'abc' })
+  @IsOptional()
+  @IsString()
+  id: string;
+
   @ApiProperty({ description: 'The name of the group', example: 'Group A' })
+  @IsString()
   name: string;
 
   @ApiProperty({ description: 'The weight of the group', example: 30 })
+  @IsNumber()
   weight: number;
 
   @ApiProperty({ description: 'Sort order of the group', example: 1 })
+  @IsNumber()
   sortOrder: number;
 
   sections: any[];
@@ -130,6 +179,9 @@ export class ScorecardGroupRequestDto extends ScorecardGroupBaseDto {
     description: 'The list of sections within this group',
     type: [ScorecardSectionRequestDto],
   })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ScorecardSectionRequestDto)
   sections: ScorecardSectionRequestDto[];
 }
 
@@ -149,60 +201,55 @@ export class ScorecardBaseDto {
     description: 'The status of the scorecard',
     enum: ScorecardStatus,
   })
+  @IsEnum(ScorecardStatus)
   status: ScorecardStatus;
 
   @ApiProperty({
     description: 'The type of the scorecard',
     enum: ScorecardType,
   })
+  @IsEnum(ScorecardType)
   type: ScorecardType;
 
   @ApiProperty({
     description: 'The challenge track associated with the scorecard',
     enum: ChallengeTrack,
   })
+  @IsEnum(ChallengeTrack)
   challengeTrack: ChallengeTrack;
 
   @ApiProperty({ description: 'The challenge type', example: 'Code' })
+  @IsString()
   challengeType: string;
 
   @ApiProperty({
     description: 'The name of the scorecard',
     example: 'Sample Scorecard',
   })
+  @IsString()
   name: string;
 
   @ApiProperty({ description: 'The version of the scorecard', example: '1.0' })
+  @IsString()
   version: string;
 
   @ApiProperty({ description: 'The minimum score', example: 0 })
+  @IsNumber()
+  @Min(0)
+  @IsSmallerThan('maxScore')
   minScore: number;
 
   @ApiProperty({ description: 'The maximum score', example: 100 })
+  @IsNumber()
+  @IsGreaterThan('minScore')
   maxScore: number;
 
-  @ApiProperty({
-    description: 'The creation timestamp',
-    example: '2023-10-01T00:00:00Z',
-  })
+  /**
+   * These shouldn't be editable via API
+   */
   createdAt: Date;
-
-  @ApiProperty({
-    description: 'The user who created the scorecard',
-    example: 'user123',
-  })
   createdBy: string;
-
-  @ApiProperty({
-    description: 'The last update timestamp',
-    example: '2023-10-01T00:00:00Z',
-  })
   updatedAt: Date;
-
-  @ApiProperty({
-    description: 'The user who last updated the scorecard',
-    example: 'user456',
-  })
   updatedBy: string;
 }
 
@@ -218,6 +265,9 @@ export class ScorecardRequestDto extends ScorecardBaseWithGroupsDto {
     description: 'The list of groups associated with the scorecard',
     type: [ScorecardGroupRequestDto],
   })
+  @IsArray()
+  @ValidateNested({ each: true }) // validate each item in the array
+  @Type(() => ScorecardGroupRequestDto)
   scorecardGroups: ScorecardGroupRequestDto[];
 }
 
@@ -272,9 +322,9 @@ export class ScorecardQueryDto {
   scorecardTypesArray?: $Enums.ScorecardType[];
 }
 
-export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
+export function mapScorecardRequestForCreate(request: ScorecardRequestDto) {
   const userFields = {
-    createdBy: request.createdBy,
+    ...(request.createdBy ? { createdBy: request.createdBy } : {}),
     updatedBy: request.updatedBy,
   };
 
@@ -297,6 +347,79 @@ export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
               })),
             },
           })),
+        },
+      })),
+    },
+  };
+}
+
+export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
+  const userFields = {
+    ...(request.createdBy ? { createdBy: request.createdBy } : {}),
+    updatedBy: request.updatedBy,
+  };
+
+  return {
+    ...request,
+    ...userFields,
+    scorecardGroups: {
+      upsert: request.scorecardGroups.map((group) => ({
+        where: { id: (group as any).id as string },
+        update: {
+          ...group,
+          updatedBy: request.updatedBy,
+          sections: {
+            upsert: group.sections.map((section) => ({
+              where: { id: (section as any).id as string },
+              update: {
+                ...section,
+                updatedBy: request.updatedBy,
+                questions: {
+                  upsert: section.questions.map((question) => ({
+                    where: { id: (question as any).id as string },
+                    update: {
+                      ...question,
+                      sortOrder: 1,
+                      updatedBy: request.updatedBy,
+                    },
+                    create: {
+                      ...question,
+                      sortOrder: 1,
+                      ...userFields,
+                    },
+                  })),
+                },
+              },
+              create: {
+                ...section,
+                ...userFields,
+                questions: {
+                  create: section.questions.map((question) => ({
+                    ...question,
+                    sortOrder: 1,
+                    ...userFields,
+                  })),
+                },
+              },
+            })),
+          },
+        },
+        create: {
+          ...group,
+          ...userFields,
+          sections: {
+            create: group.sections.map((section) => ({
+              ...section,
+              ...userFields,
+              questions: {
+                create: section.questions.map((question) => ({
+                  ...question,
+                  sortOrder: 1,
+                  ...userFields,
+                })),
+              },
+            })),
+          },
         },
       })),
     },
