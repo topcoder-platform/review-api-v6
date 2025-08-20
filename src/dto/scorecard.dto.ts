@@ -1,10 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { $Enums } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -288,6 +289,60 @@ export class ScorecardResponseDto extends ScorecardBaseDto {
   id: string;
 }
 
+function toArray<T = string>(value: unknown): T[] | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const asArray = Array.isArray(value) ? value : [value];
+  return asArray
+    .flatMap((v) => String(v).split(','))
+    .map((s) => s.trim())
+    .filter(Boolean) as T[];
+}
+
+export class SearchScorecardQuery {
+  @IsOptional()
+  @Transform(({ value }) => toArray<ChallengeTrack>(value))
+  @IsArray()
+  @IsEnum(ChallengeTrack, { each: true })
+  challengeTrack?: ChallengeTrack[];
+
+  @IsOptional()
+  @Transform(({ value }) => toArray<string>(value))
+  @IsArray()
+  @IsString({ each: true })
+  challengeType?: string[];
+
+  @IsOptional()
+  @Transform(({ value }) => toArray<$Enums.ScorecardStatus>(value))
+  @IsArray()
+  @IsEnum($Enums.ScorecardStatus, {
+    each: true,
+    message: (args) => `Invalid value "${args.value}" for "${args.property}".`,
+  })
+  status?: $Enums.ScorecardStatus[];
+
+  @IsOptional()
+  @Transform(({ value }) => toArray<$Enums.ScorecardType>(value))
+  @IsArray()
+  @IsEnum($Enums.ScorecardType, { each: true })
+  scorecardType?: $Enums.ScorecardType[];
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  perPage: number = 10;
+}
+
 export class ScorecardWithGroupResponseDto extends ScorecardBaseDto {
   @ApiProperty({ description: 'The ID of the scorecard', example: 'abc123' })
   id: string;
@@ -322,16 +377,6 @@ export class ScorecardPaginatedResponseDto {
     type: [ScorecardGroupResponseDto],
   })
   scoreCards: ScorecardResponseDto[];
-}
-
-export class ScorecardQueryDto {
-  challengeTrack?: ChallengeTrack[];
-  challengeType?: string[];
-  name?: string;
-  page?: number;
-  perPage?: number;
-  statusArray?: $Enums.ScorecardStatus[];
-  scorecardTypesArray?: $Enums.ScorecardType[];
 }
 
 export function mapScorecardRequestForCreate(request: ScorecardRequestDto) {

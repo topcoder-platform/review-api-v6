@@ -28,11 +28,11 @@ import {
   ScorecardRequestDto,
   ScorecardResponseDto,
   ScorecardWithGroupResponseDto,
+  SearchScorecardQuery,
 } from 'src/dto/scorecard.dto';
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 import { ScoreCardService } from './scorecard.service';
 import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderInterceptor';
-import { $Enums } from '@prisma/client';
 import { User } from 'src/shared/decorators/user.decorator';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
@@ -198,40 +198,26 @@ export class ScorecardController {
   })
   @UseInterceptors(PaginationHeaderInterceptor)
   async searchScorecards(
-    @Query('challengeTrack') challengeTrack?: ChallengeTrack | ChallengeTrack[],
-    @Query('challengeType') challengeType?: string | string[],
-    @Query('status') status?: $Enums.ScorecardStatus | $Enums.ScorecardStatus[],
-    @Query('scorecardType')
-    scorecardType?: $Enums.ScorecardType | $Enums.ScorecardType[],
-    @Query('name') name?: string,
-    @Query('page') page: number = 1,
-    @Query('perPage') perPage: number = 10,
+    @Query() query: SearchScorecardQuery,
   ): Promise<ScorecardPaginatedResponseDto> {
-    const challengeTrackArray = Array.isArray(challengeTrack)
-      ? challengeTrack
-      : challengeTrack
-        ? [challengeTrack]
-        : [];
-    const challengeTypeArray = Array.isArray(challengeType)
-      ? challengeType
-      : challengeType
-        ? [challengeType]
-        : [];
-    const scorecardTypesArray = Array.isArray(scorecardType)
-      ? scorecardType
-      : scorecardType
-        ? [scorecardType]
-        : [];
-    const statusArray = Array.isArray(status) ? status : status ? [status] : [];
-
-    const result = await this.scorecardService.getScoreCards({
-      challengeTrack: challengeTrackArray,
-      challengeType: challengeTypeArray,
+    const {
+      challengeTrack = [],
+      challengeType = [],
+      status = [],
+      scorecardType = [],
       name,
       page,
       perPage,
-      scorecardTypesArray,
-      statusArray,
+    } = query;
+
+    const result = await this.scorecardService.getScoreCards({
+      challengeTrack,
+      challengeType,
+      name,
+      page,
+      perPage,
+      scorecardType,
+      status,
     });
     return result;
   }
