@@ -9,12 +9,12 @@ import {
   mapScorecardRequestToDto,
   ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
-  ScorecardQueryDto,
   ScorecardQuestionBaseDto,
   ScorecardRequestDto,
   ScorecardResponseDto,
   ScorecardSectionBaseDto,
   ScorecardWithGroupResponseDto,
+  SearchScorecardQuery,
 } from 'src/dto/scorecard.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
@@ -165,15 +165,15 @@ export class ScoreCardService {
    * @returns response dto
    */
   async getScoreCards(
-    query: ScorecardQueryDto,
+    query: SearchScorecardQuery,
   ): Promise<ScorecardPaginatedResponseDto> {
     const {
       page = 1,
       perPage = 10,
       challengeTrack,
       challengeType,
-      scorecardTypesArray,
-      statusArray,
+      scorecardType,
+      status,
       name,
     } = query;
     const skip = (page - 1) * perPage;
@@ -188,14 +188,14 @@ export class ScoreCardService {
           in: challengeType,
         },
       }),
-      ...(scorecardTypesArray?.length && {
+      ...(scorecardType?.length && {
         type: {
-          in: scorecardTypesArray,
+          in: scorecardType,
         },
       }),
-      ...(statusArray?.length && {
+      ...(status?.length && {
         status: {
-          in: statusArray,
+          in: status,
         },
       }),
       ...(name && { name: { contains: name, mode: 'insensitive' } }),
