@@ -5,9 +5,11 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -61,6 +63,7 @@ export class ScorecardQuestionBaseDto {
     example: 'What is the challenge?',
   })
   @IsString()
+  @IsNotEmpty()
   description: string;
 
   @ApiProperty({
@@ -72,6 +75,8 @@ export class ScorecardQuestionBaseDto {
 
   @ApiProperty({ description: 'The weight of the question', example: 10 })
   @IsNumber()
+  @Min(0)
+  @Max(100)
   weight: number;
 
   @ApiProperty({
@@ -119,10 +124,13 @@ export class ScorecardSectionBaseDto {
     example: 'Technical Skills',
   })
   @IsString()
+  @IsNotEmpty()
   name: string;
 
   @ApiProperty({ description: 'The weight of the section', example: 20 })
   @IsNumber()
+  @Min(0)
+  @Max(100)
   weight: number;
 
   @ApiProperty({ description: 'Sort order of the section', example: 1 })
@@ -162,10 +170,13 @@ export class ScorecardGroupBaseDto {
 
   @ApiProperty({ description: 'The name of the group', example: 'Group A' })
   @IsString()
+  @IsNotEmpty()
   name: string;
 
   @ApiProperty({ description: 'The weight of the group', example: 30 })
   @IsNumber()
+  @Min(0)
+  @Max(100)
   weight: number;
 
   @ApiProperty({ description: 'Sort order of the group', example: 1 })
@@ -241,6 +252,7 @@ export class ScorecardBaseDto {
 
   @ApiProperty({ description: 'The maximum score', example: 100 })
   @IsNumber()
+  @Max(100)
   @IsGreaterThan('minScore')
   maxScore: number;
 
@@ -330,18 +342,22 @@ export function mapScorecardRequestForCreate(request: ScorecardRequestDto) {
 
   return {
     ...request,
+    id: undefined,
     ...userFields,
     scorecardGroups: {
       create: request.scorecardGroups.map((group) => ({
         ...group,
+        id: undefined,
         ...userFields,
         sections: {
           create: group.sections.map((section) => ({
             ...section,
+            id: undefined,
             ...userFields,
             questions: {
               create: section.questions.map((question) => ({
                 ...question,
+                id: undefined,
                 sortOrder: 1,
                 ...userFields,
               })),
