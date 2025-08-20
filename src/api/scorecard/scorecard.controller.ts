@@ -33,7 +33,6 @@ import {
 import { ChallengeTrack } from 'src/shared/enums/challengeTrack.enum';
 import { ScoreCardService } from './scorecard.service';
 import { PaginationHeaderInterceptor } from 'src/interceptors/PaginationHeaderInterceptor';
-import { $Enums } from '@prisma/client';
 import { User } from 'src/shared/decorators/user.decorator';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
@@ -197,10 +196,17 @@ export class ScorecardController {
   })
   @UseInterceptors(PaginationHeaderInterceptor)
   async searchScorecards(
-    @Query() query: SearchScorecardQuery
+    @Query() query: SearchScorecardQuery,
   ): Promise<ScorecardPaginatedResponseDto> {
-    const { challengeTrack = [], challengeType = [], status = [], scorecardType = [], name, page, perPage} = query;
-    
+    const {
+      challengeTrack = [],
+      challengeType = [],
+      status = [],
+      scorecardType = [],
+      name,
+      page,
+      perPage,
+    } = query;
 
     const result = await this.scorecardService.getScoreCards({
       challengeTrack,

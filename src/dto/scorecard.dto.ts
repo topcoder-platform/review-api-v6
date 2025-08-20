@@ -316,8 +316,7 @@ export class SearchScorecardQuery {
   @IsArray()
   @IsEnum($Enums.ScorecardStatus, {
     each: true,
-    message: (args) =>
-    `Invalid value "${args.value}" for "${args.property}".` 
+    message: (args) => `Invalid value "${args.value}" for "${args.property}".`,
   })
   status?: $Enums.ScorecardStatus[];
 
