@@ -66,6 +66,14 @@ export class ScoreCardService {
     body: ScorecardRequestDto,
     user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
+    const original = await this.prisma.scorecard.findUnique({
+      where: { id },
+    });
+
+    if (!original) {
+      throw new NotFoundException({ message: `Scorecard not found.` });
+    }
+
     const data = await this.prisma.scorecard
       .update({
         where: { id },
