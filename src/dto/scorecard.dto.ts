@@ -73,6 +73,7 @@ export class ScorecardQuestionBaseDto {
     example: 'Provide detailed information.',
   })
   @IsString()
+  @IsNotEmpty()
   guidelines: string;
 
   @ApiProperty({ description: 'The weight of the question', example: 10 })
@@ -106,6 +107,10 @@ export class ScorecardQuestionBaseDto {
   @IsOptional()
   @IsNumber()
   scaleMax?: number;
+
+  @ApiProperty({ description: 'Sort order of the question', example: 1 })
+  @IsNumber()
+  sortOrder: number;
 }
 
 export class ScorecardQuestionRequestDto extends ScorecardQuestionBaseDto {}
@@ -414,79 +419,6 @@ export function mapScorecardRequestForCreate(request: ScorecardRequestDto) {
               })),
             },
           })),
-        },
-      })),
-    },
-  };
-}
-
-export function mapScorecardRequestToDto(request: ScorecardRequestDto) {
-  const userFields = {
-    ...(request.createdBy ? { createdBy: request.createdBy } : {}),
-    updatedBy: request.updatedBy,
-  };
-
-  return {
-    ...request,
-    ...userFields,
-    scorecardGroups: {
-      upsert: request.scorecardGroups.map((group) => ({
-        where: { id: (group as any).id as string },
-        update: {
-          ...group,
-          updatedBy: request.updatedBy,
-          sections: {
-            upsert: group.sections.map((section) => ({
-              where: { id: (section as any).id as string },
-              update: {
-                ...section,
-                updatedBy: request.updatedBy,
-                questions: {
-                  upsert: section.questions.map((question) => ({
-                    where: { id: (question as any).id as string },
-                    update: {
-                      ...question,
-                      sortOrder: 1,
-                      updatedBy: request.updatedBy,
-                    },
-                    create: {
-                      ...question,
-                      sortOrder: 1,
-                      ...userFields,
-                    },
-                  })),
-                },
-              },
-              create: {
-                ...section,
-                ...userFields,
-                questions: {
-                  create: section.questions.map((question) => ({
-                    ...question,
-                    sortOrder: 1,
-                    ...userFields,
-                  })),
-                },
-              },
-            })),
-          },
-        },
-        create: {
-          ...group,
-          ...userFields,
-          sections: {
-            create: group.sections.map((section) => ({
-              ...section,
-              ...userFields,
-              questions: {
-                create: section.questions.map((question) => ({
-                  ...question,
-                  sortOrder: 1,
-                  ...userFields,
-                })),
-              },
-            })),
-          },
         },
       })),
     },
