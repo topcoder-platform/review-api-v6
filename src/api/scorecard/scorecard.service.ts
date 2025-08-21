@@ -209,7 +209,7 @@ export class ScoreCardService {
           data: {
             ...omit(child, ['sections', 'questions']),
             updatedBy: userId,
-          }, // ⚠️ Adjust to include other fields as needed
+          },
         });
       } else {
         this.logger.log(
