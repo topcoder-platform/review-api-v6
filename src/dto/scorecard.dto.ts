@@ -17,6 +17,7 @@ import {
 import {
   IsGreaterThan,
   IsSmallerThan,
+  WeightSum,
 } from 'src/shared/validators/customValidators';
 
 export enum ScorecardStatus {
@@ -149,6 +150,7 @@ export class ScorecardSectionRequestDto extends ScorecardSectionBaseDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ScorecardQuestionRequestDto)
+  @WeightSum()
   questions: ScorecardQuestionRequestDto[];
 }
 
@@ -194,6 +196,7 @@ export class ScorecardGroupRequestDto extends ScorecardGroupBaseDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ScorecardSectionRequestDto)
+  @WeightSum()
   sections: ScorecardSectionRequestDto[];
 }
 
@@ -232,6 +235,7 @@ export class ScorecardBaseDto {
 
   @ApiProperty({ description: 'The challenge type', example: 'Code' })
   @IsString()
+  @IsNotEmpty()
   challengeType: string;
 
   @ApiProperty({
@@ -239,6 +243,7 @@ export class ScorecardBaseDto {
     example: 'Sample Scorecard',
   })
   @IsString()
+  @IsNotEmpty()
   name: string;
 
   @ApiProperty({ description: 'The version of the scorecard', example: '1.0' })
@@ -281,6 +286,7 @@ export class ScorecardRequestDto extends ScorecardBaseWithGroupsDto {
   @IsArray()
   @ValidateNested({ each: true }) // validate each item in the array
   @Type(() => ScorecardGroupRequestDto)
+  @WeightSum()
   scorecardGroups: ScorecardGroupRequestDto[];
 }
 

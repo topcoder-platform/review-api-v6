@@ -1,4 +1,5 @@
 import {
+  isArray,
   registerDecorator,
   ValidationOptions,
   ValidationArguments,
@@ -84,4 +85,34 @@ export function IsSmallerThan(
       return `$property must be less than ${relatedPropertyName} (${relatedValue})`;
     },
   );
+}
+
+export function WeightSum(sum = 100, validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'WeightSum',
+      target: object.constructor,
+      propertyName: propertyName,
+      constraints: [sum],
+      options: validationOptions,
+      validator: {
+        validate(value: { weight: number }[], args: ValidationArguments) {
+          const [totalSum = 100] = args.constraints as [number];
+
+          if (!isArray(value)) return false;
+
+          const sum = value.reduce((acc, item) => {
+            const weight = typeof item?.weight === 'number' ? item.weight : 0;
+            return acc + weight;
+          }, 0);
+          return sum === totalSum;
+        },
+
+        defaultMessage(args: ValidationArguments) {
+          const [totalSum = 100] = args.constraints as [number];
+          return `The sum of all weights must be exactly ${totalSum}`;
+        },
+      },
+    });
+  };
 }
