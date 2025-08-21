@@ -114,7 +114,9 @@ export class ScoreCardService {
       // Update scorecard basic info
       const updatedScorecard = await tx.scorecard.update({
         where: { id: scorecardId },
-        data: { name: scorecardInput.name },
+        data: {
+          ...omit(scorecardInput, 'scorecardGroups'),
+        },
       });
       this.logger.log(
         `[updateScorecard] Updated scorecard basic info: ${JSON.stringify(updatedScorecard)}`,
