@@ -72,7 +72,6 @@ export class ScorecardQuestionBaseDto {
     example: 'Provide detailed information.',
   })
   @IsString()
-  @IsNotEmpty()
   guidelines: string;
 
   @ApiProperty({ description: 'The weight of the question', example: 10 })
