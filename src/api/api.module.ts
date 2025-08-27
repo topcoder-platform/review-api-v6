@@ -24,6 +24,7 @@ import { ReviewSummationService } from './review-summation/review-summation.serv
 import { WebhookController } from './webhook/webhook.controller';
 import { WebhookService } from './webhook/webhook.service';
 import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard';
+import { ScoreCardService } from './scorecard/scorecard.service';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule, FileUploadModule],
@@ -49,6 +50,7 @@ import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard
     ResourceApiService,
     WebhookService,
     GiteaWebhookAuthGuard,
+    ScoreCardService,
     SubmissionService,
     ReviewSummationService,
   ],

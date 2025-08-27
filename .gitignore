@@ -45,6 +45,9 @@ lerna-debug.log*
 .env.production.local
 .env.local
 
+# Prisma score cards
+/prisma/Scorecards
+
 # temp directory
 .temp
 .tmp
