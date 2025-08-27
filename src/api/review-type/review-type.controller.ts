@@ -171,6 +171,7 @@ export class ReviewTypeController {
     UserRole.Admin,
     UserRole.Submitter,
     UserRole.Reviewer,
+    UserRole.Talent,
   )
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
