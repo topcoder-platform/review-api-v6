@@ -34,7 +34,7 @@ import {
 } from 'src/dto/reviewType.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
-import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 
@@ -171,6 +171,7 @@ export class ReviewTypeController {
     UserRole.Admin,
     UserRole.Submitter,
     UserRole.Reviewer,
+    UserRole.Talent,
   )
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
@@ -187,7 +188,7 @@ export class ReviewTypeController {
     @Query() queryDto: ReviewTypeQueryDto,
     @Query() paginationDto?: PaginationDto,
     @Query() sortDto?: SortDto,
-  ): Promise<PaginatedResponse<ReviewTypeResponseDto>> {
+  ): Promise<ReviewTypeResponseDto[]> {
     this.logger.log(
       `Getting review types with filters - ${JSON.stringify(queryDto)}`,
     );
@@ -234,15 +235,7 @@ export class ReviewTypeController {
         `Found ${reviewTypes.length} review types (page ${page} of ${Math.ceil(totalCount / perPage)})`,
       );
 
-      return {
-        data: reviewTypes as ReviewTypeResponseDto[],
-        meta: {
-          page,
-          perPage,
-          totalCount,
-          totalPages: Math.ceil(totalCount / perPage),
-        },
-      };
+      return reviewTypes as ReviewTypeResponseDto[];
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
