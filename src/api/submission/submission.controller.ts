@@ -45,7 +45,7 @@ import {
   ArtifactsListResponseDto,
 } from 'src/dto/artifacts.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
-import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
 import { SubmissionService } from './submission.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
@@ -166,11 +166,16 @@ export class SubmissionController {
     @Query() queryDto: SubmissionQueryDto,
     @Query() paginationDto?: PaginationDto,
     @Query() sortDto?: SortDto,
-  ): Promise<PaginatedResponse<SubmissionResponseDto>> {
+  ): Promise<SubmissionResponseDto[]> {
     this.logger.log(
       `Getting submissions with filters - ${JSON.stringify(queryDto)}`,
     );
-    return this.service.listSubmission(queryDto, paginationDto, sortDto);
+    const paginatedData = await this.service.listSubmission(
+      queryDto,
+      paginationDto,
+      sortDto,
+    );
+    return paginatedData.data;
   }
 
   @Get('/:submissionId')
