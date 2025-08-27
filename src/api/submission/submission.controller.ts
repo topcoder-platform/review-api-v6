@@ -150,7 +150,7 @@ export class SubmissionController {
     UserRole.Admin,
     UserRole.Submitter,
     UserRole.Reviewer,
-    UserRole.Talent
+    UserRole.Talent,
   )
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
