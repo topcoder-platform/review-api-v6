@@ -18,6 +18,13 @@ export class ChallengeData {
   track: string;
   legacyId: number;
   tags?: string[] | undefined;
+  workflows?: WorkflowData[] | undefined;
+}
+
+export class WorkflowData {
+  workflowId: string;
+  ref: string;
+  params: Record<string, any>;
 }
 
 @Injectable()

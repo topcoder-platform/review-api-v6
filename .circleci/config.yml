@@ -75,9 +75,7 @@ workflows:
                           only:
                               - develop
                               - feat/ai-workflows
-                              - feat/scorecards
-                              - pm-1503
-                              - pm-1585_1
+
             - 'build-prod':
                   context: org-global
                   filters:
