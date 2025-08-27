@@ -4,7 +4,7 @@ import {
   KafkaModuleOptions,
 } from './kafka-consumer.service';
 import { KafkaHandlerRegistry } from './kafka-handler.registry';
-import { AVScanActionScanHandler } from './handlers/avscan-action-scan.handler';
+import registeredHandlersConfig from './handlers/registered-handlers.config';
 
 @Module({})
 export class KafkaModule {
@@ -24,7 +24,7 @@ export class KafkaModule {
           },
           inject: [KafkaHandlerRegistry],
         },
-        AVScanActionScanHandler,
+        ...registeredHandlersConfig,
       ],
       exports: [KafkaConsumerService, KafkaHandlerRegistry],
     };

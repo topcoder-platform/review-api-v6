@@ -4,14 +4,14 @@ import { KafkaHandlerRegistry } from '../kafka-handler.registry';
 import { LoggerService } from '../../global/logger.service';
 
 @Injectable()
-export class AVScanActionScanHandler
+export class SubmissionScanCompleteHandler
   extends BaseEventHandler
   implements OnModuleInit
 {
-  private readonly topic = 'avscan.action.scan';
+  private readonly topic = 'submission.scan.complete';
 
   constructor(private readonly handlerRegistry: KafkaHandlerRegistry) {
-    super(LoggerService.forRoot('AVScanActionScanHandler'));
+    super(LoggerService.forRoot('SubmissionScanCompleteHandler'));
   }
 
   onModuleInit() {
@@ -26,7 +26,7 @@ export class AVScanActionScanHandler
   async handle(message: any): Promise<void> {
     try {
       this.logger.log({
-        message: 'Processing AVScan Action Scan event',
+        message: 'Processing Submission Scan Complete event',
         topic: this.topic,
         payload: message,
       });
@@ -36,16 +36,19 @@ export class AVScanActionScanHandler
         return;
       }
 
-      this.logger.log('=== AVScan Action Scan Event ===');
+      this.logger.log('=== Submission Scan Complete Event ===');
       this.logger.log('Topic:', this.topic);
       this.logger.log('Payload:', JSON.stringify(message, null, 2));
       this.logger.log('==============================');
 
       await Promise.resolve(); // Add await to satisfy linter
 
-      this.logger.log('AVScan Action Scan event processed successfully');
+      this.logger.log('Submission Scan Complete event processed successfully');
     } catch (error) {
-      this.logger.error('Error processing AVScan Action Scan event', error);
+      this.logger.error(
+        'Error processing Submission Scan Complete event',
+        error,
+      );
       throw error;
     }
   }
