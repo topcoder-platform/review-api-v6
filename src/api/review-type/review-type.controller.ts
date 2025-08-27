@@ -34,7 +34,7 @@ import {
 } from 'src/dto/reviewType.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
-import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 
