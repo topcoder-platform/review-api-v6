@@ -187,7 +187,7 @@ export class ReviewTypeController {
     @Query() queryDto: ReviewTypeQueryDto,
     @Query() paginationDto?: PaginationDto,
     @Query() sortDto?: SortDto,
-  ): Promise<PaginatedResponse<ReviewTypeResponseDto>> {
+  ): Promise<ReviewTypeResponseDto[]> {
     this.logger.log(
       `Getting review types with filters - ${JSON.stringify(queryDto)}`,
     );
@@ -234,15 +234,7 @@ export class ReviewTypeController {
         `Found ${reviewTypes.length} review types (page ${page} of ${Math.ceil(totalCount / perPage)})`,
       );
 
-      return {
-        data: reviewTypes as ReviewTypeResponseDto[],
-        meta: {
-          page,
-          perPage,
-          totalCount,
-          totalPages: Math.ceil(totalCount / perPage),
-        },
-      };
+      return reviewTypes as ReviewTypeResponseDto[];
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
