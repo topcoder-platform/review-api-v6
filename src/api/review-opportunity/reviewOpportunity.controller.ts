@@ -28,6 +28,8 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ReviewOpportunityService } from './reviewOpportunity.service';
+import { Scopes } from 'src/shared/decorators/scopes.decorator';
+import { Scope } from 'src/shared/enums/scopes.enum';
 
 @ApiTags('Review Opportunity')
 @Controller('/review-opportunities')
@@ -175,6 +177,7 @@ export class ReviewOpportunityController {
   @Post()
   @ApiBearerAuth()
   @Roles(UserRole.Admin, UserRole.Copilot)
+  @Scopes(Scope.CreateReviewOpportunity, Scope.AllReviewOpportunity)
   async create(@Req() req: Request, @Body() dto: CreateReviewOpportunityDto) {
     const authUser: JwtUser = req['user'] as JwtUser;
     return OkResponse(await this.service.create(authUser, dto));
@@ -221,6 +224,7 @@ export class ReviewOpportunityController {
   @Patch('/:id')
   @ApiBearerAuth()
   @Roles(UserRole.Admin, UserRole.Copilot)
+  @Scopes(Scope.UpdateReviewOpportunity, Scope.AllReviewOpportunity)
   async updateById(
     @Req() req: Request,
     @Param('id') id: string,

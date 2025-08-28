@@ -43,6 +43,13 @@ export enum Scope {
   DeleteReviewType = 'delete:review_type',
   AllReviewType = 'all:review_type',
 
+  // Review oportunity scopes
+  CreateReviewOpportunity = 'create:review_opportunity',
+  ReadReviewOpportunity = 'read:review_opportunity',
+  UpdateReviewOpportunity = 'update:review_opportunity',
+  DeleteReviewOpportunity = 'delete:review_opportunity',
+  AllReviewOpportunity = 'all:review_opportunity',
+
   // Review summation scopes
   CreateReviewSummation = 'create:review_summation',
   ReadReviewSummation = 'read:review_summation',
