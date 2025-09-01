@@ -172,7 +172,7 @@ export class ReviewTypeController {
     UserRole.Submitter,
     UserRole.Reviewer,
     UserRole.Talent,
-    UserRole.User
+    UserRole.User,
   )
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
