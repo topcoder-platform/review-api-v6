@@ -35,14 +35,17 @@ const logSize = 20000;
 const esFileName = 'dev-submissions-api.data.json';
 
 const modelMappingKeys = [
-  'project_result',
-  'scorecard',
-  'scorecard_group',
-  'scorecard_section',
-  'scorecard_question',
-  'review',
-  'review_item',
-  'review_item_comment',
+  // 'project_result',
+  // 'scorecard',
+  // 'scorecard_group',
+  // 'scorecard_section',
+  // 'scorecard_question',
+  // 'review',
+  // 'review_item',
+  // 'review_item_comment',
+  'llm_provider',
+  'llm_model',
+  'ai_workflow'
 ];
 const subModelMappingKeys = {
   review_item_comment: ['reviewItemComment', 'appeal', 'appealResponse'],
@@ -102,6 +105,8 @@ const reviewItemCommentAppealResponseIdMap = readIdMap(
 );
 const uploadIdMap = readIdMap('uploadIdMap');
 const submissionIdMap = readIdMap('submissionIdMap');
+const llmProviderIdMap = readIdMap('llmProviderIdMap');
+const llmModelIdMap = readIdMap('llmModelIdMap');
 
 // read resourceSubmissionSet
 const rsSetFile = '.tmp/resourceSubmissionSet.json';
@@ -1342,6 +1347,123 @@ async function processType(type: string, subtype?: string) {
           }
           break;
         }
+        case 'llm_provider': {
+          console.log(`[${type}][${subtype}][${file}] Processing file`);
+          const idToLegacyIdMap = {};
+          const processedData = jsonData[key]
+          .filter(
+            (c) => !llmProviderIdMap.has(c.llm_provider_id),
+          )
+          .map((c) => {
+            const id = nanoid(14);
+            llmProviderIdMap.set(
+              c.llm_provider_id,
+              id,
+            );
+            idToLegacyIdMap[id] = c.llm_provider_id;
+            return {
+              id: id,
+              name: c.name,
+              createdAt: new Date(c.create_date),
+              createdBy: c.create_user,
+            };
+          });
+
+          const totalBatches = Math.ceil(processedData.length / batchSize);
+          for (let i = 0; i < processedData.length; i += batchSize) {
+            const batchIndex = i / batchSize + 1;
+            console.log(
+              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+            );
+            const batch = processedData.slice(i, i + batchSize);
+            await prisma.llmProvider
+              .createMany({
+                data: batch,
+              })
+              .catch(async () => {
+                console.error(
+                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                );
+                for (const item of batch) {
+                  await prisma.llmProvider
+                    .create({
+                      data: item,
+                    })
+                    .catch((err) => {
+                      llmProviderIdMap.delete(
+                        idToLegacyIdMap[item.id],
+                      );
+                      console.error(
+                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                      );
+                    });
+                }
+              });
+          }
+          break;
+        }
+        case 'llm_model': {
+          console.log(`[${type}][${subtype}][${file}] Processing file`);
+          const idToLegacyIdMap = {};
+          const processedData = jsonData[key]
+          .filter(
+            (c) => !llmModelIdMap.has(c.llm_model_id),
+          )
+          .map((c) => {
+            const id = nanoid(14);
+            llmModelIdMap.set(
+              c.llm_model_id,
+              id,
+            );
+            idToLegacyIdMap[id] = c.llm_model_id;
+            console.log(llmProviderIdMap.get(c.provider_id), 'c.provider_id')
+            return {
+              id: id,
+              providerId: llmProviderIdMap.get(c.provider_id),
+              name: c.name,
+              description: c.description,
+              icon: c.icon,
+              url: c.url,
+              createdAt: new Date(c.create_date),
+              createdBy: c.create_user,
+            };
+          });
+
+          console.log(llmProviderIdMap, processedData, 'processedData')
+
+          const totalBatches = Math.ceil(processedData.length / batchSize);
+          for (let i = 0; i < processedData.length; i += batchSize) {
+            const batchIndex = i / batchSize + 1;
+            console.log(
+              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+            );
+            const batch = processedData.slice(i, i + batchSize);
+            await prisma.llmModel
+              .createMany({
+                data: batch,
+              })
+              .catch(async () => {
+                console.error(
+                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                );
+                for (const item of batch) {
+                  await prisma.llmModel
+                    .create({
+                      data: item,
+                    })
+                    .catch((err) => {
+                      llmModelIdMap.delete(
+                        idToLegacyIdMap[item.id],
+                      );
+                      console.error(
+                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                      );
+                    });
+                }
+              });
+          }
+          break;
+        }
         default:
           console.warn(`No processor defined for type: ${type}`);
           return;
@@ -1437,28 +1559,28 @@ async function migrateResourceSubmissions() {
 }
 
 async function migrate() {
-  console.log('Starting lookup import...');
-  processLookupFiles();
-  console.log('Lookup import completed.');
+  // console.log('Starting lookup import...');
+  // processLookupFiles();
+  // console.log('Lookup import completed.');
 
-  // import upload and submision data, init {challengeId -> submission} map
-  console.log('Starting submission import...');
-  await initSubmissionMap();
-  console.log('Submission import completed.');
+  // // import upload and submision data, init {challengeId -> submission} map
+  // console.log('Starting submission import...');
+  // await initSubmissionMap();
+  // console.log('Submission import completed.');
 
   console.log('Starting review import...');
   await processAllTypes();
   console.log('Review data import completed.');
 
-  // import Elastic Search data
-  console.log('Starting Elastic Search data migration...');
-  await migrateElasticSearch();
-  console.log('Elastic Search data imported.');
+  // // import Elastic Search data
+  // console.log('Starting Elastic Search data migration...');
+  // await migrateElasticSearch();
+  // console.log('Elastic Search data imported.');
 
-  // import resource_submission data
-  console.log('Starting importing resource-submissions...');
-  await migrateResourceSubmissions();
-  console.log('Resource-submissions import completed.');
+  // // import resource_submission data
+  // console.log('Starting importing resource-submissions...');
+  // await migrateResourceSubmissions();
+  // console.log('Resource-submissions import completed.');
 }
 
 migrate()
@@ -1509,6 +1631,8 @@ migrate()
       },
       { key: 'uploadIdMap', value: uploadIdMap },
       { key: 'submissionIdMap', value: submissionIdMap },
+      { key: 'llmProviderIdMap', value: llmProviderIdMap },
+      { key: 'llmModelIdMap', value: llmModelIdMap }
     ].forEach((f) => {
       if (!fs.existsSync('.tmp')) {
         fs.mkdirSync('.tmp');

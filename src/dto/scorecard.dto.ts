@@ -18,7 +18,7 @@ import {
   IsGreaterThan,
   IsSmallerThan,
   WeightSum,
-} from 'src/shared/validators/customValidators';
+} from '../shared/validators/customValidators';
 
 export enum ScorecardStatus {
   ACTIVE = 'ACTIVE',
