@@ -172,6 +172,7 @@ export class ReviewTypeController {
     UserRole.Submitter,
     UserRole.Reviewer,
     UserRole.Talent,
+    UserRole.User
   )
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
@@ -249,7 +250,7 @@ export class ReviewTypeController {
   }
 
   @Get('/:reviewTypeId')
-  @Roles(UserRole.Copilot, UserRole.Admin)
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User)
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
     summary: 'View a specific review type',
