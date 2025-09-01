@@ -66,6 +66,7 @@ export class SubmissionController {
     UserRole.Copilot,
     UserRole.Submitter,
     UserRole.Reviewer,
+    UserRole.User,
   )
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
@@ -151,6 +152,7 @@ export class SubmissionController {
     UserRole.Submitter,
     UserRole.Reviewer,
     UserRole.Talent,
+    UserRole.User,
   )
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
@@ -185,6 +187,7 @@ export class SubmissionController {
     UserRole.Admin,
     UserRole.Submitter,
     UserRole.Reviewer,
+    UserRole.User,
   )
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
