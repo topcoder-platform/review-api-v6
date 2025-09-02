@@ -35,14 +35,14 @@ const logSize = 20000;
 const esFileName = 'dev-submissions-api.data.json';
 
 const modelMappingKeys = [
-  // 'project_result',
-  // 'scorecard',
-  // 'scorecard_group',
-  // 'scorecard_section',
-  // 'scorecard_question',
-  // 'review',
-  // 'review_item',
-  // 'review_item_comment',
+  'project_result',
+  'scorecard',
+  'scorecard_group',
+  'scorecard_section',
+  'scorecard_question',
+  'review',
+  'review_item',
+  'review_item_comment',
   'llm_provider',
   'llm_model',
   'ai_workflow'
@@ -107,6 +107,7 @@ const uploadIdMap = readIdMap('uploadIdMap');
 const submissionIdMap = readIdMap('submissionIdMap');
 const llmProviderIdMap = readIdMap('llmProviderIdMap');
 const llmModelIdMap = readIdMap('llmModelIdMap');
+const aiWorkflowIdMap = readIdMap('aiWorkflowIdMap');
 
 // read resourceSubmissionSet
 const rsSetFile = '.tmp/resourceSubmissionSet.json';
@@ -1464,6 +1465,69 @@ async function processType(type: string, subtype?: string) {
           }
           break;
         }
+        case 'ai_workflow': {
+          console.log(`[${type}][${subtype}][${file}] Processing file`);
+          const idToLegacyIdMap = {};
+          const processedData = jsonData[key]
+          .filter(
+            (c) => !aiWorkflowIdMap.has(c.ai_workflow_id),
+          )
+          .map((c) => {
+            const id = nanoid(14);
+            aiWorkflowIdMap.set(
+              c.ai_workflow_id,
+              id,
+            );
+            idToLegacyIdMap[id] = c.ai_workflow_id;
+            return {
+              id: id,
+              llmId: llmModelIdMap.get(c.llm_id),
+              name: c.name,
+              description: c.description,
+              defUrl: c.def_url,
+              gitId: c.git_id,
+              gitOwer: c.git_owner,
+              scorecardId: scorecardIdMap[c.scorecard_id],
+              createdAt: new Date(c.create_date),
+              createdBy: c.create_user,
+              updatedAt: new Date(c.modify_date),
+              updatedBy: c.modify_user,
+            };
+          });
+
+          const totalBatches = Math.ceil(processedData.length / batchSize);
+          for (let i = 0; i < processedData.length; i += batchSize) {
+            const batchIndex = i / batchSize + 1;
+            console.log(
+              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+            );
+            const batch = processedData.slice(i, i + batchSize);
+            await prisma.aiWorkflow
+              .createMany({
+                data: batch,
+              })
+              .catch(async () => {
+                console.error(
+                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                );
+                for (const item of batch) {
+                  await prisma.aiWorkflow
+                    .create({
+                      data: item,
+                    })
+                    .catch((err) => {
+                      aiWorkflowIdMap.delete(
+                        idToLegacyIdMap[item.id],
+                      );
+                      console.error(
+                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                      );
+                    });
+                }
+              });
+          }
+          break;
+        }
         default:
           console.warn(`No processor defined for type: ${type}`);
           return;
@@ -1559,28 +1623,28 @@ async function migrateResourceSubmissions() {
 }
 
 async function migrate() {
-  // console.log('Starting lookup import...');
-  // processLookupFiles();
-  // console.log('Lookup import completed.');
+  console.log('Starting lookup import...');
+  processLookupFiles();
+  console.log('Lookup import completed.');
 
-  // // import upload and submision data, init {challengeId -> submission} map
-  // console.log('Starting submission import...');
-  // await initSubmissionMap();
-  // console.log('Submission import completed.');
+  // import upload and submision data, init {challengeId -> submission} map
+  console.log('Starting submission import...');
+  await initSubmissionMap();
+  console.log('Submission import completed.');
 
   console.log('Starting review import...');
   await processAllTypes();
   console.log('Review data import completed.');
 
-  // // import Elastic Search data
-  // console.log('Starting Elastic Search data migration...');
-  // await migrateElasticSearch();
-  // console.log('Elastic Search data imported.');
+  // import Elastic Search data
+  console.log('Starting Elastic Search data migration...');
+  await migrateElasticSearch();
+  console.log('Elastic Search data imported.');
 
-  // // import resource_submission data
-  // console.log('Starting importing resource-submissions...');
-  // await migrateResourceSubmissions();
-  // console.log('Resource-submissions import completed.');
+  // import resource_submission data
+  console.log('Starting importing resource-submissions...');
+  await migrateResourceSubmissions();
+  console.log('Resource-submissions import completed.');
 }
 
 migrate()
@@ -1632,7 +1696,8 @@ migrate()
       { key: 'uploadIdMap', value: uploadIdMap },
       { key: 'submissionIdMap', value: submissionIdMap },
       { key: 'llmProviderIdMap', value: llmProviderIdMap },
-      { key: 'llmModelIdMap', value: llmModelIdMap }
+      { key: 'llmModelIdMap', value: llmModelIdMap },
+      { key: 'aiWorkflowIdMap', value: aiWorkflowIdMap }
     ].forEach((f) => {
       if (!fs.existsSync('.tmp')) {
         fs.mkdirSync('.tmp');
