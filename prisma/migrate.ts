@@ -1486,7 +1486,7 @@ async function processType(type: string, subtype?: string) {
               description: c.description,
               defUrl: c.def_url,
               gitId: c.git_id,
-              gitOwer: c.git_owner,
+              gitOwner: c.git_owner,
               scorecardId: scorecardIdMap[c.scorecard_id],
               createdAt: new Date(c.create_date),
               createdBy: c.create_user,
