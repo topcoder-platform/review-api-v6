@@ -80,7 +80,7 @@ export class SubmissionController {
     type: SubmissionResponseDto,
   })
   // TODO: When we replace Community App, we should move this to JSON instead of form-data
-  @ApiConsumes('multipart/form-data')  
+  @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file'))
   @ApiBody({
     required: true,
@@ -100,7 +100,7 @@ export class SubmissionController {
         },
         memberId: {
           type: 'number',
-        }
+        },
       },
     },
   })
