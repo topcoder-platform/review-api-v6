@@ -52,7 +52,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('Submissions')
 @ApiBearerAuth()
-@Controller('/api/submissions')
+@Controller('/submissions')
 export class SubmissionController {
   private readonly logger: LoggerService;
 

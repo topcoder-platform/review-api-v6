@@ -8,7 +8,7 @@ import { ApiModule } from './api/api.module';
 import { LoggerService } from './shared/modules/global/logger.service';
 import { Response } from 'express';
 
-const API_PREFIX = '/v6/review'; // Global prefix for all routes in production
+const API_PREFIX = '/v6'; // Global prefix for all routes in production
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {

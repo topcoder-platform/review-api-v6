@@ -40,7 +40,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('ReviewTypes')
 @ApiBearerAuth()
-@Controller('/api/reviewTypes')
+@Controller('/reviewTypes')
 export class ReviewTypeController {
   private readonly logger: LoggerService;
 
