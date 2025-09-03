@@ -1501,7 +1501,6 @@ async function processType(type: string, subtype?: string) {
                   `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
                 );
                 for (const item of batch) {
-                  console.log(item, 'alskdjlaksd  sldfk');
                   await prisma.aiWorkflow
                     .create({
                       data: item,
