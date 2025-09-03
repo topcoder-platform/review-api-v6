@@ -814,7 +814,6 @@ async function processType(type: string, subtype?: string) {
         case 'scorecard': {
           console.log(`[${type}][${file}] Processing file`);
           const processedData = jsonData[key]
-            .filter((sc) => !scorecardIdMap.has(sc.scorecard_id))
             .map((sc) => {
               const id = nanoid(14);
               scorecardIdMap.set(sc.scorecard_id, id);
@@ -1352,9 +1351,6 @@ async function processType(type: string, subtype?: string) {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
           const idToLegacyIdMap = {};
           const processedData = jsonData[key]
-          .filter(
-            (c) => !llmProviderIdMap.has(c.llm_provider_id),
-          )
           .map((c) => {
             const id = nanoid(14);
             llmProviderIdMap.set(
@@ -1407,9 +1403,6 @@ async function processType(type: string, subtype?: string) {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
           const idToLegacyIdMap = {};
           const processedData = jsonData[key]
-          .filter(
-            (c) => !llmModelIdMap.has(c.llm_model_id),
-          )
           .map((c) => {
             const id = nanoid(14);
             llmModelIdMap.set(
@@ -1469,9 +1462,6 @@ async function processType(type: string, subtype?: string) {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
           const idToLegacyIdMap = {};
           const processedData = jsonData[key]
-          .filter(
-            (c) => !aiWorkflowIdMap.has(c.ai_workflow_id),
-          )
           .map((c) => {
             const id = nanoid(14);
             aiWorkflowIdMap.set(
@@ -1487,7 +1477,7 @@ async function processType(type: string, subtype?: string) {
               defUrl: c.def_url,
               gitId: c.git_id,
               gitOwner: c.git_owner,
-              scorecardId: scorecardIdMap[c.scorecard_id],
+              scorecardId: scorecardIdMap.get(c.scorecard_id),
               createdAt: new Date(c.create_date),
               createdBy: c.create_user,
               updatedAt: new Date(c.modify_date),
@@ -1511,6 +1501,7 @@ async function processType(type: string, subtype?: string) {
                   `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
                 );
                 for (const item of batch) {
+                  console.log(item, 'alskdjlaksd  sldfk');
                   await prisma.aiWorkflow
                     .create({
                       data: item,
