@@ -20,6 +20,7 @@ export class SubmissionService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
+    console.log(`BODY: ${JSON.stringify(body)}`);
     const data = await this.prisma.submission.create({
       data: {
         ...body,

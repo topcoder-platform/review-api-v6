@@ -74,18 +74,42 @@ export class SubmissionController {
     description:
       'Roles: Admin, Copilot, Submitter, Reviewer | Scopes: create:submission',
   })
-  @ApiBody({ description: 'Submission data', type: SubmissionRequestDto })
   @ApiResponse({
     status: 201,
     description: 'Submission created successfully.',
     type: SubmissionResponseDto,
   })
+  // TODO: When we replace Community App, we should move this to JSON instead of form-data
+  @ApiConsumes('multipart/form-data')  
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiBody({
+    required: true,
+    type: 'multipart/form-data',
+    schema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          format: 'url',
+        },
+        challengeId: {
+          type: 'string',
+        },
+        type: {
+          type: 'string',
+        },
+        memberId: {
+          type: 'number',
+        }
+      },
+    },
+  })
   async createSubmission(
     @Req() req: Request,
     @Body() body: SubmissionRequestDto,
   ): Promise<SubmissionResponseDto> {
-    this.logger.log(
-      `Creating submission with request boy: ${JSON.stringify(body)}`,
+    console.log(
+      `Creating submission with request body: ${JSON.stringify(body)}`,
     );
     const authUser: JwtUser = req['user'] as JwtUser;
     return this.service.createSubmission(authUser, body);
