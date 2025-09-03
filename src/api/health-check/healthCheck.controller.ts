@@ -23,7 +23,7 @@ export class GetHealthCheckResponseDto {
 }
 
 @ApiTags('Healthcheck')
-@Controller('/')
+@Controller('/reviews')
 export class HealthCheckController {
   constructor(private readonly prisma: PrismaService) {}
 

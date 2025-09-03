@@ -157,7 +157,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config, {
     include: [ApiModule],
   });
-  SwaggerModule.setup(`${API_PREFIX}/api-docs`, app, document);
+  SwaggerModule.setup(`${API_PREFIX}/reviews/api-docs`, app, document);
   logger.log('Swagger documentation configured');
 
   // Add an event handler to log uncaught promise rejections and prevent the server from crashing
