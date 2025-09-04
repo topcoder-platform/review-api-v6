@@ -50,4 +50,15 @@ export class AiWorkflowService {
       },
     });
   }
+
+  async getWorkflowById(id: string) {
+
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id },
+    });
+    if (!workflow) {
+      throw new Error(`AI workflow with id ${id} not found.`);
+    }
+    return workflow;
+  }
 }
