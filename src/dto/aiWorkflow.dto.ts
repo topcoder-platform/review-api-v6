@@ -43,8 +43,6 @@ export class CreateAiWorkflowDto {
   createdBy: string;
 
   @ApiProperty({ required: false })
-  @IsString()
-  @IsNotEmpty()
   updatedBy?: string;
 
   @ApiProperty({ required: false })

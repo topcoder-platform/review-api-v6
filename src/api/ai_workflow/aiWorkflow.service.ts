@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { CreateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
+import { ScorecardStatus } from 'src/dto/scorecard.dto';
 
 @Injectable()
 export class AiWorkflowService {
@@ -8,7 +9,7 @@ export class AiWorkflowService {
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
     const count = await this.prisma.scorecard.count({
-      where: { id: scorecardId },
+      where: { id: scorecardId, status: ScorecardStatus.ACTIVE},
     });
     return count > 0;
   }
@@ -27,7 +28,7 @@ export class AiWorkflowService {
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
       throw new BadRequestException(
-        `Scorecard with id ${scorecardId} does not exist.`,
+        `Active scorecard with id ${scorecardId} does not exist.`,
       );
     }
 
