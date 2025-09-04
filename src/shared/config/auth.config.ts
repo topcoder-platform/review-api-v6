@@ -2,7 +2,15 @@
  * Authentication-related configuration
  */
 export const AuthConfig = {
-  // Used for validating JSON Web Tokens
+  // Global JWT secret used for token validation
+  authSecret: process.env.AUTH_SECRET,
+
+  // JSON array string of allowed issuers
+  validIssuers:
+    process.env.VALID_ISSUERS ||
+    '["https://testsachin.topcoder-dev.com/","https://test-sachin-rs256.auth0.com/","https://api.topcoder.com","https://api.topcoder-dev.com","https://topcoder-dev.auth0.com/", "https://auth.topcoder-dev.com/"]',
+
+  // Legacy JWT configuration (kept for backward compatibility)
   jwt: {
     // The Auth0 issuer used to validate tokens
     issuer: process.env.AUTH0_ISSUER || 'https://topcoder-dev.auth0.com/',

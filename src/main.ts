@@ -127,7 +127,7 @@ async function bootstrap() {
     User Token (JWT)
     - Regular user authentication using role-based access control
     - Tokens should include 'roles' claim with the appropriate role(s)
-    - Available roles: Admin, Copilot, Reviewer, Submitter
+    - Available roles: Admin, Copilot, Reviewer, User
 
     Machine-to-Machine (M2M) Token
     - For service-to-service authentication

@@ -35,17 +35,11 @@ export class ProjectResultController {
   }
 
   @Get('/projectResult')
-  @Roles(
-    UserRole.Reviewer,
-    UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Admin,
-  )
+  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.User, UserRole.Admin)
   @Scopes(Scope.ReadProjectResult)
   @ApiOperation({
     summary: 'Get project results',
-    description:
-      'Roles: Reviewer, Copilot, Submitter | Scopes: read:project-result',
+    description: 'Roles: Reviewer, Copilot, User | Scopes: read:project-result',
   })
   @ApiQuery({
     name: 'challengeId',
