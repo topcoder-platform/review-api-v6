@@ -9,7 +9,7 @@ export class AiWorkflowService {
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
     const count = await this.prisma.scorecard.count({
-      where: { id: scorecardId, status: ScorecardStatus.ACTIVE},
+      where: { id: scorecardId, status: ScorecardStatus.ACTIVE },
     });
     return count > 0;
   }
