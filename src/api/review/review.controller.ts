@@ -283,17 +283,12 @@ export class ReviewController {
   }
 
   @Get()
-  @Roles(
-    UserRole.Reviewer,
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-  )
+  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Admin, UserRole.User)
   @Scopes(Scope.ReadReview)
   @ApiOperation({
     summary: 'Search for pending reviews',
     description:
-      'Roles: Reviewer, Copilot, Admin, Submitter. For Submitter, only applies to their own review, until challenge completion. | Scopes: read:review',
+      'Roles: Reviewer, Copilot, Admin, User. For User, only applies to their own review, until challenge completion. | Scopes: read:review',
   })
   @ApiQuery({
     name: 'status',
@@ -462,17 +457,11 @@ export class ReviewController {
   }
 
   @Get('/:reviewId')
-  @Roles(
-    UserRole.Reviewer,
-    UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Admin,
-  )
+  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.User, UserRole.Admin)
   @Scopes(Scope.ReadReview)
   @ApiOperation({
     summary: 'View a specific review',
-    description:
-      'Roles: Reviewer, Copilot, Submitter, Admin | Scopes: read:review',
+    description: 'Roles: Reviewer, Copilot, User, Admin | Scopes: read:review',
   })
   @ApiParam({
     name: 'reviewId',

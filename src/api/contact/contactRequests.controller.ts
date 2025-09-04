@@ -29,11 +29,11 @@ export class ContactRequestsController {
   ) {}
 
   @Post('/contact-requests')
-  @Roles(UserRole.User, UserRole.Talent)
+  @Roles(UserRole.User)
   @Scopes(Scope.CreateContactRequest)
   @ApiOperation({
     summary: 'Create a new contact request',
-    description: 'Roles: Submitter, Reviewer | Scopes: create:contact-request',
+    description: 'Roles: User, Reviewer | Scopes: create:contact-request',
   })
   @ApiBody({ description: 'Contact request body', type: ContactRequestDto })
   @ApiResponse({
@@ -48,7 +48,7 @@ export class ContactRequestsController {
   ): Promise<ContactRequestResponseDto> {
     const authUser: JwtUser = req['user'] as JwtUser;
     await this.resourceApiService.validateResourcesRoles(
-      [UserRole.Reviewer, UserRole.Submitter],
+      [UserRole.Reviewer, UserRole.User],
       authUser,
       body.challengeId,
       body.resourceId,

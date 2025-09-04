@@ -50,11 +50,11 @@ export class AppealController {
   }
 
   @Post()
-  @Roles(UserRole.Submitter)
+  @Roles(UserRole.User)
   @Scopes(Scope.CreateAppeal)
   @ApiOperation({
     summary: 'Create an appeal for a specific review item comment',
-    description: 'Roles: Submitter | Scopes: create:appeal',
+    description: 'Roles: User | Scopes: create:appeal',
   })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
   @ApiResponse({
@@ -86,11 +86,11 @@ export class AppealController {
   }
 
   @Patch('/:appealId')
-  @Roles(UserRole.Submitter)
+  @Roles(UserRole.User)
   @Scopes(Scope.UpdateAppeal)
   @ApiOperation({
     summary: 'Update an appeal',
-    description: 'Roles: Submitter | Scopes: update:appeal',
+    description: 'Roles: User | Scopes: update:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to update' })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
@@ -134,11 +134,11 @@ export class AppealController {
   }
 
   @Delete('/:appealId')
-  @Roles(UserRole.Submitter)
+  @Roles(UserRole.User)
   @Scopes(Scope.DeleteAppeal)
   @ApiOperation({
     summary: 'Delete an appeal',
-    description: 'Roles: Submitter | Scopes: delete:appeal',
+    description: 'Roles: User | Scopes: delete:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to delete' })
   @ApiResponse({ status: 200, description: 'Appeal deleted successfully.' })

@@ -61,18 +61,12 @@ export class SubmissionController {
   }
 
   @Post()
-  @Roles(
-    UserRole.Admin,
-    UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-    UserRole.User,
-  )
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
     summary: 'Create a new submission',
     description:
-      'Roles: Admin, Copilot, Submitter, Reviewer | Scopes: create:submission',
+      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission',
   })
   @ApiResponse({
     status: 201,
@@ -170,19 +164,12 @@ export class SubmissionController {
   }
 
   @Get()
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-    UserRole.Talent,
-    UserRole.User,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.Reviewer, UserRole.User)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'Search for submissions',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
   })
   @ApiResponse({
     status: 200,
@@ -206,18 +193,12 @@ export class SubmissionController {
   }
 
   @Get('/:submissionId')
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-    UserRole.User,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'View a specific submission',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
@@ -237,18 +218,13 @@ export class SubmissionController {
   }
 
   @Delete('/:submissionId')
-  @Roles(
-    UserRole.Admin,
-    UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.DeleteSubmission)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a submission',
     description:
-      'Roles: Admin, Copilot, Submitter, Reviewer | Scopes: delete:submission',
+      'Roles: Admin, Copilot, User, Reviewer | Scopes: delete:submission',
   })
   @ApiParam({
     name: 'submissionId',
@@ -267,17 +243,12 @@ export class SubmissionController {
   }
 
   @Get('/:submissionId/download')
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'Download the submission',
     description:
-      'Roles: Copilot, Admin, Submitter Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User Reviewer. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
@@ -309,18 +280,13 @@ export class SubmissionController {
   }
 
   @Post('/:submissionId/artifacts')
-  @Roles(
-    UserRole.Admin,
-    UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.CreateSubmission)
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({
     summary: 'Create artifact for the given submission ID',
     description:
-      'Roles: Admin, Copilot, Submitter, Reviewer | Scopes: create:submission',
+      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission',
   })
   @ApiParam({
     name: 'submissionId',
@@ -356,17 +322,12 @@ export class SubmissionController {
   }
 
   @Get('/:submissionId/artifacts')
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'List artifacts for the given Submission ID',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
@@ -390,17 +351,12 @@ export class SubmissionController {
   }
 
   @Get('/:submissionId/artifacts/:artifactId/download')
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'Download artifact using Submission ID and Artifact ID',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
@@ -467,17 +423,12 @@ export class SubmissionController {
   }
 
   @Get('/:challengeId/count')
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'Get submission count for the given Challenge ID',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'challengeId',
@@ -497,17 +448,12 @@ export class SubmissionController {
   }
 
   @Get('/download/:challengeId')
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'Download all submissions for a challenge as a ZIP file',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'challengeId',
