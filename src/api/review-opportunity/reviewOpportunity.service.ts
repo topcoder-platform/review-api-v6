@@ -278,7 +278,7 @@ export class ReviewOpportunityService {
     ret.challengeData = {
       id: challengeData.legacyId,
       title: challengeData.name,
-      track: challengeData.legacy?.track || '',
+      track: challengeData.legacy?.track || challengeData.track || '',
       subTrack: challengeData.legacy?.subTrack || '',
       technologies: challengeData.tags || [],
       version: '1.0',
