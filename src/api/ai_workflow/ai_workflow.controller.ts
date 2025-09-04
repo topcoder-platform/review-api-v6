@@ -14,7 +14,7 @@ import { Roles } from 'src/shared/guards/tokenRoles.guard';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()
-@Controller('/ai-workflow')
+@Controller('/workflows')
 export class AiWorkflowController {
   constructor(private readonly aiWorkflowService: AiWorkflowService) {}
 
