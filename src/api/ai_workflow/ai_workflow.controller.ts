@@ -1,5 +1,10 @@
 import { Controller, Post, Body } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { AiWorkflowService } from './aiWorkflow.service';
 import { CreateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
@@ -17,7 +22,10 @@ export class AiWorkflowController {
   @Roles(UserRole.Admin)
   @Scopes(Scope.CreateWorkflow)
   @ApiOperation({ summary: 'Create a new AI workflow' })
-  @ApiResponse({ status: 201, description: 'The AI workflow has been successfully created.' })
+  @ApiResponse({
+    status: 201,
+    description: 'The AI workflow has been successfully created.',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async create(@Body() createAiWorkflowDto: CreateAiWorkflowDto) {
     return this.aiWorkflowService.createWithValidation(createAiWorkflowDto);

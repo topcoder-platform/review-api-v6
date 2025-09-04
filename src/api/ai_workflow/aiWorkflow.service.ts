@@ -21,16 +21,21 @@ export class AiWorkflowService {
   }
 
   async createWithValidation(createAiWorkflowDto: CreateAiWorkflowDto) {
-    const { scorecardId, llmId, createdBy, updatedBy, updatedAt, ...rest } = createAiWorkflowDto;
+    const { scorecardId, llmId, createdBy, updatedBy, updatedAt, ...rest } =
+      createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
-      throw new BadRequestException(`Scorecard with id ${scorecardId} does not exist.`);
+      throw new BadRequestException(
+        `Scorecard with id ${scorecardId} does not exist.`,
+      );
     }
 
     const llmExists = await this.llmModelExists(llmId);
     if (!llmExists) {
-      throw new BadRequestException(`LLM model with id ${llmId} does not exist.`);
+      throw new BadRequestException(
+        `LLM model with id ${llmId} does not exist.`,
+      );
     }
 
     return this.prisma.aiWorkflow.create({
