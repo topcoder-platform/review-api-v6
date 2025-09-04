@@ -32,7 +32,7 @@ export class AiWorkflowController {
     UserRole.Submitter,
     UserRole.Talent
   )
-  @Scopes(Scope.CreateWorkflow)
+  @Scopes(Scope.ReadWorkflow)
   @ApiOperation({ summary: 'Get an AI workflow by ID' })
   @ApiResponse({ status: 200, description: 'The AI workflow record.' })
   @ApiResponse({ status: 404, description: 'AI workflow not found.' })
