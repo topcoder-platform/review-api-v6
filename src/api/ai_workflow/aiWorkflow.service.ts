@@ -1,6 +1,9 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { CreateAiWorkflowDto, UpdateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
+import {
+  CreateAiWorkflowDto,
+  UpdateAiWorkflowDto,
+} from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
 
 @Injectable()
@@ -28,7 +31,9 @@ export class AiWorkflowService {
 
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
-      this.logger.error(`Active scorecard with id ${scorecardId} does not exist.`);
+      this.logger.error(
+        `Active scorecard with id ${scorecardId} does not exist.`,
+      );
       throw new BadRequestException(
         `Active scorecard with id ${scorecardId} does not exist.`,
       );
@@ -55,7 +60,6 @@ export class AiWorkflowService {
   }
 
   async getWorkflowById(id: string) {
-
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id },
     });
@@ -82,7 +86,9 @@ export class AiWorkflowService {
     if (updateDto.scorecardId) {
       const scorecardExists = await this.scorecardExists(updateDto.scorecardId);
       if (!scorecardExists) {
-        this.logger.error(`Active scorecard with id ${updateDto.scorecardId} does not exist.`);
+        this.logger.error(
+          `Active scorecard with id ${updateDto.scorecardId} does not exist.`,
+        );
         throw new BadRequestException(
           `Active scorecard with id ${updateDto.scorecardId} does not exist.`,
         );
@@ -92,7 +98,9 @@ export class AiWorkflowService {
     if (updateDto.llmId) {
       const llmExists = await this.llmModelExists(updateDto.llmId);
       if (!llmExists) {
-        this.logger.error(`LLM model with id ${updateDto.llmId} does not exist.`);
+        this.logger.error(
+          `LLM model with id ${updateDto.llmId} does not exist.`,
+        );
         throw new BadRequestException(
           `LLM model with id ${updateDto.llmId} does not exist.`,
         );
