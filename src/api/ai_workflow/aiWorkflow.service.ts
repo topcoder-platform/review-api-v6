@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
   CreateAiWorkflowDto,
@@ -65,7 +65,7 @@ export class AiWorkflowService {
     });
     if (!workflow) {
       this.logger.error(`AI workflow with id ${id} not found.`);
-      throw new Error(`AI workflow with id ${id} not found.`);
+      throw new NotFoundException(`AI workflow with id ${id} not found.`);
     }
     return workflow;
   }
@@ -80,7 +80,7 @@ export class AiWorkflowService {
     });
     if (!existingWorkflow) {
       this.logger.error(`AI workflow with id ${id} not found.`);
-      throw new Error(`AI workflow with id ${id} not found.`);
+      throw new NotFoundException(`AI workflow with id ${id} not found.`);
     }
 
     if (updateDto.scorecardId) {
