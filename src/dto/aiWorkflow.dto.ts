@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, PartialType } from '@nestjs/swagger';
 import { IsString, IsNotEmpty } from 'class-validator';
 
 export class CreateAiWorkflowDto {
@@ -48,3 +48,5 @@ export class CreateAiWorkflowDto {
   @ApiProperty({ required: false })
   updatedAt?: Date;
 }
+
+export class UpdateAiWorkflowDto extends PartialType(CreateAiWorkflowDto) {}

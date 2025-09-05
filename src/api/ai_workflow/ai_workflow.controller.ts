@@ -1,11 +1,13 @@
-import { Controller, Post, Body, Get, Param, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Post, Body, Get, Param, UseGuards, Patch, ValidationPipe } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
 import { AiWorkflowService } from './aiWorkflow.service';
-import { CreateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
+import { CreateAiWorkflowDto, UpdateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { User } from 'src/shared/decorators/user.decorator';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()
@@ -38,5 +40,26 @@ export class AiWorkflowController {
   @ApiResponse({ status: 404, description: 'AI workflow not found.' })
   async getById(@Param('id') id: string) {
     return this.aiWorkflowService.getWorkflowById(id);
+  }
+
+  @Patch('/:id')
+  @Scopes(Scope.UpdateWorkflow)
+  @Roles(UserRole.Admin)
+  @ApiOperation({ summary: 'Update an existing AI workflow' })
+  @ApiParam({
+    name: 'id',
+    description: 'The ID of the AI workflow',
+    example: 'abc123',
+  })
+  @ApiBody({ description: 'AI workflow data', type: UpdateAiWorkflowDto })
+  @ApiResponse({ status: 200, description: 'AI workflow updated successfully.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'AI workflow not found.' })
+  async update(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true })) updateDto: UpdateAiWorkflowDto,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.updateWorkflow(id, updateDto, user.userId);
   }
 }
