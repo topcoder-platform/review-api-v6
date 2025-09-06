@@ -418,3 +418,48 @@ export function mapReviewItemRequestToDto(request: ReviewItemRequestDto) {
     },
   };
 }
+
+export class ReviewProgressResponseDto {
+  @ApiProperty({
+    description: 'The ID of the challenge',
+    example: 'challenge123',
+  })
+  @IsString()
+  @IsNotEmpty()
+  challengeId: string;
+
+  @ApiProperty({
+    description: 'Total number of reviewers for the challenge',
+    example: 2,
+  })
+  @IsNumber()
+  totalReviewers: number;
+
+  @ApiProperty({
+    description: 'Total number of submissions for the challenge',
+    example: 4,
+  })
+  @IsNumber()
+  totalSubmissions: number;
+
+  @ApiProperty({
+    description: 'Total number of submitted reviews',
+    example: 6,
+  })
+  @IsNumber()
+  totalSubmittedReviews: number;
+
+  @ApiProperty({
+    description: 'Review progress percentage',
+    example: 75.0,
+  })
+  @IsNumber()
+  progressPercentage: number;
+
+  @ApiProperty({
+    description: 'Timestamp when the progress was calculated',
+    example: '2025-01-15T10:30:00Z',
+  })
+  @IsDateString()
+  calculatedAt: string;
+}

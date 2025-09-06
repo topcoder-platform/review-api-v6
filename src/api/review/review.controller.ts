@@ -9,6 +9,7 @@ import {
   Param,
   Query,
   NotFoundException,
+  BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import {
@@ -31,6 +32,7 @@ import {
   ReviewResponseDto,
   ReviewItemRequestDto,
   ReviewItemResponseDto,
+  ReviewProgressResponseDto,
   mapReviewRequestToDto,
   mapReviewItemRequestToDto,
 } from 'src/dto/review.dto';
@@ -39,6 +41,7 @@ import { ScorecardStatus } from '../../dto/scorecard.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ResourceApiService } from '../../shared/modules/global/resource.service';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
@@ -49,6 +52,7 @@ export class ReviewController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
+    private readonly resourceApiService: ResourceApiService,
   ) {
     this.logger = LoggerService.forRoot('ReviewController');
   }
@@ -600,6 +604,173 @@ export class ReviewController {
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+      });
+    }
+  }
+
+  @Get('/progress/:challengeId')
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer, UserRole.User)
+  @Scopes(Scope.ReadReview)
+  @ApiOperation({
+    summary: 'Get review progress for a specific challenge',
+    description:
+      'Calculate and return the review progress percentage for a challenge. Accessible to all authenticated users. | Scopes: read:review',
+  })
+  @ApiParam({
+    name: 'challengeId',
+    description: 'The ID of the challenge to calculate progress for',
+    example: 'challenge123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Review progress calculated successfully.',
+    type: ReviewProgressResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid challengeId parameter.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Challenge not found or no data available.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Server error during calculation.',
+  })
+  async getReviewProgress(
+    @Param('challengeId') challengeId: string,
+  ): Promise<ReviewProgressResponseDto> {
+    this.logger.log(
+      `Calculating review progress for challenge: ${challengeId}`,
+    );
+
+    try {
+      // Validate challengeId parameter
+      if (
+        !challengeId ||
+        typeof challengeId !== 'string' ||
+        challengeId.trim() === ''
+      ) {
+        throw new Error('Invalid challengeId parameter');
+      }
+
+      // Get reviewers from Resource API
+      this.logger.debug('Fetching reviewers from Resource API');
+      const resources = await this.resourceApiService.getResources({
+        challengeId,
+      });
+
+      // Get resource roles to filter by reviewer role
+      const resourceRoles = await this.resourceApiService.getResourceRoles();
+
+      // Filter resources to get only reviewers
+      const reviewers = resources.filter((resource) => {
+        const role = resourceRoles[resource.roleId];
+        return role && role.name.toLowerCase().includes('reviewer');
+      });
+
+      const totalReviewers = reviewers.length;
+      this.logger.debug(
+        `Found ${totalReviewers} reviewers for challenge ${challengeId}`,
+      );
+
+      // Get submissions for the challenge
+      this.logger.debug('Fetching submissions for the challenge');
+      const submissions = await this.prisma.submission.findMany({
+        where: {
+          challengeId,
+          status: 'ACTIVE',
+        },
+      });
+
+      const submissionIds = submissions.map((s) => s.id);
+      const totalSubmissions = submissions.length;
+      this.logger.debug(
+        `Found ${totalSubmissions} submissions for challenge ${challengeId}`,
+      );
+
+      // Get submitted reviews for these submissions
+      this.logger.debug('Fetching submitted reviews');
+      const submittedReviews = await this.prisma.review.findMany({
+        where: {
+          submissionId: { in: submissionIds },
+          committed: true,
+        },
+        include: {
+          reviewItems: true,
+        },
+      });
+
+      const totalSubmittedReviews = submittedReviews.length;
+      this.logger.debug(`Found ${totalSubmittedReviews} submitted reviews`);
+
+      // Calculate progress percentage
+      let progressPercentage = 0;
+
+      if (totalReviewers > 0 && totalSubmissions > 0) {
+        const expectedTotalReviews = totalSubmissions * totalReviewers;
+        progressPercentage =
+          (totalSubmittedReviews / expectedTotalReviews) * 100;
+        // Round to 2 decimal places
+        progressPercentage = Math.round(progressPercentage * 100) / 100;
+      }
+
+      // Handle edge cases
+      if (progressPercentage > 100) {
+        progressPercentage = 100;
+      }
+
+      const result: ReviewProgressResponseDto = {
+        challengeId,
+        totalReviewers,
+        totalSubmissions,
+        totalSubmittedReviews,
+        progressPercentage,
+        calculatedAt: new Date().toISOString(),
+      };
+
+      this.logger.log(
+        `Review progress calculated: ${progressPercentage}% for challenge ${challengeId}`,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `Error calculating review progress for challenge ${challengeId}:`,
+        error,
+      );
+
+      if (error.message === 'Invalid challengeId parameter') {
+        throw new Error('Invalid challengeId parameter');
+      }
+
+      // Handle Resource API errors based on HTTP status codes
+      if (error.message === 'Cannot get data from Resource API.') {
+        const statusCode = (error as Error & { statusCode?: number })
+          .statusCode;
+        if (statusCode === 400) {
+          throw new BadRequestException({
+            message: `Challenge ID ${challengeId} is not in valid GUID format`,
+            code: 'INVALID_CHALLENGE_ID',
+          });
+        } else if (statusCode === 404) {
+          throw new NotFoundException({
+            message: `Challenge with ID ${challengeId} was not found`,
+            code: 'CHALLENGE_NOT_FOUND',
+          });
+        }
+      }
+
+      if (error.message && error.message.includes('not found')) {
+        throw new NotFoundException({
+          message: `Challenge with ID ${challengeId} was not found or has no data available`,
+          code: 'CHALLENGE_NOT_FOUND',
+        });
+      }
+
+      throw new InternalServerErrorException({
+        message: 'Failed to calculate review progress',
+        code: 'PROGRESS_CALCULATION_ERROR',
       });
     }
   }
