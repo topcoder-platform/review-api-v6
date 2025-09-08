@@ -76,11 +76,13 @@ export class AppealController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'creating appeal',
+        `creating appeal for review item comment: ${body.reviewItemCommentId}`,
+        body,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -121,14 +123,16 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal with ID ${appealId} was not found`,
+          message: `Appeal with ID ${appealId} was not found. Please verify the appeal ID is correct.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -160,20 +164,22 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal with ID ${appealId} was not found`,
+          message: `Appeal with ID ${appealId} was not found. Cannot delete a non-existent appeal.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Post('/:appealId/response')
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer)  // Expand the permission to Admin and Copilots for now
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer) // Expand the permission to Admin and Copilots for now
   @Scopes(Scope.CreateAppealResponse)
   @ApiOperation({
     summary: 'Create a response for an appeal',
@@ -221,20 +227,22 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal with ID ${appealId} was not found`,
+          message: `Appeal with ID ${appealId} was not found. Cannot create response for a non-existent appeal.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Patch('/response/:appealResponseId')
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer)  // Expand the permission to Admin and Copilots for now
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer) // Expand the permission to Admin and Copilots for now
   @Scopes(Scope.UpdateAppealResponse)
   @ApiOperation({
     summary: 'Update a response for an appeal',
@@ -277,14 +285,16 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal response with ID ${appealResponseId} was not found`,
+          message: `Appeal response with ID ${appealResponseId} was not found. Please verify the appeal response ID is correct.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -331,8 +341,8 @@ export class AppealController {
       if (reviewId) {
         whereClause.reviewItemComment = {
           reviewItem: {
-            reviewId: reviewId
-          }
+            reviewId: reviewId,
+          },
         };
       }
 
@@ -344,11 +354,11 @@ export class AppealController {
           include: {
             reviewItemComment: {
               include: {
-                reviewItem: true
-              }
+                reviewItem: true,
+              },
             },
-            appealResponse: true
-          }
+            appealResponse: true,
+          },
         }),
         this.prisma.appeal.count({
           where: whereClause,
@@ -381,11 +391,12 @@ export class AppealController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'fetching appeals',
+        `fetching appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }

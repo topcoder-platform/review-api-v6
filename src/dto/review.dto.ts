@@ -414,7 +414,11 @@ export function mapReviewRequestToDto(
       ...userFields,
       reviewItems: {
         create: request.reviewItems?.map((item) => {
-          const itemPayload: MappedReviewItem = mapReviewItemRequestToDto(item);
+          // When creating review items nested within a review, don't include reviewId
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { reviewId, ...itemWithoutReviewId } = item;
+          const itemPayload: MappedReviewItem =
+            mapReviewItemRequestToDto(itemWithoutReviewId);
           if (itemPayload.reviewItemComments?.create) {
             itemPayload.reviewItemComments.create =
               itemPayload.reviewItemComments.create.map(
@@ -462,8 +466,9 @@ export function mapReviewItemRequestToDto(
     },
   };
 
+  // Only add review connection if reviewId is explicitly provided
+  // This is for standalone review item creation, not nested creation
   if (reviewId) {
-    // For top-level create, connect this item to its parent review
     payload.review = { connect: { id: reviewId } };
   }
 

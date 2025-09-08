@@ -149,6 +149,7 @@ export function mapAppealResponseRequestToDto(
   };
 
   // Remove appealId when creating through relationship - Prisma sets it automatically
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { appealId, ...requestWithoutAppealId } = request;
 
   return {
