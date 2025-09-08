@@ -264,21 +264,128 @@ curl -X POST "https://api.topcoder-dev.com/v6/reviews" \
   "scorecardId": "{{scorecardId}}",
   "finalScore": 85.5,
   "initialScore": 80,
-  "typeId": "type101",
+  "typeId": "REVIEW",
   "metadata": {},
   "status": "Review",
-  "reviewDate": "2025-09-07T03T00:00:00Z",
+  "reviewDate": "2025-09-07T00:00:00Z",
   "committed": true,
-  "id": "123",
   "reviewItems": [
     {
-      "scorecardQuestionId": "question123",
-      "initialAnswer": "Yes",
-      "finalAnswer": "No",
-      "managerComment": "This is a required change",
+      "scorecardQuestionId": "qJ1Xd5JgJ2I6CX",
+      "initialAnswer": "9",
       "reviewItemComments": [
         {
-          "content": "This needs more explanation",
+          "content": "This is the content for question 1",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "GxN_O7CEC1pUXX",
+      "initialAnswer": "YES",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 2",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "hCTsnzWo-b8g95",
+      "initialAnswer": "8",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 3",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "I9OwPABNbpI3ln",
+      "initialAnswer": "8",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 4",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "gAbkFpjXMG9uP7",
+      "initialAnswer": "7",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 5",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "_iSocUwSL87wR7",
+      "initialAnswer": "9",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 6",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "axmCtzQa3w0Jjt",
+      "initialAnswer": "YES",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 6",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "zVZTmkNESYDwbe",
+      "initialAnswer": "9",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 7",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "hvtNBqdaWzX3vH",
+      "initialAnswer": "YES",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 8",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "oEMhxCBzFrxlgb",
+      "initialAnswer": "8",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 9",
+          "type": "COMMENT",
+          "sortOrder": 1
+        }
+      ]
+    },
+    {
+      "scorecardQuestionId": "T0toPXe65Z80Y-",
+      "initialAnswer": "9",
+      "reviewItemComments": [
+        {
+          "content": "This is the content for question 10",
           "type": "COMMENT",
           "sortOrder": 1
         }
@@ -288,7 +395,7 @@ curl -X POST "https://api.topcoder-dev.com/v6/reviews" \
 }'
 ```
 
-**Validation:** `curl "https://api.topcoder-dev.com/v6/reviews?challengeId={challengeId}&submissionId={submissionId}"`
+**Validation:** `curl "https://api.topcoder-dev.com/v6/reviews/{reviewId}"`
 
 ## Close the review phase; open appeals
 

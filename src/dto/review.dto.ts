@@ -110,7 +110,8 @@ export class ReviewItemBaseDto {
 
 export class ReviewItemRequestDto extends ReviewItemBaseDto {
   @ApiProperty({
-    description: 'Parent review ID to attach this item to (required for standalone create)',
+    description:
+      'Parent review ID to attach this item to (required for standalone create)',
     example: 'review123',
     required: false,
   })
@@ -379,6 +380,26 @@ export class ReviewResponseDto extends ReviewBaseDto {
   updatedBy: string;
 }
 
+type MappedReviewItemComment = {
+  content: string;
+  type: ReviewItemCommentType;
+  sortOrder: number;
+  createdBy: string;
+  updatedBy: string;
+  resourceId: string;
+};
+
+type MappedReviewItem = {
+  scorecardQuestionId: string;
+  initialAnswer: string;
+  finalAnswer?: string;
+  managerComment?: string;
+  createdBy: string;
+  updatedBy: string;
+  review?: { connect: { id: string } };
+  reviewItemComments?: { create?: MappedReviewItemComment[] };
+};
+
 export function mapReviewRequestToDto(
   request: ReviewRequestDto | ReviewPatchRequestDto,
 ) {
@@ -393,15 +414,16 @@ export function mapReviewRequestToDto(
       ...userFields,
       reviewItems: {
         create: request.reviewItems?.map((item) => {
-          const itemPayload: any = mapReviewItemRequestToDto(item);
-          if (itemPayload?.reviewItemComments?.create) {
-            itemPayload.reviewItemComments.create = itemPayload.reviewItemComments.create.map(
-              (comment: any) => ({
-                ...comment,
-                // Default commenter to the review's resourceId if not provided
-                resourceId: comment.resourceId || (request as ReviewRequestDto).resourceId,
-              }),
-            );
+          const itemPayload: MappedReviewItem = mapReviewItemRequestToDto(item);
+          if (itemPayload.reviewItemComments?.create) {
+            itemPayload.reviewItemComments.create =
+              itemPayload.reviewItemComments.create.map(
+                (comment: MappedReviewItemComment) => ({
+                  ...comment,
+                  // Default commenter to the review's resourceId if not provided
+                  resourceId: comment.resourceId || request.resourceId,
+                }),
+              );
           }
           return itemPayload;
         }),
@@ -415,15 +437,19 @@ export function mapReviewRequestToDto(
   }
 }
 
-export function mapReviewItemRequestToDto(request: ReviewItemRequestDto) {
+export function mapReviewItemRequestToDto(
+  request: ReviewItemRequestDto,
+): MappedReviewItem {
   const userFields = {
     createdBy: '',
     updatedBy: '',
   };
 
-  const { reviewId, ...rest } = request as { reviewId?: string } & ReviewItemRequestDto;
+  const { reviewId, ...rest } = request as {
+    reviewId?: string;
+  } & ReviewItemRequestDto;
 
-  const payload: any = {
+  const payload: MappedReviewItem = {
     ...rest,
     ...userFields,
     reviewItemComments: {

@@ -75,9 +75,9 @@ export class ReviewController {
   ): Promise<ReviewResponseDto> {
     this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
     try {
-      const prismaBody = mapReviewRequestToDto(body) as any
+      const prismaBody = mapReviewRequestToDto(body) as any;
       const data = await this.prisma.review.create({
-        data:prismaBody as any,
+        data: prismaBody,
         include: {
           reviewItems: {
             include: {
