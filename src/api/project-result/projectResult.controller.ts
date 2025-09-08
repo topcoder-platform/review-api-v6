@@ -23,7 +23,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()
-@Controller('/')
+@Controller('/projectResult')
 export class ProjectResultController {
   private readonly logger: LoggerService;
 
@@ -34,7 +34,7 @@ export class ProjectResultController {
     this.logger = LoggerService.forRoot('ProjectResultController');
   }
 
-  @Get('/projectResult')
+  @Get()
   @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.User, UserRole.Admin)
   @Scopes(Scope.ReadProjectResult)
   @ApiOperation({
