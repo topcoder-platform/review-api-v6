@@ -16,6 +16,7 @@ import { SubmissionBaseService } from './submission-base.service';
 import { GiteaService } from './gitea.service';
 import { SubmissionScanCompleteOrchestrator } from './submission-scan-complete.orchestrator';
 import { SubmissionService } from 'src/api/submission/submission.service';
+import { ChallengePrismaService } from './challenge-prisma.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -38,6 +39,7 @@ import { SubmissionService } from 'src/api/submission/submission.service';
     PrismaErrorService,
     M2MService,
     ChallengeApiService,
+    ChallengePrismaService,
     ResourceApiService,
     EventBusService,
     MemberService,
@@ -53,6 +55,7 @@ import { SubmissionService } from 'src/api/submission/submission.service';
     PrismaErrorService,
     M2MService,
     ChallengeApiService,
+    ChallengePrismaService,
     ResourceApiService,
     EventBusService,
     MemberService,
