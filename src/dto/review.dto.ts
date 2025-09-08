@@ -110,6 +110,13 @@ export class ReviewItemBaseDto {
 
 export class ReviewItemRequestDto extends ReviewItemBaseDto {
   @ApiProperty({
+    description: 'Parent review ID to attach this item to (required for standalone create)',
+    example: 'review123',
+    required: false,
+  })
+  reviewId?: string;
+
+  @ApiProperty({
     description: 'List of comments on this review item',
     type: [ReviewItemCommentRequestDto],
     required: false,
@@ -385,9 +392,19 @@ export function mapReviewRequestToDto(
       ...request,
       ...userFields,
       reviewItems: {
-        create: request.reviewItems?.map((item) =>
-          mapReviewItemRequestToDto(item),
-        ),
+        create: request.reviewItems?.map((item) => {
+          const itemPayload: any = mapReviewItemRequestToDto(item);
+          if (itemPayload?.reviewItemComments?.create) {
+            itemPayload.reviewItemComments.create = itemPayload.reviewItemComments.create.map(
+              (comment: any) => ({
+                ...comment,
+                // Default commenter to the review's resourceId if not provided
+                resourceId: comment.resourceId || (request as ReviewRequestDto).resourceId,
+              }),
+            );
+          }
+          return itemPayload;
+        }),
       },
     };
   } else {
@@ -404,19 +421,27 @@ export function mapReviewItemRequestToDto(request: ReviewItemRequestDto) {
     updatedBy: '',
   };
 
-  return {
-    ...request,
+  const { reviewId, ...rest } = request as { reviewId?: string } & ReviewItemRequestDto;
+
+  const payload: any = {
+    ...rest,
     ...userFields,
-    reviewId: '',
     reviewItemComments: {
       create: request.reviewItemComments?.map((comment) => ({
         ...comment,
         ...userFields,
+        // resourceId is required on reviewItemComment; leave population to controller/service
         resourceId: '',
-        reviewItemId: '',
       })),
     },
   };
+
+  if (reviewId) {
+    // For top-level create, connect this item to its parent review
+    payload.review = { connect: { id: reviewId } };
+  }
+
+  return payload;
 }
 
 export class ReviewProgressResponseDto {
