@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import {
   convertRoleName,
@@ -24,6 +25,7 @@ import {
 } from 'src/shared/modules/global/challenge.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
+import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 
 @Injectable()
 export class ReviewOpportunityService {
@@ -32,6 +34,7 @@ export class ReviewOpportunityService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
+    private readonly prismaErrorService: PrismaErrorService,
   ) {}
 
   /**
@@ -39,79 +42,91 @@ export class ReviewOpportunityService {
    * @param dto query dto
    */
   async search(dto: QueryReviewOpportunityDto) {
-    // filter data with payment, duration and start date
-    const prismaFilter = {
-      include: { applications: true },
-      where: {
-        AND: [
-          {
-            status: ReviewOpportunityStatus.OPEN,
-          },
-        ] as any[],
-      },
-    };
-    if (dto.paymentFrom) {
-      prismaFilter.where.AND.push({ basePayment: { gte: dto.paymentFrom } });
-    }
-    if (dto.paymentTo) {
-      prismaFilter.where.AND.push({ basePayment: { lte: dto.paymentTo } });
-    }
-    if (dto.durationFrom) {
-      prismaFilter.where.AND.push({ duration: { gte: dto.durationFrom } });
-    }
-    if (dto.durationTo) {
-      prismaFilter.where.AND.push({ duration: { lte: dto.durationTo } });
-    }
-    if (dto.startDateFrom) {
-      prismaFilter.where.AND.push({ startDate: { gte: dto.startDateFrom } });
-    }
-    if (dto.startDateTo) {
-      prismaFilter.where.AND.push({ startDate: { lte: dto.startDateTo } });
-    }
-    // query data from db
-    const entityList =
-      await this.prisma.reviewOpportunity.findMany(prismaFilter);
-    // build result with challenge data
-    let responseList = await this.assembleList(entityList);
-    // filter with challenge fields
-    if (dto.numSubmissionsFrom) {
-      responseList = responseList.filter(
-        (r) => (r.submissions ?? 0) >= (dto.numSubmissionsFrom ?? 0),
+    try {
+      // filter data with payment, duration and start date
+      const prismaFilter = {
+        include: { applications: true },
+        where: {
+          AND: [
+            {
+              status: ReviewOpportunityStatus.OPEN,
+            },
+          ] as any[],
+        },
+      };
+      if (dto.paymentFrom) {
+        prismaFilter.where.AND.push({ basePayment: { gte: dto.paymentFrom } });
+      }
+      if (dto.paymentTo) {
+        prismaFilter.where.AND.push({ basePayment: { lte: dto.paymentTo } });
+      }
+      if (dto.durationFrom) {
+        prismaFilter.where.AND.push({ duration: { gte: dto.durationFrom } });
+      }
+      if (dto.durationTo) {
+        prismaFilter.where.AND.push({ duration: { lte: dto.durationTo } });
+      }
+      if (dto.startDateFrom) {
+        prismaFilter.where.AND.push({ startDate: { gte: dto.startDateFrom } });
+      }
+      if (dto.startDateTo) {
+        prismaFilter.where.AND.push({ startDate: { lte: dto.startDateTo } });
+      }
+      // query data from db
+      const entityList =
+        await this.prisma.reviewOpportunity.findMany(prismaFilter);
+      // build result with challenge data
+      let responseList = await this.assembleList(entityList);
+      // filter with challenge fields
+      if (dto.numSubmissionsFrom) {
+        responseList = responseList.filter(
+          (r) => (r.submissions ?? 0) >= (dto.numSubmissionsFrom ?? 0),
+        );
+      }
+      if (dto.numSubmissionsTo) {
+        responseList = responseList.filter(
+          (r) => (r.submissions ?? 0) <= (dto.numSubmissionsTo ?? 0),
+        );
+      }
+      if (dto.tracks && dto.tracks.length > 0) {
+        responseList = responseList.filter(
+          (r) =>
+            r.challengeData &&
+            dto.tracks?.includes(r.challengeData['track'] as string),
+        );
+      }
+      if (dto.skills && dto.skills.length > 0) {
+        responseList = responseList.filter(
+          (r) =>
+            r.challengeData &&
+            (r.challengeData['technologies'] as string[]).some((e) =>
+              dto.skills?.includes(e),
+            ),
+        );
+      }
+      // sort list
+      responseList = [...responseList].sort((a, b) => {
+        return dto.sortOrder === 'asc'
+          ? a[dto.sortBy] - b[dto.sortBy]
+          : b[dto.sortBy] - a[dto.sortBy];
+      });
+      // pagination
+      const start = Math.max(0, dto.offset as number);
+      const end = Math.min(responseList.length, start + (dto.limit as number));
+      responseList = responseList.slice(start, end);
+      // return result
+      return responseList;
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `searching review opportunities with filters - payment: ${dto.paymentFrom}-${dto.paymentTo}, duration: ${dto.durationFrom}-${dto.durationTo}`,
       );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
     }
-    if (dto.numSubmissionsTo) {
-      responseList = responseList.filter(
-        (r) => (r.submissions ?? 0) <= (dto.numSubmissionsTo ?? 0),
-      );
-    }
-    if (dto.tracks && dto.tracks.length > 0) {
-      responseList = responseList.filter(
-        (r) =>
-          r.challengeData &&
-          dto.tracks?.includes(r.challengeData['track'] as string),
-      );
-    }
-    if (dto.skills && dto.skills.length > 0) {
-      responseList = responseList.filter(
-        (r) =>
-          r.challengeData &&
-          (r.challengeData['technologies'] as string[]).some((e) =>
-            dto.skills?.includes(e),
-          ),
-      );
-    }
-    // sort list
-    responseList = [...responseList].sort((a, b) => {
-      return dto.sortOrder === 'asc'
-        ? a[dto.sortBy] - b[dto.sortBy]
-        : b[dto.sortBy] - a[dto.sortBy];
-    });
-    // pagination
-    const start = Math.max(0, dto.offset as number);
-    const end = Math.min(responseList.length, start + (dto.limit as number));
-    responseList = responseList.slice(start, end);
-    // return result
-    return responseList;
   }
 
   /**
@@ -124,37 +139,59 @@ export class ReviewOpportunityService {
     authUser: JwtUser,
     dto: CreateReviewOpportunityDto,
   ): Promise<ReviewOpportunityResponseDto> {
-    // make sure challenge exists first
-    let challengeData: ChallengeData;
     try {
-      challengeData = await this.challengeService.getChallengeDetail(
-        dto.challengeId,
+      // make sure challenge exists first
+      let challengeData: ChallengeData;
+      try {
+        challengeData = await this.challengeService.getChallengeDetail(
+          dto.challengeId,
+        );
+      } catch (e) {
+        // challenge doesn't exist. Return 400
+        this.logger.error("Can't get challenge:", e);
+        throw new BadRequestException(
+          `Challenge with ID ${dto.challengeId} doesn't exist`,
+        );
+      }
+      // check existing
+      const existing = await this.prisma.reviewOpportunity.findMany({
+        where: {
+          challengeId: dto.challengeId,
+          type: dto.type,
+        },
+      });
+      if (existing && existing.length > 0) {
+        throw new ConflictException(
+          `Review opportunity already exists for challenge ${dto.challengeId} and type ${dto.type}`,
+        );
+      }
+      const entity = await this.prisma.reviewOpportunity.create({
+        data: {
+          ...dto,
+          createdBy: authUser.userId ?? '',
+          updatedBy: authUser.userId ?? '',
+        },
+      });
+      return this.buildResponse(entity, challengeData);
+    } catch (error) {
+      // Re-throw business logic exceptions as-is
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `creating review opportunity for challenge ${dto.challengeId}`,
       );
-    } catch (e) {
-      // challenge doesn't exist. Return 400
-      this.logger.error("Can't get challenge:", e);
-      throw new BadRequestException("Challenge doesn't exist");
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
     }
-    // check existing
-    const existing = await this.prisma.reviewOpportunity.findMany({
-      where: {
-        challengeId: dto.challengeId,
-        type: dto.type,
-      },
-    });
-    if (existing && existing.length > 0) {
-      throw new ConflictException(
-        'Review opportunity exists for challenge and type',
-      );
-    }
-    const entity = await this.prisma.reviewOpportunity.create({
-      data: {
-        ...dto,
-        createdBy: authUser.userId ?? '',
-        updatedBy: authUser.userId ?? '',
-      },
-    });
-    return this.buildResponse(entity, challengeData);
   }
 
   /**
@@ -163,8 +200,25 @@ export class ReviewOpportunityService {
    * @returns response dto
    */
   async get(id: string) {
-    const entity = await this.checkExists(id);
-    return await this.assembleResult(entity);
+    try {
+      const entity = await this.checkExists(id);
+      return await this.assembleResult(entity);
+    } catch (error) {
+      // Re-throw NotFoundException from checkExists as-is
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `fetching review opportunity ${id}`,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
   }
 
   /**
@@ -174,16 +228,33 @@ export class ReviewOpportunityService {
    * @param dto update dto
    */
   async update(authUser: JwtUser, id: string, dto: UpdateReviewOpportunityDto) {
-    const updatedBy = authUser.userId ?? '';
-    await this.checkExists(id);
-    const entity = await this.prisma.reviewOpportunity.update({
-      where: { id },
-      data: {
-        ...dto,
-        updatedBy,
-      },
-    });
-    return await this.assembleResult(entity);
+    try {
+      const updatedBy = authUser.userId ?? '';
+      await this.checkExists(id);
+      const entity = await this.prisma.reviewOpportunity.update({
+        where: { id },
+        data: {
+          ...dto,
+          updatedBy,
+        },
+      });
+      return await this.assembleResult(entity);
+    } catch (error) {
+      // Re-throw NotFoundException from checkExists as-is
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `updating review opportunity ${id}`,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
   }
 
   /**
@@ -194,11 +265,23 @@ export class ReviewOpportunityService {
   async getByChallengeId(
     challengeId: string,
   ): Promise<ReviewOpportunityResponseDto[]> {
-    const entityList = await this.prisma.reviewOpportunity.findMany({
-      where: { challengeId },
-      include: { applications: true },
-    });
-    return await this.assembleList(entityList);
+    try {
+      const entityList = await this.prisma.reviewOpportunity.findMany({
+        where: { challengeId },
+        include: { applications: true },
+      });
+      return await this.assembleList(entityList);
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `fetching review opportunities for challenge ${challengeId}`,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
   }
 
   /**
@@ -207,14 +290,33 @@ export class ReviewOpportunityService {
    * @returns existing record
    */
   private async checkExists(id: string) {
-    const existing = await this.prisma.reviewOpportunity.findUnique({
-      where: { id },
-      include: { applications: true },
-    });
-    if (!existing || !existing.id) {
-      throw new NotFoundException('Review opportunity not found');
+    try {
+      const existing = await this.prisma.reviewOpportunity.findUnique({
+        where: { id },
+        include: { applications: true },
+      });
+      if (!existing || !existing.id) {
+        throw new NotFoundException(
+          `Review opportunity with ID ${id} not found. Please verify the opportunity ID is correct.`,
+        );
+      }
+      return existing;
+    } catch (error) {
+      // Re-throw NotFoundException as-is
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `checking existence of review opportunity ${id}`,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
     }
-    return existing;
   }
 
   /**

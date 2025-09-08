@@ -94,6 +94,7 @@ export class ProjectResultController {
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }

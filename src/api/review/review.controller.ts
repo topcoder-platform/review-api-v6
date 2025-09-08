@@ -91,11 +91,13 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'creating review',
+        `creating review for submissionId: ${body.submissionId}`,
+        body,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -137,11 +139,12 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'creating review item',
+        `creating review item for reviewId: ${body.reviewId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -223,19 +226,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `updating review ${id}`,
+        `updating review with ID: ${id}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${id} was not found`,
+          message: `Review with ID ${id} was not found. Please check the ID and try again.`,
           code: errorResponse.code,
+          details: { reviewId: id },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -278,19 +283,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `updating review item ${itemId}`,
+        `updating review item with ID: ${itemId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review item with ID ${itemId} was not found`,
+          message: `Review item with ID ${itemId} was not found. Please check the ID and try again.`,
           code: errorResponse.code,
+          details: { itemId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -460,11 +467,12 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'fetching reviews',
+        `fetching reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -508,19 +516,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `fetching review ${reviewId}`,
+        `fetching review with ID: ${reviewId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${reviewId} was not found`,
+          message: `Review with ID ${reviewId} was not found. Please check the ID and try again.`,
           code: errorResponse.code,
+          details: { reviewId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -554,19 +564,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `deleting review ${reviewId}`,
+        `deleting review with ID: ${reviewId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${reviewId} was not found`,
+          message: `Review with ID ${reviewId} was not found. Cannot delete non-existent review.`,
           code: errorResponse.code,
+          details: { reviewId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -600,19 +612,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `deleting review item ${itemId}`,
+        `deleting review item with ID: ${itemId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review item with ID ${itemId} was not found`,
+          message: `Review item with ID ${itemId} was not found. Cannot delete non-existent item.`,
           code: errorResponse.code,
+          details: { itemId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
