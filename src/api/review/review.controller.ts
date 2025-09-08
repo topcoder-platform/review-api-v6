@@ -118,8 +118,16 @@ export class ReviewController {
   ): Promise<ReviewItemResponseDto> {
     this.logger.log(`Creating review item for review`);
     try {
+      const mapped = mapReviewItemRequestToDto(body);
+      if (!('review' in mapped) || !mapped.review) {
+        throw new BadRequestException({
+          message: 'reviewId is required when creating a review item',
+          code: 'VALIDATION_ERROR',
+        });
+      }
       const data = await this.prisma.reviewItem.create({
-        data: mapReviewItemRequestToDto(body),
+        // Cast after validation to satisfy Prisma types for top-level create
+        data: mapped as any,
         include: {
           reviewItemComments: true,
         },

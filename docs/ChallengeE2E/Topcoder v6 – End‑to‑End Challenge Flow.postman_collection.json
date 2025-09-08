@@ -327,6 +327,39 @@
 			"response": []
 		},
 		{
+			"name": "6a) Get resources for the challenge",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/resources?challengeId={{challengeId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"resources"
+					],
+					"query": [
+						{
+							"key": "challengeId",
+							"value": "{{challengeId}}"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
 			"name": "7) Create Submission (Submitter)",
 			"event": [
 				{
@@ -549,8 +582,11 @@
 					}
 				}
 			],
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
 			"request": {
-				"method": "POST",
+				"method": "GET",
 				"header": [
 					{
 						"key": "Authorization",
@@ -565,10 +601,10 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n  \"resourceId\": \"{{reviewerResourceId}}\",\n  \"phaseId\": \"{{reviewPhaseId}}\",\n  \"submissionId\": \"{{submissionId}}\",\n  \"scorecardId\": \"{{scorecardId}}\",\n  \"finalScore\": 85.5,\n  \"initialScore\": 80,\n  \"typeId\": \"type101\",\n  \"metadata\": {},\n  \"status\": \"Review\",\n  \"reviewDate\": \"2025-09-07T03T00:00:00Z\",\n  \"committed\": true,\n  \"id\": \"123\",\n  \"reviewItems\": [\n    {\n      \"scorecardQuestionId\": \"question123\",\n      \"initialAnswer\": \"Yes\",\n      \"finalAnswer\": \"No\",\n      \"managerComment\": \"This is a required change\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This needs more explanation\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    }\n  ]\n}"
+					"raw": "{\n  \"resourceId\": \"{{reviewerResourceId}}\",\n  \"phaseId\": \"{{reviewPhaseId}}\",\n  \"submissionId\": \"{{submissionId}}\",\n  \"scorecardId\": \"{{scorecardId}}\",\n  \"finalScore\": 85.5,\n  \"initialScore\": 80,\n  \"typeId\": \"REVIEW\",\n  \"metadata\": {},\n  \"status\": \"Review\",\n  \"reviewDate\": \"2025-09-07T00:00:00Z\",\n  \"committed\": true,\n  \"reviewItems\": [\n    {\n      \"scorecardQuestionId\": \"qJ1Xd5JgJ2I6CX\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 1\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"GxN_O7CEC1pUXX\",\n      \"initialAnswer\": \"YES\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 2\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"hCTsnzWo-b8g95\",\n      \"initialAnswer\": \"8\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 3\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"I9OwPABNbpI3ln\",\n      \"initialAnswer\": \"8\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 4\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"gAbkFpjXMG9uP7\",\n      \"initialAnswer\": \"7\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 5\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"_iSocUwSL87wR7\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 6\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"axmCtzQa3w0Jjt\",\n      \"initialAnswer\": \"YES\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 6\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"zVZTmkNESYDwbe\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 7\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"hvtNBqdaWzX3vH\",\n      \"initialAnswer\": \"YES\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 8\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"oEMhxCBzFrxlgb\",\n      \"initialAnswer\": \"8\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 9\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"T0toPXe65Z80Y-\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 10\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    }\n  ]\n}"
 				},
 				"url": {
-					"raw": "https://api.topcoder-dev.com/v6/reviews",
+					"raw": "https://api.topcoder-dev.com/v6/reviews/f3f34ed9-76c9-450e-894c-84d845b31841",
 					"protocol": "https",
 					"host": [
 						"api",
@@ -577,7 +613,8 @@
 					],
 					"path": [
 						"v6",
-						"reviews"
+						"reviews",
+						"f3f34ed9-76c9-450e-894c-84d845b31841"
 					]
 				}
 			},
@@ -719,7 +756,7 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n  \"resourceId\": {{reviewerResourceId}},\n  \"reviewItemCommentId\": {{reviewItemCommentId}},\n  \"content\": \"This is my appeal.\"\n}"
+					"raw": "{\n  \"resourceId\": \"{{submitterResourceId}}\",\n  \"reviewItemCommentId\": \"tP3QTllmR6Bgw3\",\n  \"content\": \"This is my appeal.\"\n}"
 				},
 				"url": {
 					"raw": "https://api.topcoder-dev.com/v6/appeals",
@@ -872,18 +909,17 @@
 					"raw": "{\n  \"appealId\": \"{{appealId}}\",\n  \"resourceId\": \"{{submitterResourceId}}\",\n  \"content\": \"This is the content of the appeal response that indicates the appeal was successful.\",\n  \"success\": true\n}"
 				},
 				"url": {
-					"raw": "https://api.topcoder-dev.com/v6/appeals/{{appealId}}/appeal-responses",
-					"protocol": "https",
+					"raw": "http://localhost:3000/v6/appeals/{{appealId}}/response",
+					"protocol": "http",
 					"host": [
-						"api",
-						"topcoder-dev",
-						"com"
+						"localhost"
 					],
+					"port": "3000",
 					"path": [
 						"v6",
 						"appeals",
 						"{{appealId}}",
-						"appeal-responses"
+						"response"
 					]
 				}
 			},
@@ -984,39 +1020,6 @@
 						"v6",
 						"challenges",
 						"{{challengeId}}"
-					]
-				}
-			},
-			"response": []
-		},
-		{
-			"name": "6a) Get resources for the challenge",
-			"request": {
-				"method": "GET",
-				"header": [
-					{
-						"key": "Authorization",
-						"value": "Bearer {{token}}",
-						"type": "text"
-					}
-				],
-				"url": {
-					"raw": "https://api.topcoder-dev.com/v6/resources?challengeId={{challengeId}}",
-					"protocol": "https",
-					"host": [
-						"api",
-						"topcoder-dev",
-						"com"
-					],
-					"path": [
-						"v6",
-						"resources"
-					],
-					"query": [
-						{
-							"key": "challengeId",
-							"value": "{{challengeId}}"
-						}
 					]
 				}
 			},
