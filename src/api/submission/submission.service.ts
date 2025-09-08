@@ -16,6 +16,7 @@ import {
 } from 'src/dto/submission.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
+import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 
@@ -26,6 +27,7 @@ export class SubmissionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
+    private readonly challengePrisma: ChallengePrismaService,
   ) {}
 
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
@@ -41,6 +43,32 @@ export class SubmissionService {
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);
+      // Increment challenge submission counters if challengeId present
+      if (body.challengeId) {
+        try {
+          const isCheckpoint =
+            body.type === SubmissionType.CHECKPOINT_SUBMISSION ||
+            (data.type as unknown as string) ===
+              SubmissionType.CHECKPOINT_SUBMISSION;
+          if (isCheckpoint) {
+            await this.challengePrisma.$executeRaw`
+              UPDATE "challenge"
+              SET "numOfCheckpointSubmissions" = "numOfCheckpointSubmissions" + 1
+              WHERE "id" = ${body.challengeId}
+            `;
+          } else {
+            await this.challengePrisma.$executeRaw`
+              UPDATE "challenge"
+              SET "numOfSubmissions" = "numOfSubmissions" + 1
+              WHERE "id" = ${body.challengeId}
+            `;
+          }
+        } catch (e) {
+          this.logger.warn(
+            `Failed to increment submission counters for challenge ${body.challengeId}: ${e.message}`,
+          );
+        }
+      }
       return this.buildResponse(data);
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
@@ -181,10 +209,34 @@ export class SubmissionService {
 
   async deleteSubmission(id: string) {
     try {
-      await this.checkSubmission(id);
+      const existing = await this.checkSubmission(id);
       await this.prisma.submission.delete({
         where: { id },
       });
+      // Decrement challenge submission counters if challengeId present
+      if (existing.challengeId) {
+        try {
+          const isCheckpoint =
+            existing.type === SubmissionType.CHECKPOINT_SUBMISSION;
+          if (isCheckpoint) {
+            await this.challengePrisma.$executeRaw`
+              UPDATE "challenge"
+              SET "numOfCheckpointSubmissions" = GREATEST("numOfCheckpointSubmissions" - 1, 0)
+              WHERE "id" = ${existing.challengeId}
+            `;
+          } else {
+            await this.challengePrisma.$executeRaw`
+              UPDATE "challenge"
+              SET "numOfSubmissions" = GREATEST("numOfSubmissions" - 1, 0)
+              WHERE "id" = ${existing.challengeId}
+            `;
+          }
+        } catch (e) {
+          this.logger.warn(
+            `Failed to decrement submission counters for challenge ${existing.challengeId}: ${e.message}`,
+          );
+        }
+      }
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
