@@ -148,8 +148,11 @@ export function mapAppealResponseRequestToDto(
     updatedBy: '',
   };
 
+  // Remove appealId when creating through relationship - Prisma sets it automatically
+  const { appealId, ...requestWithoutAppealId } = request;
+
   return {
-    ...request,
+    ...requestWithoutAppealId,
     ...userFields,
   };
 }
