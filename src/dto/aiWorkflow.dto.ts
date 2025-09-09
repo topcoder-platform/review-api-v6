@@ -1,5 +1,5 @@
 import { ApiProperty, PartialType } from '@nestjs/swagger';
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, IsDateString, IsNumber } from 'class-validator';
 
 export class CreateAiWorkflowDto {
   @ApiProperty()
@@ -50,3 +50,35 @@ export class CreateAiWorkflowDto {
 }
 
 export class UpdateAiWorkflowDto extends PartialType(CreateAiWorkflowDto) {}
+
+export class CreateAiWorkflowRunDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  submissionId: string;
+
+  @ApiProperty()
+  @IsDateString()
+  @IsNotEmpty()
+  startedAt: Date;
+
+  @ApiProperty()
+  @IsDateString()
+  @IsNotEmpty()
+  completedAt: Date;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  gitRunId: string;
+
+  @ApiProperty()
+  @IsNumber()
+  @IsNotEmpty()
+  score: number;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  status: string;
+}

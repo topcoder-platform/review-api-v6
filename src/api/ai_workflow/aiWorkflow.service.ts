@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
   CreateAiWorkflowDto,
+  CreateAiWorkflowRunDto,
   UpdateAiWorkflowDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
@@ -120,5 +121,34 @@ export class AiWorkflowService {
         updatedAt: new Date(),
       },
     });
+  }
+
+  async createWorkflowRun(workflowId: string, runData: CreateAiWorkflowRunDto) {
+    try {
+      return await this.prisma.aiWorkflowRun.create({
+        data: {
+          ...runData,
+          workflowId,
+        },
+      });
+    } catch (e) {
+      if (e.code === 'P2003') {
+        console.log('hereeee', e.meta.field_name);
+
+        switch (e.meta.field_name) {
+          case 'aiWorkflowRun_workflowId_fkey (index)':
+            throw new BadRequestException(
+              `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+            );
+          case 'aiWorkflowRun_submissionId_fkey (index)':
+            throw new BadRequestException(
+              `Invalid submission id provided! Submission with id ${workflowId} does not exist!`,
+            );
+          default:
+            break;
+        }
+      }
+      throw e;
+    }
   }
 }
