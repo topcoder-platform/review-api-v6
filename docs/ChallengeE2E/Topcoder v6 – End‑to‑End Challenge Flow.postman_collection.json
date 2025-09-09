@@ -1,0 +1,1153 @@
+{
+	"info": {
+		"_postman_id": "c009df24-3149-46da-8159-89d259c985af",
+		"name": "Topcoder v6 – End‑to‑End Challenge Flow",
+		"description": "End‑to‑end happy‑path for creating, activating, running phases, reviewing, appealing, and completing a challenge using the v6 APIs.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "1308818"
+	},
+	"item": [
+		{
+			"name": "1) Create Challenge (NEW) – phases at NOW",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Create challenge 201/200', function () {",
+							"  pm.expect([200,201]).to.include(pm.response.code);",
+							"});",
+							"const json = pm.response.json();",
+							"// try the common id property names",
+							"const cid = json.id || json.challengeId || json.data && (json.data.id || json.data.challengeId);",
+							"pm.collectionVariables.set('challengeId', cid);",
+							"pm.test('challengeId captured', function(){ pm.expect(!!cid).to.be.true; });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"protocolProfileBehavior": {
+				"disabledSystemHeaders": {
+					"content-type": true
+				}
+			},
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"name\": \"Demo Challenge - instant launch\",\n  \"typeId\": \"{{challengeType}}\",\n  \"trackId\": \"{{challengeTrack}}\",\n  \"timelineTemplateId\": \"{{timelineTemplateId}}\",\n  \"projectId\": \"{{projectId}}\",\n  \"status\": \"NEW\",\n  \"description\": \"End-to-end test\"\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "2) Status: NEW → DRAFT",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('PATCH DRAFT ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"protocolProfileBehavior": {
+				"disabledSystemHeaders": {
+					"content-type": true
+				}
+			},
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"typeId\": \"927abff4-7af9-4145-8ba1-577c16e64e2e\",\n    \"trackId\": \"9b6fc876-f4d9-4ccb-9dfd-419247628825\",\n    \"name\": \"Demo Challenge - instant launch\",\n    \"description\": \"End-to-end test\",\n    \"tags\": [],\n    \"groups\": [],\n    \"metadata\": [],\n    \"startDate\": \"2025-09-07T03:50:39.031Z\",\n    \"prizeSets\": [\n        {\n            \"type\": \"PLACEMENT\",\n            \"prizes\": [\n                {\n                    \"type\": \"USD\",\n                    \"value\": 1\n                }\n            ]\n        }\n    ],\n    \"winners\": [],\n    \"discussions\": [],\n    \"task\": {\n        \"isTask\": false,\n        \"isAssigned\": false\n    },\n    \"skills\": [\n        {\n            \"name\": \"Java\",\n            \"id\": \"63bb7cfc-b0d4-4584-820a-18c503b4b0fe\"\n        }\n    ],\n    \"legacy\": {\n        \"reviewType\": \"COMMUNITY\",\n        \"confidentialityType\": \"public\",\n        \"directProjectId\": 33540,\n        \"isTask\": false,\n        \"useSchedulingAPI\": false,\n        \"pureV5Task\": false,\n        \"pureV5\": false,\n        \"selfService\": false\n    },\n    \"timelineTemplateId\": \"7ebf1c69-f62f-4d3a-bdfb-fe9ddb56861c\",\n    \"projectId\": \"100439\",\n    \"status\": \"DRAFT\",\n    \"attachmentIds\": []\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "3) Status: DRAFT → ACTIVE",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('PATCH ACTIVE ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"status\": \"ACTIVE\"\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "4) Get Phases → capture IDs",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Get phases 200', function(){ pm.expect(pm.response.code).to.eql(200); });",
+							"const data = pm.response.json();",
+							"function findId(name){",
+							"  if (!data || !Array.isArray(data)) return null;",
+							"  const p = data.find(x => (x.name||'').toLowerCase() === name.toLowerCase());",
+							"  return p && (p.id || p.phaseId);",
+							"}",
+							"pm.collectionVariables.set('registrationPhaseId', findId('Registration'));",
+							"pm.collectionVariables.set('submissionPhaseId', findId('Submission'));",
+							"pm.collectionVariables.set('reviewPhaseId', findId('Review'));",
+							"pm.collectionVariables.set('appealsPhaseId', findId('Appeals'));",
+							"pm.collectionVariables.set('appealsResponsePhaseId', findId('Appeals Response'));",
+							"pm.test('phase IDs captured', function(){",
+							"  pm.expect(!!pm.collectionVariables.get('registrationPhaseId')).to.be.true;",
+							"  pm.expect(!!pm.collectionVariables.get('submissionPhaseId')).to.be.true;",
+							"});"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "5) Add Resource – Submitter",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Add submitter ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"challengeId\": \"{{challengeId}}\",\n  \"memberId\": \"{{submitterMemberId}}\",\n  \"roleId\": \"{{submitterRoleId}}\"\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/resources",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"resources"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "6) Add Resource – Reviewer",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Add reviewer ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"challengeId\": \"{{challengeId}}\",\n  \"memberId\": \"{{reviewerMemberId}}\",\n  \"roleId\": \"{{reviewerRoleId}}\"\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/resources",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"resources"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "6a) Get resources for the challenge",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/resources?challengeId={{challengeId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"resources"
+					],
+					"query": [
+						{
+							"key": "challengeId",
+							"value": "{{challengeId}}"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "7) Create Submission (Submitter)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Create submission ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); });",
+							"const js = pm.response.json();",
+							"const sid = js.id || js.submissionId || js.data && (js.data.id || js.data.submissionId);",
+							"pm.collectionVariables.set('submissionId', sid);",
+							"pm.test('submissionId captured', function(){ pm.expect(!!sid).to.be.true; });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"challengeId\": \"{{challengeId}}\",\n  \"memberId\": \"{{submitterMemberId}}\",\n  \"type\": \"CONTEST_SUBMISSION\",\n  \"url\": \"{{submissionUrl}}\"\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/submissions",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"submissions"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "8a) Close Registration",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Close Registration ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\":false\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{registrationPhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{registrationPhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "8b) Close Submission",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Close Submission ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\": false\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{submissionPhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{submissionPhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "8c) Open Review",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Open Review ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\":true\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{reviewPhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{reviewPhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "9) Create Review (Reviewer)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Create review ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); });",
+							"const jr = pm.response.json();",
+							"const rid = jr.id || jr.reviewId || jr.data && (jr.data.id || jr.data.reviewId);",
+							"pm.collectionVariables.set('reviewId', rid);",
+							"pm.test('reviewId captured', function(){ pm.expect(!!rid).to.be.true; });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"resourceId\": \"{{reviewerResourceId}}\",\n  \"phaseId\": \"{{reviewPhaseId}}\",\n  \"submissionId\": \"{{submissionId}}\",\n  \"scorecardId\": \"{{scorecardId}}\",\n  \"finalScore\": 85.5,\n  \"initialScore\": 80,\n  \"typeId\": \"REVIEW\",\n  \"metadata\": {},\n  \"status\": \"Review\",\n  \"reviewDate\": \"2025-09-07T00:00:00Z\",\n  \"committed\": true,\n  \"reviewItems\": [\n    {\n      \"scorecardQuestionId\": \"qJ1Xd5JgJ2I6CX\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 1\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"GxN_O7CEC1pUXX\",\n      \"initialAnswer\": \"YES\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 2\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"hCTsnzWo-b8g95\",\n      \"initialAnswer\": \"8\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 3\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"I9OwPABNbpI3ln\",\n      \"initialAnswer\": \"8\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 4\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"gAbkFpjXMG9uP7\",\n      \"initialAnswer\": \"7\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 5\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"_iSocUwSL87wR7\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 6\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"axmCtzQa3w0Jjt\",\n      \"initialAnswer\": \"YES\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 6\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"zVZTmkNESYDwbe\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 7\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"hvtNBqdaWzX3vH\",\n      \"initialAnswer\": \"YES\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 8\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"oEMhxCBzFrxlgb\",\n      \"initialAnswer\": \"8\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 9\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    },\n    {\n      \"scorecardQuestionId\": \"T0toPXe65Z80Y-\",\n      \"initialAnswer\": \"9\",\n      \"reviewItemComments\": [\n        {\n          \"content\": \"This is the content for question 10\",\n          \"type\": \"COMMENT\",\n          \"sortOrder\": 1\n        }\n      ]\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/reviews/f3f34ed9-76c9-450e-894c-84d845b31841",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"reviews",
+						"f3f34ed9-76c9-450e-894c-84d845b31841"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "10a) Close Review",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Close Review ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\":false\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{reviewPhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{reviewPhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "10b) Open Appeals",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Open Appeals ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\":true\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{appealsPhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{appealsPhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "11) Create Appeal (Submitter)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Create appeal ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); });",
+							"const ja = pm.response.json();",
+							"const aid = ja.id || ja.appealId || ja.data && (ja.data.id || ja.data.appealId);",
+							"pm.collectionVariables.set('appealId', aid);",
+							"pm.test('appealId captured', function(){ pm.expect(!!aid).to.be.true; });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"resourceId\": \"{{submitterResourceId}}\",\n  \"reviewItemCommentId\": \"tP3QTllmR6Bgw3\",\n  \"content\": \"This is my appeal.\"\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/appeals",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"appeals"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "12a) Close Appeals",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Close Appeals ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\":false\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{appealsPhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{appealsPhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "12b) Open Appeals Response",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Open Appeals Response ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\":true\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{appealsResponsePhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{appealsResponsePhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "13) Create Appeals Response (Reviewer)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Create appeal response ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"appealId\": \"{{appealId}}\",\n  \"resourceId\": \"{{submitterResourceId}}\",\n  \"content\": \"This is the content of the appeal response that indicates the appeal was successful.\",\n  \"success\": true\n}"
+				},
+				"url": {
+					"raw": "http://localhost:3000/v6/appeals/{{appealId}}/response",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"v6",
+						"appeals",
+						"{{appealId}}",
+						"response"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "14) Close Appeals Response",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Close Appeals Response ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isOpen\":false\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}/phases/{{appealsResponsePhaseId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}",
+						"phases",
+						"{{appealsResponsePhaseId}}"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "15) Status: ACTIVE → COMPLETED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('PATCH COMPLETED ok', function(){ pm.expect(pm.response.code).to.be.oneOf([200,204]); });"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"status\": \"COMPLETED\"\n}"
+				},
+				"url": {
+					"raw": "https://api.topcoder-dev.com/v6/challenges/{{challengeId}}",
+					"protocol": "https",
+					"host": [
+						"api",
+						"topcoder-dev",
+						"com"
+					],
+					"path": [
+						"v6",
+						"challenges",
+						"{{challengeId}}"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"pm.variables.set('NOW', new Date().toISOString());",
+					"// Default durations (in seconds)",
+					"if (!pm.collectionVariables.get('registrationDuration')) pm.collectionVariables.set('registrationDuration', 172800);",
+					"if (!pm.collectionVariables.get('submissionDuration')) pm.collectionVariables.set('submissionDuration', 259200);"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_challenge",
+			"value": "https://api.topcoder-dev.com",
+			"type": "string"
+		},
+		{
+			"key": "base_resource",
+			"value": "https://api.topcoder-dev.com",
+			"type": "string"
+		},
+		{
+			"key": "base_review",
+			"value": "https://api.topcoder-dev.com",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "{{YOUR_M2M_TOKEN_HERE}}",
+			"type": "string"
+		},
+		{
+			"key": "submitterMemberId",
+			"value": "{{SUBMITTER_MEMBER_ID}}",
+			"type": "string"
+		},
+		{
+			"key": "reviewerMemberId",
+			"value": "{{REVIEWER_MEMBER_ID}}",
+			"type": "string"
+		},
+		{
+			"key": "challengeType",
+			"value": "{{CHALLENGE_TYPE}}",
+			"type": "string"
+		},
+		{
+			"key": "challengeTrack",
+			"value": "{{CHALLENGE_TRACK}}",
+			"type": "string"
+		},
+		{
+			"key": "submitterRoleId",
+			"value": "{{SUBMITTER_ROLE_ID}}",
+			"type": "string"
+		},
+		{
+			"key": "reviewerRoleId",
+			"value": "{{REVIEWER_ROLE_ID}}",
+			"type": "string"
+		},
+		{
+			"key": "timelineTemplateId",
+			"value": "{{TIMELINE_TEMPLATE_ID}}",
+			"type": "string"
+		},
+		{
+			"key": "submissionUrl",
+			"value": "https://example.com/artifacts/submission.zip",
+			"type": "string"
+		},
+		{
+			"key": "challengeId",
+			"value": ""
+		},
+		{
+			"key": "registrationPhaseId",
+			"value": ""
+		},
+		{
+			"key": "submissionPhaseId",
+			"value": ""
+		},
+		{
+			"key": "reviewPhaseId",
+			"value": ""
+		},
+		{
+			"key": "appealsPhaseId",
+			"value": ""
+		},
+		{
+			"key": "appealsResponsePhaseId",
+			"value": ""
+		},
+		{
+			"key": "submissionId",
+			"value": ""
+		},
+		{
+			"key": "reviewId",
+			"value": ""
+		},
+		{
+			"key": "appealId",
+			"value": ""
+		},
+		{
+			"key": "NOW",
+			"value": ""
+		},
+		{
+			"key": "registrationDuration",
+			"value": "172800"
+		},
+		{
+			"key": "submissionDuration",
+			"value": "259200"
+		}
+	]
+}

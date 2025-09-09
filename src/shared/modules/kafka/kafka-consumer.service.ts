@@ -50,8 +50,8 @@ export class KafkaConsumerService
   }
 
   async onApplicationBootstrap() {
-    await this.subscribeToTopics();
-    await this.startConsumer();
+    // await this.subscribeToTopics();
+    // await this.startConsumer();
   }
 
   async onModuleDestroy() {

@@ -1,0 +1,21 @@
+// Prisma client for Challenge DB (subset used for counters)
+
+generator client {
+  provider      = "prisma-client-js"
+  // Generate a separate client so we can import it as @prisma/client-challenge
+  output        = "../node_modules/@prisma/client-challenge"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CHALLENGE_DB_URL")
+}
+
+// Minimal challenge model shape to increment/decrement counters
+model Challenge {
+  id                           String @id
+  numOfSubmissions             Int    @default(0)
+  numOfCheckpointSubmissions   Int    @default(0)
+}
+

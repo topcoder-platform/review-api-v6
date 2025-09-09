@@ -40,7 +40,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('ReviewSummations')
 @ApiBearerAuth()
-@Controller('/api/reviewSummations')
+@Controller('/reviewSummations')
 export class ReviewSummationController {
   private readonly logger: LoggerService;
 

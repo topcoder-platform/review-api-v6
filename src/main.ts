@@ -8,7 +8,7 @@ import { ApiModule } from './api/api.module';
 import { LoggerService } from './shared/modules/global/logger.service';
 import { Response } from 'express';
 
-const API_PREFIX = '/v6/review'; // Global prefix for all routes in production
+const API_PREFIX = '/v6'; // Global prefix for all routes in production
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -127,7 +127,7 @@ async function bootstrap() {
     User Token (JWT)
     - Regular user authentication using role-based access control
     - Tokens should include 'roles' claim with the appropriate role(s)
-    - Available roles: Admin, Copilot, Reviewer, Submitter
+    - Available roles: Admin, Copilot, Reviewer, User
 
     Machine-to-Machine (M2M) Token
     - For service-to-service authentication
@@ -157,7 +157,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config, {
     include: [ApiModule],
   });
-  SwaggerModule.setup(`${API_PREFIX}/api-docs`, app, document);
+  SwaggerModule.setup(`${API_PREFIX}/reviews/api-docs`, app, document);
   logger.log('Swagger documentation configured');
 
   // Add an event handler to log uncaught promise rejections and prevent the server from crashing

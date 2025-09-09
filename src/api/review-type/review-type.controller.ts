@@ -40,7 +40,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('ReviewTypes')
 @ApiBearerAuth()
-@Controller('/api/reviewTypes')
+@Controller('/reviewTypes')
 export class ReviewTypeController {
   private readonly logger: LoggerService;
 
@@ -166,18 +166,12 @@ export class ReviewTypeController {
   }
 
   @Get()
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-    UserRole.Talent,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
     summary: 'Search for review types',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer. | Scopes: read:review_type',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:review_type',
   })
   @ApiResponse({
     status: 200,
@@ -249,7 +243,7 @@ export class ReviewTypeController {
   }
 
   @Get('/:reviewTypeId')
-  @Roles(UserRole.Copilot, UserRole.Admin)
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User)
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
     summary: 'View a specific review type',

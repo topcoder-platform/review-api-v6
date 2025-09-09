@@ -71,8 +71,6 @@ export class PrismaService
       // Configure query performance
       if (process.env.NODE_ENV === 'production') {
         try {
-          // In production, increase the maximum number of connections (NestJS already sets sensible defaults)
-          await this.$executeRaw`SET max_connections = 100;`;
           this.logger.log('Database connection pool configured');
         } catch (error) {
           this.logger.warn(
