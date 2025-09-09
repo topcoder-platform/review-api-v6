@@ -27,7 +27,7 @@ export class AiWorkflowService {
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
       throw new BadRequestException(
-        `Active scorecard with id ${scorecardId} does not exist.`,
+        `Scorecard with id ${scorecardId} does not exist or is not active.`,
       );
     }
 
