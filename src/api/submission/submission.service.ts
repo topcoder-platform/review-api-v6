@@ -52,13 +52,13 @@ export class SubmissionService {
               SubmissionType.CHECKPOINT_SUBMISSION;
           if (isCheckpoint) {
             await this.challengePrisma.$executeRaw`
-              UPDATE "challenge"
+              UPDATE "Challenge"
               SET "numOfCheckpointSubmissions" = "numOfCheckpointSubmissions" + 1
               WHERE "id" = ${body.challengeId}
             `;
           } else {
             await this.challengePrisma.$executeRaw`
-              UPDATE "challenge"
+              UPDATE "Challenge"
               SET "numOfSubmissions" = "numOfSubmissions" + 1
               WHERE "id" = ${body.challengeId}
             `;

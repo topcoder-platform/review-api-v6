@@ -13,7 +13,7 @@ datasource db {
 }
 
 // Minimal challenge model shape to increment/decrement counters
-model challenge {
+model Challenge {
   id                           String @id
   numOfSubmissions             Int    @default(0)
   numOfCheckpointSubmissions   Int    @default(0)
