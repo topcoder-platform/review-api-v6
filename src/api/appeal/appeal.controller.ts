@@ -50,11 +50,11 @@ export class AppealController {
   }
 
   @Post()
-  @Roles(UserRole.Submitter)
+  @Roles(UserRole.User)
   @Scopes(Scope.CreateAppeal)
   @ApiOperation({
     summary: 'Create an appeal for a specific review item comment',
-    description: 'Roles: Submitter | Scopes: create:appeal',
+    description: 'Roles: User | Scopes: create:appeal',
   })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
   @ApiResponse({
@@ -76,21 +76,23 @@ export class AppealController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'creating appeal',
+        `creating appeal for review item comment: ${body.reviewItemCommentId}`,
+        body,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Patch('/:appealId')
-  @Roles(UserRole.Submitter)
+  @Roles(UserRole.User)
   @Scopes(Scope.UpdateAppeal)
   @ApiOperation({
     summary: 'Update an appeal',
-    description: 'Roles: Submitter | Scopes: update:appeal',
+    description: 'Roles: User | Scopes: update:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to update' })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
@@ -121,24 +123,26 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal with ID ${appealId} was not found`,
+          message: `Appeal with ID ${appealId} was not found. Please verify the appeal ID is correct.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Delete('/:appealId')
-  @Roles(UserRole.Submitter)
+  @Roles(UserRole.User)
   @Scopes(Scope.DeleteAppeal)
   @ApiOperation({
     summary: 'Delete an appeal',
-    description: 'Roles: Submitter | Scopes: delete:appeal',
+    description: 'Roles: User | Scopes: delete:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to delete' })
   @ApiResponse({ status: 200, description: 'Appeal deleted successfully.' })
@@ -160,20 +164,22 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal with ID ${appealId} was not found`,
+          message: `Appeal with ID ${appealId} was not found. Cannot delete a non-existent appeal.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Post('/:appealId/response')
-  @Roles(UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer) // Expand the permission to Admin and Copilots for now
   @Scopes(Scope.CreateAppealResponse)
   @ApiOperation({
     summary: 'Create a response for an appeal',
@@ -221,20 +227,22 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal with ID ${appealId} was not found`,
+          message: `Appeal with ID ${appealId} was not found. Cannot create response for a non-existent appeal.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Patch('/response/:appealResponseId')
-  @Roles(UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer) // Expand the permission to Admin and Copilots for now
   @Scopes(Scope.UpdateAppealResponse)
   @ApiOperation({
     summary: 'Update a response for an appeal',
@@ -277,14 +285,16 @@ export class AppealController {
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Appeal response with ID ${appealResponseId} was not found`,
+          message: `Appeal response with ID ${appealResponseId} was not found. Please verify the appeal response ID is correct.`,
           code: errorResponse.code,
+          details: errorResponse.details,
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -302,11 +312,6 @@ export class AppealController {
     required: false,
   })
   @ApiQuery({
-    name: 'challengeId',
-    description: 'The ID of the challenge to filter by',
-    required: false,
-  })
-  @ApiQuery({
     name: 'reviewId',
     description: 'The ID of the review to filter by',
     required: false,
@@ -319,12 +324,11 @@ export class AppealController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async getAppeals(
     @Query('resourceId') resourceId?: string,
-    @Query('challengeId') challengeId?: string,
     @Query('reviewId') reviewId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<AppealResponseDto>> {
     this.logger.log(
-      `Getting appeals with filters - resourceId: ${resourceId}, challengeId: ${challengeId}, reviewId: ${reviewId}`,
+      `Getting appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,
     );
 
     const { page = 1, perPage = 10 } = paginationDto || {};
@@ -334,16 +338,29 @@ export class AppealController {
       // Build where clause for filtering
       const whereClause: any = {};
       if (resourceId) whereClause.resourceId = resourceId;
-      if (challengeId) whereClause.challengeId = challengeId;
-      if (reviewId) whereClause.appealId = reviewId;
+      if (reviewId) {
+        whereClause.reviewItemComment = {
+          reviewItem: {
+            reviewId: reviewId,
+          },
+        };
+      }
 
       const [appeals, totalCount] = await Promise.all([
-        this.prisma.appealResponse.findMany({
+        this.prisma.appeal.findMany({
           where: whereClause,
           skip,
           take: perPage,
+          include: {
+            reviewItemComment: {
+              include: {
+                reviewItem: true,
+              },
+            },
+            appealResponse: true,
+          },
         }),
-        this.prisma.appealResponse.count({
+        this.prisma.appeal.count({
           where: whereClause,
         }),
       ]);
@@ -354,8 +371,15 @@ export class AppealController {
 
       return {
         data: appeals.map((appeal) => ({
-          ...appeal,
-          reviewItemCommentId: '',
+          id: appeal.id,
+          resourceId: appeal.resourceId,
+          reviewItemCommentId: appeal.reviewItemCommentId,
+          content: appeal.content,
+          createdAt: appeal.createdAt,
+          createdBy: appeal.createdBy,
+          updatedAt: appeal.updatedAt,
+          updatedBy: appeal.updatedBy,
+          legacyId: appeal.legacyId,
         })) as AppealResponseDto[],
         meta: {
           page,
@@ -367,11 +391,12 @@ export class AppealController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'fetching appeals',
+        `fetching appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }

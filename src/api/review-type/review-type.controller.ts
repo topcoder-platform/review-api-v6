@@ -166,19 +166,12 @@ export class ReviewTypeController {
   }
 
   @Get()
-  @Roles(
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-    UserRole.Reviewer,
-    UserRole.Talent,
-    UserRole.User,
-  )
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
     summary: 'Search for review types',
     description:
-      'Roles: Copilot, Admin, Submitter, Reviewer. | Scopes: read:review_type',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:review_type',
   })
   @ApiResponse({
     status: 200,
