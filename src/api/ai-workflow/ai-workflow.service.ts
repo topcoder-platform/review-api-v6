@@ -48,17 +48,16 @@ export class AiWorkflowService {
   }
 
   async getWorkflowById(id: string) {
-
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id },
       include: {
         llm: {
           include: {
             provider: true,
-          }
+          },
         },
         scorecard: true,
-      }
+      },
     });
     if (!workflow) {
       throw new Error(`AI workflow with id ${id} not found.`);

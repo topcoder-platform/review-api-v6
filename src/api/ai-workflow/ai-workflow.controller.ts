@@ -22,19 +22,17 @@ export class AiWorkflowController {
   @Roles(UserRole.Admin)
   @Scopes(Scope.CreateWorkflow)
   @ApiOperation({ summary: 'Create a new AI workflow' })
-  @ApiResponse({ status: 201, description: 'The AI workflow has been successfully created.' })
+  @ApiResponse({
+    status: 201,
+    description: 'The AI workflow has been successfully created.',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async create(@Body() createAiWorkflowDto: CreateAiWorkflowDto) {
     return this.aiWorkflowService.createWithValidation(createAiWorkflowDto);
   }
 
   @Get(':id')
-  @Roles(
-    UserRole.Admin,
-    UserRole.User,
-    UserRole.Copilot,
-    UserRole.Reviewer
-  )
+  @Roles(UserRole.Admin, UserRole.User, UserRole.Copilot, UserRole.Reviewer)
   @Scopes(Scope.ReadWorkflow)
   @ApiOperation({ summary: 'Get an AI workflow by ID' })
   @ApiResponse({ status: 200, description: 'The AI workflow record.' })
