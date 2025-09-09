@@ -1,6 +1,11 @@
-import { Controller, Post, Body, Get, Param, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { AiWorkflowService } from './aiWorkflow.service';
+import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
+import { AiWorkflowService } from './ai-workflow.service';
 import { CreateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -28,9 +33,7 @@ export class AiWorkflowController {
     UserRole.Admin,
     UserRole.User,
     UserRole.Copilot,
-    UserRole.Reviewer,
-    UserRole.Submitter,
-    UserRole.Talent
+    UserRole.Reviewer
   )
   @Scopes(Scope.ReadWorkflow)
   @ApiOperation({ summary: 'Get an AI workflow by ID' })
