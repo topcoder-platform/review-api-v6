@@ -15,7 +15,7 @@ import {
   ApiParam,
   ApiBody,
 } from '@nestjs/swagger';
-import { AiWorkflowService } from './aiWorkflow.service';
+import { AiWorkflowService } from './ai-workflow.service';
 import {
   CreateAiWorkflowDto,
   UpdateAiWorkflowDto,
@@ -47,14 +47,7 @@ export class AiWorkflowController {
   }
 
   @Get(':id')
-  @Roles(
-    UserRole.Admin,
-    UserRole.User,
-    UserRole.Copilot,
-    UserRole.Reviewer,
-    UserRole.Submitter,
-    UserRole.Talent,
-  )
+  @Roles(UserRole.Admin, UserRole.User, UserRole.Copilot, UserRole.Reviewer)
   @Scopes(Scope.ReadWorkflow)
   @ApiOperation({ summary: 'Get an AI workflow by ID' })
   @ApiResponse({ status: 200, description: 'The AI workflow record.' })

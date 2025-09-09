@@ -23,7 +23,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()
-@Controller('/')
+@Controller('/projectResult')
 export class ProjectResultController {
   private readonly logger: LoggerService;
 
@@ -34,18 +34,12 @@ export class ProjectResultController {
     this.logger = LoggerService.forRoot('ProjectResultController');
   }
 
-  @Get('/projectResult')
-  @Roles(
-    UserRole.Reviewer,
-    UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Admin,
-  )
+  @Get()
+  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.User, UserRole.Admin)
   @Scopes(Scope.ReadProjectResult)
   @ApiOperation({
     summary: 'Get project results',
-    description:
-      'Roles: Reviewer, Copilot, Submitter | Scopes: read:project-result',
+    description: 'Roles: Reviewer, Copilot, User | Scopes: read:project-result',
   })
   @ApiQuery({
     name: 'challengeId',
@@ -100,6 +94,7 @@ export class ProjectResultController {
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
