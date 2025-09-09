@@ -76,8 +76,7 @@ export class AiWorkflowController {
     @Param('id') id: string,
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     updateDto: UpdateAiWorkflowDto,
-    @User() user: JwtUser,
   ) {
-    return this.aiWorkflowService.updateWorkflow(id, updateDto, user.userId);
+    return this.aiWorkflowService.updateWorkflow(id, updateDto);
   }
 }

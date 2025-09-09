@@ -82,7 +82,6 @@ export class AiWorkflowService {
   async updateWorkflow(
     id: string,
     updateDto: UpdateAiWorkflowDto,
-    updatedBy?: string,
   ) {
     const existingWorkflow = await this.prisma.aiWorkflow.findUnique({
       where: { id },
@@ -118,11 +117,7 @@ export class AiWorkflowService {
 
     return this.prisma.aiWorkflow.update({
       where: { id },
-      data: {
-        ...updateDto,
-        updatedBy,
-        updatedAt: new Date(),
-      },
+      data: updateDto,
     });
   }
 }
