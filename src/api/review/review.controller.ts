@@ -42,6 +42,7 @@ import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 import { ResourceApiService } from '../../shared/modules/global/resource.service';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
@@ -53,6 +54,7 @@ export class ReviewController {
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly challengeApiService: ChallengeApiService,
   ) {
     this.logger = LoggerService.forRoot('ReviewController');
   }
@@ -75,6 +77,24 @@ export class ReviewController {
   ): Promise<ReviewResponseDto> {
     this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
     try {
+      // Get the submission to find the challengeId
+      const submission = await this.prisma.submission.findUniqueOrThrow({
+        where: { id: body.submissionId },
+        select: { challengeId: true },
+      });
+
+      if (!submission.challengeId) {
+        throw new BadRequestException({
+          message: `Submission ${body.submissionId} does not have an associated challengeId`,
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      // Validate that review submission is allowed for this challenge
+      await this.challengeApiService.validateReviewSubmission(
+        submission.challengeId,
+      );
+
       const prismaBody = mapReviewRequestToDto(body) as any;
       const data = await this.prisma.review.create({
         data: prismaBody,
@@ -89,6 +109,17 @@ export class ReviewController {
       this.logger.log(`Review created with ID: ${data.id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
+      // Handle phase validation errors
+      if (
+        error.message &&
+        error.message.includes('Reviews cannot be submitted')
+      ) {
+        throw new BadRequestException({
+          message: error.message,
+          code: 'PHASE_VALIDATION_ERROR',
+        });
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating review for submissionId: ${body.submissionId}`,
