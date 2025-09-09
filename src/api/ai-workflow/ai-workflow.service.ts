@@ -22,7 +22,7 @@ export class AiWorkflowService {
   }
 
   async createWithValidation(createAiWorkflowDto: CreateAiWorkflowDto) {
-    const { scorecardId, llmId, createdBy, updatedBy, updatedAt, ...rest } =
+    const { scorecardId, llmId, ...rest } =
       createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
@@ -44,9 +44,6 @@ export class AiWorkflowService {
         ...rest,
         scorecardId,
         llmId,
-        createdBy,
-        updatedBy: updatedBy || createdBy,
-        updatedAt: updatedAt || new Date(),
       },
     });
   }

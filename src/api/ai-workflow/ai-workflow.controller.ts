@@ -5,7 +5,7 @@ import {
   ApiOperation,
   ApiResponse,
 } from '@nestjs/swagger';
-import { AiWorkflowService } from './aiWorkflow.service';
+import { AiWorkflowService } from './ai-workflow.service';
 import { CreateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
