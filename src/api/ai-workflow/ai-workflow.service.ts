@@ -57,6 +57,7 @@ export class AiWorkflowService {
             provider: true,
           }
         },
+        scorecard: true,
       }
     });
     if (!workflow) {
