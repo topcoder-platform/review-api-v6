@@ -24,8 +24,6 @@ import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { User } from 'src/shared/decorators/user.decorator';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()

@@ -79,10 +79,7 @@ export class AiWorkflowService {
     return workflow;
   }
 
-  async updateWorkflow(
-    id: string,
-    updateDto: UpdateAiWorkflowDto,
-  ) {
+  async updateWorkflow(id: string, updateDto: UpdateAiWorkflowDto) {
     const existingWorkflow = await this.prisma.aiWorkflow.findUnique({
       where: { id },
     });
