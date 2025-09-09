@@ -133,8 +133,6 @@ export class AiWorkflowService {
       });
     } catch (e) {
       if (e.code === 'P2003') {
-        console.log('hereeee', e.meta.field_name);
-
         switch (e.meta.field_name) {
           case 'aiWorkflowRun_workflowId_fkey (index)':
             throw new BadRequestException(
@@ -142,7 +140,7 @@ export class AiWorkflowService {
             );
           case 'aiWorkflowRun_submissionId_fkey (index)':
             throw new BadRequestException(
-              `Invalid submission id provided! Submission with id ${workflowId} does not exist!`,
+              `Invalid submission id provided! Submission with id ${runData.submissionId} does not exist!`,
             );
           default:
             break;

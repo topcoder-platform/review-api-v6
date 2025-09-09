@@ -60,12 +60,12 @@ export class CreateAiWorkflowRunDto {
   @ApiProperty()
   @IsDateString()
   @IsNotEmpty()
-  startedAt: Date;
+  startedAt: string;
 
   @ApiProperty()
   @IsDateString()
   @IsNotEmpty()
-  completedAt: Date;
+  completedAt: string;
 
   @ApiProperty()
   @IsString()
