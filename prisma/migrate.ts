@@ -45,7 +45,7 @@ const modelMappingKeys = [
   'review_item_comment',
   'llm_provider',
   'llm_model',
-  'ai_workflow'
+  'ai_workflow',
 ];
 const subModelMappingKeys = {
   review_item_comment: ['reviewItemComment', 'appeal', 'appealResponse'],
@@ -813,27 +813,26 @@ async function processType(type: string, subtype?: string) {
         }
         case 'scorecard': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .map((sc) => {
-              const id = nanoid(14);
-              scorecardIdMap.set(sc.scorecard_id, id);
-              return {
-                id: id,
-                legacyId: sc.scorecard_id,
-                status: scorecardStatusMap[sc.scorecard_status_id],
-                type: scorecardTypeMap[sc.scorecard_type_id],
-                challengeTrack: projectCategoryMap[sc.project_category_id].type,
-                challengeType: projectCategoryMap[sc.project_category_id].name,
-                name: sc.name,
-                version: sc.version,
-                minScore: parseFloat(sc.min_score),
-                maxScore: parseFloat(sc.max_score),
-                createdAt: new Date(sc.create_date),
-                createdBy: sc.create_user,
-                updatedAt: new Date(sc.modify_date),
-                updatedBy: sc.modify_user,
-              };
-            });
+          const processedData = jsonData[key].map((sc) => {
+            const id = nanoid(14);
+            scorecardIdMap.set(sc.scorecard_id, id);
+            return {
+              id: id,
+              legacyId: sc.scorecard_id,
+              status: scorecardStatusMap[sc.scorecard_status_id],
+              type: scorecardTypeMap[sc.scorecard_type_id],
+              challengeTrack: projectCategoryMap[sc.project_category_id].type,
+              challengeType: projectCategoryMap[sc.project_category_id].name,
+              name: sc.name,
+              version: sc.version,
+              minScore: parseFloat(sc.min_score),
+              maxScore: parseFloat(sc.max_score),
+              createdAt: new Date(sc.create_date),
+              createdBy: sc.create_user,
+              updatedAt: new Date(sc.modify_date),
+              updatedBy: sc.modify_user,
+            };
+          });
           const totalBatches = Math.ceil(processedData.length / batchSize);
           for (let i = 0; i < processedData.length; i += batchSize) {
             const batchIndex = i / batchSize + 1;
@@ -1350,13 +1349,9 @@ async function processType(type: string, subtype?: string) {
         case 'llm_provider': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
           const idToLegacyIdMap = {};
-          const processedData = jsonData[key]
-          .map((c) => {
+          const processedData = jsonData[key].map((c) => {
             const id = nanoid(14);
-            llmProviderIdMap.set(
-              c.llm_provider_id,
-              id,
-            );
+            llmProviderIdMap.set(c.llm_provider_id, id);
             idToLegacyIdMap[id] = c.llm_provider_id;
             return {
               id: id,
@@ -1387,9 +1382,7 @@ async function processType(type: string, subtype?: string) {
                       data: item,
                     })
                     .catch((err) => {
-                      llmProviderIdMap.delete(
-                        idToLegacyIdMap[item.id],
-                      );
+                      llmProviderIdMap.delete(idToLegacyIdMap[item.id]);
                       console.error(
                         `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
                       );
@@ -1402,15 +1395,11 @@ async function processType(type: string, subtype?: string) {
         case 'llm_model': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
           const idToLegacyIdMap = {};
-          const processedData = jsonData[key]
-          .map((c) => {
+          const processedData = jsonData[key].map((c) => {
             const id = nanoid(14);
-            llmModelIdMap.set(
-              c.llm_model_id,
-              id,
-            );
+            llmModelIdMap.set(c.llm_model_id, id);
             idToLegacyIdMap[id] = c.llm_model_id;
-            console.log(llmProviderIdMap.get(c.provider_id), 'c.provider_id')
+            console.log(llmProviderIdMap.get(c.provider_id), 'c.provider_id');
             return {
               id: id,
               providerId: llmProviderIdMap.get(c.provider_id),
@@ -1423,7 +1412,7 @@ async function processType(type: string, subtype?: string) {
             };
           });
 
-          console.log(llmProviderIdMap, processedData, 'processedData')
+          console.log(llmProviderIdMap, processedData, 'processedData');
 
           const totalBatches = Math.ceil(processedData.length / batchSize);
           for (let i = 0; i < processedData.length; i += batchSize) {
@@ -1446,9 +1435,7 @@ async function processType(type: string, subtype?: string) {
                       data: item,
                     })
                     .catch((err) => {
-                      llmModelIdMap.delete(
-                        idToLegacyIdMap[item.id],
-                      );
+                      llmModelIdMap.delete(idToLegacyIdMap[item.id]);
                       console.error(
                         `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
                       );
@@ -1461,13 +1448,9 @@ async function processType(type: string, subtype?: string) {
         case 'ai_workflow': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
           const idToLegacyIdMap = {};
-          const processedData = jsonData[key]
-          .map((c) => {
+          const processedData = jsonData[key].map((c) => {
             const id = nanoid(14);
-            aiWorkflowIdMap.set(
-              c.ai_workflow_id,
-              id,
-            );
+            aiWorkflowIdMap.set(c.ai_workflow_id, id);
             idToLegacyIdMap[id] = c.ai_workflow_id;
             return {
               id: id,
@@ -1506,9 +1489,7 @@ async function processType(type: string, subtype?: string) {
                       data: item,
                     })
                     .catch((err) => {
-                      aiWorkflowIdMap.delete(
-                        idToLegacyIdMap[item.id],
-                      );
+                      aiWorkflowIdMap.delete(idToLegacyIdMap[item.id]);
                       console.error(
                         `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
                       );
@@ -1687,7 +1668,7 @@ migrate()
       { key: 'submissionIdMap', value: submissionIdMap },
       { key: 'llmProviderIdMap', value: llmProviderIdMap },
       { key: 'llmModelIdMap', value: llmModelIdMap },
-      { key: 'aiWorkflowIdMap', value: aiWorkflowIdMap }
+      { key: 'aiWorkflowIdMap', value: aiWorkflowIdMap },
     ].forEach((f) => {
       if (!fs.existsSync('.tmp')) {
         fs.mkdirSync('.tmp');
