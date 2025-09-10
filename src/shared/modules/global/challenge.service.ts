@@ -175,6 +175,25 @@ export class ChallengeApiService {
   }
 
   /**
+   * Validate if a challenge exists and is active
+   */
+  async validateChallengeExists(challengeId: string): Promise<ChallengeData> {
+    try {
+      const challenge = await this.getChallengeDetail(challengeId);
+
+      // Basic validation that challenge exists
+      if (!challenge || !challenge.id) {
+        throw new Error(`Challenge ${challengeId} not found or is invalid.`);
+      }
+
+      return challenge;
+    } catch (error) {
+      this.logger.error(`Error validating challenge ${challengeId}:`, error);
+      throw new Error(`Challenge ${challengeId} not found or is invalid.`);
+    }
+  }
+
+  /**
    * Validate if checkpoint submissions can be created (Checkpoint Submission phase is open)
    */
   async validateCheckpointSubmissionCreation(

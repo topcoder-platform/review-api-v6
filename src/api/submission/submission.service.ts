@@ -21,6 +21,7 @@ import { ChallengePrismaService } from 'src/shared/modules/global/challenge-pris
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 
 @Injectable()
 export class SubmissionService {
@@ -31,10 +32,45 @@ export class SubmissionService {
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengePrisma: ChallengePrismaService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly resourceApiService: ResourceApiService,
   ) {}
 
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
     console.log(`BODY: ${JSON.stringify(body)}`);
+
+    // Validate challenge exists and is active
+    try {
+      await this.challengeApiService.validateChallengeExists(body.challengeId);
+      this.logger.log(`Challenge ${body.challengeId} exists and is valid`);
+    } catch (error) {
+      throw new BadRequestException({
+        message: error.message,
+        code: 'INVALID_CHALLENGE',
+        details: {
+          challengeId: body.challengeId,
+        },
+      });
+    }
+
+    // Validate member is registered as submitter for the challenge
+    try {
+      await this.resourceApiService.validateSubmitterRegistration(
+        body.challengeId,
+        body.memberId,
+      );
+      this.logger.log(
+        `Member ${body.memberId} is a valid submitter for challenge ${body.challengeId}`,
+      );
+    } catch (error) {
+      throw new BadRequestException({
+        message: error.message,
+        code: 'INVALID_SUBMITTER_REGISTRATION',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+        },
+      });
+    }
 
     // Validate that submission phase is open before allowing submission creation
     if (body.challengeId) {

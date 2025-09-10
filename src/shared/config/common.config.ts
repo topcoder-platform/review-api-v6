@@ -53,6 +53,11 @@ export const CommonConfig = {
     onlineReviewUrlBase:
       'https://software.topcoder.com/review/actions/ViewProjectDetails?pid=',
   },
+  // Resource role configuration
+  roles: {
+    submitterRoleId:
+      process.env.SUBMITTER_ROLE_ID ?? '732339e7-8e30-49d7-9198-cccf9451e221',
+  },
   // configs of payment for each review type
   reviewPaymentConfig: paymentConfig,
   // sendgrid templates configs
