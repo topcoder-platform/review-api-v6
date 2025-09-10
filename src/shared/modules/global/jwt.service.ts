@@ -3,11 +3,13 @@ import {
   OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
-import { decode, verify, VerifyOptions, Secret } from 'jsonwebtoken';
-import * as jwksClient from 'jwks-rsa';
-import { ALL_SCOPE_MAPPINGS, Scope } from '../../enums/scopes.enum';
+import { ALL_SCOPE_MAPPINGS } from '../../enums/scopes.enum';
 import { UserRole } from '../../enums/userRole.enum';
 import { AuthConfig } from '../../config/auth.config';
+
+// tc-core-library-js is CommonJS only, import via require
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const tcCore = require('tc-core-library-js');
 
 export interface JwtUser {
   userId?: string;
@@ -21,42 +23,17 @@ export const isAdmin = (user: JwtUser): boolean => {
   return user.isMachine || (user.roles ?? []).includes(UserRole.Admin);
 };
 
-// Map for testing tokens, will be removed in production
-const TOKEN_ROLE_MAP: Record<string, string[]> = {
-  'admin-token': [UserRole.Admin],
-  'copilot-token': [UserRole.Copilot],
-  'reviewer-token': [UserRole.Reviewer],
-  'submitter-token': [UserRole.Submitter],
-};
-
-// For testing m2m tokens
-const TEST_M2M_TOKENS: Record<string, string[]> = {
-  'm2m-token-all': [
-    Scope.AllAppeal,
-    Scope.AllContactRequest,
-    Scope.AllProjectResult,
-    Scope.AllReview,
-    Scope.AllScorecard,
-  ],
-  'm2m-token-review': [Scope.AllReview],
-  'm2m-token-scorecard': [Scope.AllScorecard],
-  'm2m-token-appeal': [Scope.AllAppeal],
-  'm2m-token-contact-request': [Scope.AllContactRequest],
-  'm2m-token-project-result': [Scope.AllProjectResult],
-};
-
 @Injectable()
 export class JwtService implements OnModuleInit {
-  private jwksClientInstance: jwksClient.JwksClient;
+  private jwtAuthenticator: any;
 
   /**
-   * Initialize the JWKS client
+   * Initialize the tc-core-library-js JWT authenticator
    */
   onModuleInit() {
-    this.jwksClientInstance = jwksClient({
-      jwksUri: `${AuthConfig.jwt.issuer.replace(/\/$/, '')}/.well-known/jwks.json`,
-      cache: true,
-      rateLimit: true,
+    this.jwtAuthenticator = tcCore.middleware.jwtAuthenticator({
+      AUTH_SECRET: AuthConfig.authSecret,
+      VALID_ISSUERS: AuthConfig.validIssuers,
     });
   }
 
@@ -67,120 +44,81 @@ export class JwtService implements OnModuleInit {
    */
   async validateToken(token: string): Promise<JwtUser> {
     try {
-      // First check if it's a test token
-      if (TOKEN_ROLE_MAP[token]) {
-        return { roles: TOKEN_ROLE_MAP[token] as UserRole[], isMachine: false };
-      }
+      // Use tc-core-library-js for JWT validation
+      const payload = await new Promise<any>((resolve, reject) => {
+        // Create a mock request object with the authorization header
+        const mockReq = {
+          headers: {
+            authorization: token.startsWith('Bearer ')
+              ? token
+              : `Bearer ${token}`,
+          },
+        };
 
-      // Check if it's a test M2M token
-      if (TEST_M2M_TOKENS[token]) {
-        const rawScopes = TEST_M2M_TOKENS[token];
-        const scopes = this.expandScopes(rawScopes);
-        return { scopes, isMachine: false };
-      }
+        const mockRes = {};
 
-      let decodedToken: any;
-
-      // In production, we verify the token
-      if (process.env.NODE_ENV === 'production') {
-        try {
-          // First decode the token to get the kid (Key ID)
-          const tokenHeader = decode(token, { complete: true })?.header;
-
-          if (!tokenHeader || !tokenHeader.kid) {
-            throw new UnauthorizedException('Invalid token: Missing key ID');
+        const next = (error?: any) => {
+          if (error) {
+            console.error('JWT validation failed:', error);
+            return reject(new UnauthorizedException('Invalid token'));
           }
 
-          // Get the signing key from Auth0
-          const signingKey = await this.getSigningKey(tokenHeader.kid);
+          // tc-core-library-js should have attached authUser to the request
+          const authUser = (mockReq as any).authUser;
 
-          console.log(`Signing key: ${JSON.stringify(signingKey)}`);
+          if (!authUser) {
+            return reject(new UnauthorizedException('Invalid token'));
+          }
 
-          // Verify options
-          const verifyOptions: VerifyOptions = {
-            //issuer: AuthConfig.jwt.issuer,
-            //audience: AuthConfig.jwt.audience,
-            clockTolerance: AuthConfig.jwt.clockTolerance,
-            ignoreExpiration: AuthConfig.jwt.ignoreExpiration,
-          };
+          resolve(authUser);
+        };
 
-          // Verify the token
-          decodedToken = verify(token, signingKey, verifyOptions);
-        } catch (error) {
-          console.error('JWT verification failed:', error);
-          throw new UnauthorizedException('Invalid token');
-        }
-      } else {
-        // In development, just decode the token without verification
-        decodedToken = decode(token);
-      }
+        // Call the tc-core-library-js authenticator
+        this.jwtAuthenticator(mockReq, mockRes, next);
+      });
 
-      if (!decodedToken) {
-        throw new UnauthorizedException('Invalid token');
-      }
-
-      console.log(`Decoded token: ${JSON.stringify(decodedToken)}`);
+      console.log(`Decoded token: ${JSON.stringify(payload)}`);
       const user: JwtUser = { isMachine: false };
 
-      // Check for M2M token from Auth0
-      if (decodedToken.scope) {
-        const scopeString = decodedToken.scope as string;
-        const rawScopes = scopeString.split(' ');
+      // Check for M2M token (has scopes)
+      if (payload.scopes || payload.scope) {
+        const scopeString =
+          payload.scope ||
+          (Array.isArray(payload.scopes)
+            ? payload.scopes.join(' ')
+            : payload.scopes);
+        const rawScopes =
+          typeof scopeString === 'string'
+            ? scopeString.split(' ')
+            : scopeString;
         user.scopes = this.expandScopes(rawScopes);
-        user.userId = decodedToken.sub;
+        user.userId = payload.sub || payload.userId;
         user.isMachine = true;
       } else {
-        // Check for roles, userId and handle in a user token
-        for (const key of Object.keys(decodedToken)) {
+        // User token - extract roles, userId and handle
+        user.userId = payload.userId || payload.sub;
+        user.handle = payload.handle;
+        user.roles = payload.roles || [];
+
+        // Check for roles, userId and handle in custom claims
+        for (const key of Object.keys(payload)) {
           if (key.endsWith('handle')) {
-            user.handle = decodedToken[key] as string;
+            user.handle = payload[key] as string;
           }
           if (key.endsWith('userId')) {
-            user.userId = decodedToken[key] as string;
+            user.userId = payload[key] as string;
           }
           if (key.endsWith('roles')) {
-            user.roles = decodedToken[key] as UserRole[];
+            user.roles = payload[key] as UserRole[];
           }
         }
       }
+
       return user;
     } catch (error) {
       console.error('Token validation failed:', error);
       throw new UnauthorizedException('Invalid token');
     }
-  }
-
-  /**
-   * Gets the signing key from Auth0
-   * @param kid The Key ID from the JWT header
-   * @returns A Promise that resolves to the signing key
-   */
-  private getSigningKey(kid: string): Promise<Secret> {
-    return new Promise((resolve, reject) => {
-      this.jwksClientInstance.getSigningKey(kid, (err, key) => {
-        if (err || !key) {
-          console.error('Error getting signing key:', err);
-          return reject(
-            new UnauthorizedException(
-              'Invalid token: Unable to get signing key',
-            ),
-          );
-        }
-
-        // Get the public key using the proper method
-        const signingKey = key.getPublicKey();
-
-        if (!signingKey) {
-          return reject(
-            new UnauthorizedException(
-              'Invalid token: Unable to get public key',
-            ),
-          );
-        }
-
-        resolve(signingKey);
-      });
-    });
   }
 
   /**

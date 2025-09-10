@@ -110,6 +110,14 @@ export class ReviewItemBaseDto {
 
 export class ReviewItemRequestDto extends ReviewItemBaseDto {
   @ApiProperty({
+    description:
+      'Parent review ID to attach this item to (required for standalone create)',
+    example: 'review123',
+    required: false,
+  })
+  reviewId?: string;
+
+  @ApiProperty({
     description: 'List of comments on this review item',
     type: [ReviewItemCommentRequestDto],
     required: false,
@@ -372,6 +380,26 @@ export class ReviewResponseDto extends ReviewBaseDto {
   updatedBy: string;
 }
 
+type MappedReviewItemComment = {
+  content: string;
+  type: ReviewItemCommentType;
+  sortOrder: number;
+  createdBy: string;
+  updatedBy: string;
+  resourceId: string;
+};
+
+type MappedReviewItem = {
+  scorecardQuestionId: string;
+  initialAnswer: string;
+  finalAnswer?: string;
+  managerComment?: string;
+  createdBy: string;
+  updatedBy: string;
+  review?: { connect: { id: string } };
+  reviewItemComments?: { create?: MappedReviewItemComment[] };
+};
+
 export function mapReviewRequestToDto(
   request: ReviewRequestDto | ReviewPatchRequestDto,
 ) {
@@ -385,9 +413,24 @@ export function mapReviewRequestToDto(
       ...request,
       ...userFields,
       reviewItems: {
-        create: request.reviewItems?.map((item) =>
-          mapReviewItemRequestToDto(item),
-        ),
+        create: request.reviewItems?.map((item) => {
+          // When creating review items nested within a review, don't include reviewId
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { reviewId, ...itemWithoutReviewId } = item;
+          const itemPayload: MappedReviewItem =
+            mapReviewItemRequestToDto(itemWithoutReviewId);
+          if (itemPayload.reviewItemComments?.create) {
+            itemPayload.reviewItemComments.create =
+              itemPayload.reviewItemComments.create.map(
+                (comment: MappedReviewItemComment) => ({
+                  ...comment,
+                  // Default commenter to the review's resourceId if not provided
+                  resourceId: comment.resourceId || request.resourceId,
+                }),
+              );
+          }
+          return itemPayload;
+        }),
       },
     };
   } else {
@@ -398,23 +441,81 @@ export function mapReviewRequestToDto(
   }
 }
 
-export function mapReviewItemRequestToDto(request: ReviewItemRequestDto) {
+export function mapReviewItemRequestToDto(
+  request: ReviewItemRequestDto,
+): MappedReviewItem {
   const userFields = {
     createdBy: '',
     updatedBy: '',
   };
 
-  return {
-    ...request,
+  const { reviewId, ...rest } = request as {
+    reviewId?: string;
+  } & ReviewItemRequestDto;
+
+  const payload: MappedReviewItem = {
+    ...rest,
     ...userFields,
-    reviewId: '',
     reviewItemComments: {
       create: request.reviewItemComments?.map((comment) => ({
         ...comment,
         ...userFields,
+        // resourceId is required on reviewItemComment; leave population to controller/service
         resourceId: '',
-        reviewItemId: '',
       })),
     },
   };
+
+  // Only add review connection if reviewId is explicitly provided
+  // This is for standalone review item creation, not nested creation
+  if (reviewId) {
+    payload.review = { connect: { id: reviewId } };
+  }
+
+  return payload;
+}
+
+export class ReviewProgressResponseDto {
+  @ApiProperty({
+    description: 'The ID of the challenge',
+    example: 'challenge123',
+  })
+  @IsString()
+  @IsNotEmpty()
+  challengeId: string;
+
+  @ApiProperty({
+    description: 'Total number of reviewers for the challenge',
+    example: 2,
+  })
+  @IsNumber()
+  totalReviewers: number;
+
+  @ApiProperty({
+    description: 'Total number of submissions for the challenge',
+    example: 4,
+  })
+  @IsNumber()
+  totalSubmissions: number;
+
+  @ApiProperty({
+    description: 'Total number of submitted reviews',
+    example: 6,
+  })
+  @IsNumber()
+  totalSubmittedReviews: number;
+
+  @ApiProperty({
+    description: 'Review progress percentage',
+    example: 75.0,
+  })
+  @IsNumber()
+  progressPercentage: number;
+
+  @ApiProperty({
+    description: 'Timestamp when the progress was calculated',
+    example: '2025-01-15T10:30:00Z',
+  })
+  @IsDateString()
+  calculatedAt: string;
 }

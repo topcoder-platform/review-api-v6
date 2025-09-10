@@ -25,8 +25,8 @@ import { WebhookController } from './webhook/webhook.controller';
 import { WebhookService } from './webhook/webhook.service';
 import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard';
 import { ScoreCardService } from './scorecard/scorecard.service';
-import { AiWorkflowService } from './ai_workflow/aiWorkflow.service';
-import { AiWorkflowController } from './ai_workflow/ai_workflow.controller';
+import { AiWorkflowService } from './ai-workflow/ai-workflow.service';
+import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule, FileUploadModule],

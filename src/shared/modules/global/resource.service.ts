@@ -79,7 +79,10 @@ export class ResourceApiService {
     } catch (e) {
       if (e instanceof AxiosError) {
         this.logger.error(`Http Error: ${e.message}`, e.response?.data);
-        throw new Error('Cannot get data from Resource API.');
+        const error = new Error('Cannot get data from Resource API.');
+        (error as any).statusCode = e.response?.status;
+        (error as any).originalMessage = e.response?.data?.message;
+        throw error;
       }
       this.logger.error(`Data validation error: ${e}`);
       throw new Error('Malformed data returned from Resource API');
