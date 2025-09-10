@@ -6,6 +6,7 @@ import { AxiosError } from 'axios';
 import { M2MService } from './m2m.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 export class ChallengeData {
   id: string;
@@ -14,6 +15,7 @@ export class ChallengeData {
     track?: string | undefined;
     subTrack?: string | undefined;
   };
+  status: ChallengeStatus
   numOfSubmissions?: number | undefined;
   track: string;
   legacyId: number;

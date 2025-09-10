@@ -3,9 +3,10 @@ import {
   Post,
   Body,
   Get,
-  Param,
   Patch,
   ValidationPipe,
+  Query,
+  Param,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -14,6 +15,7 @@ import {
   ApiResponse,
   ApiParam,
   ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { AiWorkflowService } from './aiWorkflow.service';
 import {
@@ -104,5 +106,63 @@ export class AiWorkflowController {
     body: CreateAiWorkflowRunDto,
   ) {
     return this.aiWorkflowService.createWorkflowRun(workflowId, body);
+  }
+
+  @Get('/:workflowId/runs')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.ReadWorkflowRuns)
+  @ApiOperation({
+    summary: 'Get all the AI workflow runs for a given submission ID',
+  })
+  @ApiQuery({
+    name: 'submissionId',
+    description: 'The ID of the submission to fetch AI workflow runs for',
+    required: true,
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'The AI workflow runs for the given submission ID.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  getRuns(
+    @Param('workflowId') workflowId: string,
+    @Query('submissionId') submissionId: string,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.getWorkflowRuns(workflowId, user, {
+      submissionId,
+    });
+  }
+
+  @Get('/:workflowId/runs/:runId')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.ReadWorkflowRuns)
+  @ApiOperation({
+    summary: 'Get an AI workflow runsby its ID',
+  })
+  @ApiQuery({
+    name: 'runId',
+    description: 'The ID of the run to fetch AI workflow run',
+    required: true,
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'The AI workflow run for the given ID.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  async getRun(
+    @Param('workflowId') workflowId: string,
+    @Query('runId') runId: string,
+    @User() user: JwtUser,
+  ) {
+    const runs = await this.aiWorkflowService.getWorkflowRuns(
+      workflowId,
+      user,
+      {
+        runId,
+      },
+    );
+
+    return runs[0];
   }
 }
