@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SubmissionStatus, SubmissionType } from '@prisma/client';
 import { PaginationDto } from 'src/dto/pagination.dto';
@@ -19,6 +20,7 @@ import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 
 @Injectable()
 export class SubmissionService {
@@ -28,10 +30,65 @@ export class SubmissionService {
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengePrisma: ChallengePrismaService,
+    private readonly challengeApiService: ChallengeApiService,
   ) {}
 
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
     console.log(`BODY: ${JSON.stringify(body)}`);
+
+    // Validate that submission phase is open before allowing submission creation
+    if (body.challengeId) {
+      try {
+        // Check if it's a checkpoint submission
+        const isCheckpointSubmission =
+          body.type === SubmissionType.CHECKPOINT_SUBMISSION;
+
+        if (isCheckpointSubmission) {
+          // For checkpoint submissions, validate checkpoint submission phase
+          await this.challengeApiService.validateCheckpointSubmissionCreation(
+            body.challengeId,
+          );
+          this.logger.log(
+            `Checkpoint Submission phase is open for challenge ${body.challengeId}`,
+          );
+        } else {
+          // For regular submissions, validate submission phase
+          await this.challengeApiService.validateSubmissionCreation(
+            body.challengeId,
+          );
+          this.logger.log(
+            `Submission phase is open for challenge ${body.challengeId}`,
+          );
+        }
+      } catch (error) {
+        // Convert the error from ChallengeApiService to BadRequestException
+        if (
+          error.message &&
+          (error.message.includes('Submission phase is not currently open') ||
+            error.message.includes(
+              'Checkpoint Submission phase is not currently open',
+            ))
+        ) {
+          throw new BadRequestException({
+            message: error.message,
+            code: 'SUBMISSION_PHASE_CLOSED',
+            details: {
+              challengeId: body.challengeId,
+              submissionType: body.type,
+              requiredPhase:
+                body.type === SubmissionType.CHECKPOINT_SUBMISSION
+                  ? 'Checkpoint Submission'
+                  : 'Submission',
+            },
+          });
+        }
+        // Log the error but allow submission to proceed if challenge API is unavailable
+        this.logger.warn(
+          `Could not validate submission phase for challenge ${body.challengeId}: ${error.message}. Proceeding with submission creation.`,
+        );
+      }
+    }
+
     try {
       const data = await this.prisma.submission.create({
         data: {
