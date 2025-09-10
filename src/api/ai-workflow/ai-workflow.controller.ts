@@ -144,7 +144,7 @@ export class AiWorkflowController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async getRun(
     @Param('workflowId') workflowId: string,
-    @Query('runId') runId: string,
+    @Param('runId') runId: string,
     @User() user: JwtUser,
   ) {
     const runs = await this.aiWorkflowService.getWorkflowRuns(
