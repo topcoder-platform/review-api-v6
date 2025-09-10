@@ -130,7 +130,7 @@ export class AiWorkflowController {
   @Roles(UserRole.Admin)
   @Scopes(Scope.ReadWorkflowRuns)
   @ApiOperation({
-    summary: 'Get an AI workflow runsby its ID',
+    summary: 'Get an AI workflow run by its ID',
   })
   @ApiParam({
     name: 'runId',
