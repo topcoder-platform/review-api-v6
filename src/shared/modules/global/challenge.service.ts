@@ -157,4 +157,38 @@ export class ChallengeApiService {
       );
     }
   }
+
+  /**
+   * Validate if submissions can be created (Submission phase is open)
+   */
+  async validateSubmissionCreation(challengeId: string): Promise<void> {
+    const submissionPhaseOpen = await this.isPhaseOpen(
+      challengeId,
+      'Submission',
+    );
+
+    if (!submissionPhaseOpen) {
+      throw new Error(
+        `Submissions cannot be created for challenge ${challengeId}. Submission phase is not currently open.`,
+      );
+    }
+  }
+
+  /**
+   * Validate if checkpoint submissions can be created (Checkpoint Submission phase is open)
+   */
+  async validateCheckpointSubmissionCreation(
+    challengeId: string,
+  ): Promise<void> {
+    const checkpointSubmissionPhaseOpen = await this.isPhaseOpen(
+      challengeId,
+      'Checkpoint Submission',
+    );
+
+    if (!checkpointSubmissionPhaseOpen) {
+      throw new Error(
+        `Checkpoint submissions cannot be created for challenge ${challengeId}. Checkpoint Submission phase is not currently open.`,
+      );
+    }
+  }
 }
