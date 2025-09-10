@@ -205,7 +205,8 @@ export class AiWorkflowService {
       );
     }
 
-    if (!user.isMachine && !user.roles?.includes(UserRole.Admin)) {
+    const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
+    if (!isM2mOrAdmin) {
       const requiredRoles = [
         UserRole.Reviewer,
         UserRole.Copilot,

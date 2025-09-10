@@ -27,6 +27,8 @@ import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { User } from 'src/shared/decorators/user.decorator';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()
@@ -110,7 +112,7 @@ export class AiWorkflowController {
     required: true,
   })
   @ApiResponse({
-    status: 201,
+    status: 200,
     description: 'The AI workflow runs for the given submission ID.',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
@@ -130,13 +132,13 @@ export class AiWorkflowController {
   @ApiOperation({
     summary: 'Get an AI workflow runsby its ID',
   })
-  @ApiQuery({
+  @ApiParam({
     name: 'runId',
     description: 'The ID of the run to fetch AI workflow run',
     required: true,
   })
   @ApiResponse({
-    status: 201,
+    status: 200,
     description: 'The AI workflow run for the given ID.',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
