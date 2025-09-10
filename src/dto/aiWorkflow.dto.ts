@@ -41,12 +41,6 @@ export class CreateAiWorkflowDto {
   @IsString()
   @IsNotEmpty()
   createdBy: string;
-
-  @ApiProperty({ required: false })
-  updatedBy?: string;
-
-  @ApiProperty({ required: false })
-  updatedAt?: Date;
 }
 
 export class UpdateAiWorkflowDto extends PartialType(CreateAiWorkflowDto) {}

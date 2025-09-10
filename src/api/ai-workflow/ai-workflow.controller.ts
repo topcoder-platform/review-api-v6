@@ -15,7 +15,7 @@ import {
   ApiParam,
   ApiBody,
 } from '@nestjs/swagger';
-import { AiWorkflowService } from './aiWorkflow.service';
+import { AiWorkflowService } from './ai-workflow.service';
 import {
   CreateAiWorkflowDto,
   CreateAiWorkflowRunDto,
@@ -25,8 +25,6 @@ import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { User } from 'src/shared/decorators/user.decorator';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()
@@ -48,14 +46,7 @@ export class AiWorkflowController {
   }
 
   @Get(':id')
-  @Roles(
-    UserRole.Admin,
-    UserRole.User,
-    UserRole.Copilot,
-    UserRole.Reviewer,
-    UserRole.Submitter,
-    UserRole.Talent,
-  )
+  @Roles(UserRole.Admin, UserRole.User, UserRole.Copilot, UserRole.Reviewer)
   @Scopes(Scope.ReadWorkflow)
   @ApiOperation({ summary: 'Get an AI workflow by ID' })
   @ApiResponse({ status: 200, description: 'The AI workflow record.' })
@@ -84,9 +75,8 @@ export class AiWorkflowController {
     @Param('id') id: string,
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     updateDto: UpdateAiWorkflowDto,
-    @User() user: JwtUser,
   ) {
-    return this.aiWorkflowService.updateWorkflow(id, updateDto, user.userId);
+    return this.aiWorkflowService.updateWorkflow(id, updateDto);
   }
 
   @Post('/:workflowId/runs')

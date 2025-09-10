@@ -32,8 +32,7 @@ export class AiWorkflowService {
   }
 
   async createWithValidation(createAiWorkflowDto: CreateAiWorkflowDto) {
-    const { scorecardId, llmId, createdBy, updatedBy, updatedAt, ...rest } =
-      createAiWorkflowDto;
+    const { scorecardId, llmId, ...rest } = createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
@@ -41,7 +40,7 @@ export class AiWorkflowService {
         `Active scorecard with id ${scorecardId} does not exist.`,
       );
       throw new BadRequestException(
-        `Active scorecard with id ${scorecardId} does not exist.`,
+        `Scorecard with id ${scorecardId} does not exist or is not active.`,
       );
     }
 
@@ -58,9 +57,6 @@ export class AiWorkflowService {
         ...rest,
         scorecardId,
         llmId,
-        createdBy,
-        updatedBy: updatedBy || createdBy,
-        updatedAt: updatedAt || new Date(),
       },
     });
   }
@@ -68,6 +64,14 @@ export class AiWorkflowService {
   async getWorkflowById(id: string) {
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id },
+      include: {
+        llm: {
+          include: {
+            provider: true,
+          },
+        },
+        scorecard: true,
+      },
     });
     if (!workflow) {
       this.logger.error(`AI workflow with id ${id} not found.`);
@@ -76,11 +80,7 @@ export class AiWorkflowService {
     return workflow;
   }
 
-  async updateWorkflow(
-    id: string,
-    updateDto: UpdateAiWorkflowDto,
-    updatedBy?: string,
-  ) {
+  async updateWorkflow(id: string, updateDto: UpdateAiWorkflowDto) {
     const existingWorkflow = await this.prisma.aiWorkflow.findUnique({
       where: { id },
     });
@@ -115,11 +115,7 @@ export class AiWorkflowService {
 
     return this.prisma.aiWorkflow.update({
       where: { id },
-      data: {
-        ...updateDto,
-        updatedBy,
-        updatedAt: new Date(),
-      },
+      data: updateDto,
     });
   }
 

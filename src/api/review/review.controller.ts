@@ -9,6 +9,7 @@ import {
   Param,
   Query,
   NotFoundException,
+  BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import {
@@ -31,6 +32,7 @@ import {
   ReviewResponseDto,
   ReviewItemRequestDto,
   ReviewItemResponseDto,
+  ReviewProgressResponseDto,
   mapReviewRequestToDto,
   mapReviewItemRequestToDto,
 } from 'src/dto/review.dto';
@@ -39,6 +41,7 @@ import { ScorecardStatus } from '../../dto/scorecard.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ResourceApiService } from '../../shared/modules/global/resource.service';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
@@ -49,6 +52,7 @@ export class ReviewController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
+    private readonly resourceApiService: ResourceApiService,
   ) {
     this.logger = LoggerService.forRoot('ReviewController');
   }
@@ -71,8 +75,9 @@ export class ReviewController {
   ): Promise<ReviewResponseDto> {
     this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
     try {
+      const prismaBody = mapReviewRequestToDto(body) as any;
       const data = await this.prisma.review.create({
-        data: mapReviewRequestToDto(body) as any,
+        data: prismaBody,
         include: {
           reviewItems: {
             include: {
@@ -86,11 +91,13 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'creating review',
+        `creating review for submissionId: ${body.submissionId}`,
+        body,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -113,8 +120,16 @@ export class ReviewController {
   ): Promise<ReviewItemResponseDto> {
     this.logger.log(`Creating review item for review`);
     try {
+      const mapped = mapReviewItemRequestToDto(body);
+      if (!('review' in mapped) || !mapped.review) {
+        throw new BadRequestException({
+          message: 'reviewId is required when creating a review item',
+          code: 'VALIDATION_ERROR',
+        });
+      }
       const data = await this.prisma.reviewItem.create({
-        data: mapReviewItemRequestToDto(body),
+        // Cast after validation to satisfy Prisma types for top-level create
+        data: mapped as any,
         include: {
           reviewItemComments: true,
         },
@@ -124,11 +139,12 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'creating review item',
+        `creating review item for reviewId: ${body.reviewId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -210,19 +226,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `updating review ${id}`,
+        `updating review with ID: ${id}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${id} was not found`,
+          message: `Review with ID ${id} was not found. Please check the ID and try again.`,
           code: errorResponse.code,
+          details: { reviewId: id },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -265,35 +283,32 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `updating review item ${itemId}`,
+        `updating review item with ID: ${itemId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review item with ID ${itemId} was not found`,
+          message: `Review item with ID ${itemId} was not found. Please check the ID and try again.`,
           code: errorResponse.code,
+          details: { itemId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Get()
-  @Roles(
-    UserRole.Reviewer,
-    UserRole.Copilot,
-    UserRole.Admin,
-    UserRole.Submitter,
-  )
+  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Admin, UserRole.User)
   @Scopes(Scope.ReadReview)
   @ApiOperation({
     summary: 'Search for pending reviews',
     description:
-      'Roles: Reviewer, Copilot, Admin, Submitter. For Submitter, only applies to their own review, until challenge completion. | Scopes: read:review',
+      'Roles: Reviewer, Copilot, Admin, User. For User, only applies to their own review, until challenge completion. | Scopes: read:review',
   })
   @ApiQuery({
     name: 'status',
@@ -452,27 +467,22 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        'fetching reviews',
+        `fetching reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
 
   @Get('/:reviewId')
-  @Roles(
-    UserRole.Reviewer,
-    UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Admin,
-  )
+  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.User, UserRole.Admin)
   @Scopes(Scope.ReadReview)
   @ApiOperation({
     summary: 'View a specific review',
-    description:
-      'Roles: Reviewer, Copilot, Submitter, Admin | Scopes: read:review',
+    description: 'Roles: Reviewer, Copilot, User, Admin | Scopes: read:review',
   })
   @ApiParam({
     name: 'reviewId',
@@ -506,19 +516,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `fetching review ${reviewId}`,
+        `fetching review with ID: ${reviewId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${reviewId} was not found`,
+          message: `Review with ID ${reviewId} was not found. Please check the ID and try again.`,
           code: errorResponse.code,
+          details: { reviewId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -552,19 +564,21 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `deleting review ${reviewId}`,
+        `deleting review with ID: ${reviewId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review with ID ${reviewId} was not found`,
+          message: `Review with ID ${reviewId} was not found. Cannot delete non-existent review.`,
           code: errorResponse.code,
+          details: { reviewId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
       });
     }
   }
@@ -598,19 +612,188 @@ export class ReviewController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `deleting review item ${itemId}`,
+        `deleting review item with ID: ${itemId}`,
       );
 
       if (errorResponse.code === 'RECORD_NOT_FOUND') {
         throw new NotFoundException({
-          message: `Review item with ID ${itemId} was not found`,
+          message: `Review item with ID ${itemId} was not found. Cannot delete non-existent item.`,
           code: errorResponse.code,
+          details: { itemId },
         });
       }
 
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  @Get('/progress/:challengeId')
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer, UserRole.User)
+  @Scopes(Scope.ReadReview)
+  @ApiOperation({
+    summary: 'Get review progress for a specific challenge',
+    description:
+      'Calculate and return the review progress percentage for a challenge. Accessible to all authenticated users. | Scopes: read:review',
+  })
+  @ApiParam({
+    name: 'challengeId',
+    description: 'The ID of the challenge to calculate progress for',
+    example: 'challenge123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Review progress calculated successfully.',
+    type: ReviewProgressResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid challengeId parameter.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Challenge not found or no data available.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Server error during calculation.',
+  })
+  async getReviewProgress(
+    @Param('challengeId') challengeId: string,
+  ): Promise<ReviewProgressResponseDto> {
+    this.logger.log(
+      `Calculating review progress for challenge: ${challengeId}`,
+    );
+
+    try {
+      // Validate challengeId parameter
+      if (
+        !challengeId ||
+        typeof challengeId !== 'string' ||
+        challengeId.trim() === ''
+      ) {
+        throw new Error('Invalid challengeId parameter');
+      }
+
+      // Get reviewers from Resource API
+      this.logger.debug('Fetching reviewers from Resource API');
+      const resources = await this.resourceApiService.getResources({
+        challengeId,
+      });
+
+      // Get resource roles to filter by reviewer role
+      const resourceRoles = await this.resourceApiService.getResourceRoles();
+
+      // Filter resources to get only reviewers
+      const reviewers = resources.filter((resource) => {
+        const role = resourceRoles[resource.roleId];
+        return role && role.name.toLowerCase().includes('reviewer');
+      });
+
+      const totalReviewers = reviewers.length;
+      this.logger.debug(
+        `Found ${totalReviewers} reviewers for challenge ${challengeId}`,
+      );
+
+      // Get submissions for the challenge
+      this.logger.debug('Fetching submissions for the challenge');
+      const submissions = await this.prisma.submission.findMany({
+        where: {
+          challengeId,
+          status: 'ACTIVE',
+        },
+      });
+
+      const submissionIds = submissions.map((s) => s.id);
+      const totalSubmissions = submissions.length;
+      this.logger.debug(
+        `Found ${totalSubmissions} submissions for challenge ${challengeId}`,
+      );
+
+      // Get submitted reviews for these submissions
+      this.logger.debug('Fetching submitted reviews');
+      const submittedReviews = await this.prisma.review.findMany({
+        where: {
+          submissionId: { in: submissionIds },
+          committed: true,
+        },
+        include: {
+          reviewItems: true,
+        },
+      });
+
+      const totalSubmittedReviews = submittedReviews.length;
+      this.logger.debug(`Found ${totalSubmittedReviews} submitted reviews`);
+
+      // Calculate progress percentage
+      let progressPercentage = 0;
+
+      if (totalReviewers > 0 && totalSubmissions > 0) {
+        const expectedTotalReviews = totalSubmissions * totalReviewers;
+        progressPercentage =
+          (totalSubmittedReviews / expectedTotalReviews) * 100;
+        // Round to 2 decimal places
+        progressPercentage = Math.round(progressPercentage * 100) / 100;
+      }
+
+      // Handle edge cases
+      if (progressPercentage > 100) {
+        progressPercentage = 100;
+      }
+
+      const result: ReviewProgressResponseDto = {
+        challengeId,
+        totalReviewers,
+        totalSubmissions,
+        totalSubmittedReviews,
+        progressPercentage,
+        calculatedAt: new Date().toISOString(),
+      };
+
+      this.logger.log(
+        `Review progress calculated: ${progressPercentage}% for challenge ${challengeId}`,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `Error calculating review progress for challenge ${challengeId}:`,
+        error,
+      );
+
+      if (error.message === 'Invalid challengeId parameter') {
+        throw new Error('Invalid challengeId parameter');
+      }
+
+      // Handle Resource API errors based on HTTP status codes
+      if (error.message === 'Cannot get data from Resource API.') {
+        const statusCode = (error as Error & { statusCode?: number })
+          .statusCode;
+        if (statusCode === 400) {
+          throw new BadRequestException({
+            message: `Challenge ID ${challengeId} is not in valid GUID format`,
+            code: 'INVALID_CHALLENGE_ID',
+          });
+        } else if (statusCode === 404) {
+          throw new NotFoundException({
+            message: `Challenge with ID ${challengeId} was not found`,
+            code: 'CHALLENGE_NOT_FOUND',
+          });
+        }
+      }
+
+      if (error.message && error.message.includes('not found')) {
+        throw new NotFoundException({
+          message: `Challenge with ID ${challengeId} was not found or has no data available`,
+          code: 'CHALLENGE_NOT_FOUND',
+        });
+      }
+
+      throw new InternalServerErrorException({
+        message: 'Failed to calculate review progress',
+        code: 'PROGRESS_CALCULATION_ERROR',
       });
     }
   }
