@@ -570,18 +570,18 @@ model llmModel {
 }
 
 model aiWorkflow {
-  id          String    @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
-  name        String    @unique @db.VarChar
-  llmId       String    @db.VarChar(14)
-  description String    @db.Text
-  defUrl      String    @db.VarChar
-  gitId       String    @db.VarChar
-  gitOwner    String    @db.VarChar
-  scorecardId String    @db.VarChar(14)
-  createdAt   DateTime  @default(now()) @db.Timestamp(3)
-  createdBy   String    @db.Text
-  updatedAt   DateTime? @db.Timestamp(3)
-  updatedBy   String?   @db.Text
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  name        String   @unique @db.VarChar
+  llmId       String   @db.VarChar(14)
+  description String   @db.Text
+  defUrl      String   @db.VarChar
+  gitId       String   @db.VarChar
+  gitOwner    String   @db.VarChar
+  scorecardId String   @db.VarChar(14)
+  createdAt   DateTime @default(now()) @db.Timestamp(3)
+  createdBy   String   @db.Text
+  updatedAt   DateTime @db.Timestamp(3)
+  updatedBy   String   @db.Text
 
   llm       llmModel        @relation(fields: [llmId], references: [id])
   scorecard scorecard       @relation(fields: [scorecardId], references: [id])
