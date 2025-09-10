@@ -213,6 +213,7 @@ export class SubmissionService {
       await this.prisma.submission.delete({
         where: { id },
       });
+      console.log(`Challenge ID: ${existing.challengeId}`);
       // Decrement challenge submission counters if challengeId present
       if (existing.challengeId) {
         try {
@@ -220,13 +221,13 @@ export class SubmissionService {
             existing.type === SubmissionType.CHECKPOINT_SUBMISSION;
           if (isCheckpoint) {
             await this.challengePrisma.$executeRaw`
-              UPDATE "challenge"
+              UPDATE "Challenge"
               SET "numOfCheckpointSubmissions" = GREATEST("numOfCheckpointSubmissions" - 1, 0)
               WHERE "id" = ${existing.challengeId}
             `;
           } else {
             await this.challengePrisma.$executeRaw`
-              UPDATE "challenge"
+              UPDATE "Challenge"
               SET "numOfSubmissions" = GREATEST("numOfSubmissions" - 1, 0)
               WHERE "id" = ${existing.challengeId}
             `;
