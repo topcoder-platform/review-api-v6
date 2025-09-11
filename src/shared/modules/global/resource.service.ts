@@ -130,4 +130,49 @@ export class ResourceApiService {
     }
     return true;
   }
+
+  /**
+   * Validate if a member is registered as a submitter for a challenge
+   *
+   * @param challengeId challenge id
+   * @param memberId member id to validate
+   * @returns resolves to true if member is a valid submitter
+   */
+  async validateSubmitterRegistration(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    try {
+      const resources = await this.getResources({
+        challengeId: challengeId,
+        memberId: memberId,
+      });
+
+      // Check if member has any resources for this challenge
+      if (!resources || resources.length === 0) {
+        throw new Error(
+          `Member ${memberId} is not registered for challenge ${challengeId}.`,
+        );
+      }
+
+      // Check if member has the submitter role
+      const submitterResource = resources.find(
+        (resource) => resource.roleId === CommonConfig.roles.submitterRoleId,
+      );
+
+      if (!submitterResource) {
+        throw new Error(
+          `Member ${memberId} is not registered as a submitter for challenge ${challengeId}.`,
+        );
+      }
+
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Error validating submitter registration for member ${memberId} on challenge ${challengeId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
 }

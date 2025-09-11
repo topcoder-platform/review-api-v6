@@ -7,6 +7,16 @@ import { M2MService } from './m2m.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { CommonConfig } from 'src/shared/config/common.config';
 
+export class PhaseData {
+  id: string;
+  name: string;
+  isOpen: boolean;
+  scheduledStartTime?: string;
+  scheduledEndTime?: string;
+  actualStartTime?: string;
+  actualEndTime?: string;
+}
+
 export class ChallengeData {
   id: string;
   name: string;
@@ -19,6 +29,7 @@ export class ChallengeData {
   legacyId: number;
   tags?: string[] | undefined;
   workflows?: WorkflowData[] | undefined;
+  phases?: PhaseData[] | undefined;
 }
 
 export class WorkflowData {
@@ -68,6 +79,135 @@ export class ChallengeApiService {
       }
       this.logger.error(`Data validation error: ${e}`);
       throw new Error('Malformed data returned from Challenge API');
+    }
+  }
+
+  /**
+   * Check if a specific phase is currently open for a challenge
+   */
+  async isPhaseOpen(challengeId: string, phaseName: string): Promise<boolean> {
+    try {
+      const challenge = await this.getChallengeDetail(challengeId);
+
+      if (!challenge.phases) {
+        this.logger.warn(`No phases found for challenge ${challengeId}`);
+        return false;
+      }
+
+      const phase = challenge.phases.find((p) => p.name === phaseName);
+      if (!phase) {
+        this.logger.warn(
+          `Phase '${phaseName}' not found for challenge ${challengeId}`,
+        );
+        return false;
+      }
+
+      return phase.isOpen;
+    } catch (error) {
+      this.logger.error(
+        `Error checking phase status for challenge ${challengeId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Validate if reviews can be submitted (Review or Iterative Review phase is open)
+   */
+  async validateReviewSubmission(challengeId: string): Promise<void> {
+    const reviewPhaseOpen = await this.isPhaseOpen(challengeId, 'Review');
+    const iterativeReviewPhaseOpen = await this.isPhaseOpen(
+      challengeId,
+      'Iterative Review',
+    );
+
+    if (!reviewPhaseOpen && !iterativeReviewPhaseOpen) {
+      throw new Error(
+        `Reviews cannot be submitted for challenge ${challengeId}. Neither Review nor Iterative Review phase is currently open.`,
+      );
+    }
+  }
+
+  /**
+   * Validate if appeals can be submitted (Appeals phase is open)
+   */
+  async validateAppealSubmission(challengeId: string): Promise<void> {
+    const appealsPhaseOpen = await this.isPhaseOpen(challengeId, 'Appeals');
+
+    if (!appealsPhaseOpen) {
+      throw new Error(
+        `Appeals cannot be submitted for challenge ${challengeId}. Appeals phase is not currently open.`,
+      );
+    }
+  }
+
+  /**
+   * Validate if appeal responses can be submitted (Appeals Response phase is open)
+   */
+  async validateAppealResponseSubmission(challengeId: string): Promise<void> {
+    const appealsResponsePhaseOpen = await this.isPhaseOpen(
+      challengeId,
+      'Appeals Response',
+    );
+
+    if (!appealsResponsePhaseOpen) {
+      throw new Error(
+        `Appeal responses cannot be submitted for challenge ${challengeId}. Appeals Response phase is not currently open.`,
+      );
+    }
+  }
+
+  /**
+   * Validate if submissions can be created (Submission phase is open)
+   */
+  async validateSubmissionCreation(challengeId: string): Promise<void> {
+    const submissionPhaseOpen = await this.isPhaseOpen(
+      challengeId,
+      'Submission',
+    );
+
+    if (!submissionPhaseOpen) {
+      throw new Error(
+        `Submissions cannot be created for challenge ${challengeId}. Submission phase is not currently open.`,
+      );
+    }
+  }
+
+  /**
+   * Validate if a challenge exists and is active
+   */
+  async validateChallengeExists(challengeId: string): Promise<ChallengeData> {
+    try {
+      const challenge = await this.getChallengeDetail(challengeId);
+
+      // Basic validation that challenge exists
+      if (!challenge || !challenge.id) {
+        throw new Error(`Challenge ${challengeId} not found or is invalid.`);
+      }
+
+      return challenge;
+    } catch (error) {
+      this.logger.error(`Error validating challenge ${challengeId}:`, error);
+      throw new Error(`Challenge ${challengeId} not found or is invalid.`);
+    }
+  }
+
+  /**
+   * Validate if checkpoint submissions can be created (Checkpoint Submission phase is open)
+   */
+  async validateCheckpointSubmissionCreation(
+    challengeId: string,
+  ): Promise<void> {
+    const checkpointSubmissionPhaseOpen = await this.isPhaseOpen(
+      challengeId,
+      'Checkpoint Submission',
+    );
+
+    if (!checkpointSubmissionPhaseOpen) {
+      throw new Error(
+        `Checkpoint submissions cannot be created for challenge ${challengeId}. Checkpoint Submission phase is not currently open.`,
+      );
     }
   }
 }

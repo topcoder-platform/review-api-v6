@@ -33,15 +33,16 @@ import {
   ReviewItemRequestDto,
   ReviewItemResponseDto,
   ReviewProgressResponseDto,
+  ReviewStatus,
   mapReviewRequestToDto,
   mapReviewItemRequestToDto,
 } from 'src/dto/review.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { ScorecardStatus } from '../../dto/scorecard.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 import { ResourceApiService } from '../../shared/modules/global/resource.service';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
@@ -53,6 +54,7 @@ export class ReviewController {
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly challengeApiService: ChallengeApiService,
   ) {
     this.logger = LoggerService.forRoot('ReviewController');
   }
@@ -75,6 +77,24 @@ export class ReviewController {
   ): Promise<ReviewResponseDto> {
     this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
     try {
+      // Get the submission to find the challengeId
+      const submission = await this.prisma.submission.findUniqueOrThrow({
+        where: { id: body.submissionId },
+        select: { challengeId: true },
+      });
+
+      if (!submission.challengeId) {
+        throw new BadRequestException({
+          message: `Submission ${body.submissionId} does not have an associated challengeId`,
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      // Validate that review submission is allowed for this challenge
+      await this.challengeApiService.validateReviewSubmission(
+        submission.challengeId,
+      );
+
       const prismaBody = mapReviewRequestToDto(body) as any;
       const data = await this.prisma.review.create({
         data: prismaBody,
@@ -89,6 +109,17 @@ export class ReviewController {
       this.logger.log(`Review created with ID: ${data.id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
+      // Handle phase validation errors
+      if (
+        error.message &&
+        error.message.includes('Reviews cannot be submitted')
+      ) {
+        throw new BadRequestException({
+          message: error.message,
+          code: 'PHASE_VALIDATION_ERROR',
+        });
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating review for submissionId: ${body.submissionId}`,
@@ -306,16 +337,16 @@ export class ReviewController {
   @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Admin, UserRole.User)
   @Scopes(Scope.ReadReview)
   @ApiOperation({
-    summary: 'Search for pending reviews',
+    summary: 'Search for reviews',
     description:
       'Roles: Reviewer, Copilot, Admin, User. For User, only applies to their own review, until challenge completion. | Scopes: read:review',
   })
   @ApiQuery({
     name: 'status',
     description: 'The review status to filter by',
-    example: 'pending',
+    enum: ReviewStatus,
+    example: ReviewStatus.PENDING,
     required: false,
-    enum: ScorecardStatus,
   })
   @ApiQuery({
     name: 'challengeId',
@@ -329,17 +360,17 @@ export class ReviewController {
   })
   @ApiResponse({
     status: 200,
-    description: 'List of pending reviews.',
+    description: 'List of reviews.',
     type: [ReviewResponseDto],
   })
-  async getPendingReviews(
-    @Query('status') status?: ScorecardStatus,
+  async getReviews(
+    @Query('status') status?: ReviewStatus,
     @Query('challengeId') challengeId?: string,
     @Query('submissionId') submissionId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<ReviewResponseDto>> {
     this.logger.log(
-      `Getting pending reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
+      `Getting reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
     );
 
     const { page = 1, perPage = 10 } = paginationDto || {};
@@ -348,115 +379,71 @@ export class ReviewController {
     try {
       // Build the where clause for reviews based on available filter parameters
       const reviewWhereClause: any = {};
+
       if (submissionId) {
         reviewWhereClause.submissionId = submissionId;
       }
 
-      // Get reviews by status if provided
-      let reviews: any[] = [];
-      let totalCount = 0;
-
       if (status) {
-        this.logger.debug(`Fetching reviews by scorecard status: ${status}`);
-        const scorecards = await this.prisma.scorecard.findMany({
-          where: {
-            status: ScorecardStatus[status as keyof typeof ScorecardStatus],
-          },
-          include: {
-            reviews: {
-              where: reviewWhereClause,
-              skip,
-              take: perPage,
-            },
-          },
-        });
-
-        reviews = scorecards.flatMap((d) => d.reviews);
-
-        // Count total reviews matching the filter for pagination metadata
-        const scorecardIds = scorecards.map((s) => s.id);
-        totalCount = await this.prisma.review.count({
-          where: {
-            ...reviewWhereClause,
-            scorecardId: { in: scorecardIds },
-          },
-        });
+        reviewWhereClause.status = status;
       }
 
       // Get reviews by challengeId if provided
       if (challengeId) {
         this.logger.debug(`Fetching reviews by challengeId: ${challengeId}`);
-        const challengeResults = await this.prisma.challengeResult.findMany({
+        // Get submissions for this challenge directly (consistent with POST /reviews)
+        const submissions = await this.prisma.submission.findMany({
           where: { challengeId },
+          select: { id: true },
         });
 
-        const submissionIds = challengeResults.map((c) => c.submissionId);
+        const submissionIds = submissions.map((s) => s.id);
 
         if (submissionIds.length > 0) {
-          const challengeReviews = await this.prisma.review.findMany({
-            where: {
-              submissionId: { in: submissionIds },
-              ...reviewWhereClause,
+          reviewWhereClause.submissionId = { in: submissionIds };
+        } else {
+          // No submissions found for this challenge, return empty result
+          return {
+            data: [],
+            meta: {
+              page,
+              perPage,
+              totalCount: 0,
+              totalPages: 0,
             },
-            skip,
-            take: perPage,
-            include: {
-              reviewItems: {
-                include: {
-                  reviewItemComments: true,
-                },
-              },
-            },
-          });
-
-          reviews = [...reviews, ...challengeReviews];
-
-          // Count total for this condition separately
-          const challengeReviewCount = await this.prisma.review.count({
-            where: {
-              submissionId: { in: submissionIds },
-              ...reviewWhereClause,
-            },
-          });
-
-          totalCount += challengeReviewCount;
+          };
         }
       }
 
-      // If no specific filters, get all reviews with pagination
-      if (!status && !challengeId && !submissionId) {
-        this.logger.debug('Fetching all reviews with pagination');
-        reviews = await this.prisma.review.findMany({
-          skip,
-          take: perPage,
-          include: {
-            reviewItems: {
-              include: {
-                reviewItemComments: true,
-              },
+      // Get reviews with the built where clause
+      this.logger.debug(
+        `Fetching reviews with where clause:`,
+        reviewWhereClause,
+      );
+      const reviews = await this.prisma.review.findMany({
+        where: reviewWhereClause,
+        skip,
+        take: perPage,
+        include: {
+          reviewItems: {
+            include: {
+              reviewItemComments: true,
             },
           },
-        });
+        },
+      });
 
-        totalCount = await this.prisma.review.count();
-      }
-
-      // Deduplicate reviews by ID
-      const uniqueReviews = Object.values(
-        reviews.reduce((acc: Record<string, any>, review) => {
-          if (!acc[review.id]) {
-            acc[review.id] = review;
-          }
-          return acc;
-        }, {}),
-      );
+      // Count total reviews matching the filter for pagination metadata
+      const totalCount = await this.prisma.review.count({
+        where: reviewWhereClause,
+      });
 
       this.logger.log(
-        `Found ${uniqueReviews.length} reviews (page ${page} of ${Math.ceil(totalCount / perPage)})`,
+        `Found ${reviews.length} reviews (page ${page} of ${Math.ceil(totalCount / perPage)})`,
       );
 
       return {
-        data: uniqueReviews as ReviewResponseDto[],
+        data: reviews as ReviewResponseDto[],
         meta: {
           page,
           perPage,
