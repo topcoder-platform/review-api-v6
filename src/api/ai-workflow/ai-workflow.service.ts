@@ -1,10 +1,19 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { CreateAiWorkflowDto } from '../../dto/aiWorkflow.dto';
+import {
+  CreateAiWorkflowDto,
+  UpdateAiWorkflowDto,
+} from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
 
 @Injectable()
 export class AiWorkflowService {
+  private readonly logger: Logger = new Logger(AiWorkflowService.name);
   constructor(private readonly prisma: PrismaService) {}
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
@@ -27,6 +36,9 @@ export class AiWorkflowService {
 
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
+      this.logger.error(
+        `Active scorecard with id ${scorecardId} does not exist.`,
+      );
       throw new BadRequestException(
         `Scorecard with id ${scorecardId} does not exist or is not active.`,
       );
@@ -34,6 +46,7 @@ export class AiWorkflowService {
 
     const llmExists = await this.llmModelExists(llmId);
     if (!llmExists) {
+      this.logger.error(`LLM model with id ${llmId} does not exist.`);
       throw new BadRequestException(
         `LLM model with id ${llmId} does not exist.`,
       );
@@ -69,8 +82,48 @@ export class AiWorkflowService {
       },
     });
     if (!workflow) {
-      throw new Error(`AI workflow with id ${id} not found.`);
+      this.logger.error(`AI workflow with id ${id} not found.`);
+      throw new NotFoundException(`AI workflow with id ${id} not found.`);
     }
     return workflow;
+  }
+
+  async updateWorkflow(id: string, updateDto: UpdateAiWorkflowDto) {
+    const existingWorkflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id },
+    });
+    if (!existingWorkflow) {
+      this.logger.error(`AI workflow with id ${id} not found.`);
+      throw new NotFoundException(`AI workflow with id ${id} not found.`);
+    }
+
+    if (updateDto.scorecardId) {
+      const scorecardExists = await this.scorecardExists(updateDto.scorecardId);
+      if (!scorecardExists) {
+        this.logger.error(
+          `Active scorecard with id ${updateDto.scorecardId} does not exist.`,
+        );
+        throw new BadRequestException(
+          `Active scorecard with id ${updateDto.scorecardId} does not exist.`,
+        );
+      }
+    }
+
+    if (updateDto.llmId) {
+      const llmExists = await this.llmModelExists(updateDto.llmId);
+      if (!llmExists) {
+        this.logger.error(
+          `LLM model with id ${updateDto.llmId} does not exist.`,
+        );
+        throw new BadRequestException(
+          `LLM model with id ${updateDto.llmId} does not exist.`,
+        );
+      }
+    }
+
+    return this.prisma.aiWorkflow.update({
+      where: { id },
+      data: updateDto,
+    });
   }
 }
