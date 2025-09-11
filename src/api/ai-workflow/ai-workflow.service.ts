@@ -50,7 +50,7 @@ export class AiWorkflowService {
         llmId,
         // TODO: This has to be removed once the prisma middleware is implemented
         createdBy: '',
-        updatedAt: '',
+        updatedAt: new Date(),
         updatedBy: '',
       },
     });
