@@ -127,7 +127,13 @@ export class AiWorkflowController {
   }
 
   @Get('/:workflowId/runs/:runId')
-  @Roles(UserRole.Admin)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+  )
   @Scopes(Scope.ReadWorkflowRuns)
   @ApiOperation({
     summary: 'Get an AI workflow run by its ID',

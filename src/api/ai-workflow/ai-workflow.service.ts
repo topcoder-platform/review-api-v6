@@ -209,6 +209,7 @@ export class AiWorkflowService {
     if (!isM2mOrAdmin) {
       const requiredRoles = [
         UserRole.Reviewer,
+        UserRole.ProjectManager,
         UserRole.Copilot,
         UserRole.Submitter,
       ].map((r) => r.toLowerCase());
