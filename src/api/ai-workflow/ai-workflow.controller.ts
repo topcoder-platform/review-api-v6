@@ -48,16 +48,24 @@ export class AiWorkflowController {
   @Post('/:workflowId/runs/:runId/items')
   @Scopes(Scope.CreateWorkflowRun)
   @ApiOperation({ summary: 'Create AIWorkflowRunItems in batch' })
-  @ApiResponse({ status: 201, description: 'AIWorkflowRunItems created successfully.' })
+  @ApiResponse({
+    status: 201,
+    description: 'AIWorkflowRunItems created successfully.',
+  })
   @ApiResponse({ status: 400, description: 'Bad Request.' })
   @ApiResponse({ status: 401, description: 'Unauthorized.' })
   @ApiResponse({ status: 404, description: 'Workflow or Run not found.' })
   async createRunItems(
     @Param('workflowId') workflowId: string,
     @Param('runId') runId: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true })) createItemsDto: CreateAiWorkflowRunItemsDto,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    createItemsDto: CreateAiWorkflowRunItemsDto,
   ) {
-    return this.aiWorkflowService.createRunItemsBatch(workflowId, runId, createItemsDto.items);
+    return this.aiWorkflowService.createRunItemsBatch(
+      workflowId,
+      runId,
+      createItemsDto.items,
+    );
   }
 
   @Get(':id')

@@ -141,26 +141,38 @@ export class AiWorkflowService {
       include: { workflow: true },
     });
     if (!run || run.workflowId !== workflowId) {
-      this.logger.error(`Run with id ${runId} not found or does not belong to workflow ${workflowId}.`);
-      throw new NotFoundException(`Run with id ${runId} not found or does not belong to workflow ${workflowId}.`);
+      this.logger.error(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+      throw new NotFoundException(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
     }
 
     for (const item of items) {
       if (!item.scorecardQuestionId || !item.content) {
-        this.logger.error(`Invalid item: scorecardQuestionId and content are required.`);
-        throw new BadRequestException(`Each item must have scorecardQuestionId and content.`);
+        this.logger.error(
+          `Invalid item: scorecardQuestionId and content are required.`,
+        );
+        throw new BadRequestException(
+          `Each item must have scorecardQuestionId and content.`,
+        );
       }
       const questionExists = await this.prisma.scorecardQuestion.findUnique({
         where: { id: item.scorecardQuestionId },
       });
       if (!questionExists) {
-        this.logger.error(`ScorecardQuestion with id ${item.scorecardQuestionId} not found.`);
-        throw new BadRequestException(`ScorecardQuestion with id ${item.scorecardQuestionId} not found.`);
+        this.logger.error(
+          `ScorecardQuestion with id ${item.scorecardQuestionId} not found.`,
+        );
+        throw new BadRequestException(
+          `ScorecardQuestion with id ${item.scorecardQuestionId} not found.`,
+        );
       }
     }
 
     const createdItems = await this.prisma.aiWorkflowRunItem.createMany({
-      data: items.map(item => ({
+      data: items.map((item) => ({
         workflowRunId: runId,
         scorecardQuestionId: item.scorecardQuestionId,
         content: item.content,
