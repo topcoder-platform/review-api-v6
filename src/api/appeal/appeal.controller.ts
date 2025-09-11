@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   NotFoundException,
+  BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import {
@@ -35,6 +36,7 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
 
 @ApiTags('Appeal')
 @ApiBearerAuth()
@@ -45,6 +47,7 @@ export class AppealController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
+    private readonly challengeApiService: ChallengeApiService,
   ) {
     this.logger = LoggerService.forRoot('AppealController');
   }
@@ -68,12 +71,54 @@ export class AppealController {
   ): Promise<AppealResponseDto> {
     this.logger.log(`Creating appeal`);
     try {
+      // Get challengeId by following the relationship chain
+      const reviewItemComment =
+        await this.prisma.reviewItemComment.findUniqueOrThrow({
+          where: { id: body.reviewItemCommentId },
+          include: {
+            reviewItem: {
+              include: {
+                review: {
+                  include: {
+                    submission: {
+                      select: { challengeId: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        });
+
+      const challengeId =
+        reviewItemComment.reviewItem.review.submission?.challengeId;
+      if (!challengeId) {
+        throw new BadRequestException({
+          message: `No challengeId found for reviewItemComment ${body.reviewItemCommentId}`,
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      // Validate that appeal submission is allowed for this challenge
+      await this.challengeApiService.validateAppealSubmission(challengeId);
+
       const data = await this.prisma.appeal.create({
         data: mapAppealRequestToDto(body),
       });
       this.logger.log(`Appeal created with ID: ${data.id}`);
       return data as AppealResponseDto;
     } catch (error) {
+      // Handle phase validation errors
+      if (
+        error.message &&
+        error.message.includes('Appeals cannot be submitted')
+      ) {
+        throw new BadRequestException({
+          message: error.message,
+          code: 'PHASE_VALIDATION_ERROR',
+        });
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating appeal for review item comment: ${body.reviewItemCommentId}`,
@@ -206,6 +251,42 @@ export class AppealController {
   ): Promise<AppealResponseResponseDto> {
     this.logger.log(`Creating response for appeal ID: ${appealId}`);
     try {
+      // Get challengeId by following the relationship chain from appeal
+      const appeal = await this.prisma.appeal.findUniqueOrThrow({
+        where: { id: appealId },
+        include: {
+          reviewItemComment: {
+            include: {
+              reviewItem: {
+                include: {
+                  review: {
+                    include: {
+                      submission: {
+                        select: { challengeId: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const challengeId =
+        appeal.reviewItemComment.reviewItem.review.submission?.challengeId;
+      if (!challengeId) {
+        throw new BadRequestException({
+          message: `No challengeId found for appeal ${appealId}`,
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      // Validate that appeal response submission is allowed for this challenge
+      await this.challengeApiService.validateAppealResponseSubmission(
+        challengeId,
+      );
+
       const data = await this.prisma.appeal.update({
         where: { id: appealId },
         data: {
@@ -220,6 +301,17 @@ export class AppealController {
       this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
       return data.appealResponse as AppealResponseResponseDto;
     } catch (error) {
+      // Handle phase validation errors
+      if (
+        error.message &&
+        error.message.includes('Appeal responses cannot be submitted')
+      ) {
+        throw new BadRequestException({
+          message: error.message,
+          code: 'PHASE_VALIDATION_ERROR',
+        });
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating response for appeal ${appealId}`,

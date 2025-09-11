@@ -36,11 +36,6 @@ export class CreateAiWorkflowDto {
   @IsString()
   @IsNotEmpty()
   scorecardId: string;
-
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  createdBy: string;
 }
 
 export class UpdateAiWorkflowDto extends PartialType(CreateAiWorkflowDto) {}
