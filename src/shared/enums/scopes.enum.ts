@@ -63,6 +63,9 @@ export enum Scope {
   UpdateSubmission = 'update:submission',
   DeleteSubmission = 'delete:submission',
   AllSubmission = 'all:submission',
+
+  // AI workflow scopes
+  CreateWorkflow = 'create:workflow',
 }
 
 /**
