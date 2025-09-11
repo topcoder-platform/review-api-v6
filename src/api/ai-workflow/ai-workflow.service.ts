@@ -183,7 +183,6 @@ export class AiWorkflowService {
         // TODO: Remove this once prisma middleware implementation is done
         createdBy: '',
       })),
-      skipDuplicates: true,
     });
 
     return { createdCount: createdItems.count };
