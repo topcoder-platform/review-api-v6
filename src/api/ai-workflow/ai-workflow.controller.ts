@@ -19,6 +19,7 @@ import { AiWorkflowService } from './ai-workflow.service';
 import {
   CreateAiWorkflowDto,
   UpdateAiWorkflowDto,
+  CreateAiWorkflowRunItemsDto,
 } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -42,6 +43,21 @@ export class AiWorkflowController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async create(@Body() createAiWorkflowDto: CreateAiWorkflowDto) {
     return this.aiWorkflowService.createWithValidation(createAiWorkflowDto);
+  }
+
+  @Post('/:workflowId/runs/:runId/items')
+  @Scopes(Scope.CreateWorkflowRun)
+  @ApiOperation({ summary: 'Create AIWorkflowRunItems in batch' })
+  @ApiResponse({ status: 201, description: 'AIWorkflowRunItems created successfully.' })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 404, description: 'Workflow or Run not found.' })
+  async createRunItems(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true })) createItemsDto: CreateAiWorkflowRunItemsDto,
+  ) {
+    return this.aiWorkflowService.createRunItemsBatch(workflowId, runId, createItemsDto.items);
   }
 
   @Get(':id')

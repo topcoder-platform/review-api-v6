@@ -68,6 +68,7 @@ export enum Scope {
   CreateWorkflow = 'create:workflow',
   ReadWorkflow = 'read:workflow',
   UpdateWorkflow = 'update:workflow',
+  CreateWorkflowRun = 'create:workflow-run',
 }
 
 /**
