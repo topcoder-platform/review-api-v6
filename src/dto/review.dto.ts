@@ -487,6 +487,29 @@ export function mapReviewItemRequestToDto(
   return payload;
 }
 
+export function mapReviewItemRequestForUpdate(
+  request: ReviewItemRequestDto,
+): Partial<MappedReviewItem> {
+  const userFields = {
+    updatedBy: '',
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { reviewId, reviewItemComments, ...rest } = request as {
+    reviewId?: string;
+    reviewItemComments?: any[];
+  } & ReviewItemRequestDto;
+
+  // For updates, we only include the core review item fields
+  // Comments should be handled separately via dedicated comment endpoints
+  const payload: Partial<MappedReviewItem> = {
+    ...rest,
+    ...userFields,
+  };
+
+  return payload;
+}
+
 export class ReviewProgressResponseDto {
   @ApiProperty({
     description: 'The ID of the challenge',
