@@ -66,6 +66,7 @@ export enum Scope {
 
   // AI workflow scopes
   CreateWorkflow = 'create:workflow',
+  ReadWorkflow = 'read:workflow',
 }
 
 /**

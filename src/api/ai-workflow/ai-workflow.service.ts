@@ -50,9 +50,27 @@ export class AiWorkflowService {
         llmId,
         // TODO: This has to be removed once the prisma middleware is implemented
         createdBy: '',
-        updatedAt: '',
+        updatedAt: new Date(),
         updatedBy: '',
       },
     });
+  }
+
+  async getWorkflowById(id: string) {
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id },
+      include: {
+        llm: {
+          include: {
+            provider: true,
+          },
+        },
+        scorecard: true,
+      },
+    });
+    if (!workflow) {
+      throw new Error(`AI workflow with id ${id} not found.`);
+    }
+    return workflow;
   }
 }

@@ -1,4 +1,4 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiTags,
@@ -29,5 +29,15 @@ export class AiWorkflowController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async create(@Body() createAiWorkflowDto: CreateAiWorkflowDto) {
     return this.aiWorkflowService.createWithValidation(createAiWorkflowDto);
+  }
+
+  @Get(':id')
+  @Roles(UserRole.Admin, UserRole.User, UserRole.Copilot, UserRole.Reviewer)
+  @Scopes(Scope.ReadWorkflow)
+  @ApiOperation({ summary: 'Get an AI workflow by ID' })
+  @ApiResponse({ status: 200, description: 'The AI workflow record.' })
+  @ApiResponse({ status: 404, description: 'AI workflow not found.' })
+  async getById(@Param('id') id: string) {
+    return this.aiWorkflowService.getWorkflowById(id);
   }
 }
