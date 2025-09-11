@@ -141,6 +141,16 @@ model scorecardQuestion {
   @@index([sortOrder]) // Index for ordering questions
 }
 
+enum ReviewStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
 model review {
   id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
   legacyId           String?
@@ -154,7 +164,7 @@ model review {
   initialScore       Float?
   typeId             String?
   metadata           Json?
-  status             String?
+  status             ReviewStatus?
   reviewDate         DateTime?
   createdAt          DateTime  @default(now())
   createdBy          String
@@ -170,6 +180,7 @@ model review {
   @@index([resourceId]) // Index for filtering by resource (reviewer)
   @@index([phaseId]) // Index for filtering by phase
   @@index([scorecardId]) // Index for joining with scorecard table
+  @@index([status]) // Index for filtering by review status
 }
 
 model reviewItem {
