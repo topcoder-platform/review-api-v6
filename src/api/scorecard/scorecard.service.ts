@@ -10,6 +10,7 @@ import {
   scorecardSection,
 } from '@prisma/client';
 import {
+  mapScorecardRequestForCreate,
   ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
   ScorecardQuestionBaseDto,
@@ -63,49 +64,25 @@ export class ScoreCardService {
    */
   async addScorecard(
     body: ScorecardRequestDto,
-    user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
     try {
-      const data = await this.prisma.$transaction(async (tx) => {
-        const scorecard = await tx.scorecard.create({
-          data: { ...omit(body, ['id', 'scorecardGroups']) },
-        });
-        this.logger.log(
-          `[updateScorecard] Created empty scorecard: ${JSON.stringify(scorecard)}`,
-        );
-
-        const scorecardGroups = await Promise.all(body.scorecardGroups.map(async (scorecardGroupData) => {
-          const group = await tx.scorecardGroup.create({
-            data: {
-              ...omit(scorecardGroupData, ['id', 'sections']),
-              scorecardId: scorecard.id,
-            }
-          });
-
-          const sections = await Promise.all(scorecardGroupData.sections.map(async (scorecardSectionData) => {
-            const section = await tx.scorecardSection.create({
-              data: {
-                ...omit(scorecardSectionData, ['id', 'questions']),
-                scorecardGroupId: group.id,
-              }
-            });
-            
-            const questions = await Promise.all(scorecardSectionData.questions.map(async (scorecardQuestionData) => {
-              return await tx.scorecardQuestion.create({
-                data: {
-                  ...omit(scorecardQuestionData, ['id', 'questions']),
-                  scorecardSectionId: section.id,
-                }
-              });
-            }));
-
-            return { ...section, questions };
-          }));
-
-          return { ...group, sections };
-        }));
-
-        return { ...scorecard, scorecardGroups };
+      const data = await this.prisma.scorecard.create({
+        data: {
+          ...mapScorecardRequestForCreate({
+            ...body,
+          }),
+        },
+        include: {
+          scorecardGroups: {
+            include: {
+              sections: {
+                include: {
+                  questions: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       return data as unknown as ScorecardWithGroupResponseDto;
@@ -242,7 +219,6 @@ export class ScoreCardService {
     incoming,
     existing,
     cascade,
-    userId,
   }: SyncChildrenParams<T>): Promise<void> {
     const incomingIds = incoming.filter((c) => c.id).map((c) => c.id);
     const existingIds = existing.map((e) => e.id);
@@ -444,10 +420,7 @@ export class ScoreCardService {
     }
   }
 
-  async cloneScorecard(
-    id: string,
-    user: { userId?: string; isMachine: boolean },
-  ): Promise<ScorecardResponseDto> {
+  async cloneScorecard(id: string): Promise<ScorecardResponseDto> {
     try {
       const original = await this.prisma.scorecard.findUnique({
         where: { id },
@@ -471,35 +444,22 @@ export class ScoreCardService {
         });
       }
 
-      // DO NOT remove these!
-      // prisma middleware is not recuresively parsing the data object
-      // groups, sections & questions will not be automatically updated with audit fields
-      const auditFields = {
-        createdBy: user.isMachine ? 'System' : (user.userId as string),
-        updatedBy: user.isMachine ? 'System' : (user.userId as string),
-        createdAt: undefined,
-        updatedAt: undefined,
-      };
-
       // Remove id fields from nested objects for cloning
       const cloneGroups = original.scorecardGroups.map(
         (group: ScorecardGroupBaseDto) => ({
           ...group,
           id: undefined,
-          ...auditFields,
           scorecardId: undefined,
           sections: {
             create: group.sections.map((section: ScorecardSectionBaseDto) => ({
               ...section,
               id: undefined,
-              ...auditFields,
               scorecardGroupId: undefined,
               questions: {
                 create: section.questions.map(
                   (question: ScorecardQuestionBaseDto) => ({
                     ...question,
                     id: undefined,
-                    ...auditFields,
                     sectionId: undefined,
                     scorecardSectionId: undefined,
                   }),
@@ -515,7 +475,6 @@ export class ScoreCardService {
           ...original,
           id: undefined,
           name: `${original.name} (Clone)`,
-          ...auditFields,
           scorecardGroups: {
             create: cloneGroups,
           },

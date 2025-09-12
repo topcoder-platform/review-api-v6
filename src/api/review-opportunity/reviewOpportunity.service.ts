@@ -221,19 +221,16 @@ export class ReviewOpportunityService {
 
   /**
    * Update review opportunity by id
-   * @param authUser auth user
    * @param id opportunity id
    * @param dto update dto
    */
-  async update(authUser: JwtUser, id: string, dto: UpdateReviewOpportunityDto) {
+  async update(id: string, dto: UpdateReviewOpportunityDto) {
     try {
-      const updatedBy = authUser.userId ?? '';
       await this.checkExists(id);
       const entity = await this.prisma.reviewOpportunity.update({
         where: { id },
         data: {
           ...dto,
-          updatedBy,
         },
       });
       return await this.assembleResult(entity);

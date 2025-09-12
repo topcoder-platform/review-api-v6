@@ -591,7 +591,7 @@ model aiWorkflow {
   scorecardId String   @db.VarChar(14)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
   createdBy   String?   @db.Text
-  updatedAt   DateTime @db.Timestamp(3)
+  updatedAt   DateTime @updatedAt
   updatedBy   String?   @db.Text
 
   llm       llmModel        @relation(fields: [llmId], references: [id])
@@ -638,7 +638,7 @@ model aiWorkflowRunItemComment {
   parentId          String?  @db.VarChar(14)
   createdAt         DateTime @default(now()) @db.Timestamp(3)
   createdBy         String?   @db.Text
-  updatedAt         DateTime @db.Timestamp(3)
+  updatedAt         DateTime @updatedAt
   updatedBy         String?   @db.Text
 
   item    aiWorkflowRunItem          @relation(fields: [workflowRunItemId], references: [id])

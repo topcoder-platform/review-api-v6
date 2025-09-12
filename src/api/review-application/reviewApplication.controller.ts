@@ -145,9 +145,8 @@ export class ReviewApplicationController {
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Roles(UserRole.Admin)
   @Patch('/:id/accept')
-  async approveApplication(@Req() req: Request, @Param('id') id: string) {
-    const authUser: JwtUser = req['user'] as JwtUser;
-    await this.service.approve(authUser, id);
+  async approveApplication(@Param('id') id: string) {
+    await this.service.approve(id);
     return OkResponse({});
   }
 
@@ -170,9 +169,8 @@ export class ReviewApplicationController {
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Roles(UserRole.Admin)
   @Patch('/:id/reject')
-  async rejectApplication(@Req() req: Request, @Param('id') id: string) {
-    const authUser: JwtUser = req['user'] as JwtUser;
-    await this.service.reject(authUser, id);
+  async rejectApplication(@Param('id') id: string) {
+    await this.service.reject(id);
     return OkResponse({});
   }
 
@@ -195,12 +193,8 @@ export class ReviewApplicationController {
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Roles(UserRole.Admin)
   @Patch('/opportunity/:opportunityId/reject-all')
-  async rejectAllPending(
-    @Req() req: Request,
-    @Param('opportunityId') opportunityId: string,
-  ) {
-    const authUser: JwtUser = req['user'] as JwtUser;
-    await this.service.rejectAllPending(authUser, opportunityId);
+  async rejectAllPending(@Param('opportunityId') opportunityId: string) {
+    await this.service.rejectAllPending(opportunityId);
     return OkResponse({});
   }
 }

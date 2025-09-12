@@ -226,12 +226,10 @@ export class ReviewOpportunityController {
   @Roles(UserRole.Admin, UserRole.Copilot)
   @Scopes(Scope.UpdateReviewOpportunity, Scope.AllReviewOpportunity)
   async updateById(
-    @Req() req: Request,
     @Param('id') id: string,
     @Body() dto: UpdateReviewOpportunityDto,
   ) {
-    const authUser: JwtUser = req['user'] as JwtUser;
-    return OkResponse(await this.service.update(authUser, id, dto));
+    return OkResponse(await this.service.update(id, dto));
   }
 
   @ApiOperation({

@@ -396,8 +396,6 @@ type MappedReviewItemComment = {
   content: string;
   type: ReviewItemCommentType;
   sortOrder: number;
-  createdBy: string;
-  updatedBy: string;
   resourceId: string;
 };
 
@@ -406,8 +404,6 @@ type MappedReviewItem = {
   initialAnswer: string;
   finalAnswer?: string;
   managerComment?: string;
-  createdBy: string;
-  updatedBy: string;
   review?: { connect: { id: string } };
   reviewItemComments?: { create?: MappedReviewItemComment[] };
 };
@@ -415,15 +411,9 @@ type MappedReviewItem = {
 export function mapReviewRequestToDto(
   request: ReviewRequestDto | ReviewPatchRequestDto,
 ) {
-  const userFields = {
-    createdBy: '',
-    updatedBy: '',
-  };
-
   if (request instanceof ReviewRequestDto) {
     return {
       ...request,
-      ...userFields,
       reviewItems: {
         create: request.reviewItems?.map((item) => {
           // When creating review items nested within a review, don't include reviewId
@@ -448,7 +438,6 @@ export function mapReviewRequestToDto(
   } else {
     return {
       ...request,
-      ...userFields,
     };
   }
 }
@@ -456,22 +445,15 @@ export function mapReviewRequestToDto(
 export function mapReviewItemRequestToDto(
   request: ReviewItemRequestDto,
 ): MappedReviewItem {
-  const userFields = {
-    createdBy: '',
-    updatedBy: '',
-  };
-
   const { reviewId, ...rest } = request as {
     reviewId?: string;
   } & ReviewItemRequestDto;
 
   const payload: MappedReviewItem = {
     ...rest,
-    ...userFields,
     reviewItemComments: {
       create: request.reviewItemComments?.map((comment) => ({
         ...comment,
-        ...userFields,
         // resourceId is required on reviewItemComment; leave population to controller/service
         resourceId: '',
       })),
@@ -490,10 +472,6 @@ export function mapReviewItemRequestToDto(
 export function mapReviewItemRequestForUpdate(
   request: ReviewItemRequestDto,
 ): Partial<MappedReviewItem> {
-  const userFields = {
-    updatedBy: '',
-  };
-
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { reviewId, reviewItemComments, ...rest } = request as {
     reviewId?: string;
@@ -504,7 +482,6 @@ export function mapReviewItemRequestForUpdate(
   // Comments should be handled separately via dedicated comment endpoints
   const payload: Partial<MappedReviewItem> = {
     ...rest,
-    ...userFields,
   };
 
   return payload;

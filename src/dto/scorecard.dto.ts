@@ -380,3 +380,29 @@ export class ScorecardPaginatedResponseDto {
   })
   scoreCards: ScorecardResponseDto[];
 }
+
+export function mapScorecardRequestForCreate(request: ScorecardRequestDto) {
+  return {
+    ...request,
+    id: undefined,
+    scorecardGroups: {
+      create: request.scorecardGroups.map((group) => ({
+        ...group,
+        id: undefined,
+        sections: {
+          create: group.sections.map((section) => ({
+            ...section,
+            id: undefined,
+            questions: {
+              create: section.questions.map((question) => ({
+                ...question,
+                id: undefined,
+                sortOrder: 1,
+              })),
+            },
+          })),
+        },
+      })),
+    },
+  };
+}
