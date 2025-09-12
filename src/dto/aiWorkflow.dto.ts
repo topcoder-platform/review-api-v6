@@ -1,6 +1,8 @@
 import { ApiProperty, PartialType } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsDateString, IsNumber, IsOptional } from 'class-validator';
 
+import { Transform } from 'class-transformer';
+
 export class CreateAiWorkflowDto {
   @ApiProperty()
   @IsString()
@@ -14,21 +16,25 @@ export class CreateAiWorkflowDto {
 
   @ApiProperty()
   @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsNotEmpty()
   description: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsNotEmpty()
   defUrl: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsNotEmpty()
   gitId: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsNotEmpty()
   gitOwner: string;
 
