@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsDateString,
   IsIn,
+  IsUrl,
 } from 'class-validator';
 
 import { ReviewResponseDto } from './review.dto';
@@ -101,27 +102,27 @@ export class SubmissionRequestBaseDto {
 
   @ApiProperty({
     description: 'The submission url',
+    required: true,
   })
-  @IsOptional()
-  @IsString()
+  @IsUrl()
   @IsNotEmpty()
-  url?: string;
+  url: string;
 
   @ApiProperty({
     description: 'The member id',
+    required: true,
   })
-  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  memberId?: string;
+  memberId: string;
 
   @ApiProperty({
     description: 'The challenge id',
+    required: true,
   })
-  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  challengeId?: string;
+  challengeId: string;
 
   @ApiProperty({
     description: 'The legacy submission id',

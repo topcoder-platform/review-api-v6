@@ -247,7 +247,7 @@ export class ReviewTypeController {
   @Scopes(Scope.ReadReviewType)
   @ApiOperation({
     summary: 'View a specific review type',
-    description: 'Roles: Copilot, Admin | Scopes: read:review_type',
+    description: 'Roles: Copilot, Admin, User | Scopes: read:review_type',
   })
   @ApiParam({
     name: 'reviewTypeId',
