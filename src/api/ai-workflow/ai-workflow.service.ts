@@ -48,7 +48,8 @@ export class AiWorkflowService {
   }
 
   async createWithValidation(createAiWorkflowDto: CreateAiWorkflowDto) {
-    const { scorecardId, llmId, ...rest } = createAiWorkflowDto;
+    const { scorecardId, llmId, name, description, defUrl, gitId, gitOwner } =
+      createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
@@ -70,9 +71,17 @@ export class AiWorkflowService {
 
     return this.prisma.aiWorkflow.create({
       data: {
-        ...rest,
+        defUrl,
+        description,
+        gitId,
+        gitOwner,
+        name,
         scorecardId,
         llmId,
+        // TODO: This has to be removed once the prisma middleware is implemented
+        createdBy: '',
+        updatedAt: new Date(),
+        updatedBy: '',
       },
     });
   }

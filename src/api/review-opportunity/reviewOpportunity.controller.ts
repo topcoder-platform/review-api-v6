@@ -206,7 +206,7 @@ export class ReviewOpportunityController {
   @ApiOperation({
     summary: 'Update review opportunity by id',
     description:
-      'Any user should be able to see opportunity. Including anonymous.',
+      'Roles: Admin | Copilot | Scopes: update:review_opportunity, all:review_opportunity',
   })
   @ApiBody({
     description: 'Review opportunity data',

@@ -24,6 +24,16 @@ export enum ReviewItemCommentType {
   SPECIFICATION_REVIEW_COMMENT = 'SPECIFICATION_REVIEW_COMMENT',
 }
 
+export enum ReviewStatus {
+  PENDING = 'PENDING',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  DRAFT = 'DRAFT',
+  SUBMITTED = 'SUBMITTED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
 export class ReviewItemCommentBaseDto {
   @ApiProperty({
     description: 'Content of the comment',
@@ -222,11 +232,12 @@ export class ReviewBaseDto {
 
   @ApiProperty({
     description: 'Status for the review',
-    example: 'Review',
+    enum: ReviewStatus,
+    example: ReviewStatus.PENDING,
   })
   @IsString()
   @IsNotEmpty()
-  status: string;
+  status: ReviewStatus;
 
   @ApiProperty({
     description: 'Review date for the review',
@@ -316,12 +327,13 @@ export class ReviewPatchRequestDto {
 
   @ApiProperty({
     description: 'Status for the review',
-    example: 'Review',
+    enum: ReviewStatus,
+    example: ReviewStatus.PENDING,
   })
   @IsOptional()
   @IsString()
   @IsNotEmpty()
-  status?: string;
+  status?: ReviewStatus;
 
   @ApiProperty({
     description: 'Review date for the review',
@@ -471,6 +483,29 @@ export function mapReviewItemRequestToDto(
   if (reviewId) {
     payload.review = { connect: { id: reviewId } };
   }
+
+  return payload;
+}
+
+export function mapReviewItemRequestForUpdate(
+  request: ReviewItemRequestDto,
+): Partial<MappedReviewItem> {
+  const userFields = {
+    updatedBy: '',
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { reviewId, reviewItemComments, ...rest } = request as {
+    reviewId?: string;
+    reviewItemComments?: any[];
+  } & ReviewItemRequestDto;
+
+  // For updates, we only include the core review item fields
+  // Comments should be handled separately via dedicated comment endpoints
+  const payload: Partial<MappedReviewItem> = {
+    ...rest,
+    ...userFields,
+  };
 
   return payload;
 }

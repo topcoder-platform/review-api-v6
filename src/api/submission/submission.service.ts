@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SubmissionStatus, SubmissionType } from '@prisma/client';
 import { PaginationDto } from 'src/dto/pagination.dto';
@@ -19,6 +20,8 @@ import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 
 @Injectable()
 export class SubmissionService {
@@ -28,10 +31,100 @@ export class SubmissionService {
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengePrisma: ChallengePrismaService,
+    private readonly challengeApiService: ChallengeApiService,
+    private readonly resourceApiService: ResourceApiService,
   ) {}
 
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
     console.log(`BODY: ${JSON.stringify(body)}`);
+
+    // Validate challenge exists and is active
+    try {
+      await this.challengeApiService.validateChallengeExists(body.challengeId);
+      this.logger.log(`Challenge ${body.challengeId} exists and is valid`);
+    } catch (error) {
+      throw new BadRequestException({
+        message: error.message,
+        code: 'INVALID_CHALLENGE',
+        details: {
+          challengeId: body.challengeId,
+        },
+      });
+    }
+
+    // Validate member is registered as submitter for the challenge
+    try {
+      await this.resourceApiService.validateSubmitterRegistration(
+        body.challengeId,
+        body.memberId,
+      );
+      this.logger.log(
+        `Member ${body.memberId} is a valid submitter for challenge ${body.challengeId}`,
+      );
+    } catch (error) {
+      throw new BadRequestException({
+        message: error.message,
+        code: 'INVALID_SUBMITTER_REGISTRATION',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+        },
+      });
+    }
+
+    // Validate that submission phase is open before allowing submission creation
+    if (body.challengeId) {
+      try {
+        // Check if it's a checkpoint submission
+        const isCheckpointSubmission =
+          body.type === SubmissionType.CHECKPOINT_SUBMISSION;
+
+        if (isCheckpointSubmission) {
+          // For checkpoint submissions, validate checkpoint submission phase
+          await this.challengeApiService.validateCheckpointSubmissionCreation(
+            body.challengeId,
+          );
+          this.logger.log(
+            `Checkpoint Submission phase is open for challenge ${body.challengeId}`,
+          );
+        } else {
+          // For regular submissions, validate submission phase
+          await this.challengeApiService.validateSubmissionCreation(
+            body.challengeId,
+          );
+          this.logger.log(
+            `Submission phase is open for challenge ${body.challengeId}`,
+          );
+        }
+      } catch (error) {
+        // Convert the error from ChallengeApiService to BadRequestException
+        if (
+          error.message &&
+          (error.message.includes('Submission phase is not currently open') ||
+            error.message.includes(
+              'Checkpoint Submission phase is not currently open',
+            ))
+        ) {
+          throw new BadRequestException({
+            message: error.message,
+            code: 'SUBMISSION_PHASE_CLOSED',
+            details: {
+              challengeId: body.challengeId,
+              submissionType: body.type,
+              requiredPhase:
+                body.type === SubmissionType.CHECKPOINT_SUBMISSION
+                  ? 'Checkpoint Submission'
+                  : 'Submission',
+            },
+          });
+        }
+        // Log the error but allow submission to proceed if challenge API is unavailable
+        this.logger.warn(
+          `Could not validate submission phase for challenge ${body.challengeId}: ${error.message}. Proceeding with submission creation.`,
+        );
+      }
+    }
+
     try {
       const data = await this.prisma.submission.create({
         data: {
@@ -213,6 +306,7 @@ export class SubmissionService {
       await this.prisma.submission.delete({
         where: { id },
       });
+      console.log(`Challenge ID: ${existing.challengeId}`);
       // Decrement challenge submission counters if challengeId present
       if (existing.challengeId) {
         try {
@@ -220,13 +314,13 @@ export class SubmissionService {
             existing.type === SubmissionType.CHECKPOINT_SUBMISSION;
           if (isCheckpoint) {
             await this.challengePrisma.$executeRaw`
-              UPDATE "challenge"
+              UPDATE "Challenge"
               SET "numOfCheckpointSubmissions" = GREATEST("numOfCheckpointSubmissions" - 1, 0)
               WHERE "id" = ${existing.challengeId}
             `;
           } else {
             await this.challengePrisma.$executeRaw`
-              UPDATE "challenge"
+              UPDATE "Challenge"
               SET "numOfSubmissions" = GREATEST("numOfSubmissions" - 1, 0)
               WHERE "id" = ${existing.challengeId}
             `;
