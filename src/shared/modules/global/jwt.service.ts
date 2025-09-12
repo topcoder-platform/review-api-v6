@@ -58,7 +58,7 @@ export class JwtService implements OnModuleInit {
         const mockRes = {
           status: (number: number) => {
             if (number === 403) {
-              return reject(new UnauthorizedException('Invalid token'));
+              return reject(new UnauthorizedException('Token expired'));
             }
             return {
               json: () => {},
