@@ -36,6 +36,7 @@ import {
   ReviewStatus,
   mapReviewRequestToDto,
   mapReviewItemRequestToDto,
+  mapReviewItemRequestForUpdate,
 } from 'src/dto/review.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
@@ -304,7 +305,7 @@ export class ReviewController {
     try {
       const data = await this.prisma.reviewItem.update({
         where: { id: itemId },
-        data: mapReviewItemRequestToDto(body),
+        data: mapReviewItemRequestForUpdate(body),
         include: {
           reviewItemComments: true,
         },
