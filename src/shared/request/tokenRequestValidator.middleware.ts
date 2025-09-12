@@ -17,7 +17,7 @@ export class TokenValidatorMiddleware implements NestMiddleware {
   async use(request: any, res: Response, next: (error?: any) => void) {
     const authHeader = request.headers.authorization;
     if (!authHeader) {
-        return next();
+      return next();
     }
 
     const [type, idToken] = request.headers.authorization.split(' ') ?? [];
