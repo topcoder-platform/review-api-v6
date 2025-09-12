@@ -25,7 +25,7 @@ export class ChallengeData {
     track?: string | undefined;
     subTrack?: string | undefined;
   };
-  status: ChallengeStatus
+  status: ChallengeStatus;
   numOfSubmissions?: number | undefined;
   track: string;
   legacyId: number;
