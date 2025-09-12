@@ -2,6 +2,73 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { LoggerService } from './logger.service';
 import { PrismaErrorService } from './prisma-error.service';
+import { getStore } from 'src/shared/request/requestStore';
+
+
+enum auditField {
+  createdBy = 'createdBy',
+  updatedBy = 'updatedBy',
+}
+
+const modelHasField = (model: string, field: string) => {
+  const modelObj = Prisma.dmmf?.datamodel?.models?.find((x) => x.name === model);
+  return modelObj && modelObj.fields?.some((x) => x.name === field);
+};
+
+const addUserAuditField = (model: string, field: auditField, data: object | Array<object>) => {
+  const userId = getStore()?.userId;
+
+  if (userId && modelHasField(model, field)) {
+    if (Array.isArray(data)) {
+      data.forEach((x) => (x[field] = userId));
+    } else {
+      data[field] = userId;
+    }
+  }
+};
+
+// Prisma client extension for automatically adding creator_id and modifier_id on insert and update operations
+const auditFieldsExtension = Prisma.defineExtension({
+  query: {
+    $allModels: {
+      async create({ model, args, query }) {
+        addUserAuditField(model, auditField.createdBy, args.data);
+        addUserAuditField(model, auditField.updatedBy, args.data);
+        return query(args);
+      },
+
+      async createMany({ model, args, query }) {
+        addUserAuditField(model, auditField.createdBy, args.data);
+        addUserAuditField(model, auditField.updatedBy, args.data);
+        return query(args);
+      },
+
+      async update({ model, args, query }) {
+        addUserAuditField(model, auditField.updatedBy, args.data);
+        return query(args);
+      },
+
+      async updateMany({ model, args, query }) {
+        addUserAuditField(model, auditField.updatedBy, args.data);
+        return query(args);
+      },
+
+      async upsert({ model, args, query }) {
+        if (args.create) {
+          addUserAuditField(model, auditField.createdBy, args.create);
+          addUserAuditField(model, auditField.updatedBy, args.create);
+
+        }
+
+        if (args.update) {
+          addUserAuditField(model, auditField.updatedBy, args.update);
+        }
+
+        return query(args);
+      },
+    },
+  },
+});
 
 @Injectable()
 export class PrismaService
@@ -60,6 +127,9 @@ export class PrismaService
     this.$on('error' as never, (e: Prisma.LogEvent) => {
       this.logger.error(`Prisma Error: ${e.message}`, e.target);
     });
+
+    // Extend the client and replace this instance with the extended instance
+    Object.assign(this, this.$extends(auditFieldsExtension));
   }
 
   async onModuleInit() {
