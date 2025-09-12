@@ -4,30 +4,117 @@ import { LoggerService } from './logger.service';
 import { PrismaErrorService } from './prisma-error.service';
 import { getStore } from 'src/shared/request/requestStore';
 
-
 enum auditField {
   createdBy = 'createdBy',
   updatedBy = 'updatedBy',
 }
 
+/**
+ * Checks if a given Prisma model contains a specific field.
+ *
+ * @param model - The name of the Prisma model to search for.
+ * @param field - The name of the field to check within the model.
+ * @returns `true` if the model contains the specified field, otherwise `false`.
+ */
 const modelHasField = (model: string, field: string) => {
-  const modelObj = Prisma.dmmf?.datamodel?.models?.find((x) => x.name === model);
+  const modelObj = Prisma.dmmf?.datamodel?.models?.find(
+    (x) => x.name === model,
+  );
   return modelObj && modelObj.fields?.some((x) => x.name === field);
 };
 
-const addUserAuditField = (model: string, field: auditField, data: object | Array<object>) => {
+/**
+ * Retrieves the type of a specified field from a given Prisma model.
+ *
+ * @param model - The name of the Prisma model to search for.
+ * @param field - The name of the field within the model whose type is to be retrieved.
+ * @returns The type of the specified field as a string, or `undefined` if the model or field does not exist.
+ */
+const getFieldType = (model: string, field: string) => {
+  const modelObj = Prisma.dmmf?.datamodel?.models?.find(
+    (x) => x.name === model,
+  );
+  return modelObj && modelObj.fields?.find((x) => x.name === field)?.type;
+};
+
+/**
+ * Checks an object's properties for nested 'update' or 'create' operations,
+ * and applies the `addUserAuditField` function to those operations.
+ *
+ * Iterates over the object's entries, filtering for values that are objects
+ * containing either an 'update' or 'create' key. For each matching entry,
+ * it determines the field type using `getFieldType`, and then calls
+ * `addUserAuditField` with the appropriate parameters.
+ *
+ * @param model - The name of the model being audited.
+ * @param field - The audit field information.
+ * @param obj - The object to inspect for nested update or create operations.
+ */
+const checkForNestedUpdateCreateOps = (
+  model: string,
+  field: auditField,
+  obj: object,
+) => {
+  return Object.entries(obj)
+    .filter(
+      ([key, value]) =>
+        value &&
+        typeof value === 'object' &&
+        ('update' in value || 'create' in value) &&
+        getFieldType(model, key),
+    )
+    .forEach(([key, value]) =>
+      addUserAuditField(
+        getFieldType(model, key)!,
+        field,
+        (value.create ?? value.update) as object,
+      ),
+    );
+};
+
+/**
+ * Adds a user audit field to the provided data object(s) if the current user ID is available
+ * and the specified model contains the audit field. Handles both single objects and arrays of objects.
+ * Also checks for nested update/create operations within the data.
+ *
+ * @param model - The name of the model to check for the audit field.
+ * @param field - The audit field to add (e.g., createdBy, updatedBy).
+ * @param data - The object or array of objects to which the audit field should be added.
+ */
+const addUserAuditField = (
+  model: string,
+  field: auditField,
+  data: object | Array<object>,
+) => {
   const userId = getStore()?.userId;
 
   if (userId && modelHasField(model, field)) {
     if (Array.isArray(data)) {
-      data.forEach((x) => (x[field] = userId));
+      data.forEach((x) => {
+        x[field] = userId;
+        checkForNestedUpdateCreateOps(model, field, x);
+      });
     } else {
       data[field] = userId;
+      checkForNestedUpdateCreateOps(model, field, data);
     }
   }
 };
 
-// Prisma client extension for automatically adding creator_id and modifier_id on insert and update operations
+/**
+ * Prisma extension that automatically adds audit fields (`createdBy`, `updatedBy`)
+ * to all models during create, update, and upsert operations.
+ *
+ * - On `create` and `createMany`, both `createdBy` and `updatedBy` fields are set.
+ * - On `update` and `updateMany`, only the `updatedBy` field is set.
+ * - On `upsert`, sets `createdBy` and `updatedBy` on creation, and `updatedBy` on update.
+ *
+ * This extension relies on the `addUserAuditField` helper to inject audit information
+ * into the model's data payload before executing the query.
+ *
+ * @see addUserAuditField
+ * @see auditField
+ */
 const auditFieldsExtension = Prisma.defineExtension({
   query: {
     $allModels: {
@@ -57,7 +144,6 @@ const auditFieldsExtension = Prisma.defineExtension({
         if (args.create) {
           addUserAuditField(model, auditField.createdBy, args.create);
           addUserAuditField(model, auditField.updatedBy, args.create);
-
         }
 
         if (args.update) {
