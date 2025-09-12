@@ -11,6 +11,7 @@ import {
   CreateAiWorkflowDto,
   CreateAiWorkflowRunDto,
   UpdateAiWorkflowDto,
+  UpdateAiWorkflowRunDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
@@ -254,5 +255,43 @@ export class AiWorkflowService {
     }
 
     return runs;
+  }
+
+  async updateWorkflowRun(
+    workflowId: string,
+    runId: string,
+    patchData: UpdateAiWorkflowRunDto,
+  ) {
+    // validate workflowId
+    try {
+      await this.getWorkflowById(workflowId);
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw new BadRequestException(
+          `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+        );
+      }
+    }
+
+    try {
+      await this.prisma.aiWorkflowRun.update({
+        where: {
+          workflowId,
+          id: runId,
+        },
+        data: { ...patchData },
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error as any).code === 'P2025' // Record not found
+      ) {
+        throw new NotFoundException(
+          `Workflow run with id "${runId}" does not exist!`,
+        );
+      }
+
+      throw error;
+    }
   }
 }

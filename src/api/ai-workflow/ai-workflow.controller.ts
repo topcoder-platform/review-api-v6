@@ -22,6 +22,7 @@ import {
   CreateAiWorkflowDto,
   CreateAiWorkflowRunDto,
   UpdateAiWorkflowDto,
+  UpdateAiWorkflowRunDto,
 } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -168,5 +169,22 @@ export class AiWorkflowController {
     );
 
     return runs[0];
+  }
+
+  @Patch('/:workflowId/runs/:runId')
+  @Scopes(Scope.UpdateWorkflowRuns)
+  @ApiOperation({ summary: 'Update a run for an AI workflow' })
+  @ApiResponse({
+    status: 200,
+    description: 'The AI workflow run has been successfully updated.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  updateRun(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: UpdateAiWorkflowRunDto,
+  ) {
+    return this.aiWorkflowService.updateWorkflowRun(workflowId, runId, body);
   }
 }
