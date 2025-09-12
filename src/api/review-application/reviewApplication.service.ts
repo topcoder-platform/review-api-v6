@@ -83,8 +83,6 @@ export class ReviewApplicationService {
           status: ReviewApplicationStatus.PENDING,
           userId,
           handle,
-          createdBy: userId,
-          updatedBy: userId,
         },
       });
       return this.buildResponse(entity);

@@ -19,7 +19,6 @@ import { Scope } from 'src/shared/enums/scopes.enum';
 import {
   ContactRequestDto,
   ContactRequestResponseDto,
-  mapContactRequestToDto,
 } from 'src/dto/contactRequest.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
@@ -73,7 +72,7 @@ export class ContactRequestsController {
       );
 
       const data = await this.prisma.contactRequest.create({
-        data: mapContactRequestToDto(body),
+        data: { ...body },
       });
 
       this.logger.log(`Contact request created with ID: ${data.id}`);

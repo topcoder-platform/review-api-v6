@@ -471,6 +471,9 @@ export class ScoreCardService {
         });
       }
 
+      // DO NOT remove these!
+      // prisma middleware is not recuresively parsing the data object
+      // groups, sections & questions will not be automatically updated with audit fields
       const auditFields = {
         createdBy: user.isMachine ? 'System' : (user.userId as string),
         updatedBy: user.isMachine ? 'System' : (user.userId as string),

@@ -29,40 +29,4 @@ export class ContactRequestResponseDto extends ContactRequestBaseDto {
     example: 'abc123',
   })
   id: string;
-
-  @ApiProperty({
-    description: 'The user who created the request',
-    example: 'user123',
-  })
-  createdBy: string;
-
-  @ApiProperty({
-    description: 'The timestamp when the request was created',
-    example: '2023-02-10T00:00:00Z',
-  })
-  createdAt: Date;
-
-  @ApiProperty({
-    description: 'The timestamp when the request was last updated',
-    example: '2023-02-10T00:00:00Z',
-  })
-  updatedAt: Date;
-
-  @ApiProperty({
-    description: 'The user who last updated the request',
-    example: 'user456',
-  })
-  updatedBy: string;
-}
-
-export function mapContactRequestToDto(request: ContactRequestDto) {
-  const userFields = {
-    createdBy: '',
-    updatedBy: '',
-  };
-
-  return {
-    ...request,
-    ...userFields,
-  };
 }

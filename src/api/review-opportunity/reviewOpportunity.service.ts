@@ -168,8 +168,6 @@ export class ReviewOpportunityService {
       const entity = await this.prisma.reviewOpportunity.create({
         data: {
           ...dto,
-          createdBy: authUser.userId ?? '',
-          updatedBy: authUser.userId ?? '',
         },
       });
       return this.buildResponse(entity, challengeData);

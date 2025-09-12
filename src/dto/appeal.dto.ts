@@ -128,32 +128,14 @@ export class AppealResponseDto extends AppealBaseDto {
   updatedAt?: Date;
 }
 
-export function mapAppealRequestToDto(request: AppealRequestDto) {
-  const userFields = {
-    createdBy: '',
-    updatedBy: '',
-  };
-
-  return {
-    ...request,
-    ...userFields,
-  };
-}
-
 export function mapAppealResponseRequestToDto(
   request: AppealResponseRequestDto,
 ) {
-  const userFields = {
-    createdBy: '',
-    updatedBy: '',
-  };
-
   // Remove appealId when creating through relationship - Prisma sets it automatically
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { appealId, ...requestWithoutAppealId } = request;
 
   return {
     ...requestWithoutAppealId,
-    ...userFields,
   };
 }

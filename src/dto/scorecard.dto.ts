@@ -265,14 +265,6 @@ export class ScorecardBaseDto {
   @Max(100)
   @IsGreaterThan('minScore')
   maxScore: number;
-
-  /**
-   * These shouldn't be editable via API
-   */
-  createdAt: Date;
-  createdBy: string;
-  updatedAt: Date;
-  updatedBy: string;
 }
 
 export class ScorecardBaseWithGroupsDto extends ScorecardBaseDto {
