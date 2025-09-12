@@ -1,12 +1,11 @@
-import { ApiProperty, PartialType } from '@nestjs/swagger';
+import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
 import {
   IsString,
   IsNotEmpty,
-  IsDateString,
   IsNumber,
   IsOptional,
+  IsDate,
 } from 'class-validator';
-
 import { Transform } from 'class-transformer';
 
 const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
@@ -62,15 +61,16 @@ export class CreateAiWorkflowRunDto {
   submissionId: string;
 
   @ApiProperty()
-  @IsDateString()
+  @IsDate()
   @IsNotEmpty()
-  startedAt: string;
+  @Transform(({ value }) => new Date(value))
+  startedAt: Date;
 
   @ApiProperty()
-  @IsDateString()
+  @IsDate()
   @IsNotEmpty()
-  @IsOptional()
-  completedAt?: string;
+  @Transform(({ value }) => (value ? new Date(value) : undefined))
+  completedAt?: Date;
 
   @ApiProperty()
   @IsString()
@@ -88,3 +88,8 @@ export class CreateAiWorkflowRunDto {
   @IsNotEmpty()
   status: string;
 }
+
+export class UpdateAiWorkflowRunDto extends OmitType(
+  PartialType(CreateAiWorkflowRunDto),
+  ['submissionId'],
+) {}
