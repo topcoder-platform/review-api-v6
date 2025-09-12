@@ -3,6 +3,8 @@ import {
   BadRequestException,
   Logger,
   NotFoundException,
+  InternalServerErrorException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
@@ -11,11 +13,24 @@ import {
   UpdateAiWorkflowDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import {
+  ChallengeApiService,
+  ChallengeData,
+} from 'src/shared/modules/global/challenge.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 @Injectable()
 export class AiWorkflowService {
   private readonly logger: Logger = new Logger(AiWorkflowService.name);
-  constructor(private readonly prisma: PrismaService) {}
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly challengeApiService: ChallengeApiService,
+    private readonly resourceApiService: ResourceApiService,
+  ) {}
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
     const count = await this.prisma.scorecard.count({
@@ -153,5 +168,91 @@ export class AiWorkflowService {
       }
       throw e;
     }
+  }
+
+  async getWorkflowRuns(
+    workflowId: string,
+    user: JwtUser,
+    filter: { submissionId?: string; runId?: string },
+  ) {
+    // validate workflowId
+    try {
+      await this.getWorkflowById(workflowId);
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw new BadRequestException(
+          `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+        );
+      }
+    }
+
+    const runs = await this.prisma.aiWorkflowRun.findMany({
+      where: {
+        workflowId,
+        id: filter.runId,
+        submissionId: filter.submissionId,
+      },
+      include: {
+        submission: true,
+      },
+    });
+
+    if (filter.runId && !runs.length) {
+      throw new NotFoundException(
+        `AI Workflow run with id ${filter.runId} not found!`,
+      );
+    }
+
+    const submission = runs[0]?.submission;
+    const challengeId = submission?.challengeId;
+    const challenge: ChallengeData =
+      await this.challengeApiService.getChallengeDetail(challengeId!);
+
+    if (!challenge) {
+      throw new InternalServerErrorException(
+        `Challenge with id ${challengeId} was not found!`,
+      );
+    }
+
+    const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
+    if (!isM2mOrAdmin) {
+      const requiredRoles = [
+        UserRole.Reviewer,
+        UserRole.ProjectManager,
+        UserRole.Copilot,
+        UserRole.Submitter,
+      ].map((r) => r.toLowerCase());
+
+      const memberRoles = (
+        await this.resourceApiService.getMemberResourcesRoles(
+          challengeId!,
+          user.userId,
+        )
+      ).filter((resource) =>
+        requiredRoles.some(
+          (role) =>
+            resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
+        ),
+      );
+
+      if (!memberRoles.length) {
+        throw new ForbiddenException('Insufficient permissions');
+      }
+
+      if (
+        challenge.status !== ChallengeStatus.COMPLETED &&
+        memberRoles.some(
+          (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
+        ) &&
+        user.userId !== submission.memberId
+      ) {
+        this.logger.log(
+          `Submitter ${user.userId} trying to access AI workflow run for other submitters.`,
+        );
+        throw new ForbiddenException('Insufficient permissions');
+      }
+    }
+
+    return runs;
   }
 }
