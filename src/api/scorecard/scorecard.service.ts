@@ -10,7 +10,6 @@ import {
   scorecardSection,
 } from '@prisma/client';
 import {
-  mapScorecardRequestForCreate,
   ScorecardGroupBaseDto,
   ScorecardPaginatedResponseDto,
   ScorecardQuestionBaseDto,
@@ -67,25 +66,46 @@ export class ScoreCardService {
     user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
     try {
-      const data = await this.prisma.scorecard.create({
-        data: {
-          ...(mapScorecardRequestForCreate({
-            ...body,
-            createdBy: user.isMachine ? 'System' : (user.userId as string),
-            updatedBy: user.isMachine ? 'System' : (user.userId as string),
-          }) as any),
-        },
-        include: {
-          scorecardGroups: {
-            include: {
-              sections: {
-                include: {
-                  questions: true,
-                },
-              },
-            },
-          },
-        },
+      const data = await this.prisma.$transaction(async (tx) => {
+        const scorecard = await tx.scorecard.create({
+          data: { ...omit(body, ['id', 'scorecardGroups']) },
+        });
+        this.logger.log(
+          `[updateScorecard] Created empty scorecard: ${JSON.stringify(scorecard)}`,
+        );
+
+        const scorecardGroups = await Promise.all(body.scorecardGroups.map(async (scorecardGroupData) => {
+          const group = await tx.scorecardGroup.create({
+            data: {
+              ...omit(scorecardGroupData, ['id', 'sections']),
+              scorecardId: scorecard.id,
+            }
+          });
+
+          const sections = await Promise.all(scorecardGroupData.sections.map(async (scorecardSectionData) => {
+            const section = await tx.scorecardSection.create({
+              data: {
+                ...omit(scorecardSectionData, ['id', 'questions']),
+                scorecardGroupId: group.id,
+              }
+            });
+            
+            const questions = await Promise.all(scorecardSectionData.questions.map(async (scorecardQuestionData) => {
+              return await tx.scorecardQuestion.create({
+                data: {
+                  ...omit(scorecardQuestionData, ['id', 'questions']),
+                  scorecardSectionId: section.id,
+                }
+              });
+            }));
+
+            return { ...section, questions };
+          }));
+
+          return { ...group, sections };
+        }));
+
+        return { ...scorecard, scorecardGroups };
       });
 
       return data as unknown as ScorecardWithGroupResponseDto;
@@ -130,7 +150,7 @@ export class ScoreCardService {
         `[updateScorecard] Updating scorecard with id: ${scorecardId}`,
       );
 
-      return await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async (tx) => {
         // Update scorecard basic info
         const updatedScorecard = await tx.scorecard.update({
           where: { id: scorecardId },
@@ -183,22 +203,22 @@ export class ScoreCardService {
         this.logger.log(
           `[updateScorecard] Finished syncing groups, sections, and questions for scorecard ${scorecardId}`,
         );
+      });
 
-        return this.prisma.scorecard.findUnique({
-          where: { id: scorecardId },
-          include: {
-            scorecardGroups: {
-              include: {
-                sections: {
-                  include: {
-                    questions: true,
-                  },
+      return this.prisma.scorecard.findUnique({
+        where: { id: scorecardId },
+        include: {
+          scorecardGroups: {
+            include: {
+              sections: {
+                include: {
+                  questions: true,
                 },
               },
             },
           },
-        }) as Promise<ScorecardWithGroupResponseDto>;
-      });
+        },
+      }) as Promise<ScorecardWithGroupResponseDto>;
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -243,8 +263,7 @@ export class ScoreCardService {
         await model.update({
           where: { id: child.id },
           data: {
-            ...omit(child, ['sections', 'questions']),
-            updatedBy: userId,
+            ...omit(child, ['id', 'sections', 'questions']),
           },
         });
       } else {
@@ -253,10 +272,8 @@ export class ScoreCardService {
         );
         const created = await model.create({
           data: {
-            ...omit(child, ['sections', 'questions']),
+            ...omit(child, ['id', 'sections', 'questions']),
             [parentField]: parentId,
-            createdBy: userId,
-            updatedBy: userId,
           },
         });
         child.id = created.id; // assign id back to input
