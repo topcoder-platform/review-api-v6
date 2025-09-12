@@ -62,7 +62,7 @@ export class JwtService implements OnModuleInit {
             }
             return {
               json: () => {},
-            }
+            };
           },
           send: () => {},
         };

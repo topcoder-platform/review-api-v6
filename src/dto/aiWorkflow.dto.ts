@@ -1,5 +1,11 @@
 import { ApiProperty, PartialType } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsDateString, IsNumber, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsDateString,
+  IsNumber,
+  IsOptional,
+} from 'class-validator';
 
 import { Transform } from 'class-transformer';
 
@@ -16,25 +22,33 @@ export class CreateAiWorkflowDto {
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }): string | undefined =>
+    typeof value === 'string' ? value.trim() : undefined,
+  )
   @IsNotEmpty()
   description: string;
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }): string | undefined =>
+    typeof value === 'string' ? value.trim() : undefined,
+  )
   @IsNotEmpty()
   defUrl: string;
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }): string | undefined =>
+    typeof value === 'string' ? value.trim() : undefined,
+  )
   @IsNotEmpty()
   gitId: string;
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }): string | undefined =>
+    typeof value === 'string' ? value.trim() : undefined,
+  )
   @IsNotEmpty()
   gitOwner: string;
 
