@@ -9,6 +9,9 @@ import {
 
 import { Transform } from 'class-transformer';
 
+const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
+  typeof value === 'string' ? value.trim() : undefined;
+
 export class CreateAiWorkflowDto {
   @ApiProperty()
   @IsString()
@@ -22,33 +25,25 @@ export class CreateAiWorkflowDto {
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }: { value: unknown }): string | undefined =>
-    typeof value === 'string' ? value.trim() : undefined,
-  )
+  @Transform(trimTransformer)
   @IsNotEmpty()
   description: string;
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }: { value: unknown }): string | undefined =>
-    typeof value === 'string' ? value.trim() : undefined,
-  )
+  @Transform(trimTransformer)
   @IsNotEmpty()
   defUrl: string;
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }: { value: unknown }): string | undefined =>
-    typeof value === 'string' ? value.trim() : undefined,
-  )
+  @Transform(trimTransformer)
   @IsNotEmpty()
   gitId: string;
 
   @ApiProperty()
   @IsString()
-  @Transform(({ value }: { value: unknown }): string | undefined =>
-    typeof value === 'string' ? value.trim() : undefined,
-  )
+  @Transform(trimTransformer)
   @IsNotEmpty()
   gitOwner: string;
 
