@@ -346,6 +346,108 @@ export class SubmissionService {
   ) {
     try {
       const existing = await this.checkSubmission(submissionId);
+
+      // Validate submittedDate is not in the future (if provided)
+      if (body.submittedDate) {
+        const submitted = new Date(body.submittedDate);
+        const now = new Date();
+        if (isNaN(submitted.getTime())) {
+          throw new BadRequestException({
+            message: 'submittedDate must be a valid ISO date string',
+            code: 'INVALID_SUBMITTED_DATE',
+            details: { submittedDate: body.submittedDate },
+          });
+        }
+        if (submitted.getTime() > now.getTime()) {
+          throw new BadRequestException({
+            message: 'submittedDate cannot be in the future',
+            code: 'INVALID_SUBMITTED_DATE',
+            details: { submittedDate: body.submittedDate },
+          });
+        }
+      }
+
+      // If challengeId is provided, ensure it matches the submission's existing challengeId
+      if (
+        body.challengeId !== undefined &&
+        String(body.challengeId) !== String(existing.challengeId ?? '')
+      ) {
+        throw new BadRequestException({
+          message:
+            'The submission being updated must be associated with the provided challengeId',
+          code: 'SUBMISSION_CHALLENGE_MISMATCH',
+          details: {
+            submissionId,
+            existingChallengeId: existing.challengeId,
+            providedChallengeId: body.challengeId,
+          },
+        });
+      }
+
+      // For non-admin tokens, memberId (if provided) must match the token userId
+      if (!isAdmin(authUser) && body.memberId !== undefined) {
+        if (!authUser.userId) {
+          throw new BadRequestException({
+            message: 'Authenticated user ID missing in token',
+            code: 'INVALID_TOKEN',
+          });
+        }
+        if (String(body.memberId) !== String(authUser.userId)) {
+          throw new ForbiddenException({
+            message:
+              'memberId in request must match the authenticated user for non-admin tokens',
+            code: 'MEMBER_MISMATCH',
+            details: {
+              tokenUserId: String(authUser.userId),
+              requestMemberId: String(body.memberId),
+            },
+          });
+        }
+      }
+
+      // If caller attempts to change memberId or challengeId, validate registration
+      const effectiveChallengeId =
+        body.challengeId !== undefined
+          ? body.challengeId
+          : existing.challengeId;
+      const effectiveMemberId =
+        body.memberId !== undefined ? body.memberId : existing.memberId;
+
+      if (body.memberId !== undefined || body.challengeId !== undefined) {
+        // If challengeId is provided, ensure it exists
+        if (body.challengeId) {
+          try {
+            await this.challengeApiService.validateChallengeExists(
+              body.challengeId,
+            );
+          } catch (error) {
+            throw new BadRequestException({
+              message: error.message,
+              code: 'INVALID_CHALLENGE',
+              details: { challengeId: body.challengeId },
+            });
+          }
+        }
+
+        if (effectiveChallengeId && effectiveMemberId) {
+          try {
+            await this.resourceApiService.validateSubmitterRegistration(
+              effectiveChallengeId,
+              effectiveMemberId,
+            );
+          } catch (error) {
+            throw new BadRequestException({
+              message: error.message,
+              code: 'INVALID_SUBMITTER_REGISTRATION',
+              details: {
+                challengeId: effectiveChallengeId,
+                memberId: effectiveMemberId,
+              },
+            });
+          }
+        }
+      }
+
       const data = await this.prisma.submission.update({
         where: { id: submissionId },
         data: {

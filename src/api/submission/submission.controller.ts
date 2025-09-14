@@ -434,7 +434,7 @@ export class SubmissionController {
     description: 'Count of submissions',
   })
   async countSubmissions(
-    @Param('challengeId') challengeId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Param('challengeId') challengeId: string,
   ): Promise<number> {
     // Return the actual count of submissions for the challenge
     return this.service.countSubmissionsForChallenge(challengeId);
