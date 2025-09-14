@@ -436,10 +436,8 @@ export class SubmissionController {
   async countSubmissions(
     @Param('challengeId') challengeId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
   ): Promise<number> {
-    // These artifacts are from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    return Promise.resolve(3);
+    // Return the actual count of submissions for the challenge
+    return this.service.countSubmissionsForChallenge(challengeId);
   }
 
   @Get('/download/:challengeId')

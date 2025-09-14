@@ -155,13 +155,15 @@ export class SubmissionService {
         try {
           const baseUrl = body.url.split('?')[0];
           const lastSlash = baseUrl.lastIndexOf('/');
-          const fileName = lastSlash >= 0 ? baseUrl.substring(lastSlash + 1) : baseUrl;
+          const fileName =
+            lastSlash >= 0 ? baseUrl.substring(lastSlash + 1) : baseUrl;
           systemFileName = fileName || undefined;
           const dotIdx = fileName.lastIndexOf('.');
           if (dotIdx > 0 && dotIdx < fileName.length - 1) {
             fileType = fileName.substring(dotIdx + 1).toLowerCase();
           }
-        } catch (_) {
+        } catch (e) {
+          console.log(`Error parsing submission URL ${body.url}: ${e.message}`);
           // ignore parsing issues and leave fields undefined
         }
       }
@@ -170,7 +172,9 @@ export class SubmissionService {
         data: {
           ...body,
           // populate commonly expected fields on create
-          submittedDate: body.submittedDate ? new Date(body.submittedDate) : new Date(),
+          submittedDate: body.submittedDate
+            ? new Date(body.submittedDate)
+            : new Date(),
           systemFileName,
           fileType,
           viewCount: 0,
@@ -297,6 +301,30 @@ export class SubmissionService {
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `listing submissions with filters: ${JSON.stringify(queryDto)}`,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  async countSubmissionsForChallenge(challengeId: string): Promise<number> {
+    try {
+      const count = await this.prisma.submission.count({
+        where: {
+          challengeId,
+        },
+      });
+      this.logger.log(
+        `Found ${count} submissions for challenge ${challengeId}`,
+      );
+      return count;
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `counting submissions for challengeId: ${challengeId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,
