@@ -43,10 +43,11 @@ export class ProjectResultResponseDto {
   paymentId?: string;
 
   @ApiProperty({
-    description: 'The submission ID',
+    description: 'The submission ID (optional)',
     example: 'mock-submission-id',
+    nullable: true,
   })
-  submissionId: string;
+  submissionId?: string;
 
   @ApiProperty({
     description: 'The old rating of the user',
