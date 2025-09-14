@@ -8,9 +8,6 @@ import {
   Body,
   Param,
   Query,
-  NotFoundException,
-  BadRequestException,
-  InternalServerErrorException,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -34,31 +31,15 @@ import {
   ReviewItemResponseDto,
   ReviewProgressResponseDto,
   ReviewStatus,
-  mapReviewRequestToDto,
-  mapReviewItemRequestToDto,
-  mapReviewItemRequestForUpdate,
 } from 'src/dto/review.dto';
-import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
-import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
-import { ResourceApiService } from '../../shared/modules/global/resource.service';
-import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
+import { ReviewService } from './review.service';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
 @Controller('/reviews')
 export class ReviewController {
-  private readonly logger: LoggerService;
-
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly prismaErrorService: PrismaErrorService,
-    private readonly resourceApiService: ResourceApiService,
-    private readonly challengeApiService: ChallengeApiService,
-  ) {
-    this.logger = LoggerService.forRoot('ReviewController');
-  }
+  constructor(private readonly reviewService: ReviewService) {}
 
   @Post()
   @Roles(UserRole.Reviewer)
@@ -76,62 +57,7 @@ export class ReviewController {
   async createReview(
     @Body() body: ReviewRequestDto,
   ): Promise<ReviewResponseDto> {
-    this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
-    try {
-      // Get the submission to find the challengeId
-      const submission = await this.prisma.submission.findUniqueOrThrow({
-        where: { id: body.submissionId },
-        select: { challengeId: true },
-      });
-
-      if (!submission.challengeId) {
-        throw new BadRequestException({
-          message: `Submission ${body.submissionId} does not have an associated challengeId`,
-          code: 'MISSING_CHALLENGE_ID',
-        });
-      }
-
-      // Validate that review submission is allowed for this challenge
-      await this.challengeApiService.validateReviewSubmission(
-        submission.challengeId,
-      );
-
-      const prismaBody = mapReviewRequestToDto(body) as any;
-      const data = await this.prisma.review.create({
-        data: prismaBody,
-        include: {
-          reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
-          },
-        },
-      });
-      this.logger.log(`Review created with ID: ${data.id}`);
-      return data as unknown as ReviewResponseDto;
-    } catch (error) {
-      // Handle phase validation errors
-      if (
-        error.message &&
-        error.message.includes('Reviews cannot be submitted')
-      ) {
-        throw new BadRequestException({
-          message: error.message,
-          code: 'PHASE_VALIDATION_ERROR',
-        });
-      }
-
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `creating review for submissionId: ${body.submissionId}`,
-        body,
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.reviewService.createReview(body);
   }
 
   @Post('/items')
@@ -150,35 +76,7 @@ export class ReviewController {
   async createReviewItemComments(
     @Body() body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
-    this.logger.log(`Creating review item for review`);
-    try {
-      const mapped = mapReviewItemRequestToDto(body);
-      if (!('review' in mapped) || !mapped.review) {
-        throw new BadRequestException({
-          message: 'reviewId is required when creating a review item',
-          code: 'VALIDATION_ERROR',
-        });
-      }
-      const data = await this.prisma.reviewItem.create({
-        // Cast after validation to satisfy Prisma types for top-level create
-        data: mapped as any,
-        include: {
-          reviewItemComments: true,
-        },
-      });
-      this.logger.log(`Review item created with ID: ${data.id}`);
-      return data as unknown as ReviewItemResponseDto;
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `creating review item for reviewId: ${body.reviewId}`,
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.reviewService.createReviewItemComments(body);
   }
 
   @Patch('/:reviewId')
@@ -204,7 +102,7 @@ export class ReviewController {
     @Param('reviewId') reviewId: string,
     @Body() body: ReviewPatchRequestDto,
   ): Promise<ReviewResponseDto> {
-    return this._updateReview(reviewId, body);
+    return this.reviewService.updateReview(reviewId, body);
   }
 
   @Put('/:reviewId')
@@ -230,51 +128,7 @@ export class ReviewController {
     @Param('reviewId') reviewId: string,
     @Body() body: ReviewPutRequestDto,
   ): Promise<ReviewResponseDto> {
-    return this._updateReview(reviewId, body);
-  }
-
-  /**
-   * The inner update method for entity
-   */
-  async _updateReview(
-    id: string,
-    body: ReviewPatchRequestDto | ReviewPutRequestDto,
-  ) {
-    this.logger.log(`Updating review with ID: ${id}`);
-    try {
-      const data = await this.prisma.review.update({
-        where: { id },
-        data: mapReviewRequestToDto(body as ReviewPatchRequestDto),
-        include: {
-          reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
-          },
-        },
-      });
-      this.logger.log(`Review updated successfully: ${id}`);
-      return data as unknown as ReviewResponseDto;
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `updating review with ID: ${id}`,
-      );
-
-      if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({
-          message: `Review with ID ${id} was not found. Please check the ID and try again.`,
-          code: errorResponse.code,
-          details: { reviewId: id },
-        });
-      }
-
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.reviewService.updateReview(reviewId, body);
   }
 
   @Patch('/items/:itemId')
@@ -301,37 +155,7 @@ export class ReviewController {
     @Param('itemId') itemId: string,
     @Body() body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
-    this.logger.log(`Updating review item with ID: ${itemId}`);
-    try {
-      const data = await this.prisma.reviewItem.update({
-        where: { id: itemId },
-        data: mapReviewItemRequestForUpdate(body),
-        include: {
-          reviewItemComments: true,
-        },
-      });
-      this.logger.log(`Review item updated successfully: ${itemId}`);
-      return data as unknown as ReviewItemResponseDto;
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `updating review item with ID: ${itemId}`,
-      );
-
-      if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({
-          message: `Review item with ID ${itemId} was not found. Please check the ID and try again.`,
-          code: errorResponse.code,
-          details: { itemId },
-        });
-      }
-
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.reviewService.updateReviewItem(itemId, body);
   }
 
   @Get()
@@ -370,99 +194,12 @@ export class ReviewController {
     @Query('submissionId') submissionId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<ReviewResponseDto>> {
-    this.logger.log(
-      `Getting reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
+    return this.reviewService.getReviews(
+      status,
+      challengeId,
+      submissionId,
+      paginationDto,
     );
-
-    const { page = 1, perPage = 10 } = paginationDto || {};
-    const skip = (page - 1) * perPage;
-
-    try {
-      // Build the where clause for reviews based on available filter parameters
-      const reviewWhereClause: any = {};
-
-      if (submissionId) {
-        reviewWhereClause.submissionId = submissionId;
-      }
-
-      if (status) {
-        reviewWhereClause.status = status;
-      }
-
-      // Get reviews by challengeId if provided
-      if (challengeId) {
-        this.logger.debug(`Fetching reviews by challengeId: ${challengeId}`);
-        // Get submissions for this challenge directly (consistent with POST /reviews)
-        const submissions = await this.prisma.submission.findMany({
-          where: { challengeId },
-          select: { id: true },
-        });
-
-        const submissionIds = submissions.map((s) => s.id);
-
-        if (submissionIds.length > 0) {
-          reviewWhereClause.submissionId = { in: submissionIds };
-        } else {
-          // No submissions found for this challenge, return empty result
-          return {
-            data: [],
-            meta: {
-              page,
-              perPage,
-              totalCount: 0,
-              totalPages: 0,
-            },
-          };
-        }
-      }
-
-      // Get reviews with the built where clause
-      this.logger.debug(
-        `Fetching reviews with where clause:`,
-        reviewWhereClause,
-      );
-      const reviews = await this.prisma.review.findMany({
-        where: reviewWhereClause,
-        skip,
-        take: perPage,
-        include: {
-          reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
-          },
-        },
-      });
-
-      // Count total reviews matching the filter for pagination metadata
-      const totalCount = await this.prisma.review.count({
-        where: reviewWhereClause,
-      });
-
-      this.logger.log(
-        `Found ${reviews.length} reviews (page ${page} of ${Math.ceil(totalCount / perPage)})`,
-      );
-
-      return {
-        data: reviews as ReviewResponseDto[],
-        meta: {
-          page,
-          perPage,
-          totalCount,
-          totalPages: Math.ceil(totalCount / perPage),
-        },
-      };
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `fetching reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
   }
 
   @Get('/:reviewId')
@@ -486,41 +223,7 @@ export class ReviewController {
   async getReview(
     @Param('reviewId') reviewId: string,
   ): Promise<ReviewResponseDto> {
-    this.logger.log(`Getting review with ID: ${reviewId}`);
-    try {
-      const data = await this.prisma.review.findUniqueOrThrow({
-        where: { id: reviewId },
-        include: {
-          reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
-          },
-        },
-      });
-
-      this.logger.log(`Review found: ${reviewId}`);
-      return data as ReviewResponseDto;
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `fetching review with ID: ${reviewId}`,
-      );
-
-      if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({
-          message: `Review with ID ${reviewId} was not found. Please check the ID and try again.`,
-          code: errorResponse.code,
-          details: { reviewId },
-        });
-      }
-
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.reviewService.getReview(reviewId);
   }
 
   @Delete('/:reviewId')
@@ -542,33 +245,7 @@ export class ReviewController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async deleteReview(@Param('reviewId') reviewId: string) {
-    this.logger.log(`Deleting review with ID: ${reviewId}`);
-    try {
-      await this.prisma.review.delete({
-        where: { id: reviewId },
-      });
-      this.logger.log(`Review deleted successfully: ${reviewId}`);
-      return { message: `Review ${reviewId} deleted successfully.` };
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `deleting review with ID: ${reviewId}`,
-      );
-
-      if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({
-          message: `Review with ID ${reviewId} was not found. Cannot delete non-existent review.`,
-          code: errorResponse.code,
-          details: { reviewId },
-        });
-      }
-
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.reviewService.deleteReview(reviewId);
   }
 
   @Delete('/items/:itemId')
@@ -590,33 +267,7 @@ export class ReviewController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review item not found.' })
   async deleteReviewItem(@Param('itemId') itemId: string) {
-    this.logger.log(`Deleting review item with ID: ${itemId}`);
-    try {
-      await this.prisma.reviewItem.delete({
-        where: { id: itemId },
-      });
-      this.logger.log(`Review item deleted successfully: ${itemId}`);
-      return { message: `Review item ${itemId} deleted successfully.` };
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `deleting review item with ID: ${itemId}`,
-      );
-
-      if (errorResponse.code === 'RECORD_NOT_FOUND') {
-        throw new NotFoundException({
-          message: `Review item with ID ${itemId} was not found. Cannot delete non-existent item.`,
-          code: errorResponse.code,
-          details: { itemId },
-        });
-      }
-
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.reviewService.deleteReviewItem(itemId);
   }
 
   @Get('/progress/:challengeId')
@@ -652,137 +303,6 @@ export class ReviewController {
   async getReviewProgress(
     @Param('challengeId') challengeId: string,
   ): Promise<ReviewProgressResponseDto> {
-    this.logger.log(
-      `Calculating review progress for challenge: ${challengeId}`,
-    );
-
-    try {
-      // Validate challengeId parameter
-      if (
-        !challengeId ||
-        typeof challengeId !== 'string' ||
-        challengeId.trim() === ''
-      ) {
-        throw new Error('Invalid challengeId parameter');
-      }
-
-      // Get reviewers from Resource API
-      this.logger.debug('Fetching reviewers from Resource API');
-      const resources = await this.resourceApiService.getResources({
-        challengeId,
-      });
-
-      // Get resource roles to filter by reviewer role
-      const resourceRoles = await this.resourceApiService.getResourceRoles();
-
-      // Filter resources to get only reviewers
-      const reviewers = resources.filter((resource) => {
-        const role = resourceRoles[resource.roleId];
-        return role && role.name.toLowerCase().includes('reviewer');
-      });
-
-      const totalReviewers = reviewers.length;
-      this.logger.debug(
-        `Found ${totalReviewers} reviewers for challenge ${challengeId}`,
-      );
-
-      // Get submissions for the challenge
-      this.logger.debug('Fetching submissions for the challenge');
-      const submissions = await this.prisma.submission.findMany({
-        where: {
-          challengeId,
-          status: 'ACTIVE',
-        },
-      });
-
-      const submissionIds = submissions.map((s) => s.id);
-      const totalSubmissions = submissions.length;
-      this.logger.debug(
-        `Found ${totalSubmissions} submissions for challenge ${challengeId}`,
-      );
-
-      // Get submitted reviews for these submissions
-      this.logger.debug('Fetching submitted reviews');
-      const submittedReviews = await this.prisma.review.findMany({
-        where: {
-          submissionId: { in: submissionIds },
-          committed: true,
-        },
-        include: {
-          reviewItems: true,
-        },
-      });
-
-      const totalSubmittedReviews = submittedReviews.length;
-      this.logger.debug(`Found ${totalSubmittedReviews} submitted reviews`);
-
-      // Calculate progress percentage
-      let progressPercentage = 0;
-
-      if (totalReviewers > 0 && totalSubmissions > 0) {
-        const expectedTotalReviews = totalSubmissions * totalReviewers;
-        progressPercentage =
-          (totalSubmittedReviews / expectedTotalReviews) * 100;
-        // Round to 2 decimal places
-        progressPercentage = Math.round(progressPercentage * 100) / 100;
-      }
-
-      // Handle edge cases
-      if (progressPercentage > 100) {
-        progressPercentage = 100;
-      }
-
-      const result: ReviewProgressResponseDto = {
-        challengeId,
-        totalReviewers,
-        totalSubmissions,
-        totalSubmittedReviews,
-        progressPercentage,
-        calculatedAt: new Date().toISOString(),
-      };
-
-      this.logger.log(
-        `Review progress calculated: ${progressPercentage}% for challenge ${challengeId}`,
-      );
-      return result;
-    } catch (error) {
-      this.logger.error(
-        `Error calculating review progress for challenge ${challengeId}:`,
-        error,
-      );
-
-      if (error.message === 'Invalid challengeId parameter') {
-        throw new Error('Invalid challengeId parameter');
-      }
-
-      // Handle Resource API errors based on HTTP status codes
-      if (error.message === 'Cannot get data from Resource API.') {
-        const statusCode = (error as Error & { statusCode?: number })
-          .statusCode;
-        if (statusCode === 400) {
-          throw new BadRequestException({
-            message: `Challenge ID ${challengeId} is not in valid GUID format`,
-            code: 'INVALID_CHALLENGE_ID',
-          });
-        } else if (statusCode === 404) {
-          throw new NotFoundException({
-            message: `Challenge with ID ${challengeId} was not found`,
-            code: 'CHALLENGE_NOT_FOUND',
-          });
-        }
-      }
-
-      if (error.message && error.message.includes('not found')) {
-        throw new NotFoundException({
-          message: `Challenge with ID ${challengeId} was not found or has no data available`,
-          code: 'CHALLENGE_NOT_FOUND',
-        });
-      }
-
-      throw new InternalServerErrorException({
-        message: 'Failed to calculate review progress',
-        code: 'PROGRESS_CALCULATION_ERROR',
-      });
-    }
+    return this.reviewService.getReviewProgress(challengeId);
   }
 }

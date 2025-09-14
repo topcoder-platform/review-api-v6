@@ -27,6 +27,7 @@ import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard
 import { ScoreCardService } from './scorecard/scorecard.service';
 import { AiWorkflowService } from './ai-workflow/ai-workflow.service';
 import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
+import { ReviewService } from './review/review.service';
 
 @Module({
   imports: [HttpModule, GlobalProvidersModule, FileUploadModule],
@@ -47,6 +48,7 @@ import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
     AiWorkflowController,
   ],
   providers: [
+    ReviewService,
     ReviewOpportunityService,
     ReviewApplicationService,
     ChallengeApiService,
