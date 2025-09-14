@@ -148,9 +148,32 @@ export class SubmissionService {
     }
 
     try {
+      // Derive common metadata if available
+      let systemFileName: string | undefined;
+      let fileType: string | undefined;
+      if (body.url) {
+        try {
+          const baseUrl = body.url.split('?')[0];
+          const lastSlash = baseUrl.lastIndexOf('/');
+          const fileName = lastSlash >= 0 ? baseUrl.substring(lastSlash + 1) : baseUrl;
+          systemFileName = fileName || undefined;
+          const dotIdx = fileName.lastIndexOf('.');
+          if (dotIdx > 0 && dotIdx < fileName.length - 1) {
+            fileType = fileName.substring(dotIdx + 1).toLowerCase();
+          }
+        } catch (_) {
+          // ignore parsing issues and leave fields undefined
+        }
+      }
+
       const data = await this.prisma.submission.create({
         data: {
           ...body,
+          // populate commonly expected fields on create
+          submittedDate: body.submittedDate ? new Date(body.submittedDate) : new Date(),
+          systemFileName,
+          fileType,
+          viewCount: 0,
           status: SubmissionStatus.ACTIVE,
           type: body.type as SubmissionType,
           createdBy: String(authUser.userId) || '',
