@@ -33,7 +33,7 @@ import {
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { Readable } from 'stream';
+import { Readable, PassThrough } from 'stream';
 
 @Injectable()
 export class SubmissionService {
@@ -67,7 +67,11 @@ export class SubmissionService {
         throw new ForbiddenException({
           message: 'Only the submission owner can upload artifacts',
           code: 'FORBIDDEN_ARTIFACT_UPLOAD',
-          details: { submissionId, memberId: submission.memberId, requester: uid },
+          details: {
+            submissionId,
+            memberId: submission.memberId,
+            requester: uid,
+          },
         });
       }
     }
@@ -110,9 +114,9 @@ export class SubmissionService {
         const diskDest = (file as any)?.destination;
         const diskFile = (file as any)?.filename;
         if (diskDest && diskFile) {
-          const { createReadStream } = await import('fs');
-          const { join } = await import('path');
-          body = createReadStream(join(diskDest, diskFile));
+          const fs = await import('fs');
+          const path = await import('path');
+          body = fs.createReadStream(path.join(diskDest, diskFile));
         }
       }
       if (!body) {
@@ -193,7 +197,9 @@ export class SubmissionService {
             if (id) artifactIds.add(id);
           }
         });
-        continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+        continuationToken = resp.IsTruncated
+          ? resp.NextContinuationToken
+          : undefined;
       } while (continuationToken);
     } catch (err) {
       this.logger.error(
@@ -224,14 +230,15 @@ export class SubmissionService {
       let isReviewer = false;
       if (!isOwner && submission.challengeId) {
         try {
-          const resources = await this.resourceApiService.getMemberResourcesRoles(
-            submission.challengeId,
-            uid,
-          );
+          const resources =
+            await this.resourceApiService.getMemberResourcesRoles(
+              submission.challengeId,
+              uid,
+            );
           isReviewer = resources.some((r) =>
             (r.roleName || '').toLowerCase().includes('reviewer'),
           );
-        } catch (e) {
+        } catch {
           // If we cannot confirm reviewer status, deny access
           isReviewer = false;
         }
@@ -265,9 +272,17 @@ export class SubmissionService {
     let key: string | undefined;
     try {
       const list = await s3.send(
-        new ListObjectsV2Command({ Bucket: bucket, Prefix: artifactPrefix, MaxKeys: 1 }),
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: artifactPrefix,
+          MaxKeys: 1,
+        }),
       );
-      if (!list.Contents || list.Contents.length === 0 || !list.Contents[0].Key) {
+      if (
+        !list.Contents ||
+        list.Contents.length === 0 ||
+        !list.Contents[0].Key
+      ) {
         throw new NotFoundException({
           message: `Artifact ${artifactId} not found for submission ${submissionId}`,
           code: 'ARTIFACT_NOT_FOUND',
@@ -292,23 +307,31 @@ export class SubmissionService {
     let fileName = `${artifactId}`;
     let contentType: string | undefined = undefined;
     try {
-      const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      const head = await s3.send(
+        new HeadObjectCommand({ Bucket: bucket, Key: key }),
+      );
       contentType = head.ContentType || undefined;
       // Metadata keys are lowercase in S3 SDK v3
       const meta = head.Metadata || {};
-      fileName = (meta['originalfilename'] as string) || fileName;
-    } catch (err) {
+      fileName = meta['originalfilename'] || fileName;
+    } catch {
       // proceed without metadata
     }
 
     try {
-      const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key! }));
+      const resp = await s3.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
       const body = resp.Body as any;
       let stream: Readable;
       if (body && typeof body.pipe === 'function') {
         // Node.js Readable
         stream = body as Readable;
-      } else if (body && typeof body.getReader === 'function' && (Readable as any).fromWeb) {
+      } else if (
+        body &&
+        typeof body.getReader === 'function' &&
+        (Readable as any).fromWeb
+      ) {
         // Web ReadableStream -> Node Readable (Node 18+)
         stream = (Readable as any).fromWeb(body);
       } else if (Buffer.isBuffer(body)) {
@@ -329,6 +352,421 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Streams the original submission file from the clean S3 bucket.
+   *
+   * Authorization rules:
+   * - M2M tokens: require scope read:submission or all:submission
+   * - Member tokens: allow if admin OR submission owner OR reviewer/copilot on the challenge
+   *
+   * The file is always fetched from the configured clean bucket, never from DMZ.
+   * The S3 key is derived from the submission.url.
+   */
+  async getSubmissionFileStream(
+    authUser: JwtUser,
+    submissionId: string,
+  ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
+    const submission = await this.checkSubmission(submissionId);
+
+    // Authorization
+    if (authUser.isMachine) {
+      const scopes = authUser.scopes || [];
+      const hasScope =
+        scopes.includes('read:submission') || scopes.includes('all:submission');
+      if (!hasScope) {
+        throw new ForbiddenException({
+          message: 'M2M token missing required scope to download submission',
+          code: 'FORBIDDEN_M2M_SCOPE',
+        });
+      }
+    } else if (!isAdmin(authUser)) {
+      const uid = String(authUser.userId ?? '');
+      const isOwner = !!uid && submission.memberId === uid;
+      let isReviewer = false;
+      let isCopilot = false;
+      if (!isOwner && submission.challengeId) {
+        try {
+          const resources =
+            await this.resourceApiService.getMemberResourcesRoles(
+              submission.challengeId,
+              uid,
+            );
+          for (const r of resources) {
+            const rn = (r.roleName || '').toLowerCase();
+            if (rn.includes('reviewer')) isReviewer = true;
+            if (rn.includes('copilot')) isCopilot = true;
+            if (isReviewer || isCopilot) break;
+          }
+        } catch {
+          // If we cannot confirm roles, deny access
+          isReviewer = false;
+          isCopilot = false;
+        }
+      }
+
+      if (!isOwner && !isReviewer && !isCopilot) {
+        throw new ForbiddenException({
+          message:
+            'Only the submission owner, a challenge reviewer/copilot, or an admin can download the submission',
+          code: 'FORBIDDEN_SUBMISSION_DOWNLOAD',
+          details: {
+            submissionId,
+            requester: uid,
+            challengeId: submission.challengeId,
+          },
+        });
+      }
+    }
+
+    // Determine S3 bucket and key from submission URL
+    const cleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    if (!cleanBucket) {
+      this.logger.error('SUBMISSION_CLEAN_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'CLEAN_BUCKET_MISSING',
+      });
+    }
+    if (!submission.url) {
+      throw new NotFoundException({
+        message: `Submission ${submissionId} has no URL to download`,
+        code: 'SUBMISSION_URL_MISSING',
+        details: { submissionId },
+      });
+    }
+
+    const parsed = this.parseS3Url(submission.url);
+    if (!parsed || !parsed.key) {
+      this.logger.error(
+        `Unable to parse S3 key from submission URL for submission ${submissionId}: ${submission.url}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to resolve submission location',
+        code: 'SUBMISSION_URL_PARSE_FAILED',
+        details: { submissionId },
+      });
+    }
+
+    const key = parsed.key;
+    const bucket = cleanBucket; // Always use clean bucket (never DMZ)
+
+    const s3 = this.getS3Client();
+    let contentType: string | undefined = 'application/zip';
+    try {
+      const head = await s3.send(
+        new HeadObjectCommand({ Bucket: bucket, Key: key }),
+      );
+      contentType = head.ContentType || contentType;
+    } catch (err) {
+      // If the object isn't in the clean bucket, do NOT fallback to DMZ
+      this.logger.error(
+        `Submission object not found in clean bucket. submissionId=${submissionId} bucket=${bucket} key=${key} err=${(err as Error)?.message}`,
+      );
+      throw new NotFoundException({
+        message: 'Submission not available in clean storage',
+        code: 'SUBMISSION_NOT_CLEAN',
+        details: { submissionId },
+      });
+    }
+
+    try {
+      const resp = await s3.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
+      const body = (resp as any).Body;
+      let stream: Readable;
+      if (body && typeof body.pipe === 'function') {
+        stream = body as Readable;
+      } else if (
+        body &&
+        typeof body.getReader === 'function' &&
+        (Readable as any).fromWeb
+      ) {
+        stream = (Readable as any).fromWeb(body);
+      } else if (Buffer.isBuffer(body)) {
+        stream = Readable.from(body);
+      } else {
+        throw new Error('Unsupported S3 Body stream type');
+      }
+      const fileName = `submission-${submission.id}.zip`;
+      return { stream, contentType, fileName };
+    } catch (err) {
+      this.logger.error(
+        `Failed to download submission from clean S3. submissionId=${submissionId} bucket=${bucket} key=${key} err=${(err as Error)?.message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to download submission from storage',
+        code: 'S3_DOWNLOAD_FAILED',
+        details: { submissionId },
+      });
+    }
+  }
+
+  /**
+   * Streams a ZIP file containing all submissions for a challenge.
+   * Inside the big zip are the individual submission .zip files from the clean bucket.
+   *
+   * Member tokens: only Admin, Copilot, or Reviewer can access.
+   * M2M tokens: require read:submission or all:submission scope.
+   *
+   * Naming inside the big zip:
+   * - Admin or Copilot: "{memberHandle}-{submissionId}.zip"
+   * - Reviewer: "submission-{submissionId}.zip"
+   * - M2M: uses reviewer naming.
+   */
+  async getChallengeSubmissionsZipStream(
+    authUser: JwtUser,
+    challengeId: string,
+    opts?: { status?: string },
+  ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
+    // Authorization
+    let isAdminOrCopilot = false;
+    let isReviewer = false;
+
+    if (authUser.isMachine) {
+      const scopes = authUser.scopes || [];
+      const hasScope =
+        scopes.includes('read:submission') || scopes.includes('all:submission');
+      if (!hasScope) {
+        throw new ForbiddenException({
+          message: 'M2M token missing required scope to download submissions',
+          code: 'FORBIDDEN_M2M_SCOPE',
+        });
+      }
+    } else if (!isAdmin(authUser)) {
+      const uid = String(authUser.userId ?? '');
+      try {
+        const resources = await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          uid,
+        );
+        for (const r of resources) {
+          const rn = (r.roleName || '').toLowerCase();
+          if (rn.includes('copilot')) isAdminOrCopilot = true;
+          if (rn.includes('reviewer')) isReviewer = true;
+        }
+      } catch {
+        // Fall through; if we can't confirm roles, deny
+      }
+      if (!isReviewer && !isAdminOrCopilot) {
+        throw new ForbiddenException({
+          message:
+            'Only a challenge reviewer/copilot or an admin can download all submissions',
+          code: 'FORBIDDEN_SUBMISSION_BULK_DOWNLOAD',
+          details: { challengeId, requester: uid },
+        });
+      }
+    } else {
+      // Admin
+      isAdminOrCopilot = true;
+    }
+
+    const cleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    if (!cleanBucket) {
+      this.logger.error('SUBMISSION_CLEAN_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'CLEAN_BUCKET_MISSING',
+      });
+    }
+
+    // Fetch all submissions for the challenge (with optional status filter)
+    const where: any = { challengeId };
+    if (opts?.status) {
+      const statusKey = String(opts.status).toUpperCase();
+      if (
+        Object.values(SubmissionStatus).includes(statusKey as SubmissionStatus)
+      ) {
+        where.status = statusKey as SubmissionStatus;
+      }
+    }
+    const submissions = await this.prisma.submission.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Build memberId -> handle map for naming (admin/copilot case)
+    let handleMap = new Map<string, string>();
+    try {
+      const allResources = await this.resourceApiService.getResources({
+        challengeId,
+      });
+      handleMap = new Map(
+        (allResources || [])
+          .filter((r) => r.memberId && r.memberHandle)
+          .map((r) => [String(r.memberId), String(r.memberHandle)]),
+      );
+    } catch (e) {
+      // If member handles cannot be loaded, we will fallback to memberId in filenames
+      this.logger.warn(
+        `Could not load resource handles for challenge ${challengeId}: ${(e as Error)?.message}`,
+      );
+    }
+
+    const s3 = this.getS3Client();
+
+    // Pre-validate that all submission objects exist in the clean bucket.
+    // Fail the entire request if any are missing.
+    for (const sub of submissions) {
+      if (!sub.url) {
+        throw new NotFoundException({
+          message: `Submission ${sub.id} has no URL to download`,
+          code: 'SUBMISSION_URL_MISSING',
+          details: { submissionId: sub.id },
+        });
+      }
+      const parsed = this.parseS3Url(sub.url);
+      if (!parsed || !parsed.key) {
+        throw new InternalServerErrorException({
+          message: `Failed to resolve submission location for ${sub.id}`,
+          code: 'SUBMISSION_URL_PARSE_FAILED',
+          details: { submissionId: sub.id },
+        });
+      }
+      try {
+        await s3.send(
+          new HeadObjectCommand({ Bucket: cleanBucket, Key: parsed.key }),
+        );
+      } catch {
+        throw new NotFoundException({
+          message: `Submission ${sub.id} not available in clean storage`,
+          code: 'SUBMISSION_NOT_CLEAN',
+          details: { submissionId: sub.id },
+        });
+      }
+    }
+
+    const zipPass = new PassThrough();
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const archiver = require('archiver');
+    const archive = archiver('zip', { zlib: { level: 0 } });
+    archive.on('error', (err: Error) => {
+      zipPass.destroy(err);
+    });
+    archive.pipe(zipPass);
+
+    // Async assembly of the ZIP, without blocking return
+    void (async () => {
+      for (const sub of submissions) {
+        try {
+          if (!sub.url) continue;
+          const parsed = this.parseS3Url(sub.url);
+          if (!parsed || !parsed.key) continue;
+
+          // Ensure object exists in clean bucket by attempting GetObject
+          let bodyStream: any;
+          const resp = await s3.send(
+            new GetObjectCommand({ Bucket: cleanBucket, Key: parsed.key }),
+          );
+          const body = (resp as any).Body;
+          if (body && typeof body.pipe === 'function') {
+            bodyStream = body as Readable;
+          } else if (
+            body &&
+            typeof body.getReader === 'function' &&
+            (Readable as any).fromWeb
+          ) {
+            bodyStream = (Readable as any).fromWeb(body);
+          } else if (Buffer.isBuffer(body)) {
+            bodyStream = Readable.from(body);
+          } else {
+            throw new Error('Unsupported S3 Body stream type');
+          }
+
+          // Determine entry name
+          let entryName: string;
+          const memberId = sub.memberId ? String(sub.memberId) : '';
+          const memberHandle = handleMap.get(memberId);
+
+          const useAdminNaming = authUser.isMachine ? false : isAdminOrCopilot; // M2M uses reviewer naming by spec
+
+          if (useAdminNaming) {
+            const safeHandle =
+              memberHandle ||
+              (memberId ? `member-${memberId}` : 'member-unknown');
+            entryName = `${safeHandle}-${sub.id}.zip`;
+          } else {
+            entryName = `submission-${sub.id}.zip`;
+          }
+
+          archive.append(bodyStream, { name: entryName, store: true });
+        } catch (err) {
+          this.logger.warn(
+            `Failed to append submission ${sub.id} to archive: ${(err as Error)?.message}`,
+          );
+        }
+      }
+      try {
+        await archive.finalize();
+      } catch (e) {
+        zipPass.destroy(e as Error);
+      }
+    })();
+
+    return {
+      stream: zipPass,
+      contentType: 'application/zip',
+      fileName: `challenge-${challengeId}-submissions.zip`,
+    };
+  }
+
+  /**
+   * Parse an S3 URL and return { bucket?, key? }
+   * Supports formats:
+   * - s3://bucket/key
+   * - https://bucket.s3.amazonaws.com/key
+   * - https://bucket.s3.<region>.amazonaws.com/key
+   * - https://s3.amazonaws.com/bucket/key
+   * - https://s3.<region>.amazonaws.com/bucket/key
+   */
+  private parseS3Url(
+    url: string,
+  ): { bucket?: string; key?: string } | undefined {
+    try {
+      if (!url) return undefined;
+      if (url.startsWith('s3://')) {
+        const noScheme = url.substring('s3://'.length);
+        const slash = noScheme.indexOf('/');
+        if (slash <= 0) return { bucket: noScheme, key: '' };
+        return {
+          bucket: noScheme.substring(0, slash),
+          key: noScheme.substring(slash + 1),
+        };
+      }
+
+      const u = new URL(url);
+      const host = u.hostname || '';
+      const path = u.pathname || '';
+
+      // Virtual-hosted-style: bucket.s3.amazonaws.com or bucket.s3.<region>.amazonaws.com
+      const vhMatch =
+        host.match(/^(?<bucket>[^.]+)\.s3[.-][^.]+\.amazonaws\.com$/) ||
+        host.match(/^(?<bucket>[^.]+)\.s3\.amazonaws\.com$/);
+      if (vhMatch && (vhMatch.groups as any)?.bucket) {
+        const bucket = (vhMatch.groups as any).bucket as string;
+        const key = path.startsWith('/') ? path.substring(1) : path;
+        return { bucket, key };
+      }
+
+      // Path-style: s3.amazonaws.com/bucket/key or s3.<region>.amazonaws.com/bucket/key
+      if (host === 's3.amazonaws.com' || host.startsWith('s3.')) {
+        const parts = path.split('/').filter(Boolean);
+        if (parts.length >= 2) {
+          const bucket = parts[0];
+          const key = parts.slice(1).join('/');
+          return { bucket, key };
+        }
+      }
+
+      // As a fallback, try to extract after the last domain segment
+      const key = path.startsWith('/') ? path.substring(1) : path;
+      return { key };
+    } catch {
+      return undefined;
+    }
+  }
+
   async deleteArtifact(
     authUser: JwtUser,
     submissionId: string,
@@ -343,7 +781,11 @@ export class SubmissionService {
         throw new ForbiddenException({
           message: 'Only the submission owner can delete artifacts',
           code: 'FORBIDDEN_ARTIFACT_DELETE',
-          details: { submissionId, memberId: submission.memberId, requester: uid },
+          details: {
+            submissionId,
+            memberId: submission.memberId,
+            requester: uid,
+          },
         });
       }
     }
@@ -369,8 +811,13 @@ export class SubmissionService {
             ContinuationToken: continuationToken,
           }),
         );
-        (resp.Contents || []).forEach((o) => o.Key && keys.push(o.Key));
-        continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+        (resp.Contents || []).forEach((o) => {
+          const key = o.Key;
+          if (key) keys.push(key);
+        });
+        continuationToken = resp.IsTruncated
+          ? resp.NextContinuationToken
+          : undefined;
       } while (continuationToken);
     } catch (err) {
       this.logger.error(

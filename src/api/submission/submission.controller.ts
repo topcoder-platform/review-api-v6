@@ -26,8 +26,6 @@ import {
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import { createReadStream } from 'fs';
-import { join } from 'path';
 
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -263,20 +261,16 @@ export class SubmissionController {
     },
   })
   async downloadSubmission(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
   ): Promise<StreamableFile> {
-    // The artifact file is from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const file = createReadStream(
-      join(process.cwd(), 'uploads/submission-123.zip'),
-    );
-    return Promise.resolve(
-      new StreamableFile(file, {
-        type: 'application/zip',
-        disposition: 'attachment; filename="submission-123.zip"',
-      }),
-    );
+    const authUser: JwtUser = req['user'] as JwtUser;
+    const { stream, contentType, fileName } =
+      await this.service.getSubmissionFileStream(authUser, submissionId);
+    return new StreamableFile(stream, {
+      type: contentType || 'application/zip',
+      disposition: `attachment; filename="${fileName}"`,
+    });
   }
 
   @Post('/:submissionId/artifacts')
@@ -373,11 +367,8 @@ export class SubmissionController {
     @Param('artifactId') artifactId: string,
   ): Promise<StreamableFile> {
     const authUser: JwtUser = req['user'] as JwtUser;
-    const { stream, contentType, fileName } = await this.service.getArtifactStream(
-      authUser,
-      submissionId,
-      artifactId,
-    );
+    const { stream, contentType, fileName } =
+      await this.service.getArtifactStream(authUser, submissionId, artifactId);
     return new StreamableFile(stream, {
       type: contentType || 'application/octet-stream',
       disposition: `attachment; filename="${fileName}"`,
@@ -407,7 +398,6 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
-  // eslint-disable-next-line @typescript-eslint/require-await
   async deleteArtifact(
     @Req() req: Request,
     @Param('submissionId') submissionId: string,
@@ -462,19 +452,20 @@ export class SubmissionController {
     },
   })
   async downloadAllSubmission(
-    @Param('challengeId') challengeId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Req() req: Request,
+    @Param('challengeId') challengeId: string,
+    @Query('status') status?: string,
   ): Promise<StreamableFile> {
-    // The artifact file is from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const file = createReadStream(
-      join(process.cwd(), 'uploads/submission-123.zip'),
-    );
-    return Promise.resolve(
-      new StreamableFile(file, {
-        type: 'application/zip',
-        disposition: 'attachment; filename="submission-123.zip"',
-      }),
-    );
+    const authUser: JwtUser = req['user'] as JwtUser;
+    const { stream, contentType, fileName } =
+      await this.service.getChallengeSubmissionsZipStream(
+        authUser,
+        challengeId,
+        { status },
+      );
+    return new StreamableFile(stream, {
+      type: contentType || 'application/zip',
+      disposition: `attachment; filename="${fileName}"`,
+    });
   }
 }
