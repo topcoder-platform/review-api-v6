@@ -47,7 +47,7 @@ export class ContactRequestsService {
     );
 
     try {
-      // Validate requester has access (same logic as before)
+      // Validate requester has access
       await this.resourceApiService.validateResourcesRoles(
         [UserRole.Reviewer, UserRole.User],
         authUser,
