@@ -23,6 +23,17 @@ import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
+import { randomUUID } from 'crypto';
+import {
+  S3Client,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  HeadObjectCommand,
+  DeleteObjectsCommand,
+} from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import { Readable } from 'stream';
 
 @Injectable()
 export class SubmissionService {
@@ -35,6 +46,337 @@ export class SubmissionService {
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
   ) {}
+
+  /**
+   * Upload an artifact file to S3 under a submission-specific path and
+   * return a generated artifact identifier (UUID), matching legacy behavior
+   * where artifacts are stored in S3 and referenced by ID.
+   */
+  async createArtifact(
+    submissionId: string,
+    file: Express.Multer.File,
+  ): Promise<ArtifactsCreateResponseDto> {
+    // Ensure the submission exists (keeps behavior predictable)
+    await this.checkSubmission(submissionId);
+
+    const bucket = process.env.ARTIFACTS_S3_BUCKET;
+    if (!bucket) {
+      this.logger.error('ARTIFACTS_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'S3_BUCKET_MISSING',
+      });
+    }
+
+    const s3 = this.getS3Client();
+
+    const artifactId = randomUUID();
+    const originalName = file.originalname || file.filename || 'artifact';
+
+    // Derive file extension from mime-type or filename (fallback to 'bin')
+    let uFileType: string | undefined = this.guessExtFromMime(file.mimetype);
+    if (!uFileType) {
+      const dot = originalName.lastIndexOf('.');
+      if (dot > 0 && dot < originalName.length - 1) {
+        uFileType = originalName.substring(dot + 1);
+      }
+    }
+    if (!uFileType) uFileType = 'bin';
+
+    // Legacy-compatible S3 key format: `${submissionId}/${artifactId}.${uFileType}`
+    const key = `${submissionId}/${artifactId}.${uFileType}`;
+
+    try {
+      // Prefer in-memory buffer (memoryStorage). Fallbacks for other cases.
+      let body: any = (file as any)?.buffer;
+      if (!body && (file as any)?.stream) {
+        body = (file as any).stream;
+      }
+      if (!body) {
+        // As a last resort, try disk-based path if Multer was configured for disk
+        const diskDest = (file as any)?.destination;
+        const diskFile = (file as any)?.filename;
+        if (diskDest && diskFile) {
+          const { createReadStream } = await import('fs');
+          const { join } = await import('path');
+          body = createReadStream(join(diskDest, diskFile));
+        }
+      }
+      if (!body) {
+        throw new BadRequestException({
+          message: 'File data missing in request',
+          code: 'FILE_DATA_MISSING',
+        });
+      }
+
+      const upload = new Upload({
+        client: s3,
+        params: {
+          Bucket: bucket,
+          Key: key,
+          Body: body,
+          ContentType: file.mimetype,
+          Metadata: {
+            artifactId,
+            submissionId,
+            originalFileName: originalName,
+          },
+        },
+        queueSize: 4,
+        partSize: 5 * 1024 * 1024, // 5 MB
+        leavePartsOnError: false,
+      });
+      await upload.done();
+      this.logger.log(
+        `Uploaded artifact to S3. bucket=${bucket} key=${key} artifactId=${artifactId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to upload artifact to S3 for submission ${submissionId}: ${err?.message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to upload artifact to storage',
+        code: 'S3_UPLOAD_FAILED',
+        details: { submissionId },
+      });
+    }
+
+    return { artifacts: artifactId };
+  }
+
+  async listArtifacts(submissionId: string): Promise<{ artifacts: string[] }> {
+    await this.checkSubmission(submissionId);
+
+    const bucket = process.env.ARTIFACTS_S3_BUCKET;
+    if (!bucket) {
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'S3_BUCKET_MISSING',
+      });
+    }
+
+    const s3 = this.getS3Client();
+    const prefix = `${submissionId}/`;
+
+    const artifactIds = new Set<string>();
+    let continuationToken: string | undefined = undefined;
+    try {
+      do {
+        const resp = await s3.send(
+          new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          }),
+        );
+        (resp.Contents || []).forEach((obj) => {
+          const key = obj.Key || '';
+          // Expect keys like {submissionId}/{artifactId}.{ext}
+          const parts = key.split('/');
+          if (parts.length >= 2) {
+            const file = parts[parts.length - 1];
+            const dot = file.lastIndexOf('.');
+            const id = dot > 0 ? file.substring(0, dot) : file;
+            if (id) artifactIds.add(id);
+          }
+        });
+        continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+      } while (continuationToken);
+    } catch (err) {
+      this.logger.error(
+        `Failed to list artifacts from S3 for submission ${submissionId}: ${err?.message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to list artifacts from storage',
+        code: 'S3_LIST_FAILED',
+        details: { submissionId },
+      });
+    }
+
+    return { artifacts: Array.from(artifactIds) };
+  }
+
+  async getArtifactStream(
+    submissionId: string,
+    artifactId: string,
+  ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
+    await this.checkSubmission(submissionId);
+
+    const bucket = process.env.ARTIFACTS_S3_BUCKET;
+    if (!bucket) {
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'S3_BUCKET_MISSING',
+      });
+    }
+    const s3 = this.getS3Client();
+
+    // Locate the object by listing under the artifact prefix
+    const artifactPrefix = `${submissionId}/${artifactId}.`;
+    let key: string | undefined;
+    try {
+      const list = await s3.send(
+        new ListObjectsV2Command({ Bucket: bucket, Prefix: artifactPrefix, MaxKeys: 1 }),
+      );
+      if (!list.Contents || list.Contents.length === 0 || !list.Contents[0].Key) {
+        throw new NotFoundException({
+          message: `Artifact ${artifactId} not found for submission ${submissionId}`,
+          code: 'ARTIFACT_NOT_FOUND',
+        });
+      }
+      key = list.Contents[0].Key;
+    } catch (err) {
+      if (err instanceof NotFoundException) {
+        throw err;
+      }
+      this.logger.error(
+        `Failed to locate artifact in S3 for submission ${submissionId}, artifact ${artifactId}: ${err?.message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to locate artifact in storage',
+        code: 'S3_LOCATE_FAILED',
+        details: { submissionId, artifactId },
+      });
+    }
+
+    // Get metadata for original filename and content-type
+    let fileName = `${artifactId}`;
+    let contentType: string | undefined = undefined;
+    try {
+      const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      contentType = head.ContentType || undefined;
+      // Metadata keys are lowercase in S3 SDK v3
+      const meta = head.Metadata || {};
+      fileName = (meta['originalfilename'] as string) || fileName;
+    } catch (err) {
+      // proceed without metadata
+    }
+
+    try {
+      const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key! }));
+      const body = resp.Body as any;
+      let stream: Readable;
+      if (body && typeof body.pipe === 'function') {
+        // Node.js Readable
+        stream = body as Readable;
+      } else if (body && typeof body.getReader === 'function' && (Readable as any).fromWeb) {
+        // Web ReadableStream -> Node Readable (Node 18+)
+        stream = (Readable as any).fromWeb(body);
+      } else if (Buffer.isBuffer(body)) {
+        stream = Readable.from(body);
+      } else {
+        throw new Error('Unsupported S3 Body stream type');
+      }
+      return { stream, contentType, fileName };
+    } catch (err) {
+      this.logger.error(
+        `Failed to download artifact from S3 for submission ${submissionId}, artifact ${artifactId}: ${err?.message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to download artifact from storage',
+        code: 'S3_DOWNLOAD_FAILED',
+        details: { submissionId, artifactId },
+      });
+    }
+  }
+
+  async deleteArtifact(submissionId: string, artifactId: string): Promise<void> {
+    await this.checkSubmission(submissionId);
+    const bucket = process.env.ARTIFACTS_S3_BUCKET;
+    if (!bucket) {
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'S3_BUCKET_MISSING',
+      });
+    }
+    const s3 = this.getS3Client();
+    const prefix = `${submissionId}/${artifactId}.`;
+
+    // List all objects under the artifact prefix, then delete in batch
+    const keys: string[] = [];
+    let continuationToken: string | undefined = undefined;
+    try {
+      do {
+        const resp = await s3.send(
+          new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          }),
+        );
+        (resp.Contents || []).forEach((o) => o.Key && keys.push(o.Key));
+        continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+      } while (continuationToken);
+    } catch (err) {
+      this.logger.error(
+        `Failed to list objects for deletion in S3 for submission ${submissionId}, artifact ${artifactId}: ${err?.message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to delete artifact from storage',
+        code: 'S3_DELETE_LIST_FAILED',
+        details: { submissionId, artifactId },
+      });
+    }
+
+    if (keys.length === 0) {
+      throw new NotFoundException({
+        message: `Artifact ${artifactId} not found for submission ${submissionId}`,
+        code: 'ARTIFACT_NOT_FOUND',
+      });
+    }
+
+    try {
+      // Delete in batches of up to 1000 keys per request
+      const batchSize = 1000;
+      for (let i = 0; i < keys.length; i += batchSize) {
+        const batch = keys.slice(i, i + batchSize).map((Key) => ({ Key }));
+        await s3.send(
+          new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: { Objects: batch, Quiet: true },
+          }),
+        );
+      }
+      this.logger.log(
+        `Deleted artifact ${artifactId} for submission ${submissionId} from S3 (${keys.length} object(s))`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to delete artifact objects from S3 for submission ${submissionId}, artifact ${artifactId}: ${err?.message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to delete artifact from storage',
+        code: 'S3_DELETE_FAILED',
+        details: { submissionId, artifactId },
+      });
+    }
+  }
+
+  private getS3Client(): S3Client {
+    // Rely on ECS task role / instance role and default provider chain
+    // for credentials and region resolution.
+    return new S3Client({});
+  }
+
+  private guessExtFromMime(mime?: string): string | undefined {
+    if (!mime) return undefined;
+    switch (mime) {
+      case 'application/zip':
+      case 'application/x-zip-compressed':
+        return 'zip';
+      case 'application/pdf':
+        return 'pdf';
+      case 'image/png':
+        return 'png';
+      case 'image/jpeg':
+      case 'image/jpg':
+        return 'jpg';
+      case 'text/plain':
+        return 'txt';
+      default:
+        return undefined;
+    }
+  }
 
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
     console.log(`BODY: ${JSON.stringify(body)}`);

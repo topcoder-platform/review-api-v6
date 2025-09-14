@@ -25,6 +25,7 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { createReadStream } from 'fs';
 import { join } from 'path';
 
@@ -75,7 +76,11 @@ export class SubmissionController {
   })
   // TODO: When we replace Community App, we should move this to JSON instead of form-data
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+    }),
+  )
   @ApiBody({
     required: true,
     type: 'multipart/form-data',
@@ -310,10 +315,7 @@ export class SubmissionController {
     @Param('submissionId') submissionId: string,
     @UploadedFile() file: Express.Multer.File,
   ): Promise<ArtifactsCreateResponseDto> {
-    const fileName = file.filename;
-    return Promise.resolve({
-      artifacts: fileName.substring(fileName.lastIndexOf('/') + 1),
-    });
+    return this.service.createArtifact(submissionId, file);
   }
 
   @Get('/:submissionId/artifacts')
@@ -334,15 +336,9 @@ export class SubmissionController {
     type: [ArtifactsListResponseDto],
   })
   async listArtifacts(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Param('submissionId') submissionId: string,
   ): Promise<ArtifactsListResponseDto> {
-    // These artifacts are from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const mockData = {
-      artifacts: ['c56a4180-65aa-42ec-a945-5fd21dec0503'],
-    };
-    return Promise.resolve(mockData);
+    return this.service.listArtifacts(submissionId);
   }
 
   @Get('/:submissionId/artifacts/:artifactId/download')
@@ -370,21 +366,17 @@ export class SubmissionController {
     },
   })
   async downloadArtifacts(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
-    @Param('artifactId') artifactId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Param('submissionId') submissionId: string,
+    @Param('artifactId') artifactId: string,
   ): Promise<StreamableFile> {
-    // The artifact file is from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const file = createReadStream(
-      join(process.cwd(), 'uploads/artifact-123.zip'),
+    const { stream, contentType, fileName } = await this.service.getArtifactStream(
+      submissionId,
+      artifactId,
     );
-    return Promise.resolve(
-      new StreamableFile(file, {
-        type: 'application/zip',
-        disposition: 'attachment; filename="artifact-123.zip"',
-      }),
-    );
+    return new StreamableFile(stream, {
+      type: contentType || 'application/octet-stream',
+      disposition: `attachment; filename="${fileName}"`,
+    });
   }
 
   @Delete('/:submissionId/artifacts/:artifactId')
@@ -411,9 +403,10 @@ export class SubmissionController {
   @ApiResponse({ status: 404, description: 'Submission not found.' })
   // eslint-disable-next-line @typescript-eslint/require-await
   async deleteArtifact(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
-    @Param('artifactId') artifactId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Param('submissionId') submissionId: string,
+    @Param('artifactId') artifactId: string,
   ) {
+    await this.service.deleteArtifact(submissionId, artifactId);
     return;
   }
 
