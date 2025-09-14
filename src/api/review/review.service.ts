@@ -3,6 +3,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ReviewItemRequestDto,
@@ -23,6 +24,7 @@ import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.servi
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 
 @Injectable()
 export class ReviewService {
@@ -37,7 +39,10 @@ export class ReviewService {
     this.logger = LoggerService.forRoot('ReviewService');
   }
 
-  async createReview(body: ReviewRequestDto): Promise<ReviewResponseDto> {
+  async createReview(
+    authUser: JwtUser,
+    body: ReviewRequestDto,
+  ): Promise<ReviewResponseDto> {
     this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
     try {
       const submission = await this.prisma.submission.findUniqueOrThrow({
@@ -55,6 +60,43 @@ export class ReviewService {
       await this.challengeApiService.validateReviewSubmission(
         submission.challengeId,
       );
+
+      // Authorization: for member tokens (non-M2M), require admin OR reviewer on the challenge
+      if (!authUser?.isMachine) {
+        if (!isAdmin(authUser)) {
+          const uid = String(authUser?.userId ?? '');
+          let isReviewer = false;
+          try {
+            const resources =
+              await this.resourceApiService.getMemberResourcesRoles(
+                submission.challengeId,
+                uid,
+              );
+            isReviewer = resources.some((r) =>
+              (r.roleName || '').toLowerCase().includes('reviewer'),
+            );
+          } catch (e) {
+            // If we cannot confirm reviewer status, deny access
+            const msg = e instanceof Error ? e.message : String(e);
+            this.logger.debug(
+              `Failed to verify reviewer status via Resource API: ${msg}`,
+            );
+            isReviewer = false;
+          }
+
+          if (!isReviewer) {
+            throw new ForbiddenException({
+              message:
+                'Only an admin or a registered reviewer for this challenge can create reviews',
+              code: 'FORBIDDEN_CREATE_REVIEW',
+              details: {
+                challengeId: submission.challengeId,
+                requester: uid,
+              },
+            });
+          }
+        }
+      }
 
       const prismaBody = mapReviewRequestToDto(body) as any;
       const data = await this.prisma.review.create({

@@ -8,6 +8,7 @@ import {
   Body,
   Param,
   Query,
+  Req,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -42,11 +43,11 @@ export class ReviewController {
   constructor(private readonly reviewService: ReviewService) {}
 
   @Post()
-  @Roles(UserRole.Reviewer)
+  @Roles(UserRole.Reviewer, UserRole.Admin)
   @Scopes(Scope.CreateReview)
   @ApiOperation({
     summary: 'Create a new review',
-    description: 'Roles: Reviewer | Scopes: create:review',
+    description: 'Roles: Reviewer, Admin | Scopes: create:review',
   })
   @ApiBody({ description: 'Review data', type: ReviewRequestDto })
   @ApiResponse({
@@ -55,9 +56,11 @@ export class ReviewController {
     type: ReviewResponseDto,
   })
   async createReview(
+    @Req() req: Request,
     @Body() body: ReviewRequestDto,
   ): Promise<ReviewResponseDto> {
-    return this.reviewService.createReview(body);
+    const authUser = req['user'];
+    return this.reviewService.createReview(authUser as any, body);
   }
 
   @Post('/items')
