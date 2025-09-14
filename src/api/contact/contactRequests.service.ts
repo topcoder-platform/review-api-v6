@@ -61,7 +61,11 @@ export class ContactRequestsService {
       });
 
       // Fire email notification to managers/copilots for the challenge
-      await this.notifyChallengeManagers(authUser, body.challengeId);
+      await this.notifyChallengeManagers(
+        authUser,
+        body.challengeId,
+        body.message,
+      );
 
       this.logger.log(`Contact request created with ID: ${data.id}`);
       return data as ContactRequestResponseDto;
@@ -87,6 +91,7 @@ export class ContactRequestsService {
   private async notifyChallengeManagers(
     authUser: JwtUser,
     challengeId: string,
+    message: string,
   ): Promise<void> {
     // Load challenge info for name
     const challenge =
@@ -147,6 +152,7 @@ export class ContactRequestsService {
     payload.data = {
       handle: authUser.handle ?? '',
       challengeName: challenge.name,
+      message: message ?? '',
     };
 
     await this.eventBusService.sendEmail(payload);
