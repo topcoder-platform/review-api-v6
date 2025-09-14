@@ -53,11 +53,24 @@ export class SubmissionService {
    * where artifacts are stored in S3 and referenced by ID.
    */
   async createArtifact(
+    authUser: JwtUser,
     submissionId: string,
     file: Express.Multer.File,
   ): Promise<ArtifactsCreateResponseDto> {
     // Ensure the submission exists (keeps behavior predictable)
-    await this.checkSubmission(submissionId);
+    const submission = await this.checkSubmission(submissionId);
+
+    // If token is a member (non-admin), they must own the submission
+    if (!isAdmin(authUser)) {
+      const uid = String(authUser.userId ?? '');
+      if (!uid || submission.memberId !== uid) {
+        throw new ForbiddenException({
+          message: 'Only the submission owner can upload artifacts',
+          code: 'FORBIDDEN_ARTIFACT_UPLOAD',
+          details: { submissionId, memberId: submission.memberId, requester: uid },
+        });
+      }
+    }
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
@@ -197,10 +210,46 @@ export class SubmissionService {
   }
 
   async getArtifactStream(
+    authUser: JwtUser,
     submissionId: string,
     artifactId: string,
   ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
-    await this.checkSubmission(submissionId);
+    const submission = await this.checkSubmission(submissionId);
+
+    // For member tokens (non-admin), validate they are either the owner
+    // of the submission or a reviewer on the challenge
+    if (!isAdmin(authUser)) {
+      const uid = String(authUser.userId ?? '');
+      const isOwner = !!uid && submission.memberId === uid;
+      let isReviewer = false;
+      if (!isOwner && submission.challengeId) {
+        try {
+          const resources = await this.resourceApiService.getMemberResourcesRoles(
+            submission.challengeId,
+            uid,
+          );
+          isReviewer = resources.some((r) =>
+            (r.roleName || '').toLowerCase().includes('reviewer'),
+          );
+        } catch (e) {
+          // If we cannot confirm reviewer status, deny access
+          isReviewer = false;
+        }
+      }
+
+      if (!isOwner && !isReviewer) {
+        throw new ForbiddenException({
+          message:
+            'Only the submission owner or a challenge reviewer can download artifacts',
+          code: 'FORBIDDEN_ARTIFACT_DOWNLOAD',
+          details: {
+            submissionId,
+            requester: uid,
+            challengeId: submission.challengeId,
+          },
+        });
+      }
+    }
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
@@ -280,8 +329,24 @@ export class SubmissionService {
     }
   }
 
-  async deleteArtifact(submissionId: string, artifactId: string): Promise<void> {
-    await this.checkSubmission(submissionId);
+  async deleteArtifact(
+    authUser: JwtUser,
+    submissionId: string,
+    artifactId: string,
+  ): Promise<void> {
+    const submission = await this.checkSubmission(submissionId);
+
+    // If token is a member (non-admin), they must own the submission
+    if (!isAdmin(authUser)) {
+      const uid = String(authUser.userId ?? '');
+      if (!uid || submission.memberId !== uid) {
+        throw new ForbiddenException({
+          message: 'Only the submission owner can delete artifacts',
+          code: 'FORBIDDEN_ARTIFACT_DELETE',
+          details: { submissionId, memberId: submission.memberId, requester: uid },
+        });
+      }
+    }
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
       throw new InternalServerErrorException({

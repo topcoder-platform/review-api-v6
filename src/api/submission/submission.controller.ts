@@ -281,12 +281,12 @@ export class SubmissionController {
 
   @Post('/:submissionId/artifacts')
   @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
-  @Scopes(Scope.CreateSubmission)
+  @Scopes(Scope.CreateSubmissionArtifacts)
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({
     summary: 'Create artifact for the given submission ID',
     description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission',
+      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
@@ -312,10 +312,12 @@ export class SubmissionController {
     type: ArtifactsCreateResponseDto,
   })
   async createArtifact(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
     @UploadedFile() file: Express.Multer.File,
   ): Promise<ArtifactsCreateResponseDto> {
-    return this.service.createArtifact(submissionId, file);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.createArtifact(authUser, submissionId, file);
   }
 
   @Get('/:submissionId/artifacts')
@@ -343,11 +345,11 @@ export class SubmissionController {
 
   @Get('/:submissionId/artifacts/:artifactId/download')
   @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
-  @Scopes(Scope.ReadSubmission)
+  @Scopes(Scope.ReadSubmissionArtifacts)
   @ApiOperation({
     summary: 'Download artifact using Submission ID and Artifact ID',
     description:
-      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
@@ -366,10 +368,13 @@ export class SubmissionController {
     },
   })
   async downloadArtifacts(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
     @Param('artifactId') artifactId: string,
   ): Promise<StreamableFile> {
+    const authUser: JwtUser = req['user'] as JwtUser;
     const { stream, contentType, fileName } = await this.service.getArtifactStream(
+      authUser,
       submissionId,
       artifactId,
     );
@@ -380,12 +385,13 @@ export class SubmissionController {
   }
 
   @Delete('/:submissionId/artifacts/:artifactId')
-  @Roles(UserRole.Admin)
-  @Scopes(Scope.DeleteSubmission)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Scopes(Scope.DeleteSubmissionArtifacts)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a artifact',
-    description: 'Roles: Admin | Scopes: delete:submission',
+    description:
+      'Roles: Admin, Copilot, User, Reviewer | Scopes: delete:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
@@ -403,10 +409,12 @@ export class SubmissionController {
   @ApiResponse({ status: 404, description: 'Submission not found.' })
   // eslint-disable-next-line @typescript-eslint/require-await
   async deleteArtifact(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
     @Param('artifactId') artifactId: string,
   ) {
-    await this.service.deleteArtifact(submissionId, artifactId);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    await this.service.deleteArtifact(authUser, submissionId, artifactId);
     return;
   }
 
