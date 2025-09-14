@@ -70,5 +70,8 @@ export const CommonConfig = {
     rejectEmailTemplate:
       process.env.SENDGRID_REJECT_REVIEW_APPLICATION ??
       'd-82ed74e778e84d8c9bc02eeda0f44b5e',
+    contactManagersEmailTemplate:
+      process.env.SENDGRID_CONTACT_MANAGERS_TEMPLATE ??
+      'd-00000000000000000000000000000000',
   },
 };

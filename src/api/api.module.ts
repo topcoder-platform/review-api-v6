@@ -28,6 +28,7 @@ import { ScoreCardService } from './scorecard/scorecard.service';
 import { AiWorkflowService } from './ai-workflow/ai-workflow.service';
 import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
 import { ReviewService } from './review/review.service';
+import { ContactRequestsService } from './contact/contactRequests.service';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { ReviewService } from './review/review.service';
   providers: [
     ReviewService,
     ReviewOpportunityService,
+    ContactRequestsService,
     ReviewApplicationService,
     ChallengeApiService,
     ResourceApiService,

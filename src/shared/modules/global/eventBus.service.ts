@@ -22,12 +22,8 @@ class EventBusMessage<T> {
 
 // event bus send email payload
 export class EventBusSendEmailPayload {
-  data: {
-    handle: string;
-    reviewPhaseStart: string;
-    challengeUrl: string;
-    challengeName: string;
-  };
+  // Template-specific variables payload. Structure depends on the sendgrid template.
+  data: Record<string, any>;
   from: Record<string, string> = {
     email: 'Topcoder <noreply@topcoder.com>',
   };
