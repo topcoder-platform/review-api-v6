@@ -21,6 +21,11 @@ export class PhaseData {
 export class ChallengeData {
   id: string;
   name: string;
+  // v6 identifiers
+  typeId?: string | undefined;
+  trackId?: string | undefined;
+  // Some payloads may embed a type name directly (not guaranteed)
+  type?: string | undefined;
   legacy?: {
     track?: string | undefined;
     subTrack?: string | undefined;

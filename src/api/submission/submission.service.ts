@@ -22,6 +22,7 @@ import { ChallengePrismaService } from 'src/shared/modules/global/challenge-pris
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
 import { randomUUID } from 'crypto';
@@ -45,6 +46,7 @@ export class SubmissionService {
     private readonly challengePrisma: ChallengePrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly challengeCatalogService: ChallengeCatalogService,
   ) {}
 
   /**
@@ -914,9 +916,12 @@ export class SubmissionService {
       }
     }
 
-    // Validate challenge exists and is active
+    // Validate challenge exists and is active; capture challenge details for type/track validation
+    let challengeDetails;
     try {
-      await this.challengeApiService.validateChallengeExists(body.challengeId);
+      challengeDetails = await this.challengeApiService.validateChallengeExists(
+        body.challengeId,
+      );
       this.logger.log(`Challenge ${body.challengeId} exists and is valid`);
     } catch (error) {
       throw new BadRequestException({
@@ -944,6 +949,27 @@ export class SubmissionService {
         details: {
           challengeId: body.challengeId,
           memberId: body.memberId,
+        },
+      });
+    }
+
+    // Validate submission type against challenge type/track
+    try {
+      this.challengeCatalogService.ensureSubmissionTypeAllowed(
+        body.type as SubmissionType,
+        challengeDetails,
+      );
+      this.logger.log(
+        `Submission type ${body.type} is valid for challenge ${body.challengeId}`,
+      );
+    } catch (error) {
+      throw new BadRequestException({
+        message: (error as Error).message,
+        code: 'INVALID_SUBMISSION_TYPE_FOR_CHALLENGE',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+          submissionType: body.type,
         },
       });
     }
