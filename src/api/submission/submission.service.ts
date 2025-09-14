@@ -1329,9 +1329,36 @@ export class SubmissionService {
     }
   }
 
-  async deleteSubmission(id: string) {
+  async deleteSubmission(authUser: JwtUser, id: string) {
     try {
       const existing = await this.checkSubmission(id);
+      // Authorization checks
+      if (authUser.isMachine) {
+        const scopes = authUser.scopes || [];
+        const hasScope =
+          scopes.includes('delete:submission') ||
+          scopes.includes('all:submission');
+        if (!hasScope) {
+          throw new ForbiddenException({
+            message: 'M2M token missing required scope to delete submission',
+            code: 'FORBIDDEN_M2M_SCOPE',
+          });
+        }
+      } else if (!isAdmin(authUser)) {
+        const uid = String(authUser.userId ?? '');
+        if (!uid || String(existing.memberId) !== uid) {
+          throw new ForbiddenException({
+            message:
+              'Only the submission owner or an admin can delete this submission',
+            code: 'FORBIDDEN_SUBMISSION_DELETE',
+            details: {
+              submissionId: id,
+              memberId: existing.memberId,
+              requester: uid,
+            },
+          });
+        }
+      }
       await this.prisma.submission.delete({
         where: { id },
       });

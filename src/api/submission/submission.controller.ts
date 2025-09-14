@@ -234,9 +234,13 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
-  async deleteSubmission(@Param('submissionId') submissionId: string) {
-    this.logger.log(`Deleting review type with ID: ${submissionId}`);
-    await this.service.deleteSubmission(submissionId);
+  async deleteSubmission(
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
+  ) {
+    this.logger.log(`Deleting submission with ID: ${submissionId}`);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    await this.service.deleteSubmission(authUser, submissionId);
     return { message: `Submission ${submissionId} deleted successfully.` };
   }
 
