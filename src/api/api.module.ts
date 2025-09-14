@@ -7,7 +7,7 @@ import { ScorecardController } from './scorecard/scorecard.controller';
 import { AppealController } from './appeal/appeal.controller';
 import { ContactRequestsController } from './contact/contactRequests.controller';
 import { ReviewController } from './review/review.controller';
-import { ProjectResultController } from './project-result/projectResult.controller';
+import { ProjectResultModule } from './project-result/projectResult.module';
 
 import { ReviewTypeController } from './review-type/review-type.controller';
 import { SubmissionController } from './submission/submission.controller';
@@ -30,14 +30,18 @@ import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
 import { ReviewService } from './review/review.service';
 
 @Module({
-  imports: [HttpModule, GlobalProvidersModule, FileUploadModule],
+  imports: [
+    HttpModule,
+    GlobalProvidersModule,
+    FileUploadModule,
+    ProjectResultModule,
+  ],
   controllers: [
     HealthCheckController,
     ScorecardController,
     AppealController,
     ContactRequestsController,
     ReviewController,
-    ProjectResultController,
     ReviewTypeController,
     SubmissionController,
     ReviewSummationController,
