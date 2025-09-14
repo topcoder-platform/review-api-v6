@@ -4,6 +4,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { SubmissionStatus, SubmissionType } from '@prisma/client';
 import { PaginationDto } from 'src/dto/pagination.dto';
@@ -15,7 +16,7 @@ import {
   SubmissionResponseDto,
   SubmissionUpdateRequestDto,
 } from 'src/dto/submission.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
@@ -37,6 +38,27 @@ export class SubmissionService {
 
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
     console.log(`BODY: ${JSON.stringify(body)}`);
+
+    // Enforce: non-admin, non-M2M users can only submit for themselves
+    if (!isAdmin(authUser)) {
+      if (!authUser.userId) {
+        throw new BadRequestException({
+          message: 'Authenticated user ID missing in token',
+          code: 'INVALID_TOKEN',
+        });
+      }
+      if (String(body.memberId) !== String(authUser.userId)) {
+        throw new ForbiddenException({
+          message:
+            'memberId in request must match the authenticated user for non-admin tokens',
+          code: 'MEMBER_MISMATCH',
+          details: {
+            tokenUserId: String(authUser.userId),
+            requestMemberId: String(body.memberId),
+          },
+        });
+      }
+    }
 
     // Validate challenge exists and is active
     try {
