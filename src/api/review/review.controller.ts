@@ -35,6 +35,7 @@ import {
 } from 'src/dto/review.dto';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { ReviewService } from './review.service';
+import { Request } from 'express';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
@@ -192,12 +193,15 @@ export class ReviewController {
     type: [ReviewResponseDto],
   })
   async getReviews(
+    @Req() req: Request,
     @Query('status') status?: ReviewStatus,
     @Query('challengeId') challengeId?: string,
     @Query('submissionId') submissionId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<ReviewResponseDto>> {
+    const authUser = req['user'];
     return this.reviewService.getReviews(
+      authUser as any,
       status,
       challengeId,
       submissionId,
@@ -224,9 +228,11 @@ export class ReviewController {
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async getReview(
+    @Req() req: Request,
     @Param('reviewId') reviewId: string,
   ): Promise<ReviewResponseDto> {
-    return this.reviewService.getReview(reviewId);
+    const authUser = req['user'];
+    return this.reviewService.getReview(authUser as any, reviewId);
   }
 
   @Delete('/:reviewId')

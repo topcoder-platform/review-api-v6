@@ -25,6 +25,7 @@ import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 @Injectable()
 export class ReviewService {
@@ -247,6 +248,7 @@ export class ReviewService {
   }
 
   async getReviews(
+    authUser: JwtUser,
     status?: ReviewStatus,
     challengeId?: string,
     submissionId?: string,
@@ -261,6 +263,36 @@ export class ReviewService {
 
     try {
       const reviewWhereClause: any = {};
+
+      // Utility to merge an allowed set of submission IDs into where clause
+      const restrictToSubmissionIds = (allowedIds: string[]) => {
+        if (!allowedIds || allowedIds.length === 0) {
+          // Force impossible condition to return empty result deterministically
+          reviewWhereClause.submissionId = { in: ['__none__'] };
+          return;
+        }
+        const existing = reviewWhereClause.submissionId;
+        if (!existing) {
+          reviewWhereClause.submissionId = { in: allowedIds };
+        } else if (typeof existing === 'string') {
+          // Keep only if included
+          if (!allowedIds.includes(existing)) {
+            reviewWhereClause.submissionId = { in: ['__none__'] };
+          } else {
+            reviewWhereClause.submissionId = existing;
+          }
+        } else if (existing.in && Array.isArray(existing.in)) {
+          const intersect = existing.in.filter((id: string) =>
+            allowedIds.includes(id),
+          );
+          reviewWhereClause.submissionId = {
+            in: intersect.length ? intersect : ['__none__'],
+          };
+        } else {
+          // Unknown shape; overwrite conservatively
+          reviewWhereClause.submissionId = { in: allowedIds };
+        }
+      };
 
       if (submissionId) {
         reviewWhereClause.submissionId = submissionId;
@@ -291,6 +323,139 @@ export class ReviewService {
               totalPages: 0,
             },
           };
+        }
+      }
+
+      // Authorization filtering for non-admin member tokens
+      if (!authUser?.isMachine && !isAdmin(authUser)) {
+        const uid = String(authUser?.userId ?? '');
+
+        // If a challengeId is specified, check role context for that challenge
+        if (challengeId) {
+          let isReviewerOrCopilot = false;
+          try {
+            const resources =
+              await this.resourceApiService.getMemberResourcesRoles(
+                challengeId,
+                uid,
+              );
+            isReviewerOrCopilot = resources.some((r) => {
+              const rn = (r.roleName || '').toLowerCase();
+              return rn.includes('reviewer') || rn.includes('copilot');
+            });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.logger.debug(
+              `Failed to verify reviewer/copilot roles via Resource API: ${msg}`,
+            );
+          }
+
+          if (!isReviewerOrCopilot) {
+            // Confirm the user has actually submitted to this challenge
+            const mySubs = await this.prisma.submission.findMany({
+              where: { challengeId, memberId: uid },
+              select: { id: true },
+            });
+            if (mySubs.length === 0) {
+              throw new ForbiddenException({
+                message:
+                  'You must be a submitter on this challenge to access reviews',
+                code: 'FORBIDDEN_REVIEW_ACCESS',
+                details: { challengeId, requester: uid },
+              });
+            }
+
+            // Fetch challenge to determine phase-based visibility
+            const challenge =
+              await this.challengeApiService.getChallengeDetail(challengeId);
+            const phases = challenge.phases || [];
+            const appealsOpen = phases.some(
+              (p) => p.name === 'Appeals' && p.isOpen,
+            );
+            const appealsResponseOpen = phases.some(
+              (p) => p.name === 'Appeals Response' && p.isOpen,
+            );
+
+            if (challenge.status === ChallengeStatus.COMPLETED) {
+              // Allowed to see all reviews on this challenge
+              // reviewWhereClause already limited to submissions on this challenge
+            } else if (appealsOpen || appealsResponseOpen) {
+              // Restrict to own reviews (own submissions only)
+              restrictToSubmissionIds(mySubs.map((s) => s.id));
+            } else {
+              // No access for non-completed, non-appeals phases
+              throw new ForbiddenException({
+                message:
+                  'Reviews are not accessible for this challenge at the current phase',
+                code: 'FORBIDDEN_REVIEW_ACCESS',
+                details: {
+                  challengeId,
+                  status: challenge.status,
+                },
+              });
+            }
+          }
+        } else {
+          // No specific challenge provided: restrict to allowed submissions across challenges
+          if (!uid) {
+            // Should not happen, but guard anyway
+            restrictToSubmissionIds([]);
+          } else {
+            // Get all of the user's submissions (ids + challengeId)
+            const mySubs = await this.prisma.submission.findMany({
+              where: { memberId: uid },
+              select: { id: true, challengeId: true },
+            });
+
+            if (mySubs.length === 0) {
+              // They haven't submitted anywhere; no reviews are visible
+              restrictToSubmissionIds([]);
+            } else {
+              const myChallengeIds = Array.from(
+                new Set(
+                  mySubs
+                    .map((s) => s.challengeId)
+                    .filter((cId): cId is string => !!cId),
+                ),
+              );
+
+              // Fetch challenge details in bulk
+              const challenges =
+                await this.challengeApiService.getChallenges(myChallengeIds);
+              const completedIds = challenges
+                .filter((c) => c.status === ChallengeStatus.COMPLETED)
+                .map((c) => c.id);
+              const appealsAllowedIds = challenges
+                .filter((c) => {
+                  const phases = c.phases || [];
+                  return phases.some(
+                    (p) =>
+                      (p.name === 'Appeals' || p.name === 'Appeals Response') &&
+                      p.isOpen,
+                  );
+                })
+                .map((c) => c.id);
+
+              const allowed = new Set<string>();
+
+              // For completed challenges, allow all submissions in those challenges
+              if (completedIds.length) {
+                const subs = await this.prisma.submission.findMany({
+                  where: { challengeId: { in: completedIds } },
+                  select: { id: true },
+                });
+                subs.forEach((s) => allowed.add(s.id));
+              }
+
+              // For appeals or appeals response, allow only the user's own submissions
+              const myAllowedOwn = mySubs
+                .filter((s) => appealsAllowedIds.includes(s.challengeId || ''))
+                .map((s) => s.id);
+              myAllowedOwn.forEach((id) => allowed.add(id));
+
+              restrictToSubmissionIds(Array.from(allowed));
+            }
+          }
         }
       }
 
@@ -328,6 +493,9 @@ export class ReviewService {
         },
       };
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `fetching reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
@@ -340,12 +508,18 @@ export class ReviewService {
     }
   }
 
-  async getReview(reviewId: string): Promise<ReviewResponseDto> {
+  async getReview(
+    authUser: JwtUser,
+    reviewId: string,
+  ): Promise<ReviewResponseDto> {
     this.logger.log(`Getting review with ID: ${reviewId}`);
     try {
       const data = await this.prisma.review.findUniqueOrThrow({
         where: { id: reviewId },
         include: {
+          submission: {
+            select: { id: true, challengeId: true, memberId: true },
+          },
           reviewItems: {
             include: {
               reviewItemComments: true,
@@ -354,9 +528,96 @@ export class ReviewService {
         },
       });
 
+      // Authorization for non-M2M, non-admin users
+      if (!authUser?.isMachine && !isAdmin(authUser)) {
+        const uid = String(authUser?.userId ?? '');
+        const challengeId = data.submission?.challengeId;
+
+        if (!challengeId) {
+          throw new ForbiddenException({
+            message:
+              'Reviews without an associated challenge are not accessible to this user',
+            code: 'FORBIDDEN_REVIEW_ACCESS',
+            details: { reviewId },
+          });
+        }
+
+        // If user is reviewer or copilot for the challenge, allow
+        let isReviewerOrCopilot = false;
+        try {
+          const resources =
+            await this.resourceApiService.getMemberResourcesRoles(
+              challengeId,
+              uid,
+            );
+          isReviewerOrCopilot = resources.some((r) => {
+            const rn = (r.roleName || '').toLowerCase();
+            return rn.includes('reviewer') || rn.includes('copilot');
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.logger.debug(
+            `Failed to verify reviewer/copilot roles via Resource API: ${msg}`,
+          );
+        }
+
+        if (!isReviewerOrCopilot) {
+          // Confirm the user has actually submitted to this challenge (has a submission record)
+          const mySubs = await this.prisma.submission.findMany({
+            where: { challengeId, memberId: uid },
+            select: { id: true },
+          });
+          if (mySubs.length === 0) {
+            throw new ForbiddenException({
+              message:
+                'You must have submitted to this challenge to access this review',
+              code: 'FORBIDDEN_REVIEW_ACCESS',
+              details: { challengeId, reviewId, requester: uid },
+            });
+          }
+
+          // Determine visibility by challenge phase/status
+          const challenge =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          const phases = challenge.phases || [];
+          const appealsOpen = phases.some(
+            (p) => p.name === 'Appeals' && p.isOpen,
+          );
+          const appealsResponseOpen = phases.some(
+            (p) => p.name === 'Appeals Response' && p.isOpen,
+          );
+
+          if (challenge.status === ChallengeStatus.COMPLETED) {
+            // Allowed to view any review on this challenge
+          } else if (appealsOpen || appealsResponseOpen) {
+            const isOwnSubmission = !!uid && data.submission?.memberId === uid;
+            if (!isOwnSubmission) {
+              throw new ForbiddenException({
+                message:
+                  'Only reviews of your own submission are accessible during Appeals or Appeals Response',
+                code: 'FORBIDDEN_REVIEW_ACCESS_OWN_ONLY',
+                details: { challengeId, reviewId },
+              });
+            }
+          } else {
+            throw new ForbiddenException({
+              message:
+                'Reviews are not accessible for this challenge at the current phase',
+              code: 'FORBIDDEN_REVIEW_ACCESS_PHASE',
+              details: { challengeId, status: challenge.status },
+            });
+          }
+        }
+      }
+
       this.logger.log(`Review found: ${reviewId}`);
-      return data as ReviewResponseDto;
+      const result = data as any;
+      delete result.submission;
+      return result as ReviewResponseDto;
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `fetching review with ID: ${reviewId}`,
