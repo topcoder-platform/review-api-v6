@@ -40,6 +40,195 @@ export class ReviewService {
     this.logger = LoggerService.forRoot('ReviewService');
   }
 
+  /**
+   * Compute initial and final scores for a review, based on its scorecard and answers.
+   * - YES_NO: YES -> 100, NO -> 0
+   * - SCALE/TEST_CASE: linear map from [scaleMin, scaleMax] to [0, 100]
+   * Aggregation: question-weight within section, section-weight within group, group-weight across groups.
+   */
+  private async computeScoresFromItems(
+    scorecardId: string,
+    items: Array<{
+      scorecardQuestionId: string;
+      initialAnswer?: string | null;
+      finalAnswer?: string | null;
+    }>,
+  ): Promise<{ initialScore: number | null; finalScore: number | null }> {
+    try {
+      const scorecard = await this.prisma.scorecard.findUnique({
+        where: { id: scorecardId },
+        include: {
+          scorecardGroups: {
+            include: {
+              sections: {
+                include: {
+                  questions: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!scorecard) {
+        this.logger.warn(
+          `[computeScoresFromItems] Scorecard ${scorecardId} not found. Returning null scores.`,
+        );
+        return { initialScore: null, finalScore: null };
+      }
+
+      // Build a quick lookup for answers by questionId
+      const answersByQuestion = new Map(
+        items.map((i) => [i.scorecardQuestionId, i]),
+      );
+
+      // Normalize weights to avoid issues if they don't sum to exactly 100
+      const totalGroupWeight = scorecard.scorecardGroups.reduce(
+        (sum, g) => sum + (g.weight || 0),
+        0,
+      );
+
+      const computeQuestionScore = (
+        type: string,
+        scaleMin: number | null | undefined,
+        scaleMax: number | null | undefined,
+        answer: string | null | undefined,
+      ): number => {
+        if (answer === undefined || answer === null) return 0;
+        const t = String(type).toUpperCase();
+        if (t === 'YES_NO') {
+          return String(answer).toUpperCase() === 'YES' ? 100 : 0;
+        }
+        if (t === 'SCALE' || t === 'TEST_CASE') {
+          const min = typeof scaleMin === 'number' ? scaleMin : 0;
+          const max = typeof scaleMax === 'number' ? scaleMax : 0;
+          const val = Number(answer);
+          if (!isFinite(val)) return 0;
+          if (max === min) return 0;
+          const norm = ((val - min) / (max - min)) * 100;
+          return Math.min(100, Math.max(0, norm));
+        }
+        // Default for unknown types
+        return 0;
+      };
+
+      let initialTotal = 0;
+      let finalTotal = 0;
+
+      for (const group of scorecard.scorecardGroups) {
+        const groupWeightNorm = totalGroupWeight
+          ? (group.weight || 0) / totalGroupWeight
+          : 1 / Math.max(1, scorecard.scorecardGroups.length);
+
+        const totalSectionWeight = group.sections.reduce(
+          (s, sec) => s + (sec.weight || 0),
+          0,
+        );
+
+        let groupInitial = 0;
+        let groupFinal = 0;
+
+        for (const section of group.sections) {
+          const sectionWeightNorm = totalSectionWeight
+            ? (section.weight || 0) / totalSectionWeight
+            : 1 / Math.max(1, group.sections.length);
+
+          const totalQuestionWeight = section.questions.reduce(
+            (s, q) => s + (q.weight || 0),
+            0,
+          );
+
+          let sectionInitial = 0;
+          let sectionFinal = 0;
+
+          for (const q of section.questions) {
+            const questionWeightNorm = totalQuestionWeight
+              ? (q.weight || 0) / totalQuestionWeight
+              : 1 / Math.max(1, section.questions.length);
+
+            const ans = answersByQuestion.get(q.id);
+            const qi = computeQuestionScore(
+              q.type,
+              q.scaleMin ?? null,
+              q.scaleMax ?? null,
+              ans?.initialAnswer ?? null,
+            );
+            const qf = computeQuestionScore(
+              q.type,
+              q.scaleMin ?? null,
+              q.scaleMax ?? null,
+              ans?.finalAnswer ?? ans?.initialAnswer ?? null,
+            );
+
+            sectionInitial += qi * questionWeightNorm;
+            sectionFinal += qf * questionWeightNorm;
+          }
+
+          groupInitial += sectionInitial * sectionWeightNorm;
+          groupFinal += sectionFinal * sectionWeightNorm;
+        }
+
+        initialTotal += groupInitial * groupWeightNorm;
+        finalTotal += groupFinal * groupWeightNorm;
+      }
+
+      // Round to 2 decimals for readability
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+      return {
+        initialScore: round2(initialTotal),
+        finalScore: round2(finalTotal),
+      };
+    } catch (e) {
+      this.logger.error(
+        '[computeScoresFromItems] Failed to compute scores. Returning nulls.',
+        e,
+      );
+      return { initialScore: null, finalScore: null };
+    }
+  }
+
+  private async recomputeAndUpdateReviewScores(reviewId: string) {
+    try {
+      const review = await this.prisma.review.findUnique({
+        where: { id: reviewId },
+        select: {
+          id: true,
+          scorecardId: true,
+        },
+      });
+      if (!review?.scorecardId) return;
+
+      const items = await this.prisma.reviewItem.findMany({
+        where: { reviewId },
+        select: {
+          scorecardQuestionId: true,
+          initialAnswer: true,
+          finalAnswer: true,
+        },
+      });
+
+      const scores = await this.computeScoresFromItems(
+        review.scorecardId,
+        items,
+      );
+      await this.prisma.review.update({
+        where: { id: reviewId },
+        data: {
+          initialScore: scores.initialScore,
+          finalScore: scores.finalScore,
+        },
+      });
+      this.logger.debug(
+        `[recomputeAndUpdateReviewScores] Updated scores for review ${reviewId}: ${JSON.stringify(scores)}`,
+      );
+    } catch (e) {
+      this.logger.error(
+        `[recomputeAndUpdateReviewScores] Failed for review ${reviewId}`,
+        e,
+      );
+    }
+  }
+
   async createReview(
     authUser: JwtUser,
     body: ReviewRequestDto,
@@ -99,7 +288,21 @@ export class ReviewService {
         }
       }
 
-      const prismaBody = mapReviewRequestToDto(body) as any;
+      // Compute initial/final scores from the provided reviewItems and scorecard
+      const scores = await this.computeScoresFromItems(
+        body.scorecardId,
+        (body.reviewItems || []).map((ri) => ({
+          scorecardQuestionId: ri.scorecardQuestionId,
+          initialAnswer: ri.initialAnswer,
+          finalAnswer: ri.finalAnswer,
+        })),
+      );
+
+      const prismaBody = {
+        ...(mapReviewRequestToDto(body) as any),
+        initialScore: scores.initialScore,
+        finalScore: scores.finalScore,
+      };
       const data = await this.prisma.review.create({
         data: prismaBody,
         include: {
@@ -154,6 +357,10 @@ export class ReviewService {
           reviewItemComments: true,
         },
       });
+      // Recalculate parent review scores
+      if (data?.reviewId) {
+        await this.recomputeAndUpdateReviewScores(data.reviewId);
+      }
       this.logger.log(`Review item created with ID: ${data.id}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
@@ -186,6 +393,8 @@ export class ReviewService {
           },
         },
       });
+      // Recalculate scores based on current review items
+      await this.recomputeAndUpdateReviewScores(id);
       this.logger.log(`Review updated successfully: ${id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
@@ -223,6 +432,10 @@ export class ReviewService {
           reviewItemComments: true,
         },
       });
+      // Recalculate parent review scores
+      if (data?.reviewId) {
+        await this.recomputeAndUpdateReviewScores(data.reviewId);
+      }
       this.logger.log(`Review item updated successfully: ${itemId}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
@@ -672,9 +885,17 @@ export class ReviewService {
   async deleteReviewItem(itemId: string) {
     this.logger.log(`Deleting review item with ID: ${itemId}`);
     try {
+      // Get parent reviewId before deletion
+      const existing = await this.prisma.reviewItem.findUnique({
+        where: { id: itemId },
+        select: { reviewId: true },
+      });
       await this.prisma.reviewItem.delete({
         where: { id: itemId },
       });
+      if (existing?.reviewId) {
+        await this.recomputeAndUpdateReviewScores(existing.reviewId);
+      }
       this.logger.log(`Review item deleted successfully: ${itemId}`);
       return { message: `Review item ${itemId} deleted successfully.` };
     } catch (error) {
