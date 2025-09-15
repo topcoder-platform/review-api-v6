@@ -38,6 +38,33 @@ import { User } from 'src/shared/decorators/user.decorator';
 export class AiWorkflowController {
   constructor(private readonly aiWorkflowService: AiWorkflowService) {}
 
+  @Get('/:workflowId/runs/:runId/items')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.User,
+  )
+  @Scopes(Scope.ReadWorkflowRun)
+  @ApiOperation({
+    summary: 'Get AIWorkflowRunItems for a given workflow run ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The AIWorkflowRunItems for the given run ID.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Run not found.' })
+  async getRunItems(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.getRunItems(workflowId, runId, user);
+  }
+
   @Post()
   @Roles(UserRole.Admin)
   @Scopes(Scope.CreateWorkflow)
