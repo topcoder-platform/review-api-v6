@@ -21,7 +21,7 @@ export class ResourceApiService {
   /**
    * Fetch list of resource roles
    *
-   * @returns resolves to list of resouce role
+   * @returns resolves to list of resource role
    */
   async getResourceRoles(): Promise<{
     [key: string]: ResourceRole;
@@ -54,7 +54,7 @@ export class ResourceApiService {
   /**
    * Fetch list of resource
    *
-   * @returns resolves to list of resouce info
+   * @returns resolves to list of resource info
    */
   async getResources(query: {
     challengeId?: string;
@@ -90,7 +90,30 @@ export class ResourceApiService {
   }
 
   /**
-   * Validate resource fole
+   * Fetch list of role resources
+   *
+   * @returns resolves to list of resource info
+   */
+  async getMemberResourcesRoles(
+    challengeId?: string,
+    memberId?: string,
+  ): Promise<ResourceInfo[]> {
+    const resourceRoles = await this.getResourceRoles();
+    return (
+      await this.getResources({
+        challengeId: challengeId,
+        memberId: memberId,
+      })
+    )
+      .filter((resource) => resource.memberId === memberId)
+      .map((resource) => ({
+        ...resource,
+        roleName: resourceRoles?.[resource.roleId]?.name ?? '',
+      }));
+  }
+
+  /**
+   * Validate resource role
    *
    * @param requiredRoles list of require roles
    * @param authUser login user info
@@ -104,25 +127,14 @@ export class ResourceApiService {
     challengeId: string,
     resourceId: string,
   ): Promise<boolean> {
-    const resourceRoles = await this.getResourceRoles();
     const myResources = (
-      await this.getResources({
-        challengeId: challengeId,
-        memberId: authUser.userId,
-      })
+      await this.getMemberResourcesRoles(challengeId, authUser.userId)
     )
-      .filter(
-        (resource) =>
-          resource.id === resourceId && resource.memberId === authUser.userId,
-      )
-      .map((resource) => ({
-        ...resource,
-        roleName: resourceRoles?.[resource.roleId]?.name ?? '',
-      }))
+      .filter((resource) => resource.id === resourceId)
       .filter((resource) =>
         some(
           requiredRoles.map((item) => item.toLowerCase()),
-          (role: string) => resource.roleName.toLowerCase().indexOf(role) >= 0,
+          (role: string) => resource.roleName!.toLowerCase().indexOf(role) >= 0,
         ),
       );
     if (!myResources.length) {

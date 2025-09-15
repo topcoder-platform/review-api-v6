@@ -49,6 +49,8 @@ export const CommonConfig = {
       process.env.CHALLENGE_API_URL ?? 'http://localhost:4000/challenges/',
     resourceApiUrl:
       process.env.RESOURCE_API_URL ?? 'https://api.topcoder-dev.com/v6/',
+    // Base URL for Topcoder v6 APIs (challenge types, tracks, etc.)
+    v6ApiUrl: process.env.V6_API_URL ?? 'https://api.topcoder-dev.com/v6',
     memberApiUrl: process.env.MEMBER_API_URL ?? 'http://localhost:4000/members',
     onlineReviewUrlBase:
       'https://software.topcoder.com/review/actions/ViewProjectDetails?pid=',
@@ -68,5 +70,8 @@ export const CommonConfig = {
     rejectEmailTemplate:
       process.env.SENDGRID_REJECT_REVIEW_APPLICATION ??
       'd-82ed74e778e84d8c9bc02eeda0f44b5e',
+    contactManagersEmailTemplate:
+      process.env.SENDGRID_CONTACT_MANAGERS_TEMPLATE ??
+      'd-00000000000000000000000000000000',
   },
 };

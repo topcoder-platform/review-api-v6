@@ -25,8 +25,7 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { createReadStream } from 'fs';
-import { join } from 'path';
+import { memoryStorage } from 'multer';
 
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -75,7 +74,11 @@ export class SubmissionController {
   })
   // TODO: When we replace Community App, we should move this to JSON instead of form-data
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+    }),
+  )
   @ApiBody({
     required: true,
     type: 'multipart/form-data',
@@ -231,9 +234,13 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
-  async deleteSubmission(@Param('submissionId') submissionId: string) {
-    this.logger.log(`Deleting review type with ID: ${submissionId}`);
-    await this.service.deleteSubmission(submissionId);
+  async deleteSubmission(
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
+  ) {
+    this.logger.log(`Deleting submission with ID: ${submissionId}`);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    await this.service.deleteSubmission(authUser, submissionId);
     return { message: `Submission ${submissionId} deleted successfully.` };
   }
 
@@ -258,30 +265,26 @@ export class SubmissionController {
     },
   })
   async downloadSubmission(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
   ): Promise<StreamableFile> {
-    // The artifact file is from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const file = createReadStream(
-      join(process.cwd(), 'uploads/submission-123.zip'),
-    );
-    return Promise.resolve(
-      new StreamableFile(file, {
-        type: 'application/zip',
-        disposition: 'attachment; filename="submission-123.zip"',
-      }),
-    );
+    const authUser: JwtUser = req['user'] as JwtUser;
+    const { stream, contentType, fileName } =
+      await this.service.getSubmissionFileStream(authUser, submissionId);
+    return new StreamableFile(stream, {
+      type: contentType || 'application/zip',
+      disposition: `attachment; filename="${fileName}"`,
+    });
   }
 
   @Post('/:submissionId/artifacts')
   @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
-  @Scopes(Scope.CreateSubmission)
+  @Scopes(Scope.CreateSubmissionArtifacts)
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({
     summary: 'Create artifact for the given submission ID',
     description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission',
+      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
@@ -307,13 +310,12 @@ export class SubmissionController {
     type: ArtifactsCreateResponseDto,
   })
   async createArtifact(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
     @UploadedFile() file: Express.Multer.File,
   ): Promise<ArtifactsCreateResponseDto> {
-    const fileName = file.filename;
-    return Promise.resolve({
-      artifacts: fileName.substring(fileName.lastIndexOf('/') + 1),
-    });
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.createArtifact(authUser, submissionId, file);
   }
 
   @Get('/:submissionId/artifacts')
@@ -334,24 +336,18 @@ export class SubmissionController {
     type: [ArtifactsListResponseDto],
   })
   async listArtifacts(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Param('submissionId') submissionId: string,
   ): Promise<ArtifactsListResponseDto> {
-    // These artifacts are from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const mockData = {
-      artifacts: ['c56a4180-65aa-42ec-a945-5fd21dec0503'],
-    };
-    return Promise.resolve(mockData);
+    return this.service.listArtifacts(submissionId);
   }
 
   @Get('/:submissionId/artifacts/:artifactId/download')
   @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
-  @Scopes(Scope.ReadSubmission)
+  @Scopes(Scope.ReadSubmissionArtifacts)
   @ApiOperation({
     summary: 'Download artifact using Submission ID and Artifact ID',
     description:
-      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
@@ -370,30 +366,27 @@ export class SubmissionController {
     },
   })
   async downloadArtifacts(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
-    @Param('artifactId') artifactId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
+    @Param('artifactId') artifactId: string,
   ): Promise<StreamableFile> {
-    // The artifact file is from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const file = createReadStream(
-      join(process.cwd(), 'uploads/artifact-123.zip'),
-    );
-    return Promise.resolve(
-      new StreamableFile(file, {
-        type: 'application/zip',
-        disposition: 'attachment; filename="artifact-123.zip"',
-      }),
-    );
+    const authUser: JwtUser = req['user'] as JwtUser;
+    const { stream, contentType, fileName } =
+      await this.service.getArtifactStream(authUser, submissionId, artifactId);
+    return new StreamableFile(stream, {
+      type: contentType || 'application/octet-stream',
+      disposition: `attachment; filename="${fileName}"`,
+    });
   }
 
   @Delete('/:submissionId/artifacts/:artifactId')
-  @Roles(UserRole.Admin)
-  @Scopes(Scope.DeleteSubmission)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Scopes(Scope.DeleteSubmissionArtifacts)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a artifact',
-    description: 'Roles: Admin | Scopes: delete:submission',
+    description:
+      'Roles: Admin, Copilot, User, Reviewer | Scopes: delete:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
@@ -409,11 +402,13 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
-  // eslint-disable-next-line @typescript-eslint/require-await
   async deleteArtifact(
-    @Param('submissionId') submissionId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
-    @Param('artifactId') artifactId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
+    @Param('artifactId') artifactId: string,
   ) {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    await this.service.deleteArtifact(authUser, submissionId, artifactId);
     return;
   }
 
@@ -434,12 +429,10 @@ export class SubmissionController {
     description: 'Count of submissions',
   })
   async countSubmissions(
-    @Param('challengeId') challengeId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Param('challengeId') challengeId: string,
   ): Promise<number> {
-    // These artifacts are from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    return Promise.resolve(3);
+    // Return the actual count of submissions for the challenge
+    return this.service.countSubmissionsForChallenge(challengeId);
   }
 
   @Get('/download/:challengeId')
@@ -463,19 +456,20 @@ export class SubmissionController {
     },
   })
   async downloadAllSubmission(
-    @Param('challengeId') challengeId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    @Req() req: Request,
+    @Param('challengeId') challengeId: string,
+    @Query('status') status?: string,
   ): Promise<StreamableFile> {
-    // The artifact file is from S3 in original codes
-    // Not data from DB
-    // So just return mock data now.
-    const file = createReadStream(
-      join(process.cwd(), 'uploads/submission-123.zip'),
-    );
-    return Promise.resolve(
-      new StreamableFile(file, {
-        type: 'application/zip',
-        disposition: 'attachment; filename="submission-123.zip"',
-      }),
-    );
+    const authUser: JwtUser = req['user'] as JwtUser;
+    const { stream, contentType, fileName } =
+      await this.service.getChallengeSubmissionsZipStream(
+        authUser,
+        challengeId,
+        { status },
+      );
+    return new StreamableFile(stream, {
+      type: contentType || 'application/zip',
+      disposition: `attachment; filename="${fileName}"`,
+    });
   }
 }

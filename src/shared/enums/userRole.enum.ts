@@ -5,5 +5,7 @@ export enum UserRole {
   Admin = 'administrator',
   Copilot = 'copilot',
   Reviewer = 'reviewer',
+  Submitter = 'Submitter',
+  ProjectManager = 'Manager',
   User = 'Topcoder User',
 }

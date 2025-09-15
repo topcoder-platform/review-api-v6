@@ -46,8 +46,8 @@ export class JwtService implements OnModuleInit {
     try {
       // Use tc-core-library-js for JWT validation
       const payload = await new Promise<any>((resolve, reject) => {
-        // Create a mock request object with the authorization header
-        const mockReq = {
+        // Create a request object with the authorization header
+        const req = {
           headers: {
             authorization: token.startsWith('Bearer ')
               ? token
@@ -55,7 +55,7 @@ export class JwtService implements OnModuleInit {
           },
         };
 
-        const mockRes = {};
+        const res = {};
 
         const next = (error?: any) => {
           if (error) {
@@ -64,7 +64,7 @@ export class JwtService implements OnModuleInit {
           }
 
           // tc-core-library-js should have attached authUser to the request
-          const authUser = (mockReq as any).authUser;
+          const authUser = (req as any).authUser;
 
           if (!authUser) {
             return reject(new UnauthorizedException('Invalid token'));
@@ -74,7 +74,7 @@ export class JwtService implements OnModuleInit {
         };
 
         // Call the tc-core-library-js authenticator
-        this.jwtAuthenticator(mockReq, mockRes, next);
+        this.jwtAuthenticator(req, res, next);
       });
 
       console.log(`Decoded token: ${JSON.stringify(payload)}`);

@@ -2,12 +2,6 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class AppealResponseBaseDto {
   @ApiProperty({
-    description: 'The appeal ID associated with the response',
-    example: 'appeal123',
-  })
-  appealId: string;
-
-  @ApiProperty({
     description: 'The resource ID associated with the appeal response',
     example: 'resource456',
   })
@@ -29,6 +23,12 @@ export class AppealResponseBaseDto {
 export class AppealResponseRequestDto extends AppealResponseBaseDto {}
 
 export class AppealResponseResponseDto extends AppealResponseBaseDto {
+  @ApiProperty({
+    description: 'The appeal ID associated with the response',
+    example: 'appeal123',
+  })
+  appealId: string;
+
   @ApiProperty({
     description: 'The appeal response ID',
     example: 'appeal456',
@@ -131,11 +131,10 @@ export class AppealResponseDto extends AppealBaseDto {
 export function mapAppealResponseRequestToDto(
   request: AppealResponseRequestDto,
 ) {
-  // Remove appealId when creating through relationship - Prisma sets it automatically
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { appealId, ...requestWithoutAppealId } = request;
-
+  // Only forward allowed fields; relation ID is set by Prisma in nested create
   return {
-    ...requestWithoutAppealId,
+    resourceId: request.resourceId,
+    content: request.content,
+    success: request.success,
   };
 }

@@ -16,10 +16,9 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { ProjectResultResponseDto } from 'src/dto/projectResult.dto';
-import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
-import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ProjectResultService } from './projectResult.service';
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()
@@ -27,10 +26,7 @@ import { PrismaErrorService } from '../../shared/modules/global/prisma-error.ser
 export class ProjectResultController {
   private readonly logger: LoggerService;
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly prismaErrorService: PrismaErrorService,
-  ) {
+  constructor(private readonly projectResultService: ProjectResultService) {
     this.logger = LoggerService.forRoot('ProjectResultController');
   }
 
@@ -62,23 +58,20 @@ export class ProjectResultController {
     const skip = (page - 1) * perPage;
 
     try {
-      const [projectResults, totalCount] = await Promise.all([
-        this.prisma.challengeResult.findMany({
-          where: { challengeId },
-          skip,
-          take: perPage,
-        }),
-        this.prisma.challengeResult.count({
-          where: { challengeId },
-        }),
-      ]);
+      const allResults =
+        await this.projectResultService.getProjectResultsFromChallenge(
+          challengeId,
+        );
+
+      const paginatedResults = allResults.slice(skip, skip + perPage);
+      const totalCount = allResults.length;
 
       this.logger.log(
-        `Found ${projectResults.length} project results (page ${page} of ${Math.ceil(totalCount / perPage)})`,
+        `Found ${paginatedResults.length} project results (page ${page} of ${Math.ceil(totalCount / perPage)})`,
       );
 
       return {
-        data: projectResults as ProjectResultResponseDto[],
+        data: paginatedResults,
         meta: {
           page,
           perPage,
@@ -87,14 +80,14 @@ export class ProjectResultController {
         },
       };
     } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
+      this.logger.error(
+        `Error fetching project results for challenge ${challengeId}:`,
         error,
-        `fetching project results for challenge ${challengeId}`,
       );
       throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
+        message: error.message || 'Failed to fetch project results',
+        code: 'PROJECT_RESULT_FETCH_ERROR',
+        details: error,
       });
     }
   }
