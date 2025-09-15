@@ -272,11 +272,15 @@ export class ReviewOpportunityService {
           `Review opportunity already exists for challenge ${dto.challengeId} and type ${dto.type}`,
         );
       }
+      const userId =
+        authUser.userId === null || authUser.userId === undefined
+          ? ''
+          : String(authUser.userId);
       const entity = await this.prisma.reviewOpportunity.create({
         data: {
           ...dto,
-          createdBy: authUser.userId ?? '',
-          updatedBy: authUser.userId ?? '',
+          createdBy: userId,
+          updatedBy: userId,
         },
       });
       return this.buildResponse(entity, challengeData);
@@ -336,7 +340,10 @@ export class ReviewOpportunityService {
    */
   async update(authUser: JwtUser, id: string, dto: UpdateReviewOpportunityDto) {
     try {
-      const updatedBy = authUser.userId ?? '';
+      const updatedBy =
+        authUser.userId === null || authUser.userId === undefined
+          ? ''
+          : String(authUser.userId);
       await this.checkExists(id);
       const entity = await this.prisma.reviewOpportunity.update({
         where: { id },
