@@ -395,7 +395,9 @@ export class AiWorkflowService {
     const challengeId = submission?.challengeId;
 
     if (!challengeId) {
-      this.logger.error(`Challenge ID not found for submission ${run.submissionId}`);
+      this.logger.error(
+        `Challenge ID not found for submission ${run.submissionId}`,
+      );
       throw new InternalServerErrorException(
         `Challenge ID not found for submission ${run.submissionId}`,
       );
