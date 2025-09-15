@@ -23,6 +23,7 @@ import {
   ChallengeApiService,
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
+import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
@@ -34,6 +35,7 @@ export class ReviewOpportunityService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
+    private readonly challengeCatalog: ChallengeCatalogService,
     private readonly prismaErrorService: PrismaErrorService,
   ) {}
 
@@ -75,8 +77,12 @@ export class ReviewOpportunityService {
       // query data from db
       const entityList =
         await this.prisma.reviewOpportunity.findMany(prismaFilter);
+      const challengeMap = await this.buildChallengeMap(entityList);
+      const trackFilterIds = await this.resolveTrackFilters(dto.tracks);
+      const typeFilterIds = await this.resolveTypeFilters(dto.types);
+
       // build result with challenge data
-      let responseList = await this.assembleList(entityList);
+      let responseList = this.buildResponseList(entityList, challengeMap);
       // filter with challenge fields
       if (dto.numSubmissionsFrom) {
         responseList = responseList.filter(
@@ -88,12 +94,27 @@ export class ReviewOpportunityService {
           (r) => (r.submissions ?? 0) <= (dto.numSubmissionsTo ?? 0),
         );
       }
-      if (dto.tracks && dto.tracks.length > 0) {
-        responseList = responseList.filter(
-          (r) =>
-            r.challengeData &&
-            dto.tracks?.includes(r.challengeData['track'] as string),
-        );
+      if (trackFilterIds.size > 0) {
+        responseList = responseList.filter((r) => {
+          const challenge = challengeMap.get(r.challengeId);
+          if (!challenge) return false;
+          const trackId =
+            challenge.trackId ||
+            this.challengeCatalog.getTrackIdByName(
+              challenge.track || challenge.legacy?.track,
+            );
+          return !!trackId && trackFilterIds.has(trackId);
+        });
+      }
+      if (typeFilterIds.size > 0) {
+        responseList = responseList.filter((r) => {
+          const challenge = challengeMap.get(r.challengeId);
+          if (!challenge) return false;
+          const typeId =
+            challenge.typeId ||
+            this.challengeCatalog.getTypeIdByName((challenge as any)?.type);
+          return !!typeId && typeFilterIds.has(typeId);
+        });
       }
       if (dto.skills && dto.skills.length > 0) {
         responseList = responseList.filter(
@@ -127,6 +148,92 @@ export class ReviewOpportunityService {
         details: errorResponse.details,
       });
     }
+  }
+
+  private async resolveTrackFilters(tracks?: string[]): Promise<Set<string>> {
+    const ids = new Set<string>();
+    if (!tracks || tracks.length === 0) {
+      return ids;
+    }
+
+    let catalogLoaded = false;
+    for (const entry of tracks) {
+      const value = (entry ?? '').trim();
+      if (!value) {
+        continue;
+      }
+
+      if (this.looksLikeGuid(value)) {
+        ids.add(value);
+        continue;
+      }
+
+      if (!catalogLoaded) {
+        await this.challengeCatalog.ensureTracksLoaded();
+        catalogLoaded = true;
+      }
+
+      const byName = this.challengeCatalog.getTrackIdByName(value);
+      if (byName) {
+        ids.add(byName);
+        continue;
+      }
+
+      throw new BadRequestException(
+        `Challenge track '${entry}' is not recognized.`,
+      );
+    }
+
+    return ids;
+  }
+
+  private async resolveTypeFilters(types?: string[]): Promise<Set<string>> {
+    const ids = new Set<string>();
+    if (!types || types.length === 0) {
+      return ids;
+    }
+
+    let catalogLoaded = false;
+    for (const entry of types) {
+      const value = (entry ?? '').trim();
+      if (!value) {
+        continue;
+      }
+
+      if (this.looksLikeGuid(value)) {
+        ids.add(value);
+        continue;
+      }
+
+      if (!catalogLoaded) {
+        await this.challengeCatalog.ensureTypesLoaded();
+        catalogLoaded = true;
+      }
+
+      const byName = this.challengeCatalog.getTypeIdByName(value);
+      if (byName) {
+        ids.add(byName);
+        continue;
+      }
+
+      throw new BadRequestException(
+        `Challenge type '${entry}' is not recognized.`,
+      );
+    }
+
+    return ids;
+  }
+
+  private looksLikeGuid(input: string): boolean {
+    const value = input.trim();
+    if (!value) {
+      return false;
+    }
+
+    const hyphenated =
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const compact = /^[0-9a-fA-F]{32}$/;
+    return hyphenated.test(value) || compact.test(value);
   }
 
   /**
@@ -327,20 +434,43 @@ export class ReviewOpportunityService {
   private async assembleList(
     entityList: any[],
   ): Promise<ReviewOpportunityResponseDto[]> {
-    // get challenge id and remove duplicated
+    const challengeMap = await this.buildChallengeMap(entityList);
+    return this.buildResponseList(entityList, challengeMap);
+  }
+
+  private async buildChallengeMap(
+    entityList: any[],
+  ): Promise<Map<string, ChallengeData>> {
     const challengeIdList: string[] = [
-      ...new Set(entityList.map((e: any) => e.challengeId as string)),
+      ...new Set(
+        (entityList || [])
+          .map((e: any) => e.challengeId as string)
+          .filter((id) => !!id),
+      ),
     ];
-    // get all challenge data
+
+    if (challengeIdList.length === 0) {
+      return new Map();
+    }
+
     const challengeList =
       await this.challengeService.getChallenges(challengeIdList);
-    // build challenge id -> challenge data map
-    const challengeMap = new Map();
-    challengeList.forEach((c) => challengeMap.set(c.id, c));
-    // build response list.
-    return entityList.map((e) => {
-      return this.buildResponse(e, challengeMap.get(e.challengeId));
-    });
+    const challengeMap = new Map<string, ChallengeData>();
+    for (const challenge of challengeList) {
+      if (challenge?.id) {
+        challengeMap.set(challenge.id, challenge);
+      }
+    }
+    return challengeMap;
+  }
+
+  private buildResponseList(
+    entityList: any[],
+    challengeMap: Map<string, ChallengeData>,
+  ): ReviewOpportunityResponseDto[] {
+    return (entityList || []).map((e) =>
+      this.buildResponse(e, challengeMap.get(e.challengeId)),
+    );
   }
 
   /**
@@ -363,7 +493,7 @@ export class ReviewOpportunityService {
    */
   private buildResponse(
     entity: any,
-    challengeData: ChallengeData,
+    challengeData?: ChallengeData,
   ): ReviewOpportunityResponseDto {
     const ret = new ReviewOpportunityResponseDto();
     ret.id = entity.id;
@@ -375,17 +505,22 @@ export class ReviewOpportunityService {
     ret.duration = entity.duration;
     ret.basePayment = entity.basePayment;
     ret.incrementalPayment = entity.incrementalPayment;
-    ret.submissions = challengeData.numOfSubmissions ?? 0;
-    ret.challengeName = challengeData.name;
-    ret.challengeData = {
-      id: challengeData.legacyId,
-      title: challengeData.name,
-      track: challengeData.legacy?.track || challengeData.track || '',
-      subTrack: challengeData.legacy?.subTrack || '',
-      technologies: challengeData.tags || [],
-      version: '1.0',
-      platforms: [''],
-    };
+    ret.submissions = challengeData?.numOfSubmissions ?? 0;
+    ret.challengeName = challengeData?.name ?? '';
+    ret.challengeData = challengeData
+      ? {
+          id: challengeData.legacyId,
+          title: challengeData.name,
+          type: (challengeData as any)?.type || '',
+          typeId: challengeData.typeId ?? '',
+          track: challengeData.legacy?.track || challengeData.track || '',
+          trackId: challengeData.trackId ?? '',
+          subTrack: challengeData.legacy?.subTrack || '',
+          technologies: challengeData.tags || [],
+          version: '1.0',
+          platforms: [''],
+        }
+      : null;
 
     // review applications
     if (entity.applications && entity.applications.length > 0) {

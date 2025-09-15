@@ -99,9 +99,16 @@ export class ReviewOpportunityController {
   })
   @ApiQuery({
     name: 'tracks',
-    description: 'Challenge tracks',
+    description: 'Challenge tracks (ID or name)',
     type: 'array',
     example: ['CODE'],
+    required: false,
+  })
+  @ApiQuery({
+    name: 'types',
+    description: 'Challenge types (ID or name)',
+    type: 'array',
+    example: ['CHALLENGE'],
     required: false,
   })
   @ApiQuery({
