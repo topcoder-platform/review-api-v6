@@ -5,6 +5,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
@@ -83,6 +84,12 @@ export class AiWorkflowService {
         updatedAt: new Date(),
         updatedBy: '',
       },
+    }).catch((e) => {
+      if (e.code === 'P2002') {
+        throw new ConflictException(
+          `Unique constraint failed on the fields - ${e.meta.target.join(',')}`,
+        );
+      }
     });
   }
 
