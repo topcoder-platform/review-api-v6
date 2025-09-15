@@ -13,6 +13,7 @@ import {
   CreateAiWorkflowRunDto,
   UpdateAiWorkflowDto,
   UpdateAiWorkflowRunDto,
+  UpdateAiWorkflowRunItemDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
@@ -363,5 +364,110 @@ export class AiWorkflowService {
 
       throw error;
     }
+  }
+
+  async updateRunItem(
+    workflowId: string,
+    runId: string,
+    itemId: string,
+    patchData: UpdateAiWorkflowRunItemDto,
+    user: JwtUser,
+  ) {
+
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id: workflowId },
+    });
+    if (!workflow) {
+      this.logger.error(`Workflow with id ${workflowId} not found.`);
+      throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+    }
+
+    const run = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: runId },
+    });
+    if (!run || run.workflowId !== workflowId) {
+      this.logger.error(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+      throw new NotFoundException(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+    }
+
+    const runItem = await this.prisma.aiWorkflowRunItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!runItem || runItem.workflowRunId !== runId) {
+      this.logger.error(
+        `Run item with id ${itemId} not found or does not belong to run ${runId}.`,
+      );
+      throw new NotFoundException(
+        `Run item with id ${itemId} not found or does not belong to run ${runId}.`,
+      );
+    }
+
+    const updateData: any = {};
+
+    if (patchData.content !== undefined) {
+      updateData.content = patchData.content;
+    }
+    if (patchData.upVotes !== undefined) {
+      updateData.upVotes = patchData.upVotes;
+    }
+    if (patchData.downVotes !== undefined) {
+      updateData.downVotes = patchData.downVotes;
+    }
+    if (patchData.questionScore !== undefined) {
+      updateData.questionScore = patchData.questionScore;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updatedRunItem = await tx.aiWorkflowRunItem.update({
+        where: { id: itemId },
+        data: updateData,
+      });
+
+      if (patchData.comments) {
+        for (const comment of patchData.comments) {
+          if (comment.id) {
+            const existingComment = await tx.aiWorkflowRunItemComment.findUnique({
+              where: { id: comment.id },
+            });
+            if (!existingComment) {
+              this.logger.error(`Comment with id ${comment.id} not found.`);
+              throw new NotFoundException(`Comment with id ${comment.id} not found.`);
+            }
+
+            if (existingComment.createdBy !== user.userId && !user.roles?.includes(UserRole.Admin)) {
+              this.logger.error(`User ${user.userId} unauthorized to update comment ${comment.id}.`);
+              throw new ForbiddenException(`Unauthorized to update comment ${comment.id}.`);
+            }
+
+            await tx.aiWorkflowRunItemComment.update({
+              where: { id: comment.id },
+              data: {
+                content: comment.content,
+                updatedAt: new Date(),
+              },
+            });
+          } else {
+            await tx.aiWorkflowRunItemComment.create({
+              data: {
+                workflowRunItemId: itemId,
+                content: comment.content,
+                parentId: comment.parentId,
+                createdBy: '',
+                createdAt: new Date(),
+                userId: user.userId as string,
+                updatedAt: new Date(),
+                updatedBy: '',
+              },
+            });
+          }
+        }
+      }
+
+      return updatedRunItem;
+    });
   }
 }

@@ -9,6 +9,8 @@ import {
   IsInt,
   IsDate,
   Min,
+  IsUUID,
+  IsBoolean,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -133,4 +135,45 @@ export class CreateAiWorkflowRunItemsDto {
   @ValidateNested({ each: true })
   @Type(() => CreateAiWorkflowRunItemDto)
   items: CreateAiWorkflowRunItemDto[];
+}
+
+// New DTOs for update run item and comments
+
+export class CommentDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  parentId?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  createdBy: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsDate()
+  @Transform(({ value }) => (value ? new Date(value) : undefined))
+  createdAt?: Date;
+}
+
+export class UpdateAiWorkflowRunItemDto extends PartialType(
+  OmitType(CreateAiWorkflowRunItemDto, ['scorecardQuestionId'] as const),
+) {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CommentDto)
+  comments?: CommentDto[];
 }
