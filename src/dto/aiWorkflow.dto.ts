@@ -1,12 +1,16 @@
 import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
   IsNumber,
+  IsArray,
+  ValidateNested,
   IsOptional,
+  IsInt,
   IsDate,
+  Min,
 } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 
 export class CreateAiWorkflowDto {
   @ApiProperty()
@@ -86,3 +90,39 @@ export class UpdateAiWorkflowRunDto extends OmitType(
   PartialType(CreateAiWorkflowRunDto),
   ['submissionId'],
 ) {}
+
+export class CreateAiWorkflowRunItemDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  scorecardQuestionId: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  upVotes?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  downVotes?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  questionScore?: number;
+}
+
+export class CreateAiWorkflowRunItemsDto {
+  @ApiProperty({ type: [CreateAiWorkflowRunItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateAiWorkflowRunItemDto)
+  items: CreateAiWorkflowRunItemDto[];
+}
