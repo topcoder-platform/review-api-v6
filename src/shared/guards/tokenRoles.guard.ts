@@ -21,7 +21,7 @@ export class TokenRolesGuard implements CanActivate {
     private jwtService: JwtService,
   ) {}
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext): boolean {
     // Get required roles and scopes from decorators
     const requiredRoles =
       this.reflector.get<UserRole[]>(ROLES_KEY, context.getHandler()) || [];
@@ -38,7 +38,7 @@ export class TokenRolesGuard implements CanActivate {
 
     try {
       const user = request['user'] ?? {};
-      
+
       // Check role-based access for regular users
       if (user.roles && requiredRoles.length > 0) {
         const hasRole = requiredRoles.some((role) =>

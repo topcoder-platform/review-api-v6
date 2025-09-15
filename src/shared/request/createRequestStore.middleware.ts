@@ -7,7 +7,11 @@ export class CreateRequestStoreMiddleware implements NestMiddleware {
   constructor() {}
 
   use(req: any, res: Response, next: NextFunction) {
-    const requestUserId = req['user'] ? (req['user'].isMachine ? 'System' : `${req['user'].userId}`) : undefined;
+    const requestUserId = req['user']
+      ? req['user'].isMachine
+        ? 'System'
+        : `${req['user'].userId}`
+      : undefined;
     const requestMetaData = new RequestMetadata({ userId: requestUserId });
 
     saveStore(requestMetaData, next);
