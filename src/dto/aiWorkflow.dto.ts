@@ -136,8 +136,6 @@ export class CreateAiWorkflowRunItemsDto {
   items: CreateAiWorkflowRunItemDto[];
 }
 
-// New DTOs for update run item and comments
-
 export class CommentDto {
   @ApiProperty({ required: false })
   @IsOptional()
