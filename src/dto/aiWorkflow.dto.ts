@@ -12,6 +12,9 @@ import {
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
+const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
+  typeof value === 'string' ? value.trim() : undefined;
+
 export class CreateAiWorkflowDto {
   @ApiProperty()
   @IsString()
@@ -25,21 +28,25 @@ export class CreateAiWorkflowDto {
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   description: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   defUrl: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   gitId: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   gitOwner: string;
 
@@ -99,6 +106,7 @@ export class CreateAiWorkflowRunItemDto {
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   content: string;
 
