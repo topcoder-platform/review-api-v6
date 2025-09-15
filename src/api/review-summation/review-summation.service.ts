@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PaginationDto } from 'src/dto/pagination.dto';
 import {
@@ -27,6 +28,33 @@ export class ReviewSummationService {
 
   async createSummation(authUser: JwtUser, body: ReviewSummationRequestDto) {
     try {
+      // Validate submissionId format and existence
+      if (body.submissionId) {
+        // First check if the submissionId length is valid (should be 14 characters for nanoid)
+        if (body.submissionId.length > 14) {
+          throw new BadRequestException({
+            message: `Invalid submissionId format. Expected 14 characters, got ${body.submissionId.length}`,
+            code: 'INVALID_SUBMISSION_ID_FORMAT',
+            details: {
+              field: 'submissionId',
+              expectedLength: 14,
+              actualLength: body.submissionId.length,
+            },
+          });
+        }
+
+        // Check if submission exists
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: body.submissionId },
+        });
+
+        if (!submission) {
+          throw new NotFoundException(
+            `Submission with ID ${body.submissionId} not found. Please verify the submission ID is correct.`,
+          );
+        }
+      }
+
       const data = await this.prisma.reviewSummation.create({
         data: {
           ...body,
@@ -38,10 +66,50 @@ export class ReviewSummationService {
       this.logger.log(`Review summation created with ID: ${data.id}`);
       return data as ReviewSummationResponseDto;
     } catch (error) {
+      // Re-throw NotFoundException and BadRequestException as-is
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating review summation for submission ${body.submissionId}`,
+        body,
       );
+
+      // Throw appropriate HTTP exception based on error code
+      if (errorResponse.code === 'FOREIGN_KEY_CONSTRAINT_FAILED') {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      if (errorResponse.code === 'UNIQUE_CONSTRAINT_FAILED') {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      if (
+        errorResponse.code === 'VALIDATION_ERROR' ||
+        errorResponse.code === 'REQUIRED_FIELD_MISSING' ||
+        errorResponse.code === 'INVALID_DATA'
+      ) {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      // For other errors, throw internal server error
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -159,6 +227,34 @@ export class ReviewSummationService {
   ) {
     try {
       await this.checkSummation(id);
+
+      // If submissionId is provided, validate it exists and check its length
+      if (body.submissionId) {
+        // First check if the submissionId length is valid (should be 14 characters for nanoid)
+        if (body.submissionId.length > 14) {
+          throw new BadRequestException({
+            message: `Invalid submissionId format. Expected 14 characters, got ${body.submissionId.length}`,
+            code: 'INVALID_SUBMISSION_ID_FORMAT',
+            details: {
+              field: 'submissionId',
+              expectedLength: 14,
+              actualLength: body.submissionId.length,
+            },
+          });
+        }
+
+        // Check if submission exists
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: body.submissionId },
+        });
+
+        if (!submission) {
+          throw new NotFoundException(
+            `Submission with ID ${body.submissionId} not found. Please verify the submission ID is correct.`,
+          );
+        }
+      }
+
       const data = await this.prisma.reviewSummation.update({
         where: { id },
         data: {
@@ -167,18 +263,53 @@ export class ReviewSummationService {
           updatedAt: new Date(),
         },
       });
-      this.logger.log(`Review type updated successfully: ${id}`);
+      this.logger.log(`Review summation updated successfully: ${id}`);
       return data as ReviewSummationResponseDto;
     } catch (error) {
-      // Re-throw NotFoundException from checkSummation as-is
-      if (error instanceof NotFoundException) {
+      // Re-throw NotFoundException and BadRequestException from checkSummation and validation as-is
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
 
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `updating review summation ${id}`,
+        body,
       );
+
+      // Throw appropriate HTTP exception based on error code
+      if (errorResponse.code === 'FOREIGN_KEY_CONSTRAINT_FAILED') {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      if (errorResponse.code === 'UNIQUE_CONSTRAINT_FAILED') {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      if (
+        errorResponse.code === 'VALIDATION_ERROR' ||
+        errorResponse.code === 'REQUIRED_FIELD_MISSING' ||
+        errorResponse.code === 'INVALID_DATA'
+      ) {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      // For other errors, throw internal server error
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
