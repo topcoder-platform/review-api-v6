@@ -440,8 +440,7 @@ export class SubmissionController {
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'Download all submissions for a challenge as a ZIP file',
-    description:
-      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
+    description: 'Roles: Copilot, Admin, Reviewer. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'challengeId',
