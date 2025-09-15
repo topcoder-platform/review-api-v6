@@ -587,6 +587,14 @@ export class SubmissionService {
       orderBy: { createdAt: 'asc' },
     });
 
+    if (!submissions.length) {
+      throw new NotFoundException({
+        message: `No submissions found for challenge ${challengeId}`,
+        code: 'SUBMISSIONS_NOT_FOUND',
+        details: { challengeId },
+      });
+    }
+
     // Build memberId -> handle map for naming (admin/copilot case)
     let handleMap = new Map<string, string>();
     try {
