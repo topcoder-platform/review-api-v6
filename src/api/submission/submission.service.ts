@@ -163,8 +163,50 @@ export class SubmissionService {
     return { artifacts: artifactId };
   }
 
-  async listArtifacts(submissionId: string): Promise<{ artifacts: string[] }> {
-    await this.checkSubmission(submissionId);
+  async listArtifacts(
+    authUser: JwtUser,
+    submissionId: string,
+  ): Promise<{ artifacts: string[] }> {
+    const submission = await this.checkSubmission(submissionId);
+
+    if (!authUser.isMachine && !isAdmin(authUser)) {
+      const uid = authUser.userId ? String(authUser.userId) : '';
+      const isOwner = !!uid && submission.memberId === uid;
+      let isReviewer = false;
+      let isCopilot = false;
+
+      if (!isOwner && submission.challengeId && uid) {
+        try {
+          const resources =
+            await this.resourceApiService.getMemberResourcesRoles(
+              submission.challengeId,
+              uid,
+            );
+          for (const resource of resources) {
+            const rn = (resource.roleName || '').toLowerCase();
+            if (rn.includes('reviewer')) isReviewer = true;
+            if (rn.includes('copilot')) isCopilot = true;
+            if (isReviewer || isCopilot) break;
+          }
+        } catch {
+          isReviewer = false;
+          isCopilot = false;
+        }
+      }
+
+      if (!isOwner && !isReviewer && !isCopilot) {
+        throw new ForbiddenException({
+          message:
+            'Only the submission owner, a challenge reviewer/copilot, or an admin can list submission artifacts',
+          code: 'FORBIDDEN_ARTIFACT_LIST',
+          details: {
+            submissionId,
+            requester: uid,
+            challengeId: submission.challengeId,
+          },
+        });
+      }
+    }
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
