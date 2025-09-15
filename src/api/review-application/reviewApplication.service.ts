@@ -190,11 +190,15 @@ export class ReviewApplicationService {
   async approve(authUser: JwtUser, id: string): Promise<void> {
     try {
       const entity = await this.checkExists(id);
+      const updatedBy =
+        authUser.userId === null || authUser.userId === undefined
+          ? ''
+          : String(authUser.userId);
       await this.prisma.reviewApplication.update({
         where: { id },
         data: {
           status: ReviewApplicationStatus.APPROVED,
-          updatedBy: authUser.userId ?? '',
+          updatedBy,
         },
       });
       // send email
@@ -225,11 +229,15 @@ export class ReviewApplicationService {
   async reject(authUser: JwtUser, id: string): Promise<void> {
     try {
       const entity = await this.checkExists(id);
+      const updatedBy =
+        authUser.userId === null || authUser.userId === undefined
+          ? ''
+          : String(authUser.userId);
       await this.prisma.reviewApplication.update({
         where: { id },
         data: {
           status: ReviewApplicationStatus.REJECTED,
-          updatedBy: authUser.userId ?? '',
+          updatedBy,
         },
       });
       // send email
@@ -268,11 +276,15 @@ export class ReviewApplicationService {
         include: { opportunity: true },
       });
       // update all pending
+      const updatedBy =
+        authUser.userId === null || authUser.userId === undefined
+          ? ''
+          : String(authUser.userId);
       await this.prisma.reviewApplication.updateMany({
         where: { opportunityId, status: ReviewApplicationStatus.PENDING },
         data: {
           status: ReviewApplicationStatus.REJECTED,
-          updatedBy: authUser.userId ?? '',
+          updatedBy,
         },
       });
       // send emails to these users
