@@ -70,27 +70,29 @@ export class AiWorkflowService {
       );
     }
 
-    return this.prisma.aiWorkflow.create({
-      data: {
-        defUrl,
-        description,
-        gitId,
-        gitOwner,
-        name,
-        scorecardId,
-        llmId,
-        // TODO: This has to be removed once the prisma middleware is implemented
-        createdBy: '',
-        updatedAt: new Date(),
-        updatedBy: '',
-      },
-    }).catch((e) => {
-      if (e.code === 'P2002') {
-        throw new ConflictException(
-          `Unique constraint failed on the fields - ${e.meta.target.join(',')}`,
-        );
-      }
-    });
+    return this.prisma.aiWorkflow
+      .create({
+        data: {
+          defUrl,
+          description,
+          gitId,
+          gitOwner,
+          name,
+          scorecardId,
+          llmId,
+          // TODO: This has to be removed once the prisma middleware is implemented
+          createdBy: '',
+          updatedAt: new Date(),
+          updatedBy: '',
+        },
+      })
+      .catch((e) => {
+        if (e.code === 'P2002') {
+          throw new ConflictException(
+            `Unique constraint failed on the fields - ${e.meta.target.join(',')}`,
+          );
+        }
+      });
   }
 
   async getWorkflowById(id: string) {
@@ -210,7 +212,6 @@ export class AiWorkflowService {
     });
 
     return { createdCount: createdItems.count };
-
   }
 
   async createWorkflowRun(workflowId: string, runData: CreateAiWorkflowRunDto) {
@@ -240,7 +241,6 @@ export class AiWorkflowService {
     }
   }
 
-  
   async getWorkflowRuns(
     workflowId: string,
     user: JwtUser,
