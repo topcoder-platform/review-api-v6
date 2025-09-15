@@ -106,6 +106,7 @@ export class CreateAiWorkflowRunItemDto {
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   content: string;
 
