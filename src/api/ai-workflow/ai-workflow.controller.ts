@@ -78,8 +78,7 @@ export class AiWorkflowController {
   @ApiResponse({ status: 404, description: 'AI workflow not found.' })
   async update(
     @Param('id') id: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true }))
-    updateDto: UpdateAiWorkflowDto,
+    @Body() updateDto: UpdateAiWorkflowDto,
   ) {
     return this.aiWorkflowService.updateWorkflow(id, updateDto);
   }
