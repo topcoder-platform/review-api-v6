@@ -29,6 +29,8 @@ import { AiWorkflowService } from './ai-workflow/ai-workflow.service';
 import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
 import { ReviewService } from './review/review.service';
 import { ContactRequestsService } from './contact/contactRequests.service';
+import { ProjectResultService } from './project-result/projectResult.service';
+import { ProjectResultController } from './project-result/projectResult.controller';
 
 @Module({
   imports: [
@@ -51,6 +53,7 @@ import { ContactRequestsService } from './contact/contactRequests.service';
     ReviewHistoryController,
     WebhookController,
     AiWorkflowController,
+    ProjectResultController,
   ],
   providers: [
     ReviewService,
@@ -65,6 +68,7 @@ import { ContactRequestsService } from './contact/contactRequests.service';
     SubmissionService,
     ReviewSummationService,
     AiWorkflowService,
+    ProjectResultService,
   ],
 })
 export class ApiModule {}
