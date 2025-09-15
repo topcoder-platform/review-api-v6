@@ -42,7 +42,7 @@ export class ReviewApplicationService {
     authUser: JwtUser,
     dto: CreateReviewApplicationDto,
   ): Promise<ReviewApplicationResponseDto> {
-    const userId = authUser.userId as string;
+    const userId = String(authUser.userId);
     const handle = authUser.handle as string;
 
     try {

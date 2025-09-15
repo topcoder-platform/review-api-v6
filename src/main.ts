@@ -109,7 +109,7 @@ async function bootstrap() {
   app.useBodyParser('urlencoded', { limit: '15mb', extended: true });
   // Add the global validation pipe to auto-map and validate DTOs
   // Note that the whitelist option sanitizes input DTOs so only properties defined on the class are set
-  app.useGlobalPipes(new ValidationPipe({ whitelist: false, transform: true }));
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   logger.log('Body parsers and validation pipe configured');
 
   // Setup swagger

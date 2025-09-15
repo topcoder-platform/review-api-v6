@@ -15,6 +15,7 @@ import { KafkaModule } from '../kafka/kafka.module';
 import { SubmissionBaseService } from './submission-base.service';
 import { GiteaService } from './gitea.service';
 import { SubmissionScanCompleteOrchestrator } from './submission-scan-complete.orchestrator';
+import { ChallengeCatalogService } from './challenge-catalog.service';
 import { SubmissionService } from 'src/api/submission/submission.service';
 import { ChallengePrismaService } from './challenge-prisma.service';
 
@@ -39,6 +40,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
     PrismaErrorService,
     M2MService,
     ChallengeApiService,
+    ChallengeCatalogService,
     ChallengePrismaService,
     ResourceApiService,
     EventBusService,
@@ -55,6 +57,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
     PrismaErrorService,
     M2MService,
     ChallengeApiService,
+    ChallengeCatalogService,
     ChallengePrismaService,
     ResourceApiService,
     EventBusService,

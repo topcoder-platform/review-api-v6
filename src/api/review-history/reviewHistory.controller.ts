@@ -45,7 +45,7 @@ export class ReviewHistoryController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @ApiBearerAuth()
-  @Roles(UserRole.Reviewer, UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer, UserRole.User)
   @Get('/:userId')
   async getHistory(
     @Req() req: Request,

@@ -64,11 +64,19 @@ export enum Scope {
   DeleteSubmission = 'delete:submission',
   AllSubmission = 'all:submission',
 
+  // Submission artifact scopes
+  CreateSubmissionArtifacts = 'create:submission-artifacts',
+  ReadSubmissionArtifacts = 'read:submission-artifacts',
+  DeleteSubmissionArtifacts = 'delete:submission-artifacts',
+  AllSubmissionArtifacts = 'all:submission-artifacts',
+
   // AI workflow scopes
   CreateWorkflow = 'create:workflow',
   ReadWorkflow = 'read:workflow',
   UpdateWorkflow = 'update:workflow',
   CreateWorkflowRun = 'create:workflow-run',
+  ReadWorkflowRun = 'read:workflow-run',
+  UpdateWorkflowRun = 'update:workflow-run',
 }
 
 /**
@@ -117,5 +125,10 @@ export const ALL_SCOPE_MAPPINGS: Record<string, string[]> = {
     Scope.ReadSubmission,
     Scope.UpdateSubmission,
     Scope.DeleteSubmission,
+  ],
+  [Scope.AllSubmissionArtifacts]: [
+    Scope.CreateSubmissionArtifacts,
+    Scope.ReadSubmissionArtifacts,
+    Scope.DeleteSubmissionArtifacts,
   ],
 };

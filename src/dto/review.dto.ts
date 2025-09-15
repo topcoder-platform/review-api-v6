@@ -171,7 +171,8 @@ export class ReviewItemResponseDto extends ReviewItemBaseDto {
   updatedBy: string;
 }
 
-export class ReviewBaseDto {
+// Common fields shared across Review request/response
+export class ReviewCommonDto {
   @ApiProperty({
     description: 'Resource ID associated with the review',
     example: 'resource123',
@@ -203,17 +204,6 @@ export class ReviewBaseDto {
   @IsString()
   @IsNotEmpty()
   scorecardId: string;
-
-  @ApiProperty({ description: 'Final score of the review', example: 85.5 })
-  @IsNumber()
-  finalScore: number;
-
-  @ApiProperty({
-    description: 'Initial score before finalization',
-    example: 80.0,
-  })
-  @IsNumber()
-  initialScore: number;
 
   @ApiProperty({
     description: 'Type ID used for the review',
@@ -252,7 +242,7 @@ export class ReviewBaseDto {
   committed?: boolean;
 }
 
-export class ReviewRequestDto extends ReviewBaseDto {
+export class ReviewRequestDto extends ReviewCommonDto {
   @ApiProperty({ description: 'The ID of the review', example: '123' })
   id: string;
 
@@ -264,7 +254,7 @@ export class ReviewRequestDto extends ReviewBaseDto {
   reviewItems?: ReviewItemRequestDto[];
 }
 
-export class ReviewPutRequestDto extends ReviewBaseDto {}
+export class ReviewPutRequestDto extends ReviewCommonDto {}
 
 export class ReviewPatchRequestDto {
   @ApiProperty({
@@ -302,19 +292,6 @@ export class ReviewPatchRequestDto {
   @IsString()
   @IsNotEmpty()
   scorecardId?: string;
-
-  @ApiProperty({ description: 'Final score of the review', example: 85.5 })
-  @IsOptional()
-  @IsNumber()
-  finalScore?: number;
-
-  @ApiProperty({
-    description: 'Initial score before finalization',
-    example: 80.0,
-  })
-  @IsOptional()
-  @IsNumber()
-  initialScore?: number;
 
   @ApiProperty({
     description: 'Type ID used for the review',
@@ -356,9 +333,18 @@ export class ReviewPatchRequestDto {
   committed?: boolean;
 }
 
-export class ReviewResponseDto extends ReviewBaseDto {
+export class ReviewResponseDto extends ReviewCommonDto {
   @ApiProperty({ description: 'The ID of the review', example: '123' })
   id: string;
+
+  @ApiProperty({ description: 'Final score of the review', example: 85.5 })
+  finalScore: number | null;
+
+  @ApiProperty({
+    description: 'Initial score before finalization',
+    example: 80.0,
+  })
+  initialScore: number | null;
 
   @ApiProperty({
     description: 'List of review items',
@@ -483,6 +469,29 @@ export function mapReviewItemRequestToDto(
   if (reviewId) {
     payload.review = { connect: { id: reviewId } };
   }
+
+  return payload;
+}
+
+export function mapReviewItemRequestForUpdate(
+  request: ReviewItemRequestDto,
+): Partial<MappedReviewItem> {
+  const userFields = {
+    updatedBy: '',
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { reviewId, reviewItemComments, ...rest } = request as {
+    reviewId?: string;
+    reviewItemComments?: any[];
+  } & ReviewItemRequestDto;
+
+  // For updates, we only include the core review item fields
+  // Comments should be handled separately via dedicated comment endpoints
+  const payload: Partial<MappedReviewItem> = {
+    ...rest,
+    ...userFields,
+  };
 
   return payload;
 }

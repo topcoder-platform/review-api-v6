@@ -19,13 +19,11 @@ import { Scope } from 'src/shared/enums/scopes.enum';
 import {
   ContactRequestDto,
   ContactRequestResponseDto,
-  mapContactRequestToDto,
 } from 'src/dto/contactRequest.dto';
-import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
+import { ContactRequestsService } from './contactRequests.service';
 
 @ApiTags('Contact Requests')
 @ApiBearerAuth()
@@ -34,8 +32,7 @@ export class ContactRequestsController {
   private readonly logger: LoggerService;
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly resourceApiService: ResourceApiService,
+    private readonly contactRequestsService: ContactRequestsService,
     private readonly prismaErrorService: PrismaErrorService,
   ) {
     this.logger = LoggerService.forRoot('ContactRequestsController');
@@ -60,24 +57,11 @@ export class ContactRequestsController {
     @Body() body: ContactRequestDto,
   ): Promise<ContactRequestResponseDto> {
     const authUser: JwtUser = req['user'] as JwtUser;
-    this.logger.log(
-      `Creating contact request for challenge: ${body.challengeId}, resource: ${body.resourceId}`,
-    );
-
     try {
-      await this.resourceApiService.validateResourcesRoles(
-        [UserRole.Reviewer, UserRole.User],
+      return await this.contactRequestsService.createContactRequest(
         authUser,
-        body.challengeId,
-        body.resourceId,
+        body,
       );
-
-      const data = await this.prisma.contactRequest.create({
-        data: mapContactRequestToDto(body),
-      });
-
-      this.logger.log(`Contact request created with ID: ${data.id}`);
-      return data as ContactRequestResponseDto;
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
