@@ -1417,6 +1417,9 @@ export class SubmissionService {
       if (error instanceof NotFoundException) {
         throw error;
       }
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `deleting submission with ID: ${id}`,
