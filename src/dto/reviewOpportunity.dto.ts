@@ -231,10 +231,20 @@ export class QueryReviewOpportunityDto {
   @IsOptional()
   numSubmissionsTo: number | undefined;
 
+  @Transform(({ value }): string[] | undefined => {
+    if (Array.isArray(value)) return value as string[];
+    if (typeof value === 'string') return [value];
+    return value as string[] | undefined;
+  })
   @IsArray()
   @IsOptional()
   tracks: string[] | undefined;
 
+  @Transform(({ value }): string[] | undefined => {
+    if (Array.isArray(value)) return value as string[];
+    if (typeof value === 'string') return [value];
+    return value as string[] | undefined;
+  })
   @IsArray()
   @IsOptional()
   skills: string[] | undefined;

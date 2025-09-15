@@ -7,7 +7,7 @@ import { ScorecardController } from './scorecard/scorecard.controller';
 import { AppealController } from './appeal/appeal.controller';
 import { ContactRequestsController } from './contact/contactRequests.controller';
 import { ReviewController } from './review/review.controller';
-import { ProjectResultController } from './project-result/projectResult.controller';
+import { ProjectResultModule } from './project-result/projectResult.module';
 
 import { ReviewTypeController } from './review-type/review-type.controller';
 import { SubmissionController } from './submission/submission.controller';
@@ -27,16 +27,24 @@ import { GiteaWebhookAuthGuard } from '../shared/guards/gitea-webhook-auth.guard
 import { ScoreCardService } from './scorecard/scorecard.service';
 import { AiWorkflowService } from './ai-workflow/ai-workflow.service';
 import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
+import { ReviewService } from './review/review.service';
+import { ContactRequestsService } from './contact/contactRequests.service';
+import { ProjectResultService } from './project-result/projectResult.service';
+import { ProjectResultController } from './project-result/projectResult.controller';
 
 @Module({
-  imports: [HttpModule, GlobalProvidersModule, FileUploadModule],
+  imports: [
+    HttpModule,
+    GlobalProvidersModule,
+    FileUploadModule,
+    ProjectResultModule,
+  ],
   controllers: [
     HealthCheckController,
     ScorecardController,
     AppealController,
     ContactRequestsController,
     ReviewController,
-    ProjectResultController,
     ReviewTypeController,
     SubmissionController,
     ReviewSummationController,
@@ -45,9 +53,12 @@ import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
     ReviewHistoryController,
     WebhookController,
     AiWorkflowController,
+    ProjectResultController,
   ],
   providers: [
+    ReviewService,
     ReviewOpportunityService,
+    ContactRequestsService,
     ReviewApplicationService,
     ChallengeApiService,
     ResourceApiService,
@@ -57,6 +68,7 @@ import { AiWorkflowController } from './ai-workflow/ai-workflow.controller';
     SubmissionService,
     ReviewSummationService,
     AiWorkflowService,
+    ProjectResultService,
   ],
 })
 export class ApiModule {}

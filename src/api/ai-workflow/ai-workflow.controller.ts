@@ -3,8 +3,10 @@ import {
   Post,
   Body,
   Get,
-  Param,
   Patch,
+  ValidationPipe,
+  Query,
+  Param,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -13,16 +15,21 @@ import {
   ApiResponse,
   ApiParam,
   ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { AiWorkflowService } from './ai-workflow.service';
 import {
   CreateAiWorkflowDto,
+  CreateAiWorkflowRunDto,
   UpdateAiWorkflowDto,
+  UpdateAiWorkflowRunDto,
 } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { User } from 'src/shared/decorators/user.decorator';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()
@@ -74,5 +81,109 @@ export class AiWorkflowController {
     @Body() updateDto: UpdateAiWorkflowDto,
   ) {
     return this.aiWorkflowService.updateWorkflow(id, updateDto);
+  }
+
+  @Post('/:workflowId/runs')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.CreateWorkflowRuns)
+  @ApiOperation({ summary: 'Create a new run for an AI workflow' })
+  @ApiResponse({
+    status: 201,
+    description: 'The AI workflow run has been successfully created.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  createRun(
+    @Param('workflowId') workflowId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: CreateAiWorkflowRunDto,
+  ) {
+    return this.aiWorkflowService.createWorkflowRun(workflowId, body);
+  }
+
+  @Get('/:workflowId/runs')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+  )
+  @Scopes(Scope.ReadWorkflowRuns)
+  @ApiOperation({
+    summary: 'Get all the AI workflow runs for a given submission ID',
+  })
+  @ApiQuery({
+    name: 'submissionId',
+    description: 'The ID of the submission to fetch AI workflow runs for',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The AI workflow runs for the given submission ID.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  getRuns(
+    @Param('workflowId') workflowId: string,
+    @Query('submissionId') submissionId: string,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.getWorkflowRuns(workflowId, user, {
+      submissionId,
+    });
+  }
+
+  @Get('/:workflowId/runs/:runId')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+  )
+  @Scopes(Scope.ReadWorkflowRuns)
+  @ApiOperation({
+    summary: 'Get an AI workflow run by its ID',
+  })
+  @ApiParam({
+    name: 'runId',
+    description: 'The ID of the run to fetch AI workflow run',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The AI workflow run for the given ID.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  async getRun(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @User() user: JwtUser,
+  ) {
+    const runs = await this.aiWorkflowService.getWorkflowRuns(
+      workflowId,
+      user,
+      {
+        runId,
+      },
+    );
+
+    return runs[0];
+  }
+
+  @Patch('/:workflowId/runs/:runId')
+  @Scopes(Scope.UpdateWorkflowRuns)
+  @ApiOperation({ summary: 'Update a run for an AI workflow' })
+  @ApiResponse({
+    status: 200,
+    description: 'The AI workflow run has been successfully updated.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  updateRun(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: UpdateAiWorkflowRunDto,
+  ) {
+    return this.aiWorkflowService.updateWorkflowRun(workflowId, runId, body);
   }
 }
