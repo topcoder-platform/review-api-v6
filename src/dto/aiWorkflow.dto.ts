@@ -10,7 +10,6 @@ import {
   IsDate,
   Min,
   IsUUID,
-  IsBoolean,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 

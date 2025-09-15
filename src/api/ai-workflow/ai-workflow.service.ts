@@ -373,7 +373,6 @@ export class AiWorkflowService {
     patchData: UpdateAiWorkflowRunItemDto,
     user: JwtUser,
   ) {
-
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id: workflowId },
     });
@@ -430,17 +429,27 @@ export class AiWorkflowService {
       if (patchData.comments) {
         for (const comment of patchData.comments) {
           if (comment.id) {
-            const existingComment = await tx.aiWorkflowRunItemComment.findUnique({
-              where: { id: comment.id },
-            });
+            const existingComment =
+              await tx.aiWorkflowRunItemComment.findUnique({
+                where: { id: comment.id },
+              });
             if (!existingComment) {
               this.logger.error(`Comment with id ${comment.id} not found.`);
-              throw new NotFoundException(`Comment with id ${comment.id} not found.`);
+              throw new NotFoundException(
+                `Comment with id ${comment.id} not found.`,
+              );
             }
 
-            if (existingComment.createdBy !== user.userId && !user.roles?.includes(UserRole.Admin)) {
-              this.logger.error(`User ${user.userId} unauthorized to update comment ${comment.id}.`);
-              throw new ForbiddenException(`Unauthorized to update comment ${comment.id}.`);
+            if (
+              existingComment.createdBy !== user.userId &&
+              !user.roles?.includes(UserRole.Admin)
+            ) {
+              this.logger.error(
+                `User ${user.userId} unauthorized to update comment ${comment.id}.`,
+              );
+              throw new ForbiddenException(
+                `Unauthorized to update comment ${comment.id}.`,
+              );
             }
 
             await tx.aiWorkflowRunItemComment.update({

@@ -217,9 +217,18 @@ export class AiWorkflowController {
   @ApiOperation({ summary: 'Update an AIWorkflowRunItem by id' })
   @ApiParam({ name: 'workflowId', description: 'The ID of the AI workflow' })
   @ApiParam({ name: 'runId', description: 'The ID of the AI workflow run' })
-  @ApiParam({ name: 'itemId', description: 'The ID of the AI workflow run item' })
-  @ApiBody({ description: 'AIWorkflowRunItem update data', type: UpdateAiWorkflowRunItemDto })
-  @ApiResponse({ status: 200, description: 'AIWorkflowRunItem updated successfully.' })
+  @ApiParam({
+    name: 'itemId',
+    description: 'The ID of the AI workflow run item',
+  })
+  @ApiBody({
+    description: 'AIWorkflowRunItem update data',
+    type: UpdateAiWorkflowRunItemDto,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'AIWorkflowRunItem updated successfully.',
+  })
   @ApiResponse({ status: 400, description: 'Bad Request.' })
   @ApiResponse({ status: 401, description: 'Unauthorized.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
@@ -232,6 +241,12 @@ export class AiWorkflowController {
     patchData: UpdateAiWorkflowRunItemDto,
     @User() user: JwtUser,
   ) {
-    return this.aiWorkflowService.updateRunItem(workflowId, runId, itemId, patchData, user);
+    return this.aiWorkflowService.updateRunItem(
+      workflowId,
+      runId,
+      itemId,
+      patchData,
+      user,
+    );
   }
 }
