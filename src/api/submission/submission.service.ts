@@ -1390,13 +1390,43 @@ export class SubmissionService {
       this.logger.log(`Submission updated successfully: ${submissionId}`);
       return this.buildResponse(data);
     } catch (error) {
-      if (error instanceof NotFoundException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `updating submission with ID: ${submissionId}`,
       );
+
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({
+          message: `Submission with ID ${submissionId} not found. Cannot update non-existent submission.`,
+          details: { submissionId },
+        });
+      }
+
+      const badRequestCodes = [
+        'FOREIGN_KEY_CONSTRAINT_FAILED',
+        'INVALID_DATA',
+        'VALIDATION_ERROR',
+        'REQUIRED_FIELD_MISSING',
+        'MISSING_REQUIRED_VALUE',
+        'DATA_VALIDATION_ERROR',
+      ];
+
+      if (badRequestCodes.includes(errorResponse.code)) {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
