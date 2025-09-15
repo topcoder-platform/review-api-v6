@@ -366,7 +366,6 @@ export class AiWorkflowService {
   }
 
   async getRunItems(workflowId: string, runId: string, user: JwtUser) {
-    // Validate workflow exists
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id: workflowId },
     });
@@ -375,7 +374,6 @@ export class AiWorkflowService {
       throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
     }
 
-    // Validate run exists and belongs to workflow
     const run = await this.prisma.aiWorkflowRun.findUnique({
       where: { id: runId },
       include: { workflow: true },
@@ -389,7 +387,6 @@ export class AiWorkflowService {
       );
     }
 
-    // Permission check similar to getWorkflowRuns
     const submission = run.submissionId
       ? await this.prisma.submission.findUnique({
           where: { id: run.submissionId },
@@ -452,7 +449,6 @@ export class AiWorkflowService {
       }
     }
 
-    // Fetch run items with comments
     const items = await this.prisma.aiWorkflowRunItem.findMany({
       where: { workflowRunId: runId },
       include: {
