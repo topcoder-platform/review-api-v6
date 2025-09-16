@@ -58,9 +58,8 @@ export class ScorecardController {
   async addScorecard(
     @Body()
     body: ScorecardRequestDto,
-    @User() user: JwtUser,
   ): Promise<ScorecardWithGroupResponseDto> {
-    return await this.scorecardService.addScorecard(body, user);
+    return await this.scorecardService.addScorecard(body);
   }
 
   @Put('/:id')
@@ -240,10 +239,7 @@ export class ScorecardController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Scorecard not found.' })
-  async cloneScorecard(
-    @Param('id') id: string,
-    @User() user: JwtUser,
-  ): Promise<ScorecardResponseDto> {
-    return this.scorecardService.cloneScorecard(id, user);
+  async cloneScorecard(@Param('id') id: string): Promise<ScorecardResponseDto> {
+    return this.scorecardService.cloneScorecard(id);
   }
 }

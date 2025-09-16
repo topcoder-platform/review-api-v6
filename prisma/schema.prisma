@@ -26,9 +26,9 @@ model scorecard {
   minScore       Float
   maxScore       Float
   createdAt      DateTime        @default(now())
-  createdBy      String
+  createdBy      String?
   updatedAt      DateTime        @updatedAt
-  updatedBy      String
+  updatedBy      String?
 
   scorecardGroups scorecardGroup[]
   reviews         review[]
@@ -75,9 +75,9 @@ model scorecardGroup {
   weight      Float
   sortOrder   Int
   createdAt   DateTime @default(now())
-  createdBy   String
+  createdBy   String?
   updatedAt   DateTime @updatedAt
-  updatedBy   String
+  updatedBy   String?
 
   scorecard scorecard          @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
   sections  scorecardSection[]
@@ -95,9 +95,9 @@ model scorecardSection {
   weight           Float
   sortOrder        Int
   createdAt        DateTime @default(now())
-  createdBy        String
+  createdBy        String?
   updatedAt        DateTime @updatedAt
-  updatedBy        String
+  updatedBy        String?
 
   group     scorecardGroup      @relation(fields: [scorecardGroupId], references: [id], onDelete: Cascade)
   questions scorecardQuestion[]
@@ -125,9 +125,9 @@ model scorecardQuestion {
   requiresUpload     Boolean
   sortOrder          Int
   createdAt          DateTime     @default(now())
-  createdBy          String
+  createdBy          String?
   updatedAt          DateTime     @updatedAt
-  updatedBy          String
+  updatedBy          String?
 
   scaleMin Int? // Minimum value for scale (used when type is SCALE)
   scaleMax Int? // Maximum value for scale (used when type is SCALE)
@@ -167,9 +167,9 @@ model review {
   status             ReviewStatus?
   reviewDate         DateTime?
   createdAt          DateTime  @default(now())
-  createdBy          String
+  createdBy          String?
   updatedAt          DateTime  @updatedAt
-  updatedBy          String
+  updatedBy          String?
 
   scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
   submission  submission?  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
@@ -193,9 +193,9 @@ model reviewItem {
   finalAnswer         String?
   managerComment      String?
   createdAt           DateTime @default(now())
-  createdBy           String
+  createdBy           String?
   updatedAt           DateTime @updatedAt
-  updatedBy           String
+  updatedBy           String?
 
   review             review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewItemComments reviewItemComment[]
@@ -214,9 +214,9 @@ model reviewItemComment {
   type         ReviewItemCommentType
   sortOrder    Int                   @default(0)
   createdAt    DateTime              @default(now())
-  createdBy    String
+  createdBy    String?
   updatedAt    DateTime              @updatedAt
-  updatedBy    String
+  updatedBy    String?
 
   reviewItem reviewItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
   appeal     appeal?
@@ -249,9 +249,9 @@ model appeal {
   reviewItemCommentId String   @unique // Ensure one-to-one relationship
   content             String
   createdAt           DateTime @default(now())
-  createdBy           String
+  createdBy           String?
   updatedAt           DateTime @updatedAt
-  updatedBy           String
+  updatedBy           String?
 
   reviewItemComment reviewItemComment @relation(fields: [reviewItemCommentId], references: [id], onDelete: Cascade) // Define fields and references here
   appealResponse    appealResponse?
@@ -269,9 +269,9 @@ model appealResponse {
   content    String
   success    Boolean
   createdAt  DateTime @default(now())
-  createdBy  String
+  createdBy  String?
   updatedAt  DateTime @updatedAt
-  updatedBy  String
+  updatedBy  String?
 
   appeal appeal @relation(fields: [appealId], references: [id], onDelete: Cascade)
 
@@ -297,9 +297,9 @@ model challengeResult {
   ratingOrder     Int?
 
   createdAt DateTime @default(now())
-  createdBy String
+  createdBy String?
   updatedAt DateTime @updatedAt
-  updatedBy String
+  updatedBy String?
 
   @@id([challengeId, userId])
   @@index([challengeId]) // Index for filtering by challenge
@@ -313,9 +313,9 @@ model contactRequest {
   challengeId String // Associated challenge
   message     String // Markdown content
   createdAt   DateTime @default(now())
-  createdBy   String
+  createdBy   String?
   updatedAt   DateTime @updatedAt
-  updatedBy   String
+  updatedBy   String?
 
   @@index([id]) // Index for direct ID lookups
   @@index([resourceId]) // Index for filtering by resource (requester)
@@ -344,9 +344,9 @@ model reviewSummation {
   isFinal            Boolean?
   reviewedDate       DateTime?
   createdAt          DateTime  @default(now())
-  createdBy          String
+  createdBy          String?
   updatedAt          DateTime  @updatedAt
-  updatedBy          String
+  updatedBy          String?
 
   submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 
@@ -383,7 +383,7 @@ model submission {
   submittedDate     DateTime?
 
   createdAt DateTime  @default(now())
-  createdBy String
+  createdBy String?
   updatedAt DateTime? @updatedAt
   updatedBy String?
 
@@ -449,9 +449,9 @@ model reviewOpportunity {
   applications reviewApplication[]
 
   createdAt DateTime @default(now())
-  createdBy String
+  createdBy String?
   updatedAt DateTime @updatedAt
-  updatedBy String
+  updatedBy String?
 
   @@unique([challengeId, type])
   @@index([id]) // Index for direct ID lookups
@@ -469,9 +469,9 @@ model reviewApplication {
   opportunity reviewOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
-  createdBy String
+  createdBy String?
   updatedAt DateTime @updatedAt
-  updatedBy String
+  updatedBy String?
 
   @@unique([opportunityId, userId, role])
   @@index([id]) // Index for direct ID lookups
@@ -521,7 +521,7 @@ model upload {
   projectPhaseId String?
 
   createdAt DateTime  @default(now())
-  createdBy String
+  createdBy String?
   updatedAt DateTime? @updatedAt
   updatedBy String?
 
@@ -538,7 +538,7 @@ model resourceSubmission {
   legacySubmissionId String?
 
   createdAt DateTime  @default(now())
-  createdBy String
+  createdBy String?
   updatedAt DateTime? @updatedAt
   updatedBy String?
 
@@ -561,7 +561,7 @@ model llmProvider {
   id        String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
   name      String   @unique @db.VarChar
   createdAt DateTime @db.Timestamp(3)
-  createdBy String   @db.Text
+  createdBy String?   @db.Text
 
   models llmModel[]
 }
@@ -574,7 +574,7 @@ model llmModel {
   icon        String?  @db.VarChar
   url         String?  @db.VarChar
   createdAt   DateTime @default(now()) @db.Timestamp(3)
-  createdBy   String   @db.Text
+  createdBy   String?   @db.Text
 
   provider  llmProvider  @relation(fields: [providerId], references: [id])
   workflows aiWorkflow[]
@@ -590,9 +590,9 @@ model aiWorkflow {
   gitOwner    String   @db.VarChar
   scorecardId String   @db.VarChar(14)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
-  createdBy   String   @db.Text
-  updatedAt   DateTime @db.Timestamp(3)
-  updatedBy   String   @db.Text
+  createdBy   String?   @db.Text
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?   @db.Text
 
   llm       llmModel        @relation(fields: [llmId], references: [id])
   scorecard scorecard       @relation(fields: [scorecardId], references: [id])
@@ -623,7 +623,7 @@ model aiWorkflowRunItem {
   downVotes           Int      @default(0)
   questionScore       Float?   @db.DoublePrecision
   createdAt           DateTime @db.Timestamp(3)
-  createdBy           String   @db.Text
+  createdBy           String?   @db.Text
 
   run      aiWorkflowRun              @relation(fields: [workflowRunId], references: [id])
   question scorecardQuestion          @relation(fields: [scorecardQuestionId], references: [id])
@@ -637,9 +637,9 @@ model aiWorkflowRunItemComment {
   content           String   @db.Text
   parentId          String?  @db.VarChar(14)
   createdAt         DateTime @default(now()) @db.Timestamp(3)
-  createdBy         String   @db.Text
-  updatedAt         DateTime @db.Timestamp(3)
-  updatedBy         String   @db.Text
+  createdBy         String?   @db.Text
+  updatedAt         DateTime @updatedAt
+  updatedBy         String?   @db.Text
 
   item    aiWorkflowRunItem          @relation(fields: [workflowRunItemId], references: [id])
   parent  aiWorkflowRunItemComment?  @relation("CommentHierarchy", fields: [parentId], references: [id])

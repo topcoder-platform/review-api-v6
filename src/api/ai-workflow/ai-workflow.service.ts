@@ -80,10 +80,6 @@ export class AiWorkflowService {
           name,
           scorecardId,
           llmId,
-          // TODO: This has to be removed once the prisma middleware is implemented
-          createdBy: '',
-          updatedAt: new Date(),
-          updatedBy: '',
         },
       })
       .catch((e) => {

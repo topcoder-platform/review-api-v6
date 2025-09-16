@@ -21,7 +21,7 @@ export class TokenRolesGuard implements CanActivate {
     private jwtService: JwtService,
   ) {}
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext): boolean {
     // Get required roles and scopes from decorators
     const requiredRoles =
       this.reflector.get<UserRole[]>(ROLES_KEY, context.getHandler()) || [];
@@ -35,17 +35,9 @@ export class TokenRolesGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    const authHeader = request.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Invalid or missing token');
-    }
 
     try {
-      const token = authHeader.split(' ')[1];
-      const user = await this.jwtService.validateToken(token);
-
-      // Add user to request for later use in controllers
-      request['user'] = user;
+      const user = request['user'] ?? {};
 
       // Check role-based access for regular users
       if (user.roles && requiredRoles.length > 0) {

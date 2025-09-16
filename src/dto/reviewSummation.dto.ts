@@ -211,7 +211,7 @@ export class ReviewSummationResponseDto {
     description: 'The user who created the review summation',
     example: 'user123',
   })
-  createdBy: string;
+  createdBy: string | null;
 
   @ApiProperty({
     description: 'The last update timestamp',

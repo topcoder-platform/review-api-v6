@@ -83,8 +83,6 @@ export class ReviewApplicationService {
           status: ReviewApplicationStatus.PENDING,
           userId,
           handle,
-          createdBy: userId,
-          updatedBy: userId,
         },
       });
       return this.buildResponse(entity);
@@ -184,21 +182,16 @@ export class ReviewApplicationService {
 
   /**
    * Approve a review application.
-   * @param authUser auth user
    * @param id review application id
    */
-  async approve(authUser: JwtUser, id: string): Promise<void> {
+  async approve(id: string): Promise<void> {
     try {
       const entity = await this.checkExists(id);
-      const updatedBy =
-        authUser.userId === null || authUser.userId === undefined
-          ? ''
-          : String(authUser.userId);
+
       await this.prisma.reviewApplication.update({
         where: { id },
         data: {
           status: ReviewApplicationStatus.APPROVED,
-          updatedBy,
         },
       });
       // send email
@@ -223,21 +216,16 @@ export class ReviewApplicationService {
 
   /**
    * Reject a review application.
-   * @param authUser auth user
    * @param id review application id
    */
-  async reject(authUser: JwtUser, id: string): Promise<void> {
+  async reject(id: string): Promise<void> {
     try {
       const entity = await this.checkExists(id);
-      const updatedBy =
-        authUser.userId === null || authUser.userId === undefined
-          ? ''
-          : String(authUser.userId);
+
       await this.prisma.reviewApplication.update({
         where: { id },
         data: {
           status: ReviewApplicationStatus.REJECTED,
-          updatedBy,
         },
       });
       // send email
@@ -262,13 +250,9 @@ export class ReviewApplicationService {
 
   /**
    * Reject all pending applications of specific opportunity
-   * @param authUser auth user
    * @param opportunityId opportunity id
    */
-  async rejectAllPending(
-    authUser: JwtUser,
-    opportunityId: string,
-  ): Promise<void> {
+  async rejectAllPending(opportunityId: string): Promise<void> {
     try {
       // select all pending
       const entityList = await this.prisma.reviewApplication.findMany({
@@ -276,15 +260,10 @@ export class ReviewApplicationService {
         include: { opportunity: true },
       });
       // update all pending
-      const updatedBy =
-        authUser.userId === null || authUser.userId === undefined
-          ? ''
-          : String(authUser.userId);
       await this.prisma.reviewApplication.updateMany({
         where: { opportunityId, status: ReviewApplicationStatus.PENDING },
         data: {
           status: ReviewApplicationStatus.REJECTED,
-          updatedBy,
         },
       });
       // send emails to these users

@@ -1110,8 +1110,6 @@ export class SubmissionService {
           viewCount: 0,
           status: SubmissionStatus.ACTIVE,
           type: body.type as SubmissionType,
-          createdBy: String(authUser.userId) || '',
-          createdAt: new Date(),
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);
@@ -1383,8 +1381,6 @@ export class SubmissionService {
         data: {
           ...body,
           type: (body.type as SubmissionType) || existing.type,
-          updatedBy: String(authUser.userId) || '',
-          updatedAt: new Date(),
         },
       });
       this.logger.log(`Submission updated successfully: ${submissionId}`);

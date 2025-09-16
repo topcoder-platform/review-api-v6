@@ -10,7 +10,6 @@ import { LoggerService } from 'src/shared/modules/global/logger.service';
 import {
   ContactRequestDto,
   ContactRequestResponseDto,
-  mapContactRequestToDto,
 } from 'src/dto/contactRequest.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import {
@@ -57,7 +56,10 @@ export class ContactRequestsService {
 
       // Persist contact request
       const data = await this.prisma.contactRequest.create({
-        data: mapContactRequestToDto(body, requesterResource.id),
+        data: {
+          ...body,
+          resourceId: requesterResource.id,
+        },
       });
 
       // Fire email notification to managers/copilots for the challenge

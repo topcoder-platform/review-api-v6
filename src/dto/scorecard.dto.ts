@@ -265,14 +265,6 @@ export class ScorecardBaseDto {
   @Max(100)
   @IsGreaterThan('minScore')
   maxScore: number;
-
-  /**
-   * These shouldn't be editable via API
-   */
-  createdAt: Date;
-  createdBy: string;
-  updatedAt: Date;
-  updatedBy: string;
 }
 
 export class ScorecardBaseWithGroupsDto extends ScorecardBaseDto {
@@ -390,31 +382,22 @@ export class ScorecardPaginatedResponseDto {
 }
 
 export function mapScorecardRequestForCreate(request: ScorecardRequestDto) {
-  const userFields = {
-    ...(request.createdBy ? { createdBy: request.createdBy } : {}),
-    updatedBy: request.updatedBy,
-  };
-
   return {
     ...request,
     id: undefined,
-    ...userFields,
     scorecardGroups: {
       create: request.scorecardGroups.map((group) => ({
         ...group,
         id: undefined,
-        ...userFields,
         sections: {
           create: group.sections.map((section) => ({
             ...section,
             id: undefined,
-            ...userFields,
             questions: {
               create: section.questions.map((question) => ({
                 ...question,
                 id: undefined,
                 sortOrder: 1,
-                ...userFields,
               })),
             },
           })),

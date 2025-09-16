@@ -128,31 +128,13 @@ export class AppealResponseDto extends AppealBaseDto {
   updatedAt?: Date;
 }
 
-export function mapAppealRequestToDto(request: AppealRequestDto) {
-  const userFields = {
-    createdBy: '',
-    updatedBy: '',
-  };
-
-  return {
-    ...request,
-    ...userFields,
-  };
-}
-
 export function mapAppealResponseRequestToDto(
   request: AppealResponseRequestDto,
 ) {
-  const userFields = {
-    createdBy: '',
-    updatedBy: '',
-  };
-
   // Only forward allowed fields; relation ID is set by Prisma in nested create
   return {
     resourceId: request.resourceId,
     content: request.content,
     success: request.success,
-    ...userFields,
   };
 }
