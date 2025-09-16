@@ -38,33 +38,6 @@ import { User } from 'src/shared/decorators/user.decorator';
 export class AiWorkflowController {
   constructor(private readonly aiWorkflowService: AiWorkflowService) {}
 
-  @Get('/:workflowId/runs/:runId/items')
-  @Roles(
-    UserRole.Admin,
-    UserRole.Copilot,
-    UserRole.ProjectManager,
-    UserRole.User,
-  )
-  @Scopes(Scope.ReadWorkflowRun)
-  @ApiOperation({
-    summary: 'Get AIWorkflowRunItems for a given workflow run ID',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'The AIWorkflowRunItems for the given run ID.',
-  })
-  @ApiResponse({ status: 400, description: 'Bad Request.' })
-  @ApiResponse({ status: 401, description: 'Unauthorized.' })
-  @ApiResponse({ status: 403, description: 'Forbidden.' })
-  @ApiResponse({ status: 404, description: 'Run not found.' })
-  async getRunItems(
-    @Param('workflowId') workflowId: string,
-    @Param('runId') runId: string,
-    @User() user: JwtUser,
-  ) {
-    return this.aiWorkflowService.getRunItems(workflowId, runId, user);
-  }
-
   @Post()
   @Roles(UserRole.Admin)
   @Scopes(Scope.CreateWorkflow)
@@ -78,27 +51,19 @@ export class AiWorkflowController {
     return this.aiWorkflowService.createWithValidation(createAiWorkflowDto);
   }
 
-  @Post('/:workflowId/runs/:runId/items')
-  @Scopes(Scope.CreateWorkflowRun)
-  @ApiOperation({ summary: 'Create AIWorkflowRunItems in batch' })
-  @ApiResponse({
-    status: 201,
-    description: 'AIWorkflowRunItems created successfully.',
+  @Get()
+  @Roles(UserRole.Admin, UserRole.User, UserRole.Copilot, UserRole.Reviewer)
+  @Scopes(Scope.ReadWorkflow)
+  @ApiOperation({ summary: 'Fetch AI workflows' })
+  @ApiQuery({
+    name: 'name',
+    description: 'Filter AI workflows by name',
+    required: false,
+    type: 'string',
   })
-  @ApiResponse({ status: 400, description: 'Bad Request.' })
-  @ApiResponse({ status: 401, description: 'Unauthorized.' })
-  @ApiResponse({ status: 404, description: 'Workflow or Run not found.' })
-  async createRunItems(
-    @Param('workflowId') workflowId: string,
-    @Param('runId') runId: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true }))
-    createItemsDto: CreateAiWorkflowRunItemsDto,
-  ) {
-    return this.aiWorkflowService.createRunItemsBatch(
-      workflowId,
-      runId,
-      createItemsDto.items,
-    );
+  @ApiResponse({ status: 200, description: 'The AI workflow records.' })
+  async fetchRecords(@Query('name') name: string) {
+    return this.aiWorkflowService.getWorkflows({ name: name?.trim() });
   }
 
   @Get(':id')
@@ -235,5 +200,55 @@ export class AiWorkflowController {
     body: UpdateAiWorkflowRunDto,
   ) {
     return this.aiWorkflowService.updateWorkflowRun(workflowId, runId, body);
+  }
+
+  @Post('/:workflowId/runs/:runId/items')
+  @Scopes(Scope.CreateWorkflowRun)
+  @ApiOperation({ summary: 'Create AIWorkflowRunItems in batch' })
+  @ApiResponse({
+    status: 201,
+    description: 'AIWorkflowRunItems created successfully.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 404, description: 'Workflow or Run not found.' })
+  async createRunItems(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    createItemsDto: CreateAiWorkflowRunItemsDto,
+  ) {
+    return this.aiWorkflowService.createRunItemsBatch(
+      workflowId,
+      runId,
+      createItemsDto.items,
+    );
+  }
+
+  @Get('/:workflowId/runs/:runId/items')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.User,
+  )
+  @Scopes(Scope.ReadWorkflowRun)
+  @ApiOperation({
+    summary: 'Get AIWorkflowRunItems for a given workflow run ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The AIWorkflowRunItems for the given run ID.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Run not found.' })
+  async getRunItems(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.getRunItems(workflowId, runId, user);
   }
 }
