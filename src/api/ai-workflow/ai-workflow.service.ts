@@ -319,8 +319,7 @@ export class AiWorkflowService {
         )
       ).filter((resource) =>
         requiredRoles.some(
-          (role) =>
-            resource.roleName!.toLowerCase() === role.toLowerCase(),
+          (role) => resource.roleName!.toLowerCase() === role.toLowerCase(),
         ),
       );
 
