@@ -445,15 +445,13 @@ export class AiWorkflowService {
         UserRole.Submitter,
       ].map((r) => r.toLowerCase());
 
-      const userRoles =  await this.resourceApiService.getMemberResourcesRoles(
-        challengeId!,
+      const userRoles = await this.resourceApiService.getMemberResourcesRoles(
+        challengeId,
         user.userId,
       );
 
       this.logger.debug(userRoles);
-      const memberRoles = (
-        userRoles
-      ).filter((resource) =>
+      const memberRoles = userRoles.filter((resource) =>
         requiredRoles.some(
           (role) =>
             resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
