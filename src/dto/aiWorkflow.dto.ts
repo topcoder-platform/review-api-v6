@@ -155,17 +155,6 @@ export class CommentDto {
   @IsOptional()
   @IsUUID()
   parentId?: string;
-
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  createdBy: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsDate()
-  @Transform(({ value }) => (value ? new Date(value) : undefined))
-  createdAt?: Date;
 }
 
 export class UpdateAiWorkflowRunItemDto extends PartialType(
