@@ -390,111 +390,103 @@ export class AiWorkflowService {
   }
 
   async getRunItems(workflowId: string, runId: string, user: JwtUser) {
-    try {
-      const workflow = await this.prisma.aiWorkflow.findUnique({
-        where: { id: workflowId },
-      });
-      if (!workflow) {
-        this.logger.error(`Workflow with id ${workflowId} not found.`);
-        throw new NotFoundException(
-          `Workflow with id ${workflowId} not found.`,
-        );
-      }
-
-      const run = await this.prisma.aiWorkflowRun.findUnique({
-        where: { id: runId },
-        include: { workflow: true },
-      });
-      if (!run || run.workflowId !== workflowId) {
-        this.logger.error(
-          `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
-        );
-        throw new NotFoundException(
-          `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
-        );
-      }
-
-      const submission = run.submissionId
-        ? await this.prisma.submission.findUnique({
-            where: { id: run.submissionId },
-          })
-        : null;
-      const challengeId = submission?.challengeId;
-
-      if (!challengeId) {
-        this.logger.error(
-          `Challenge ID not found for submission ${run.submissionId}`,
-        );
-        throw new InternalServerErrorException(
-          `Challenge ID not found for submission ${run.submissionId}`,
-        );
-      }
-
-      const challenge: ChallengeData =
-        await this.challengeApiService.getChallengeDetail(challengeId);
-
-      if (!challenge) {
-        throw new InternalServerErrorException(
-          `Challenge with id ${challengeId} was not found!`,
-        );
-      }
-
-      const isM2mOrAdmin =
-        user.isMachine || user.roles?.includes(UserRole.Admin);
-      if (!isM2mOrAdmin) {
-        const requiredRoles = [
-          UserRole.Reviewer,
-          UserRole.ProjectManager,
-          UserRole.Copilot,
-          UserRole.Submitter,
-        ].map((r) => r.toLowerCase());
-
-        const userRoles = await this.resourceApiService.getMemberResourcesRoles(
-          challengeId,
-          user.userId,
-        );
-
-        this.logger.debug(userRoles);
-        const memberRoles = userRoles.filter((resource) =>
-          requiredRoles.some(
-            (role) =>
-              resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
-          ),
-        );
-
-        if (!memberRoles.length) {
-          throw new ForbiddenException('Insufficient permissions');
-        }
-
-        if (
-          challenge.status !== ChallengeStatus.COMPLETED &&
-          memberRoles.some(
-            (r) =>
-              r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
-          ) &&
-          user.userId !== submission?.memberId
-        ) {
-          this.logger.log(
-            `Submitter ${user.userId} trying to access AI workflow run for other submitters.`,
-          );
-          throw new ForbiddenException('Insufficient permissions');
-        }
-      }
-
-      const items = await this.prisma.aiWorkflowRunItem.findMany({
-        where: { workflowRunId: runId },
-        include: {
-          comments: true,
-        },
-        orderBy: {
-          createdAt: 'asc',
-        },
-      });
-
-      return items;
-    } catch (e) {
-      this.logger.debug(e, 'Error on getRunItems');
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id: workflowId },
+    });
+    if (!workflow) {
+      this.logger.error(`Workflow with id ${workflowId} not found.`);
+      throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
     }
+
+    const run = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: runId },
+      include: { workflow: true },
+    });
+    if (!run || run.workflowId !== workflowId) {
+      this.logger.error(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+      throw new NotFoundException(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+    }
+
+    const submission = run.submissionId
+      ? await this.prisma.submission.findUnique({
+          where: { id: run.submissionId },
+        })
+      : null;
+    const challengeId = submission?.challengeId;
+
+    if (!challengeId) {
+      this.logger.error(
+        `Challenge ID not found for submission ${run.submissionId}`,
+      );
+      throw new InternalServerErrorException(
+        `Challenge ID not found for submission ${run.submissionId}`,
+      );
+    }
+
+    const challenge: ChallengeData =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+
+    if (!challenge) {
+      throw new InternalServerErrorException(
+        `Challenge with id ${challengeId} was not found!`,
+      );
+    }
+
+    const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
+    if (!isM2mOrAdmin) {
+      const requiredRoles = [
+        UserRole.Reviewer,
+        UserRole.ProjectManager,
+        UserRole.Copilot,
+        UserRole.Submitter,
+      ].map((r) => r.toLowerCase());
+
+      const userRoles = await this.resourceApiService.getMemberResourcesRoles(
+        challengeId,
+        user.userId,
+      );
+
+      this.logger.debug(userRoles);
+      const memberRoles = userRoles.filter((resource) =>
+        requiredRoles.some(
+          (role) =>
+            resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
+        ),
+      );
+
+      if (!memberRoles.length) {
+        throw new ForbiddenException('Insufficient permissions');
+      }
+
+      if (
+        challenge.status !== ChallengeStatus.COMPLETED &&
+        memberRoles.some(
+          (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
+        ) &&
+        user.userId !== submission?.memberId
+      ) {
+        this.logger.log(
+          `Submitter ${user.userId} trying to access AI workflow run for other submitters.`,
+        );
+        throw new ForbiddenException('Insufficient permissions');
+      }
+    }
+
+    const items = await this.prisma.aiWorkflowRunItem.findMany({
+      where: { workflowRunId: runId },
+      include: {
+        comments: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    return items;
   }
 
   async updateRunItem(
