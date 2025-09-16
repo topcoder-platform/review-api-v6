@@ -6,7 +6,6 @@ import { CommonConfig } from 'src/shared/config/common.config';
 import { ResourceRole } from 'src/shared/models/ResourceRole.model';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 import { JwtUser } from './jwt.service';
-import { some } from 'lodash';
 import { M2MService } from './m2m.service';
 
 @Injectable()
@@ -105,7 +104,7 @@ export class ResourceApiService {
         memberId: memberId,
       })
     )
-      .filter((resource) => resource.memberId === memberId)
+      .filter((resource) => String(resource.memberId) === String(memberId))
       .map((resource) => ({
         ...resource,
         roleName: resourceRoles?.[resource.roleId]?.name ?? '',
@@ -118,29 +117,41 @@ export class ResourceApiService {
    * @param requiredRoles list of require roles
    * @param authUser login user info
    * @param challengeId challenge id
-   * @param resourceId resource id
-   * @returns resolves to true if role is valid
+   * @param resourceId resource id (optional)
+   * @returns resolves to the matching resource info if role is valid
    */
   async validateResourcesRoles(
     requiredRoles: string[],
     authUser: JwtUser,
     challengeId: string,
-    resourceId: string,
-  ): Promise<boolean> {
-    const myResources = (
-      await this.getMemberResourcesRoles(challengeId, authUser.userId)
-    )
-      .filter((resource) => resource.id === resourceId)
-      .filter((resource) =>
-        some(
-          requiredRoles.map((item) => item.toLowerCase()),
-          (role: string) => resource.roleName!.toLowerCase().indexOf(role) >= 0,
-        ),
-      );
-    if (!myResources.length) {
+    resourceId?: string,
+  ): Promise<ResourceInfo> {
+    const normalizedRoles = requiredRoles.map((item) => item.toLowerCase());
+    const memberResources = await this.getMemberResourcesRoles(
+      challengeId,
+      authUser.userId,
+    );
+
+    const matches = memberResources
+      .filter((resource) => !resourceId || resource.id === resourceId)
+      .map((resource) => {
+        const roleName = resource.roleName?.toLowerCase() ?? '';
+        const matchIndex = normalizedRoles.findIndex(
+          (role) => roleName.indexOf(role) >= 0,
+        );
+        return {
+          matchIndex,
+          resource,
+        };
+      })
+      .filter(({ matchIndex }) => matchIndex !== -1)
+      .sort((a, b) => a.matchIndex - b.matchIndex);
+
+    if (!matches.length) {
       throw new ForbiddenException('Insufficient permissions');
     }
-    return true;
+
+    return matches[0].resource;
   }
 
   /**

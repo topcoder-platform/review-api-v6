@@ -163,8 +163,50 @@ export class SubmissionService {
     return { artifacts: artifactId };
   }
 
-  async listArtifacts(submissionId: string): Promise<{ artifacts: string[] }> {
-    await this.checkSubmission(submissionId);
+  async listArtifacts(
+    authUser: JwtUser,
+    submissionId: string,
+  ): Promise<{ artifacts: string[] }> {
+    const submission = await this.checkSubmission(submissionId);
+
+    if (!authUser.isMachine && !isAdmin(authUser)) {
+      const uid = authUser.userId ? String(authUser.userId) : '';
+      const isOwner = !!uid && submission.memberId === uid;
+      let isReviewer = false;
+      let isCopilot = false;
+
+      if (!isOwner && submission.challengeId && uid) {
+        try {
+          const resources =
+            await this.resourceApiService.getMemberResourcesRoles(
+              submission.challengeId,
+              uid,
+            );
+          for (const resource of resources) {
+            const rn = (resource.roleName || '').toLowerCase();
+            if (rn.includes('reviewer')) isReviewer = true;
+            if (rn.includes('copilot')) isCopilot = true;
+            if (isReviewer || isCopilot) break;
+          }
+        } catch {
+          isReviewer = false;
+          isCopilot = false;
+        }
+      }
+
+      if (!isOwner && !isReviewer && !isCopilot) {
+        throw new ForbiddenException({
+          message:
+            'Only the submission owner, a challenge reviewer/copilot, or an admin can list submission artifacts',
+          code: 'FORBIDDEN_ARTIFACT_LIST',
+          details: {
+            submissionId,
+            requester: uid,
+            challengeId: submission.challengeId,
+          },
+        });
+      }
+    }
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
@@ -586,6 +628,14 @@ export class SubmissionService {
       where,
       orderBy: { createdAt: 'asc' },
     });
+
+    if (!submissions.length) {
+      throw new NotFoundException({
+        message: `No submissions found for challenge ${challengeId}`,
+        code: 'SUBMISSIONS_NOT_FOUND',
+        details: { challengeId },
+      });
+    }
 
     // Build memberId -> handle map for naming (admin/copilot case)
     let handleMap = new Map<string, string>();
@@ -1060,8 +1110,6 @@ export class SubmissionService {
           viewCount: 0,
           status: SubmissionStatus.ACTIVE,
           type: body.type as SubmissionType,
-          createdBy: String(authUser.userId) || '',
-          createdAt: new Date(),
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);
@@ -1333,20 +1381,48 @@ export class SubmissionService {
         data: {
           ...body,
           type: (body.type as SubmissionType) || existing.type,
-          updatedBy: String(authUser.userId) || '',
-          updatedAt: new Date(),
         },
       });
       this.logger.log(`Submission updated successfully: ${submissionId}`);
       return this.buildResponse(data);
     } catch (error) {
-      if (error instanceof NotFoundException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `updating submission with ID: ${submissionId}`,
       );
+
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({
+          message: `Submission with ID ${submissionId} not found. Cannot update non-existent submission.`,
+          details: { submissionId },
+        });
+      }
+
+      const badRequestCodes = [
+        'FOREIGN_KEY_CONSTRAINT_FAILED',
+        'INVALID_DATA',
+        'VALIDATION_ERROR',
+        'REQUIRED_FIELD_MISSING',
+        'MISSING_REQUIRED_VALUE',
+        'DATA_VALIDATION_ERROR',
+      ];
+
+      if (badRequestCodes.includes(errorResponse.code)) {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
@@ -1415,6 +1491,9 @@ export class SubmissionService {
       }
     } catch (error) {
       if (error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof ForbiddenException) {
         throw error;
       }
       const errorResponse = this.prismaErrorService.handleError(

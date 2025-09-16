@@ -336,9 +336,11 @@ export class SubmissionController {
     type: [ArtifactsListResponseDto],
   })
   async listArtifacts(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
   ): Promise<ArtifactsListResponseDto> {
-    return this.service.listArtifacts(submissionId);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.listArtifacts(authUser, submissionId);
   }
 
   @Get('/:submissionId/artifacts/:artifactId/download')

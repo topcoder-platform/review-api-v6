@@ -1,7 +1,6 @@
 import {
   Injectable,
   BadRequestException,
-  Logger,
   NotFoundException,
   InternalServerErrorException,
   ForbiddenException,
@@ -24,16 +23,19 @@ import {
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { LoggerService } from 'src/shared/modules/global/logger.service';
 
 @Injectable()
 export class AiWorkflowService {
-  private readonly logger: Logger = new Logger(AiWorkflowService.name);
+  private readonly logger: LoggerService;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
-  ) {}
+  ) {
+    this.logger = LoggerService.forRoot('AiWorkflowService');
+  }
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
     const count = await this.prisma.scorecard.count({
@@ -81,10 +83,6 @@ export class AiWorkflowService {
           name,
           scorecardId,
           llmId,
-          // TODO: This has to be removed once the prisma middleware is implemented
-          createdBy: '',
-          updatedAt: new Date(),
-          updatedBy: '',
         },
       })
       .catch((e) => {
@@ -94,6 +92,24 @@ export class AiWorkflowService {
           );
         }
       });
+  }
+
+  async getWorkflows(filters: { name: string }) {
+    const workflows = await this.prisma.aiWorkflow.findMany({
+      where: filters.name
+        ? { name: { contains: filters.name, mode: 'insensitive' } }
+        : {},
+      include: {
+        llm: {
+          include: {
+            provider: true,
+          },
+        },
+        scorecard: true,
+      },
+    });
+
+    return workflows;
   }
 
   async getWorkflowById(id: string) {
@@ -247,6 +263,10 @@ export class AiWorkflowService {
     user: JwtUser,
     filter: { submissionId?: string; runId?: string },
   ) {
+    this.logger.log(
+      `fetching workflow runs for workflowId ${workflowId} and ${JSON.stringify(filter)}`,
+    );
+
     // validate workflowId
     try {
       await this.getWorkflowById(workflowId);
@@ -276,7 +296,11 @@ export class AiWorkflowService {
     }
 
     const submission = runs[0]?.submission;
-    const challengeId = submission?.challengeId;
+    if ((!submission || !submission.challengeId) && filter.submissionId) {
+      throw new BadRequestException(`Invalid submissionId provided!`);
+    }
+
+    const challengeId = submission.challengeId;
     const challenge: ChallengeData =
       await this.challengeApiService.getChallengeDetail(challengeId!);
 
@@ -302,8 +326,7 @@ export class AiWorkflowService {
         )
       ).filter((resource) =>
         requiredRoles.some(
-          (role) =>
-            resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
+          (role) => resource.roleName!.toLowerCase() === role.toLowerCase(),
         ),
       );
 
@@ -316,7 +339,7 @@ export class AiWorkflowService {
         memberRoles.some(
           (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
         ) &&
-        user.userId !== submission.memberId
+        String(user.userId) !== String(submission.memberId)
       ) {
         this.logger.log(
           `Submitter ${user.userId} trying to access AI workflow run for other submitters.`,
@@ -325,7 +348,7 @@ export class AiWorkflowService {
       }
     }
 
-    return runs;
+    return runs.map((r) => ({ ...r, submission: undefined, test: true }));
   }
 
   async updateWorkflowRun(
@@ -364,6 +387,105 @@ export class AiWorkflowService {
 
       throw error;
     }
+  }
+
+  async getRunItems(workflowId: string, runId: string, user: JwtUser) {
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id: workflowId },
+    });
+    if (!workflow) {
+      this.logger.error(`Workflow with id ${workflowId} not found.`);
+      throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+    }
+
+    const run = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: runId },
+      include: { workflow: true },
+    });
+    if (!run || run.workflowId !== workflowId) {
+      this.logger.error(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+      throw new NotFoundException(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+    }
+
+    const submission = run.submissionId
+      ? await this.prisma.submission.findUnique({
+          where: { id: run.submissionId },
+        })
+      : null;
+    const challengeId = submission?.challengeId;
+
+    if (!challengeId) {
+      this.logger.error(
+        `Challenge ID not found for submission ${run.submissionId}`,
+      );
+      throw new InternalServerErrorException(
+        `Challenge ID not found for submission ${run.submissionId}`,
+      );
+    }
+
+    const challenge: ChallengeData =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+
+    if (!challenge) {
+      throw new InternalServerErrorException(
+        `Challenge with id ${challengeId} was not found!`,
+      );
+    }
+
+    const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
+    if (!isM2mOrAdmin) {
+      const requiredRoles = [
+        UserRole.Reviewer,
+        UserRole.ProjectManager,
+        UserRole.Copilot,
+        UserRole.Submitter,
+      ].map((r) => r.toLowerCase());
+
+      const memberRoles = (
+        await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          user.userId,
+        )
+      ).filter((resource) =>
+        requiredRoles.some(
+          (role) =>
+            resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
+        ),
+      );
+
+      if (!memberRoles.length) {
+        throw new ForbiddenException('Insufficient permissions');
+      }
+
+      if (
+        challenge.status !== ChallengeStatus.COMPLETED &&
+        memberRoles.some(
+          (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
+        ) &&
+        user.userId !== submission?.memberId
+      ) {
+        this.logger.log(
+          `Submitter ${user.userId} trying to access AI workflow run for other submitters.`,
+        );
+        throw new ForbiddenException('Insufficient permissions');
+      }
+    }
+
+    const items = await this.prisma.aiWorkflowRunItem.findMany({
+      where: { workflowRunId: runId },
+      include: {
+        comments: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    return items;
   }
 
   async updateRunItem(

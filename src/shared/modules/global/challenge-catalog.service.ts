@@ -15,7 +15,9 @@ export class ChallengeCatalogService implements OnModuleInit {
   private readonly logger = new Logger(ChallengeCatalogService.name);
 
   private typesById = new Map<string, ChallengeTypeRecord>();
+  private typesByName = new Map<string, ChallengeTypeRecord>();
   private tracksById = new Map<string, ChallengeTrackRecord>();
+  private tracksByName = new Map<string, ChallengeTrackRecord>();
 
   constructor(
     private readonly httpService: HttpService,
@@ -64,13 +66,33 @@ export class ChallengeCatalogService implements OnModuleInit {
   async refreshTypes(): Promise<void> {
     const list =
       await this.fetchFromV6<ChallengeTypeRecord[]>('challenge-types');
-    this.typesById = new Map((list || []).map((t) => [t.id, t]));
+    const byId = new Map<string, ChallengeTypeRecord>();
+    const byName = new Map<string, ChallengeTypeRecord>();
+    for (const item of list || []) {
+      byId.set(item.id, item);
+      const nameKey = this.normalizeTypeName(item.name);
+      if (nameKey) {
+        byName.set(nameKey, item);
+      }
+    }
+    this.typesById = byId;
+    this.typesByName = byName;
   }
 
   async refreshTracks(): Promise<void> {
     const list =
       await this.fetchFromV6<ChallengeTrackRecord[]>('challenge-tracks');
-    this.tracksById = new Map((list || []).map((t) => [t.id, t]));
+    const byId = new Map<string, ChallengeTrackRecord>();
+    const byName = new Map<string, ChallengeTrackRecord>();
+    for (const item of list || []) {
+      byId.set(item.id, item);
+      const nameKey = this.normalizeTrackName(item.name);
+      if (nameKey) {
+        byName.set(nameKey, item);
+      }
+    }
+    this.tracksById = byId;
+    this.tracksByName = byName;
   }
 
   getTypeNameById(id?: string): string | undefined {
@@ -81,6 +103,32 @@ export class ChallengeCatalogService implements OnModuleInit {
   getTrackNameById(id?: string): string | undefined {
     if (!id) return undefined;
     return this.tracksById.get(id)?.name;
+  }
+
+  getTypeIdByName(name?: string): string | undefined {
+    const normalized = this.normalizeTypeName(name);
+    if (!normalized) return undefined;
+    return this.typesByName.get(normalized)?.id;
+  }
+
+  getTrackIdByName(name?: string): string | undefined {
+    const normalized = this.normalizeTrackName(name);
+    if (!normalized) return undefined;
+    return this.tracksByName.get(normalized)?.id;
+  }
+
+  async ensureTypesLoaded(): Promise<void> {
+    if (this.typesById.size > 0 && this.typesByName.size > 0) {
+      return;
+    }
+    await this.refreshTypes();
+  }
+
+  async ensureTracksLoaded(): Promise<void> {
+    if (this.tracksById.size > 0 && this.tracksByName.size > 0) {
+      return;
+    }
+    await this.refreshTracks();
   }
 
   private normalizeTypeName(name?: string): string | undefined {

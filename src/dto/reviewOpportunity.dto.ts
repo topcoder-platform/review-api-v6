@@ -17,7 +17,33 @@ import {
   Min,
 } from 'class-validator';
 import { ReviewApplicationResponseDto } from './reviewApplication.dto';
-import { Transform } from 'class-transformer';
+import { Expose, Transform } from 'class-transformer';
+
+const toNormalizedStrings = (input: unknown): string[] => {
+  if (Array.isArray(input)) {
+    return input
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    return trimmed ? [trimmed] : [];
+  }
+
+  return [];
+};
+
+const mergeNormalizedStrings = (...inputs: unknown[]): string[] => {
+  const unique = new Set<string>();
+  for (const input of inputs) {
+    for (const value of toNormalizedStrings(input)) {
+      unique.add(value);
+    }
+  }
+  return [...unique];
+};
 
 export enum ReviewOpportunityStatus {
   OPEN = 'OPEN',
@@ -231,23 +257,33 @@ export class QueryReviewOpportunityDto {
   @IsOptional()
   numSubmissionsTo: number | undefined;
 
-  @Transform(({ value }): string[] | undefined => {
-    if (Array.isArray(value)) return value as string[];
-    if (typeof value === 'string') return [value];
-    return value as string[] | undefined;
+  @Expose({ name: 'track' })
+  @Transform(({ value, obj }): string[] | undefined => {
+    const sourceObj = obj as Record<string, unknown> | undefined;
+    const values = mergeNormalizedStrings(
+      value,
+      sourceObj?.tracks,
+      sourceObj?.track,
+    );
+    return values.length > 0 ? values : undefined;
   })
   @IsArray()
   @IsOptional()
   tracks: string[] | undefined;
 
-  @Transform(({ value }): string[] | undefined => {
-    if (Array.isArray(value)) return value as string[];
-    if (typeof value === 'string') return [value];
-    return value as string[] | undefined;
+  @Expose({ name: 'type' })
+  @Transform(({ value, obj }): string[] | undefined => {
+    const sourceObj = obj as Record<string, unknown> | undefined;
+    const values = mergeNormalizedStrings(
+      value,
+      sourceObj?.types,
+      sourceObj?.type,
+    );
+    return values.length > 0 ? values : undefined;
   })
   @IsArray()
   @IsOptional()
-  skills: string[] | undefined;
+  types: string[] | undefined;
 
   @IsIn(['basePayment', 'duration', 'startDate'])
   @IsString()

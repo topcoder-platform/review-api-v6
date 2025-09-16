@@ -29,7 +29,6 @@ import {
   AppealResponseDto,
   AppealResponseRequestDto,
   AppealResponseResponseDto,
-  mapAppealRequestToDto,
   mapAppealResponseRequestToDto,
 } from 'src/dto/appeal.dto';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
@@ -103,7 +102,7 @@ export class AppealController {
       await this.challengeApiService.validateAppealSubmission(challengeId);
 
       const data = await this.prisma.appeal.create({
-        data: mapAppealRequestToDto(body),
+        data: { ...body },
       });
       this.logger.log(`Appeal created with ID: ${data.id}`);
       return data as AppealResponseDto;
@@ -156,7 +155,7 @@ export class AppealController {
     try {
       const data = await this.prisma.appeal.update({
         where: { id: appealId },
-        data: mapAppealRequestToDto(body),
+        data: { ...body },
       });
       this.logger.log(`Appeal updated successfully: ${appealId}`);
       return data as AppealResponseDto;
@@ -392,11 +391,11 @@ export class AppealController {
   }
 
   @Get('/')
-  @Roles(UserRole.Admin, UserRole.Copilot)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer, UserRole.User)
   @Scopes(Scope.ReadAppeal)
   @ApiOperation({
     summary: 'Get appeals',
-    description: 'Roles: Admin, Copilot | Scopes: read:appeal',
+    description: 'Roles: Admin, Reviewer, User, Copilot | Scopes: read:appeal',
   })
   @ApiQuery({
     name: 'resourceId',

@@ -99,16 +99,16 @@ export class ReviewOpportunityController {
   })
   @ApiQuery({
     name: 'tracks',
-    description: 'Challenge tracks',
+    description: 'Challenge tracks (ID or name)',
     type: 'array',
     example: ['CODE'],
     required: false,
   })
   @ApiQuery({
-    name: 'skills',
-    description: 'Skills of challenges',
+    name: 'types',
+    description: 'Challenge types (ID or name)',
     type: 'array',
-    example: ['TypeScript'],
+    example: ['CHALLENGE'],
     required: false,
   })
   @ApiQuery({
@@ -226,12 +226,10 @@ export class ReviewOpportunityController {
   @Roles(UserRole.Admin, UserRole.Copilot)
   @Scopes(Scope.UpdateReviewOpportunity, Scope.AllReviewOpportunity)
   async updateById(
-    @Req() req: Request,
     @Param('id') id: string,
     @Body() dto: UpdateReviewOpportunityDto,
   ) {
-    const authUser: JwtUser = req['user'] as JwtUser;
-    return OkResponse(await this.service.update(authUser, id, dto));
+    return OkResponse(await this.service.update(id, dto));
   }
 
   @ApiOperation({

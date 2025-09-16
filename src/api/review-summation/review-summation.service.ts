@@ -58,9 +58,6 @@ export class ReviewSummationService {
       const data = await this.prisma.reviewSummation.create({
         data: {
           ...body,
-          createdBy: String(authUser.userId) || '',
-          createdAt: new Date(),
-          updatedBy: String(authUser.userId) || '',
         },
       });
       this.logger.log(`Review summation created with ID: ${data.id}`);
@@ -259,8 +256,6 @@ export class ReviewSummationService {
         where: { id },
         data: {
           ...body,
-          updatedBy: String(authUser.userId) || '',
-          updatedAt: new Date(),
         },
       });
       this.logger.log(`Review summation updated successfully: ${id}`);
