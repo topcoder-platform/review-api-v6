@@ -77,7 +77,7 @@ export class ReviewApplicationController {
 
   @ApiOperation({
     summary: 'Get applications by user ID',
-    description: 'Roles: Admin | Reviewer | User (self)',
+    description: 'Roles: Admin | User (self)',
   })
   @ApiParam({
     name: 'userId',

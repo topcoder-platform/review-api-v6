@@ -2,10 +2,6 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsString } from 'class-validator';
 
 export class ContactRequestBaseDto {
-  @ApiProperty({ description: 'The ID of the resource', example: 'user123' })
-  @IsString()
-  resourceId: string;
-
   @ApiProperty({
     description: 'The associated challenge ID',
     example: 'challenge456',
@@ -24,6 +20,9 @@ export class ContactRequestBaseDto {
 export class ContactRequestDto extends ContactRequestBaseDto {}
 
 export class ContactRequestResponseDto extends ContactRequestBaseDto {
+  @ApiProperty({ description: 'The ID of the resource', example: 'user123' })
+  resourceId: string;
+
   @ApiProperty({
     description: 'The ID of the contact request',
     example: 'abc123',
@@ -55,7 +54,10 @@ export class ContactRequestResponseDto extends ContactRequestBaseDto {
   updatedBy: string;
 }
 
-export function mapContactRequestToDto(request: ContactRequestDto) {
+export function mapContactRequestToDto(
+  request: ContactRequestDto,
+  resourceId: string,
+) {
   const userFields = {
     createdBy: '',
     updatedBy: '',
@@ -63,6 +65,7 @@ export function mapContactRequestToDto(request: ContactRequestDto) {
 
   return {
     ...request,
+    resourceId,
     ...userFields,
   };
 }
