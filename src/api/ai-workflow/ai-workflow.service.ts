@@ -262,7 +262,7 @@ export class AiWorkflowService {
     user: JwtUser,
     filter: { submissionId?: string; runId?: string },
   ) {
-    this.logger.debug(
+    this.logger.log(
       `fetching workflow runs for workflowId ${workflowId} and ${JSON.stringify(filter)}`,
     );
 
