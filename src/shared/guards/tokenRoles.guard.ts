@@ -37,7 +37,11 @@ export class TokenRolesGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
 
     try {
-      const user = request['user'] ?? {};
+      const user = request['user'];
+
+      if (!user && (requiredRoles.length || requiredScopes.length)) {
+        throw new UnauthorizedException('Missing or invalid token!');
+      }
 
       // Check role-based access for regular users
       if (user.roles && requiredRoles.length > 0) {
