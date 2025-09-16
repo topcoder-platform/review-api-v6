@@ -9,6 +9,7 @@ import {
   IsInt,
   IsDate,
   Min,
+  Max,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -84,12 +85,15 @@ export class CreateAiWorkflowRunDto {
   @ApiProperty()
   @IsNumber()
   @IsNotEmpty()
+  @Min(0)
+  @Max(100)
   @IsOptional()
   score?: number;
 
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
+  @Transform(trimTransformer)
   status: string;
 }
 
