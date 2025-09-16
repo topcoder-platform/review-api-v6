@@ -112,13 +112,6 @@ export class ReviewOpportunityController {
     required: false,
   })
   @ApiQuery({
-    name: 'skills',
-    description: 'Skills of challenges',
-    type: 'array',
-    example: ['TypeScript'],
-    required: false,
-  })
-  @ApiQuery({
     name: 'sortBy',
     description: 'sorting field',
     enum: ['basePayment', 'duration', 'startDate'],

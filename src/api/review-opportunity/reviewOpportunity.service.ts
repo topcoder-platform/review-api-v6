@@ -116,15 +116,6 @@ export class ReviewOpportunityService {
           return !!typeId && typeFilterIds.has(typeId);
         });
       }
-      if (dto.skills && dto.skills.length > 0) {
-        responseList = responseList.filter(
-          (r) =>
-            r.challengeData &&
-            (r.challengeData['technologies'] as string[]).some((e) =>
-              dto.skills?.includes(e),
-            ),
-        );
-      }
       // sort list
       responseList = [...responseList].sort((a, b) => {
         return dto.sortOrder === 'asc'
