@@ -251,15 +251,6 @@ export class QueryReviewOpportunityDto {
   @IsOptional()
   types: string[] | undefined;
 
-  @Transform(({ value }): string[] | undefined => {
-    if (Array.isArray(value)) return value as string[];
-    if (typeof value === 'string') return [value];
-    return value as string[] | undefined;
-  })
-  @IsArray()
-  @IsOptional()
-  skills: string[] | undefined;
-
   @IsIn(['basePayment', 'duration', 'startDate'])
   @IsString()
   @IsOptional()
