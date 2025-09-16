@@ -148,6 +148,7 @@ export class CommentDto {
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   content: string;
 
