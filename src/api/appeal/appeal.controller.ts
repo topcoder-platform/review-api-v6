@@ -392,11 +392,11 @@ export class AppealController {
   }
 
   @Get('/')
-  @Roles(UserRole.Admin, UserRole.Copilot)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer, UserRole.User)
   @Scopes(Scope.ReadAppeal)
   @ApiOperation({
     summary: 'Get appeals',
-    description: 'Roles: Admin, Copilot | Scopes: read:appeal',
+    description: 'Roles: Admin, Reviewer, User, Copilot | Scopes: read:appeal',
   })
   @ApiQuery({
     name: 'resourceId',
