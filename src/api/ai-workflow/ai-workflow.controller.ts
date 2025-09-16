@@ -122,6 +122,7 @@ export class AiWorkflowController {
     UserRole.ProjectManager,
     UserRole.Reviewer,
     UserRole.Submitter,
+    UserRole.User,
   )
   @Scopes(Scope.ReadWorkflowRun)
   @ApiOperation({
@@ -154,6 +155,7 @@ export class AiWorkflowController {
     UserRole.ProjectManager,
     UserRole.Reviewer,
     UserRole.Submitter,
+    UserRole.User,
   )
   @Scopes(Scope.ReadWorkflowRun)
   @ApiOperation({

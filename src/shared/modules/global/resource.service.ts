@@ -104,7 +104,7 @@ export class ResourceApiService {
         memberId: memberId,
       })
     )
-      .filter((resource) => resource.memberId === memberId)
+      .filter((resource) => String(resource.memberId) === String(memberId))
       .map((resource) => ({
         ...resource,
         roleName: resourceRoles?.[resource.roleId]?.name ?? '',
