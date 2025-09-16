@@ -347,7 +347,7 @@ export class AiWorkflowService {
       }
     }
 
-    return runs.map((r) => ({ ...r, submission: undefined }));
+    return runs.map((r) => ({ ...r, submission: undefined, test: true }));
   }
 
   async updateWorkflowRun(
