@@ -94,7 +94,7 @@ export class AiWorkflowService {
   async getWorkflows(filters: { name: string }) {
     const workflows = await this.prisma.aiWorkflow.findMany({
       where: filters.name
-        ? { name: { contains: `%${filters.name}%`, mode: 'insensitive' } }
+        ? { name: { contains: filters.name, mode: 'insensitive' } }
         : {},
       include: {
         llm: {
