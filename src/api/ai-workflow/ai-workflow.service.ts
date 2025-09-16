@@ -289,7 +289,11 @@ export class AiWorkflowService {
     }
 
     const submission = runs[0]?.submission;
-    const challengeId = submission?.challengeId;
+    if ((!submission || !submission.challengeId) && filter.submissionId) {
+      throw new BadRequestException(`Invalid submissionId provided!`);
+    }
+
+    const challengeId = submission.challengeId;
     const challenge: ChallengeData =
       await this.challengeApiService.getChallengeDetail(challengeId!);
 
@@ -338,7 +342,7 @@ export class AiWorkflowService {
       }
     }
 
-    return runs;
+    return runs.map((r) => ({ ...r, submission: undefined }));
   }
 
   async updateWorkflowRun(
