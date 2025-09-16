@@ -17,7 +17,33 @@ import {
   Min,
 } from 'class-validator';
 import { ReviewApplicationResponseDto } from './reviewApplication.dto';
-import { Transform } from 'class-transformer';
+import { Expose, Transform } from 'class-transformer';
+
+const toNormalizedStrings = (input: unknown): string[] => {
+  if (Array.isArray(input)) {
+    return input
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    return trimmed ? [trimmed] : [];
+  }
+
+  return [];
+};
+
+const mergeNormalizedStrings = (...inputs: unknown[]): string[] => {
+  const unique = new Set<string>();
+  for (const input of inputs) {
+    for (const value of toNormalizedStrings(input)) {
+      unique.add(value);
+    }
+  }
+  return [...unique];
+};
 
 export enum ReviewOpportunityStatus {
   OPEN = 'OPEN',
@@ -231,21 +257,29 @@ export class QueryReviewOpportunityDto {
   @IsOptional()
   numSubmissionsTo: number | undefined;
 
+  @Expose({ name: 'track' })
   @Transform(({ value, obj }): string[] | undefined => {
-    const raw = value ?? obj?.track;
-    if (Array.isArray(raw)) return raw as string[];
-    if (typeof raw === 'string') return [raw];
-    return raw as string[] | undefined;
+    const sourceObj = obj as Record<string, unknown> | undefined;
+    const values = mergeNormalizedStrings(
+      value,
+      sourceObj?.tracks,
+      sourceObj?.track,
+    );
+    return values.length > 0 ? values : undefined;
   })
   @IsArray()
   @IsOptional()
   tracks: string[] | undefined;
 
+  @Expose({ name: 'type' })
   @Transform(({ value, obj }): string[] | undefined => {
-    const raw = value ?? obj?.type;
-    if (Array.isArray(raw)) return raw as string[];
-    if (typeof raw === 'string') return [raw];
-    return raw as string[] | undefined;
+    const sourceObj = obj as Record<string, unknown> | undefined;
+    const values = mergeNormalizedStrings(
+      value,
+      sourceObj?.types,
+      sourceObj?.type,
+    );
+    return values.length > 0 ? values : undefined;
   })
   @IsArray()
   @IsOptional()
