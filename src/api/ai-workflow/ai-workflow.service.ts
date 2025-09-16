@@ -320,7 +320,7 @@ export class AiWorkflowService {
       ).filter((resource) =>
         requiredRoles.some(
           (role) =>
-            resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
+            resource.roleName!.toLowerCase() === role.toLowerCase(),
         ),
       );
 
@@ -333,7 +333,7 @@ export class AiWorkflowService {
         memberRoles.some(
           (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
         ) &&
-        user.userId !== submission.memberId
+        String(user.userId) !== String(submission.memberId)
       ) {
         this.logger.log(
           `Submitter ${user.userId} trying to access AI workflow run for other submitters.`,
