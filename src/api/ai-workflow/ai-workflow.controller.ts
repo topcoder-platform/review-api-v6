@@ -22,6 +22,7 @@ import {
   CreateAiWorkflowDto,
   CreateAiWorkflowRunDto,
   UpdateAiWorkflowDto,
+  CreateAiWorkflowRunItemsDto,
   UpdateAiWorkflowRunDto,
 } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
@@ -48,6 +49,29 @@ export class AiWorkflowController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async create(@Body() createAiWorkflowDto: CreateAiWorkflowDto) {
     return this.aiWorkflowService.createWithValidation(createAiWorkflowDto);
+  }
+
+  @Post('/:workflowId/runs/:runId/items')
+  @Scopes(Scope.CreateWorkflowRun)
+  @ApiOperation({ summary: 'Create AIWorkflowRunItems in batch' })
+  @ApiResponse({
+    status: 201,
+    description: 'AIWorkflowRunItems created successfully.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 404, description: 'Workflow or Run not found.' })
+  async createRunItems(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    createItemsDto: CreateAiWorkflowRunItemsDto,
+  ) {
+    return this.aiWorkflowService.createRunItemsBatch(
+      workflowId,
+      runId,
+      createItemsDto.items,
+    );
   }
 
   @Get(':id')
@@ -78,15 +102,13 @@ export class AiWorkflowController {
   @ApiResponse({ status: 404, description: 'AI workflow not found.' })
   async update(
     @Param('id') id: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true }))
-    updateDto: UpdateAiWorkflowDto,
+    @Body() updateDto: UpdateAiWorkflowDto,
   ) {
     return this.aiWorkflowService.updateWorkflow(id, updateDto);
   }
 
   @Post('/:workflowId/runs')
-  @Roles(UserRole.Admin)
-  @Scopes(Scope.CreateWorkflowRuns)
+  @Scopes(Scope.CreateWorkflowRun)
   @ApiOperation({ summary: 'Create a new run for an AI workflow' })
   @ApiResponse({
     status: 201,
@@ -109,7 +131,7 @@ export class AiWorkflowController {
     UserRole.Reviewer,
     UserRole.Submitter,
   )
-  @Scopes(Scope.ReadWorkflowRuns)
+  @Scopes(Scope.ReadWorkflowRun)
   @ApiOperation({
     summary: 'Get all the AI workflow runs for a given submission ID',
   })
@@ -141,7 +163,7 @@ export class AiWorkflowController {
     UserRole.Reviewer,
     UserRole.Submitter,
   )
-  @Scopes(Scope.ReadWorkflowRuns)
+  @Scopes(Scope.ReadWorkflowRun)
   @ApiOperation({
     summary: 'Get an AI workflow run by its ID',
   })
@@ -172,7 +194,7 @@ export class AiWorkflowController {
   }
 
   @Patch('/:workflowId/runs/:runId')
-  @Scopes(Scope.UpdateWorkflowRuns)
+  @Scopes(Scope.UpdateWorkflowRun)
   @ApiOperation({ summary: 'Update a run for an AI workflow' })
   @ApiResponse({
     status: 200,

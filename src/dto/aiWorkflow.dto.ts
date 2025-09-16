@@ -1,12 +1,20 @@
 import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
   IsNumber,
+  IsArray,
+  ValidateNested,
   IsOptional,
+  IsInt,
   IsDate,
+  Min,
+  Max,
 } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+
+const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
+  typeof value === 'string' ? value.trim() : undefined;
 
 export class CreateAiWorkflowDto {
   @ApiProperty()
@@ -21,21 +29,25 @@ export class CreateAiWorkflowDto {
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   description: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   defUrl: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   gitId: string;
 
   @ApiProperty()
   @IsString()
+  @Transform(trimTransformer)
   @IsNotEmpty()
   gitOwner: string;
 
@@ -73,12 +85,15 @@ export class CreateAiWorkflowRunDto {
   @ApiProperty()
   @IsNumber()
   @IsNotEmpty()
+  @Min(0)
+  @Max(100)
   @IsOptional()
   score?: number;
 
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
+  @Transform(trimTransformer)
   status: string;
 }
 
@@ -86,3 +101,40 @@ export class UpdateAiWorkflowRunDto extends OmitType(
   PartialType(CreateAiWorkflowRunDto),
   ['submissionId'],
 ) {}
+
+export class CreateAiWorkflowRunItemDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  scorecardQuestionId: string;
+
+  @ApiProperty()
+  @IsString()
+  @Transform(trimTransformer)
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  upVotes?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  downVotes?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  questionScore?: number;
+}
+
+export class CreateAiWorkflowRunItemsDto {
+  @ApiProperty({ type: [CreateAiWorkflowRunItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateAiWorkflowRunItemDto)
+  items: CreateAiWorkflowRunItemDto[];
+}

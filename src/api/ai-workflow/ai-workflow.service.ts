@@ -5,6 +5,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
@@ -69,17 +70,25 @@ export class AiWorkflowService {
       );
     }
 
-    return this.prisma.aiWorkflow.create({
-      data: {
-        defUrl,
-        description,
-        gitId,
-        gitOwner,
-        name,
-        scorecardId,
-        llmId,
-      },
-    });
+    return this.prisma.aiWorkflow
+      .create({
+        data: {
+          defUrl,
+          description,
+          gitId,
+          gitOwner,
+          name,
+          scorecardId,
+          llmId,
+        },
+      })
+      .catch((e) => {
+        if (e.code === 'P2002') {
+          throw new ConflictException(
+            `Unique constraint failed on the fields - ${e.meta.target.join(',')}`,
+          );
+        }
+      });
   }
 
   async getWorkflowById(id: string) {
@@ -138,6 +147,67 @@ export class AiWorkflowService {
       where: { id },
       data: updateDto,
     });
+  }
+
+  async createRunItemsBatch(workflowId: string, runId: string, items: any[]) {
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id: workflowId },
+    });
+    if (!workflow) {
+      this.logger.error(`Workflow with id ${workflowId} not found.`);
+      throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+    }
+
+    const run = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: runId },
+      include: { workflow: true },
+    });
+    if (!run || run.workflowId !== workflowId) {
+      this.logger.error(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+      throw new NotFoundException(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+    }
+
+    for (const item of items) {
+      if (!item.scorecardQuestionId || !item.content) {
+        this.logger.error(
+          `Invalid item: scorecardQuestionId and content are required.`,
+        );
+        throw new BadRequestException(
+          `Each item must have scorecardQuestionId and content.`,
+        );
+      }
+      const questionExists = await this.prisma.scorecardQuestion.findUnique({
+        where: { id: item.scorecardQuestionId },
+      });
+      if (!questionExists) {
+        this.logger.error(
+          `ScorecardQuestion with id ${item.scorecardQuestionId} not found.`,
+        );
+        throw new BadRequestException(
+          `ScorecardQuestion with id ${item.scorecardQuestionId} not found.`,
+        );
+      }
+    }
+
+    const createdItems = await this.prisma.aiWorkflowRunItem.createMany({
+      data: items.map((item) => ({
+        workflowRunId: runId,
+        scorecardQuestionId: item.scorecardQuestionId,
+        content: item.content,
+        upVotes: item.upVotes ?? 0,
+        downVotes: item.downVotes ?? 0,
+        questionScore: item.questionScore ?? null,
+        createdAt: new Date(),
+        // TODO: Remove this once prisma middleware implementation is done
+        createdBy: '',
+      })),
+    });
+
+    return { createdCount: createdItems.count };
   }
 
   async createWorkflowRun(workflowId: string, runData: CreateAiWorkflowRunDto) {

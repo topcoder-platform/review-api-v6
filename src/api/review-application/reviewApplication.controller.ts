@@ -77,7 +77,7 @@ export class ReviewApplicationController {
 
   @ApiOperation({
     summary: 'Get applications by user ID',
-    description: 'Roles: Admin | Reviewer',
+    description: 'Roles: Admin | Reviewer | User (self)',
   })
   @ApiParam({
     name: 'userId',
@@ -93,13 +93,15 @@ export class ReviewApplicationController {
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Get('/user/:userId')
   @ApiBearerAuth()
-  @Roles(UserRole.Admin, UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.Reviewer, UserRole.User)
   async getByUserId(@Req() req: Request, @Param('userId') userId: string) {
     // Check user permission. Only admin and user himself can access
     const authUser: JwtUser = req['user'] as JwtUser;
-    if (authUser.userId !== userId && !isAdmin(authUser)) {
+    const tokenUserId =
+      authUser.userId == null ? null : String(authUser.userId);
+    if (tokenUserId !== userId && !isAdmin(authUser)) {
       throw new ForbiddenException(
-        "You cannot check this user's review applications",
+        "You cannot retrieve this user's review applications",
       );
     }
     return OkResponse(await this.service.listByUser(userId));

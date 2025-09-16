@@ -187,6 +187,7 @@ export class ReviewApplicationService {
   async approve(id: string): Promise<void> {
     try {
       const entity = await this.checkExists(id);
+
       await this.prisma.reviewApplication.update({
         where: { id },
         data: {
@@ -220,6 +221,7 @@ export class ReviewApplicationService {
   async reject(id: string): Promise<void> {
     try {
       const entity = await this.checkExists(id);
+
       await this.prisma.reviewApplication.update({
         where: { id },
         data: {

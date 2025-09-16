@@ -336,9 +336,11 @@ export class SubmissionController {
     type: [ArtifactsListResponseDto],
   })
   async listArtifacts(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
   ): Promise<ArtifactsListResponseDto> {
-    return this.service.listArtifacts(submissionId);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.listArtifacts(authUser, submissionId);
   }
 
   @Get('/:submissionId/artifacts/:artifactId/download')
@@ -440,8 +442,7 @@ export class SubmissionController {
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
     summary: 'Download all submissions for a challenge as a ZIP file',
-    description:
-      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
+    description: 'Roles: Copilot, Admin, Reviewer. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'challengeId',
