@@ -260,6 +260,8 @@ export class AiWorkflowService {
     user: JwtUser,
     filter: { submissionId?: string; runId?: string },
   ) {
+    this.logger.debug(`fetching workflow runs for workflowId ${workflowId} and ${JSON.stringify(filter)}`);
+
     // validate workflowId
     try {
       await this.getWorkflowById(workflowId);
