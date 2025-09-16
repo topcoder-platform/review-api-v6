@@ -1,7 +1,6 @@
 import {
   Injectable,
   BadRequestException,
-  Logger,
   NotFoundException,
   InternalServerErrorException,
   ForbiddenException,
@@ -23,16 +22,19 @@ import {
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { LoggerService } from 'src/shared/modules/global/logger.service';
 
 @Injectable()
 export class AiWorkflowService {
-  private readonly logger: Logger = new Logger(AiWorkflowService.name);
+  private readonly logger: LoggerService;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
-  ) {}
+  ) {
+    this.logger = LoggerService.forRoot('AiWorkflowService');
+  }
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
     const count = await this.prisma.scorecard.count({
