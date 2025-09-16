@@ -108,7 +108,6 @@ export class AiWorkflowController {
   }
 
   @Post('/:workflowId/runs')
-  @Roles(UserRole.Admin)
   @Scopes(Scope.CreateWorkflowRun)
   @ApiOperation({ summary: 'Create a new run for an AI workflow' })
   @ApiResponse({
