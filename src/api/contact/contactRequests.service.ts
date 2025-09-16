@@ -42,21 +42,24 @@ export class ContactRequestsService {
     body: ContactRequestDto,
   ): Promise<ContactRequestResponseDto> {
     this.logger.log(
-      `Creating contact request for challenge: ${body.challengeId}, resource: ${body.resourceId}`,
+      `Creating contact request for challenge: ${body.challengeId}`,
     );
 
     try {
       // Validate requester has access
-      await this.resourceApiService.validateResourcesRoles(
-        [UserRole.Reviewer, UserRole.User],
-        authUser,
-        body.challengeId,
-        body.resourceId,
-      );
+      const requesterResource =
+        await this.resourceApiService.validateResourcesRoles(
+          [UserRole.Reviewer, UserRole.User],
+          authUser,
+          body.challengeId,
+        );
 
       // Persist contact request
       const data = await this.prisma.contactRequest.create({
-        data: body,
+        data: {
+          ...body,
+          resourceId: requesterResource.id,
+        },
       });
 
       // Fire email notification to managers/copilots for the challenge
@@ -74,7 +77,7 @@ export class ContactRequestsService {
 
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `creating contact request for challenge ${body.challengeId} and resource ${body.resourceId}`,
+        `creating contact request for challenge ${body.challengeId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,

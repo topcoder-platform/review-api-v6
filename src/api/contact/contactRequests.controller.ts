@@ -65,7 +65,7 @@ export class ContactRequestsController {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `creating contact request for challenge ${body.challengeId} and resource ${body.resourceId}`,
+        `creating contact request for challenge ${body.challengeId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,

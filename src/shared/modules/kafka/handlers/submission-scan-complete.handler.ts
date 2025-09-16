@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { BaseEventHandler } from '../base-event.handler';
 import { KafkaHandlerRegistry } from '../kafka-handler.registry';
 import { LoggerService } from '../../global/logger.service';
+import { PrismaService } from '../../global/prisma.service';
 import { SubmissionScanCompleteOrchestrator } from '../../global/submission-scan-complete.orchestrator';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class SubmissionScanCompleteHandler
   constructor(
     private readonly handlerRegistry: KafkaHandlerRegistry,
     private readonly orchestrator: SubmissionScanCompleteOrchestrator,
+    private readonly prisma: PrismaService,
   ) {
     super(LoggerService.forRoot('SubmissionScanCompleteHandler'));
   }
@@ -53,6 +55,8 @@ export class SubmissionScanCompleteHandler
       }
 
       if (!message.isInfected) {
+        await this.updateSubmissionUrl(message.submissionId, message.url);
+
         // delegate to orchestrator for further processing
         await this.orchestrator.orchestrateScanComplete(message.submissionId);
       } else {
@@ -65,6 +69,44 @@ export class SubmissionScanCompleteHandler
     } catch (error) {
       this.logger.error(
         'Error processing Submission Scan Complete event',
+        error,
+      );
+      throw error;
+    }
+  }
+
+  private async updateSubmissionUrl(
+    submissionId: string,
+    url: string,
+  ): Promise<void> {
+    if (!submissionId) {
+      this.logger.warn(
+        'Submission ID is missing in the scan complete message.',
+      );
+      return;
+    }
+
+    if (!url) {
+      this.logger.warn(
+        `URL is missing in scan complete message for submission ${submissionId}.`,
+      );
+      return;
+    }
+
+    try {
+      await this.prisma.submission.update({
+        where: { id: submissionId },
+        data: {
+          url,
+          updatedBy: 'SubmissionScanCompleteHandler',
+        },
+      });
+      this.logger.log(
+        `Updated submission ${submissionId} with scanned artifact URL.`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to update submission ${submissionId} with scanned artifact URL`,
         error,
       );
       throw error;
