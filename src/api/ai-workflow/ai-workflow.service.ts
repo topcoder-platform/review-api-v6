@@ -543,8 +543,11 @@ export class AiWorkflowService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const updatedRunItem = await tx.aiWorkflowRunItem.update({
+      await tx.aiWorkflowRunItem.update({
         where: { id: itemId },
+        include: {
+          comments: true,
+        },
         data: updateData,
       });
 
@@ -598,7 +601,12 @@ export class AiWorkflowService {
         }
       }
 
-      return updatedRunItem;
+      return tx.aiWorkflowRunItem.findUnique({
+        where: { id: itemId },
+        include: {
+          comments: true,
+        },
+      });
     });
   }
 }
