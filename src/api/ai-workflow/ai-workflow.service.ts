@@ -496,7 +496,6 @@ export class AiWorkflowService {
     runId: string,
     itemId: string,
     patchData: UpdateAiWorkflowRunItemDto,
-    user: JwtUser,
   ) {
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id: workflowId },
@@ -545,71 +544,12 @@ export class AiWorkflowService {
       updateData.questionScore = patchData.questionScore;
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      await tx.aiWorkflowRunItem.update({
-        where: { id: itemId },
-        include: {
-          comments: true,
-        },
-        data: updateData,
-      });
-
-      if (patchData.comments) {
-        for (const comment of patchData.comments) {
-          if (comment.id) {
-            const existingComment =
-              await tx.aiWorkflowRunItemComment.findUnique({
-                where: { id: comment.id },
-              });
-            if (!existingComment) {
-              this.logger.error(`Comment with id ${comment.id} not found.`);
-              throw new NotFoundException(
-                `Comment with id ${comment.id} not found.`,
-              );
-            }
-
-            if (
-              existingComment.createdBy !== user.userId &&
-              !user.roles?.includes(UserRole.Admin)
-            ) {
-              this.logger.error(
-                `User ${user.userId} unauthorized to update comment ${comment.id}.`,
-              );
-              throw new ForbiddenException(
-                `Unauthorized to update comment ${comment.id}.`,
-              );
-            }
-
-            await tx.aiWorkflowRunItemComment.update({
-              where: { id: comment.id },
-              data: {
-                content: comment.content,
-                updatedAt: new Date(),
-              },
-            });
-          } else {
-            await tx.aiWorkflowRunItemComment.create({
-              data: {
-                workflowRunItemId: itemId,
-                content: comment.content,
-                parentId: comment.parentId,
-                createdBy: '',
-                createdAt: new Date(),
-                userId: user.userId as string,
-                updatedAt: new Date(),
-                updatedBy: '',
-              },
-            });
-          }
-        }
-      }
-
-      return tx.aiWorkflowRunItem.findUnique({
-        where: { id: itemId },
-        include: {
-          comments: true,
-        },
-      });
+    return this.prisma.aiWorkflowRunItem.update({
+      where: { id: itemId },
+      include: {
+        comments: true,
+      },
+      data: updateData,
     });
   }
 }

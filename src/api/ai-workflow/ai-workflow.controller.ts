@@ -255,14 +255,12 @@ export class AiWorkflowController {
     @Param('itemId') itemId: string,
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     patchData: UpdateAiWorkflowRunItemDto,
-    @User() user: JwtUser,
   ) {
     return this.aiWorkflowService.updateRunItem(
       workflowId,
       runId,
       itemId,
       patchData,
-      user,
     );
   }
 
