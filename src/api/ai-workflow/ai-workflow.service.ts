@@ -469,7 +469,7 @@ export class AiWorkflowService {
         memberRoles.some(
           (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
         ) &&
-        user.userId !== submission?.memberId
+        user.userId?.toString() !== submission?.memberId
       ) {
         this.logger.log(
           `Submitter ${user.userId} trying to access AI workflow run for other submitters.`,
