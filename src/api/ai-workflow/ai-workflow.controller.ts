@@ -230,6 +230,14 @@ export class AiWorkflowController {
 
   @Patch('/:workflowId/runs/:runId/items/:itemId')
   @Scopes(Scope.UpdateWorkflowRun)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+    UserRole.User,
+  )
   @ApiOperation({ summary: 'Update an AIWorkflowRunItem by id' })
   @ApiParam({ name: 'workflowId', description: 'The ID of the AI workflow' })
   @ApiParam({ name: 'runId', description: 'The ID of the AI workflow run' })
