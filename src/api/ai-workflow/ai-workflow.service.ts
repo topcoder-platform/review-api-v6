@@ -451,6 +451,8 @@ export class AiWorkflowService {
       );
 
       this.logger.debug(userRoles);
+      this.logger.debug(user);
+      this.logger.debug(submission);
       const memberRoles = userRoles.filter((resource) =>
         requiredRoles.some(
           (role) =>
