@@ -17,6 +17,7 @@ import {
   SubmissionUpdateRequestDto,
 } from 'src/dto/submission.dto';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
@@ -1155,6 +1156,7 @@ export class SubmissionService {
   }
 
   async listSubmission(
+    authUser: JwtUser,
     queryDto: SubmissionQueryDto,
     paginationDto?: PaginationDto,
     sortDto?: SortDto,
@@ -1170,6 +1172,30 @@ export class SubmissionService {
         };
       }
 
+      const requestedMemberId = queryDto.memberId
+        ? String(queryDto.memberId)
+        : undefined;
+
+      if (requestedMemberId) {
+        const userId = authUser.userId ? String(authUser.userId) : undefined;
+        const isRequestingMember = userId === requestedMemberId;
+        const hasCopilotRole = (authUser.roles ?? []).includes(
+          UserRole.Copilot,
+        );
+        const hasElevatedAccess = isAdmin(authUser) || hasCopilotRole;
+
+        if (!hasElevatedAccess && !isRequestingMember) {
+          throw new ForbiddenException({
+            message:
+              'You are not allowed to view submissions for the requested member',
+            code: 'FORBIDDEN_SUBMISSION_ACCESS',
+            details: {
+              requestedMemberId,
+            },
+          });
+        }
+      }
+
       // Build the where clause for submissions based on available filter parameters
       const submissionWhereClause: any = {};
       if (queryDto.type) {
@@ -1180,6 +1206,9 @@ export class SubmissionService {
       }
       if (queryDto.challengeId) {
         submissionWhereClause.challengeId = queryDto.challengeId;
+      }
+      if (requestedMemberId) {
+        submissionWhereClause.memberId = requestedMemberId;
       }
       if (queryDto.legacySubmissionId) {
         submissionWhereClause.legacySubmissionId = queryDto.legacySubmissionId;

@@ -26,6 +26,7 @@ import {
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { Request } from 'express';
 
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -180,6 +181,7 @@ export class SubmissionController {
     type: [SubmissionResponseDto],
   })
   async listSubmissions(
+    @Req() req: Request,
     @Query() queryDto: SubmissionQueryDto,
     @Query() paginationDto?: PaginationDto,
     @Query() sortDto?: SortDto,
@@ -187,7 +189,13 @@ export class SubmissionController {
     this.logger.log(
       `Getting submissions with filters - ${JSON.stringify(queryDto)}`,
     );
-    return this.service.listSubmission(queryDto, paginationDto, sortDto);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.listSubmission(
+      authUser,
+      queryDto,
+      paginationDto,
+      sortDto,
+    );
   }
 
   @Get('/:submissionId')
