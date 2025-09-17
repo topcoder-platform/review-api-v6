@@ -277,17 +277,70 @@ export class ReviewService {
         challengeId: submission.challengeId,
       });
 
-      const resourceExists = challengeResources.some(
-        (resource) => resource.id === body.resourceId,
+      const resource = challengeResources.find(
+        (challengeResource) => challengeResource.id === body.resourceId,
       );
 
-      if (!resourceExists) {
+      if (!resource) {
         throw new NotFoundException({
           message: `Resource with ID ${body.resourceId} was not found for challenge ${submission.challengeId}.`,
           code: 'RESOURCE_NOT_FOUND',
           details: {
             resourceId: body.resourceId,
             challengeId: submission.challengeId,
+          },
+        });
+      }
+
+      const challenge = await this.challengeApiService.getChallengeDetail(
+        submission.challengeId,
+      );
+
+      const challengePhases = challenge?.phases ?? [];
+      const requestedPhaseId = String(body.phaseId);
+      const resolvePhaseId = (phase: (typeof challengePhases)[number]) =>
+        String((phase as any)?.id ?? (phase as any)?.phaseId ?? '');
+
+      const matchingPhase = challengePhases.find((phase) => {
+        const candidate = resolvePhaseId(phase);
+        return candidate && candidate === requestedPhaseId;
+      });
+
+      if (!matchingPhase) {
+        throw new BadRequestException({
+          message: `Phase ${body.phaseId} is not associated with challenge ${submission.challengeId}.`,
+          code: 'INVALID_REVIEW_PHASE',
+          details: {
+            resourceId: body.resourceId,
+            submissionId: body.submissionId,
+            challengeId: submission.challengeId,
+          },
+        });
+      }
+
+      const matchingPhaseName = (matchingPhase.name ?? '').toLowerCase();
+      if (!matchingPhaseName.includes('review')) {
+        throw new BadRequestException({
+          message: `Phase ${body.phaseId} is not a Review phase for challenge ${submission.challengeId}.`,
+          code: 'INVALID_REVIEW_PHASE',
+          details: {
+            phaseName: matchingPhase.name,
+            challengeId: submission.challengeId,
+          },
+        });
+      }
+
+      const resourcePhaseId = resource?.phaseId
+        ? String(resource.phaseId)
+        : undefined;
+      if (resourcePhaseId && resourcePhaseId !== requestedPhaseId) {
+        throw new BadRequestException({
+          message: `Resource ${body.resourceId} is associated with phase ${resourcePhaseId}, which does not match the requested phase ${requestedPhaseId}.`,
+          code: 'RESOURCE_PHASE_MISMATCH',
+          details: {
+            resourceId: body.resourceId,
+            expectedPhaseId: resourcePhaseId,
+            requestedPhaseId,
           },
         });
       }
@@ -357,6 +410,33 @@ export class ReviewService {
       if (!authUser?.isMachine) {
         if (!isAdmin(authUser)) {
           const uid = String(authUser?.userId ?? '');
+
+          if (!uid) {
+            throw new ForbiddenException({
+              message:
+                'Authenticated user information is missing the user identifier required for authorization checks.',
+              code: 'FORBIDDEN_CREATE_REVIEW',
+              details: {
+                challengeId: submission.challengeId,
+                resourceId: body.resourceId,
+              },
+            });
+          }
+
+          if (String(resource.memberId) !== uid) {
+            throw new ForbiddenException({
+              message:
+                'The specified resource does not belong to the authenticated user.',
+              code: 'RESOURCE_MEMBER_MISMATCH',
+              details: {
+                challengeId: submission.challengeId,
+                resourceId: body.resourceId,
+                requester: uid,
+                resourceOwner: resource.memberId,
+              },
+            });
+          }
+
           let isReviewer = false;
           try {
             const resources =
