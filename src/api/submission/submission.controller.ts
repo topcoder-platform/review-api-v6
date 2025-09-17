@@ -389,13 +389,12 @@ export class SubmissionController {
   }
 
   @Delete('/:submissionId/artifacts/:artifactId')
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.User)
   @Scopes(Scope.DeleteSubmissionArtifacts)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a artifact',
-    description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: delete:submission-artifacts',
+    description: 'Roles: Admin, User | Scopes: delete:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
