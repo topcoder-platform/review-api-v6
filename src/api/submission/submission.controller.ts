@@ -61,12 +61,11 @@ export class SubmissionController {
   }
 
   @Post()
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User)
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
     summary: 'Create a new submission',
-    description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission',
+    description: 'Roles: Admin, Copilot, User | Scopes: create:submission',
   })
   @ApiResponse({
     status: 201,
