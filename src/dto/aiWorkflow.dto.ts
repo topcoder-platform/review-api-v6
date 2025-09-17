@@ -11,6 +11,7 @@ import {
   Min,
   IsUUID,
   Max,
+  IsEmpty,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -159,9 +160,14 @@ export class CommentDto {
 }
 
 export class UpdateAiWorkflowRunItemDto extends PartialType(
-  OmitType(CreateAiWorkflowRunItemDto, [
-    'scorecardQuestionId',
-    'content',
-    'questionScore',
-  ] as const),
-) {}
+  CreateAiWorkflowRunItemDto,
+) {
+  @IsEmpty({ message: 'scorecardQuestionId cannot be updated' })
+  scorecardQuestionId?: never;
+
+  @IsEmpty({ message: 'content cannot be updated' })
+  content?: never;
+
+  @IsEmpty({ message: 'questionScore cannot be updated' })
+  questionScore?: never;
+}

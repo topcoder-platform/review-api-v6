@@ -526,19 +526,6 @@ export class AiWorkflowService {
       );
     }
 
-    const keys = Object.keys(patchData);
-
-    const KeysProhibitedToUpdate = [
-      'scorecardQuestionId',
-      'content',
-      'questionScore',
-    ];
-    if (keys.some((key) => KeysProhibitedToUpdate.includes(key))) {
-      throw new BadRequestException(
-        `Keys like ${KeysProhibitedToUpdate.join(',')} are not allowed to be updated`,
-      );
-    }
-
     const updateData: any = {};
 
     if (patchData.upVotes !== undefined) {
