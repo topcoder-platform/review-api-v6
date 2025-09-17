@@ -55,7 +55,7 @@ const checkForNestedUpdateCreateOps = (
   field: auditField,
   obj: object,
 ) => {
-  return Object.entries(obj)
+  Object.entries(obj)
     .filter(
       ([key, value]) =>
         value &&
@@ -63,13 +63,23 @@ const checkForNestedUpdateCreateOps = (
         ('update' in value || 'create' in value) &&
         getFieldType(model, key),
     )
-    .forEach(([key, value]) =>
-      addUserAuditField(
-        getFieldType(model, key)!,
-        field,
-        (value.create ?? value.update) as object,
-      ),
-    );
+    .forEach(([key, value]) => {
+      const nestedModel = getFieldType(model, key);
+      if (!nestedModel) {
+        return;
+      }
+
+      const nestedContainer = value as Record<string, any>;
+      const nestedData =
+        (nestedContainer.create as object | Array<object> | undefined) ??
+        (nestedContainer.update as object | Array<object> | undefined);
+
+      if (!nestedData) {
+        return;
+      }
+
+      addUserAuditField(nestedModel, field, nestedData);
+    });
 };
 
 /**
@@ -84,20 +94,24 @@ const checkForNestedUpdateCreateOps = (
 const addUserAuditField = (
   model: string,
   field: auditField,
-  data: object | Array<object>,
+  data?: object | Array<object>,
 ) => {
   const userId = getStore()?.userId;
 
-  if (userId && modelHasField(model, field)) {
-    if (Array.isArray(data)) {
-      data.forEach((x) => {
-        x[field] = userId;
-        checkForNestedUpdateCreateOps(model, field, x);
-      });
-    } else {
-      data[field] = userId;
-      checkForNestedUpdateCreateOps(model, field, data);
-    }
+  if (!data || !userId || !modelHasField(model, field)) {
+    return;
+  }
+
+  if (Array.isArray(data)) {
+    data.forEach((item) => {
+      const record = item as Record<string, any>;
+      record[field] = userId;
+      checkForNestedUpdateCreateOps(model, field, record);
+    });
+  } else {
+    const record = data as Record<string, any>;
+    record[field] = userId;
+    checkForNestedUpdateCreateOps(model, field, record);
   }
 };
 

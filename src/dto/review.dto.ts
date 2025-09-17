@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsString,
   IsNumber,
@@ -7,6 +8,10 @@ import {
   IsOptional,
   IsDateString,
   IsObject,
+  IsArray,
+  ValidateNested,
+  IsEnum,
+  IsInt,
 } from 'class-validator';
 
 export enum ReviewItemCommentType {
@@ -39,6 +44,8 @@ export class ReviewItemCommentBaseDto {
     description: 'Content of the comment',
     example: 'This needs more explanation',
   })
+  @IsString()
+  @IsNotEmpty()
   content: string;
 
   @ApiProperty({
@@ -46,6 +53,7 @@ export class ReviewItemCommentBaseDto {
     enum: ReviewItemCommentType,
     example: ReviewItemCommentType.COMMENT,
   })
+  @IsEnum(ReviewItemCommentType)
   type: ReviewItemCommentType;
 
   @ApiProperty({
@@ -53,6 +61,9 @@ export class ReviewItemCommentBaseDto {
     example: 1,
     default: 0,
   })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
   sortOrder: number;
 }
 
@@ -92,6 +103,8 @@ export class ReviewItemCommentResponseDto extends ReviewItemCommentBaseDto {
 
 export class ReviewItemBaseDto {
   @ApiProperty({ description: 'Scorecard question ID', example: 'question123' })
+  @IsString()
+  @IsNotEmpty()
   scorecardQuestionId: string;
 
   @ApiProperty({
@@ -99,6 +112,8 @@ export class ReviewItemBaseDto {
     example: 'Yes',
     required: true,
   })
+  @IsString()
+  @IsNotEmpty()
   initialAnswer: string;
 
   @ApiProperty({
@@ -106,6 +121,8 @@ export class ReviewItemBaseDto {
     example: 'No',
     required: false,
   })
+  @IsOptional()
+  @IsString()
   finalAnswer?: string;
 
   @ApiProperty({
@@ -113,9 +130,9 @@ export class ReviewItemBaseDto {
     example: 'This is a required change',
     required: false,
   })
+  @IsOptional()
+  @IsString()
   managerComment?: string;
-
-  reviewItemComments?: any[];
 }
 
 export class ReviewItemRequestDto extends ReviewItemBaseDto {
@@ -125,6 +142,9 @@ export class ReviewItemRequestDto extends ReviewItemBaseDto {
     example: 'review123',
     required: false,
   })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
   reviewId?: string;
 
   @ApiProperty({
@@ -132,6 +152,10 @@ export class ReviewItemRequestDto extends ReviewItemBaseDto {
     type: [ReviewItemCommentRequestDto],
     required: false,
   })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReviewItemCommentRequestDto)
   reviewItemComments?: ReviewItemCommentRequestDto[];
 }
 
@@ -251,6 +275,10 @@ export class ReviewRequestDto extends ReviewCommonDto {
     type: [ReviewItemRequestDto],
     required: false,
   })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReviewItemRequestDto)
   reviewItems?: ReviewItemRequestDto[];
 }
 
@@ -389,7 +417,7 @@ type MappedReviewItem = {
   scorecardQuestionId: string;
   initialAnswer: string;
   finalAnswer?: string;
-  managerComment?: string;
+  managerComment?: string | null;
   review?: { connect: { id: string } };
   reviewItemComments?: { create?: MappedReviewItemComment[] };
 };
@@ -431,20 +459,24 @@ export function mapReviewRequestToDto(
 export function mapReviewItemRequestToDto(
   request: ReviewItemRequestDto,
 ): MappedReviewItem {
-  const { reviewId, ...rest } = request as {
+  const { reviewId, reviewItemComments, managerComment, ...rest } = request as {
     reviewId?: string;
   } & ReviewItemRequestDto;
 
   const payload: MappedReviewItem = {
     ...rest,
     reviewItemComments: {
-      create: request.reviewItemComments?.map((comment) => ({
+      create: reviewItemComments?.map((comment) => ({
         ...comment,
         // resourceId is required on reviewItemComment; leave population to controller/service
         resourceId: '',
       })),
     },
   };
+
+  if (managerComment !== undefined) {
+    payload.managerComment = managerComment ?? null;
+  }
 
   // Only add review connection if reviewId is explicitly provided
   // This is for standalone review item creation, not nested creation

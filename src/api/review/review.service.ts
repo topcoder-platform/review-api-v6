@@ -390,22 +390,8 @@ export class ReviewService {
         }
       }
 
-      // Compute initial/final scores from the provided reviewItems and scorecard
-      const scores = await this.computeScoresFromItems(
-        body.scorecardId,
-        (body.reviewItems || []).map((ri) => ({
-          scorecardQuestionId: ri.scorecardQuestionId,
-          initialAnswer: ri.initialAnswer,
-          finalAnswer: ri.finalAnswer,
-        })),
-      );
-
-      const prismaBody = {
-        ...(mapReviewRequestToDto(body) as any),
-        initialScore: scores.initialScore,
-        finalScore: scores.finalScore,
-      };
-      const data = await this.prisma.review.create({
+      const prismaBody = mapReviewRequestToDto(body) as any;
+      const createdReview = await this.prisma.review.create({
         data: prismaBody,
         include: {
           reviewItems: {
@@ -415,8 +401,45 @@ export class ReviewService {
           },
         },
       });
-      this.logger.log(`Review created with ID: ${data.id}`);
-      return data as unknown as ReviewResponseDto;
+
+      const scores = await this.computeScoresFromItems(
+        createdReview.scorecardId,
+        (createdReview.reviewItems || []).map((ri) => ({
+          scorecardQuestionId: ri.scorecardQuestionId,
+          initialAnswer: ri.initialAnswer,
+          finalAnswer: ri.finalAnswer,
+        })),
+      );
+      console.log(`scores computed: ${JSON.stringify(scores)}`);
+      const needsScorePersist =
+        createdReview.initialScore !== scores.initialScore ||
+        createdReview.finalScore !== scores.finalScore;
+
+      let reviewToReturn = createdReview;
+
+      if (needsScorePersist) {
+        reviewToReturn = await this.prisma.review.update({
+          where: { id: createdReview.id },
+          data: {
+            initialScore: scores.initialScore,
+            finalScore: scores.finalScore,
+          },
+          include: {
+            reviewItems: {
+              include: {
+                reviewItemComments: true,
+              },
+            },
+          },
+        });
+      }
+
+      this.logger.log(`Review created with ID: ${reviewToReturn.id}`);
+      return {
+        ...reviewToReturn,
+        initialScore: scores.initialScore,
+        finalScore: scores.finalScore,
+      } as unknown as ReviewResponseDto;
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
