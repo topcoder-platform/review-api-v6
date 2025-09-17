@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   ForbiddenException,
+  HttpException,
 } from '@nestjs/common';
 import {
   ReviewItemRequestDto,
@@ -235,10 +236,31 @@ export class ReviewService {
   ): Promise<ReviewResponseDto> {
     this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
     try {
-      const submission = await this.prisma.submission.findUniqueOrThrow({
+      const scorecard = await this.prisma.scorecard.findUnique({
+        where: { id: body.scorecardId },
+        select: { id: true },
+      });
+
+      if (!scorecard) {
+        throw new NotFoundException({
+          message: `Scorecard with ID ${body.scorecardId} was not found. Please verify the scorecardId and try again.`,
+          code: 'SCORECARD_NOT_FOUND',
+          details: { scorecardId: body.scorecardId },
+        });
+      }
+
+      const submission = await this.prisma.submission.findUnique({
         where: { id: body.submissionId },
         select: { challengeId: true },
       });
+
+      if (!submission) {
+        throw new NotFoundException({
+          message: `Submission with ID ${body.submissionId} was not found. Please verify the submissionId and try again.`,
+          code: 'SUBMISSION_NOT_FOUND',
+          details: { submissionId: body.submissionId },
+        });
+      }
 
       if (!submission.challengeId) {
         throw new BadRequestException({
@@ -250,6 +272,86 @@ export class ReviewService {
       await this.challengeApiService.validateReviewSubmission(
         submission.challengeId,
       );
+
+      const challengeResources = await this.resourceApiService.getResources({
+        challengeId: submission.challengeId,
+      });
+
+      const resourceExists = challengeResources.some(
+        (resource) => resource.id === body.resourceId,
+      );
+
+      if (!resourceExists) {
+        throw new NotFoundException({
+          message: `Resource with ID ${body.resourceId} was not found for challenge ${submission.challengeId}.`,
+          code: 'RESOURCE_NOT_FOUND',
+          details: {
+            resourceId: body.resourceId,
+            challengeId: submission.challengeId,
+          },
+        });
+      }
+
+      const scorecardQuestionIds = Array.from(
+        new Set(
+          (body.reviewItems || [])
+            .map((item) => item.scorecardQuestionId)
+            .filter(Boolean),
+        ),
+      );
+
+      if (scorecardQuestionIds.length) {
+        const questions = await this.prisma.scorecardQuestion.findMany({
+          where: {
+            id: {
+              in: scorecardQuestionIds,
+            },
+          },
+          select: {
+            id: true,
+            section: {
+              select: {
+                group: {
+                  select: {
+                    scorecardId: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        const foundIds = new Set(questions.map((question) => question.id));
+        const missingQuestionIds = scorecardQuestionIds.filter(
+          (id) => !foundIds.has(id),
+        );
+
+        if (missingQuestionIds.length) {
+          throw new NotFoundException({
+            message: `Scorecard questions not found: ${missingQuestionIds.join(', ')}`,
+            code: 'SCORECARD_QUESTION_NOT_FOUND',
+            details: { missingQuestionIds },
+          });
+        }
+
+        const mismatchedQuestions = questions
+          .filter(
+            (question) =>
+              question.section?.group?.scorecardId !== body.scorecardId,
+          )
+          .map((question) => question.id);
+
+        if (mismatchedQuestions.length) {
+          throw new BadRequestException({
+            message: `Scorecard questions ${mismatchedQuestions.join(', ')} do not belong to scorecard ${body.scorecardId}.`,
+            code: 'SCORECARD_QUESTION_MISMATCH',
+            details: {
+              mismatchedQuestionIds: mismatchedQuestions,
+              scorecardId: body.scorecardId,
+            },
+          });
+        }
+      }
 
       // Authorization: for member tokens (non-M2M), require admin OR reviewer on the challenge
       if (!authUser?.isMachine) {
@@ -316,6 +418,10 @@ export class ReviewService {
       this.logger.log(`Review created with ID: ${data.id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
       if (
         error?.message &&
         error.message.includes('Reviews cannot be submitted')
@@ -331,6 +437,23 @@ export class ReviewService {
         `creating review for submissionId: ${body.submissionId}`,
         body,
       );
+
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      if (errorResponse.code === 'VALIDATION_ERROR') {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,

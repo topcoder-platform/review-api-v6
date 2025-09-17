@@ -36,6 +36,7 @@ export class MemberService {
     const url =
       CommonConfig.apis.memberApiUrl +
       `?fields=email,userId&userIds=[${userIds.join(',')}]`;
+    console.log(`Getting user emails from Member API: ${url}`);
     // send request
     try {
       const response = await firstValueFrom(
