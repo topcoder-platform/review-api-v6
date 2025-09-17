@@ -286,13 +286,12 @@ export class SubmissionController {
   }
 
   @Post('/:submissionId/artifacts')
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.User)
   @Scopes(Scope.CreateSubmissionArtifacts)
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({
     summary: 'Create artifact for the given submission ID',
-    description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission-artifacts',
+    description: 'Roles: Admin, User | Scopes: create:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
