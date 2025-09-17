@@ -161,3 +161,139 @@ describe('ReviewService.createReview authorization checks', () => {
     });
   });
 });
+
+describe('ReviewService.getReview authorization checks', () => {
+  const prismaMock = {
+    review: {
+      findUniqueOrThrow: jest.fn(),
+    },
+    submission: {
+      findMany: jest.fn(),
+    },
+  } as unknown as any;
+
+  const prismaErrorServiceMock = {
+    handleError: jest.fn(),
+  } as unknown as any;
+
+  const resourceApiServiceMock = {
+    getMemberResourcesRoles: jest.fn(),
+  } as unknown as any;
+
+  const challengeApiServiceMock = {
+    getChallengeDetail: jest.fn(),
+  } as unknown as any;
+
+  const service = new ReviewService(
+    prismaMock,
+    prismaErrorServiceMock,
+    resourceApiServiceMock,
+    challengeApiServiceMock,
+  );
+
+  const baseAuthUser: JwtUser = {
+    userId: 'reviewer-123',
+    roles: [],
+    isMachine: false,
+  };
+
+  const defaultReviewData = () => ({
+    id: 'review-1',
+    resourceId: 'resource-1',
+    committed: false,
+    createdAt: new Date(),
+    createdBy: 'system',
+    updatedAt: new Date(),
+    updatedBy: 'system',
+    finalScore: null,
+    initialScore: null,
+    reviewItems: [],
+    scorecardId: 'scorecard-1',
+    submission: {
+      id: 'submission-1',
+      challengeId: 'challenge-1',
+      memberId: 'submitter-1',
+    },
+  });
+
+  const baseReviewerResource = {
+    id: 'resource-1',
+    challengeId: 'challenge-1',
+    memberId: 'reviewer-123',
+    memberHandle: 'reviewerHandle',
+    roleId: 'role-reviewer',
+    phaseId: 'phase-review',
+    createdBy: 'tc',
+    created: new Date().toISOString(),
+    roleName: 'Reviewer',
+  };
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    prismaMock.review.findUniqueOrThrow.mockImplementation(() =>
+      Promise.resolve(defaultReviewData()),
+    );
+    prismaMock.submission.findMany.mockResolvedValue([]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+      phases: [],
+    });
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      baseReviewerResource,
+    ]);
+  });
+
+  it('blocks reviewers from accessing reviews that are not their own before completion', async () => {
+    prismaMock.review.findUniqueOrThrow.mockImplementation(() =>
+      Promise.resolve({
+        ...defaultReviewData(),
+        resourceId: 'resource-other',
+      }),
+    );
+
+    await expect(
+      service.getReview(baseAuthUser, 'review-1'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'FORBIDDEN_REVIEW_ACCESS_REVIEWER_SELF',
+      }),
+      status: 403,
+    });
+  });
+
+  it('allows reviewers to access non-owned reviews once the challenge is completed', async () => {
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+      phases: [],
+    });
+
+    prismaMock.review.findUniqueOrThrow.mockImplementation(() =>
+      Promise.resolve({
+        ...defaultReviewData(),
+        resourceId: 'resource-other',
+      }),
+    );
+
+    await expect(
+      service.getReview(baseAuthUser, 'review-1'),
+    ).resolves.toMatchObject({ id: 'review-1', resourceId: 'resource-other' });
+  });
+
+  it('allows reviewers to access their own review before completion', async () => {
+    prismaMock.review.findUniqueOrThrow.mockImplementation(() =>
+      Promise.resolve({
+        ...defaultReviewData(),
+        resourceId: 'resource-1',
+      }),
+    );
+
+    await expect(
+      service.getReview(baseAuthUser, 'review-1'),
+    ).resolves.toMatchObject({ id: 'review-1', resourceId: 'resource-1' });
+  });
+});

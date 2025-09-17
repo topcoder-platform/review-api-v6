@@ -27,6 +27,7 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 
 @Injectable()
 export class ReviewService {
@@ -981,18 +982,24 @@ export class ReviewService {
           });
         }
 
-        // If user is reviewer or copilot for the challenge, allow
-        let isReviewerOrCopilot = false;
+        const challenge =
+          await this.challengeApiService.getChallengeDetail(challengeId);
+
+        let reviewerResources: ResourceInfo[] = [];
+        let hasCopilotRole = false;
         try {
           const resources =
             await this.resourceApiService.getMemberResourcesRoles(
               challengeId,
               uid,
             );
-          isReviewerOrCopilot = resources.some((r) => {
+          reviewerResources = resources.filter((r) => {
             const rn = (r.roleName || '').toLowerCase();
-            return rn.includes('reviewer') || rn.includes('copilot');
+            return rn.includes('reviewer');
           });
+          hasCopilotRole = resources.some((r) =>
+            (r.roleName || '').toLowerCase().includes('copilot'),
+          );
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           this.logger.debug(
@@ -1000,7 +1007,24 @@ export class ReviewService {
           );
         }
 
-        if (!isReviewerOrCopilot) {
+        if (reviewerResources.length > 0) {
+          const reviewerResourceIds = new Set(
+            reviewerResources.map((r) => String(r.id)),
+          );
+          const reviewResourceId = String(data.resourceId ?? '');
+
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            !reviewerResourceIds.has(reviewResourceId)
+          ) {
+            throw new ForbiddenException({
+              message:
+                'Reviewers can only access their own reviews until the challenge is completed',
+              code: 'FORBIDDEN_REVIEW_ACCESS_REVIEWER_SELF',
+              details: { challengeId, reviewId, requester: uid },
+            });
+          }
+        } else if (!hasCopilotRole) {
           // Confirm the user has actually submitted to this challenge (has a submission record)
           const mySubs = await this.prisma.submission.findMany({
             where: { challengeId, memberId: uid },
@@ -1016,8 +1040,6 @@ export class ReviewService {
           }
 
           // Determine visibility by challenge phase/status
-          const challenge =
-            await this.challengeApiService.getChallengeDetail(challengeId);
           const phases = challenge.phases || [];
           const appealsOpen = phases.some(
             (p) => p.name === 'Appeals' && p.isOpen,
