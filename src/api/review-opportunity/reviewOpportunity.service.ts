@@ -294,7 +294,7 @@ export class ReviewOpportunityService {
         handle: e.handle,
         role: convertRoleName(e.role),
         status: e.status,
-        applicationDate: e.createdBy,
+        applicationDate: e.createdAt,
       }));
     }
 
