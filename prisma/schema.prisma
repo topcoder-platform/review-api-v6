@@ -152,23 +152,23 @@ enum ReviewStatus {
 }
 
 model review {
-  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
   legacyId           String?
   resourceId         String
   phaseId            String
-  submissionId       String?   @db.VarChar(14) // Associated submission
+  submissionId       String?       @db.VarChar(14) // Associated submission
   legacySubmissionId String?
   scorecardId        String // Associated scorecard
-  committed          Boolean   @default(false)
+  committed          Boolean       @default(false)
   finalScore         Float?
   initialScore       Float?
   typeId             String?
   metadata           Json?
   status             ReviewStatus?
   reviewDate         DateTime?
-  createdAt          DateTime  @default(now())
+  createdAt          DateTime      @default(now())
   createdBy          String?
-  updatedAt          DateTime  @updatedAt
+  updatedAt          DateTime      @updatedAt
   updatedBy          String?
 
   scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
@@ -561,7 +561,7 @@ model llmProvider {
   id        String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
   name      String   @unique @db.VarChar
   createdAt DateTime @db.Timestamp(3)
-  createdBy String?   @db.Text
+  createdBy String?  @db.Text
 
   models llmModel[]
 }
@@ -574,7 +574,7 @@ model llmModel {
   icon        String?  @db.VarChar
   url         String?  @db.VarChar
   createdAt   DateTime @default(now()) @db.Timestamp(3)
-  createdBy   String?   @db.Text
+  createdBy   String?  @db.Text
 
   provider  llmProvider  @relation(fields: [providerId], references: [id])
   workflows aiWorkflow[]
@@ -590,9 +590,9 @@ model aiWorkflow {
   gitOwner    String   @db.VarChar
   scorecardId String   @db.VarChar(14)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
-  createdBy   String?   @db.Text
+  createdBy   String?  @db.Text
   updatedAt   DateTime @updatedAt
-  updatedBy   String?   @db.Text
+  updatedBy   String?  @db.Text
 
   llm       llmModel        @relation(fields: [llmId], references: [id])
   scorecard scorecard       @relation(fields: [scorecardId], references: [id])
@@ -623,7 +623,7 @@ model aiWorkflowRunItem {
   downVotes           Int      @default(0)
   questionScore       Float?   @db.DoublePrecision
   createdAt           DateTime @db.Timestamp(3)
-  createdBy           String?   @db.Text
+  createdBy           String?  @db.Text
 
   run      aiWorkflowRun              @relation(fields: [workflowRunId], references: [id])
   question scorecardQuestion          @relation(fields: [scorecardQuestionId], references: [id])
@@ -635,11 +635,13 @@ model aiWorkflowRunItemComment {
   workflowRunItemId String   @db.VarChar(14)
   userId            String   @db.Text
   content           String   @db.Text
+  upVotes           Int      @default(0)
+  downVotes         Int      @default(0)
   parentId          String?  @db.VarChar(14)
   createdAt         DateTime @default(now()) @db.Timestamp(3)
-  createdBy         String?   @db.Text
+  createdBy         String?  @db.Text
   updatedAt         DateTime @updatedAt
-  updatedBy         String?   @db.Text
+  updatedBy         String?  @db.Text
 
   item    aiWorkflowRunItem          @relation(fields: [workflowRunItemId], references: [id])
   parent  aiWorkflowRunItemComment?  @relation("CommentHierarchy", fields: [parentId], references: [id])
