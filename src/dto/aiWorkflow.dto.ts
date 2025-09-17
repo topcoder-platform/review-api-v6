@@ -159,12 +159,9 @@ export class CommentDto {
 }
 
 export class UpdateAiWorkflowRunItemDto extends PartialType(
-  OmitType(CreateAiWorkflowRunItemDto, ['scorecardQuestionId'] as const),
-) {
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => CommentDto)
-  comments?: CommentDto[];
-}
+  OmitType(CreateAiWorkflowRunItemDto, [
+    'scorecardQuestionId',
+    'content',
+    'questionScore',
+  ] as const),
+) {}

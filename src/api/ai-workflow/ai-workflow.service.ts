@@ -526,19 +526,26 @@ export class AiWorkflowService {
       );
     }
 
+    const keys = Object.keys(patchData);
+
+    const KeysProhibitedToUpdate = [
+      'scorecardQuestionId',
+      'content',
+      'questionScore',
+    ];
+    if (keys.some((key) => KeysProhibitedToUpdate.includes(key))) {
+      throw new BadRequestException(
+        `Keys like ${KeysProhibitedToUpdate.join(',')} are not allowed to be updated`,
+      );
+    }
+
     const updateData: any = {};
 
-    if (patchData.content !== undefined) {
-      updateData.content = patchData.content;
-    }
     if (patchData.upVotes !== undefined) {
       updateData.upVotes = patchData.upVotes;
     }
     if (patchData.downVotes !== undefined) {
       updateData.downVotes = patchData.downVotes;
-    }
-    if (patchData.questionScore !== undefined) {
-      updateData.questionScore = patchData.questionScore;
     }
 
     return this.prisma.aiWorkflowRunItem.update({
