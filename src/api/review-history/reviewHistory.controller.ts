@@ -54,7 +54,10 @@ export class ReviewHistoryController {
   ): Promise<ResponseDto<ReviewApplicationResponseDto[]>> {
     // Check user permission
     const authUser: JwtUser = req['user'] as JwtUser;
-    if (authUser.userId !== userId && !isAdmin(authUser)) {
+    console.log(
+      `Checking user ${authUser.userId} to get review history of ${userId}`,
+    );
+    if (authUser.userId != userId && !isAdmin(authUser)) {
       throw new ForbiddenException(
         "You cannot check this user's review history",
       );

@@ -41,18 +41,17 @@ export class EventBusService {
     private readonly httpService: HttpService,
   ) {}
 
-  /**
-   * Send email message to Event bus.
-   * @param payload send email payload
-   */
-  async sendEmail(payload: EventBusSendEmailPayload): Promise<void> {
-    // Get M2m token
+  private async postMessage<T>(
+    topic: string,
+    payload: T,
+    originator = 'ap-review-microservice',
+  ): Promise<void> {
+    // Get M2M token
     const token = await this.m2mService.getM2MToken();
     // build event bus message
-    const msg = new EventBusMessage<EventBusSendEmailPayload>();
-    msg.topic = 'external.action.email';
-    // TODO: Maybe we should update this value.
-    msg.originator = 'ap-review-microservice';
+    const msg = new EventBusMessage<T>();
+    msg.topic = topic;
+    msg.originator = originator;
     msg.payload = payload;
     // send message to event bus
     const url = CommonConfig.apis.busApiUrl;
@@ -77,5 +76,17 @@ export class EventBusService {
         'Sending message to event bus failed.',
       );
     }
+  }
+
+  /**
+   * Send email message to Event bus.
+   * @param payload send email payload
+   */
+  async sendEmail(payload: EventBusSendEmailPayload): Promise<void> {
+    await this.postMessage('external.action.email', payload);
+  }
+
+  async publish<T>(topic: string, payload: T): Promise<void> {
+    await this.postMessage(topic, payload);
   }
 }

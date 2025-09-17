@@ -17,6 +17,7 @@ import {
   SubmissionUpdateRequestDto,
 } from 'src/dto/submission.dto';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
@@ -35,6 +36,13 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable, PassThrough } from 'stream';
+import { EventBusService } from 'src/shared/modules/global/eventBus.service';
+
+type SubmissionMinimal = {
+  id: string;
+  systemFileName: string | null;
+  url: string | null;
+};
 
 @Injectable()
 export class SubmissionService {
@@ -46,6 +54,7 @@ export class SubmissionService {
     private readonly challengePrisma: ChallengePrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly eventBusService: EventBusService,
     private readonly challengeCatalogService: ChallengeCatalogService,
   ) {}
 
@@ -942,6 +951,93 @@ export class SubmissionService {
     }
   }
 
+  private getSubmissionFileName(
+    submission: SubmissionMinimal,
+  ): string | undefined {
+    if (submission.systemFileName) {
+      return submission.systemFileName;
+    }
+
+    if (!submission.url) {
+      return undefined;
+    }
+
+    try {
+      const baseUrl = submission.url.split('?')[0];
+      const lastSlash = baseUrl.lastIndexOf('/');
+      if (lastSlash >= 0 && lastSlash < baseUrl.length - 1) {
+        return baseUrl.substring(lastSlash + 1);
+      }
+      return baseUrl;
+    } catch (error) {
+      this.logger.warn(
+        `Unable to derive submission file name from URL for submission ${submission.id}: ${(error as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
+  private async publishSubmissionScanEvent(
+    submission: SubmissionMinimal,
+  ): Promise<void> {
+    const cleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    if (!cleanBucket) {
+      this.logger.error('SUBMISSION_CLEAN_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'CLEAN_BUCKET_MISSING',
+      });
+    }
+
+    const quarantineBucket = process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
+    if (!quarantineBucket) {
+      this.logger.error('SUBMISSION_QUARANTINE_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'QUARANTINE_BUCKET_MISSING',
+      });
+    }
+
+    if (!submission.url) {
+      this.logger.error(
+        `Submission ${submission.id} has no URL available for AV scan event dispatch`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Submission URL missing',
+        code: 'SUBMISSION_URL_MISSING',
+        details: { submissionId: submission.id },
+      });
+    }
+
+    const fileName = this.getSubmissionFileName(submission);
+    if (!fileName) {
+      this.logger.error(
+        `Unable to determine file name for submission ${submission.id} while preparing AV scan event`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Submission file name missing',
+        code: 'SUBMISSION_FILE_NAME_MISSING',
+        details: { submissionId: submission.id },
+      });
+    }
+
+    const payload = {
+      submissionId: submission.id,
+      url: submission.url,
+      fileName,
+      moveFile: true,
+      cleanDestinationBucket: cleanBucket,
+      quarantineDestinationBucket: quarantineBucket,
+      callbackOption: 'kafka',
+      callbackKafkaTopic: 'submission.scan.complete',
+    };
+
+    await this.eventBusService.publish('avscan.action.scan', payload);
+    this.logger.log(
+      `Published AV scan request for submission ${submission.id} to avscan.action.scan`,
+    );
+  }
+
   async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
     console.log(`BODY: ${JSON.stringify(body)}`);
 
@@ -1113,6 +1209,7 @@ export class SubmissionService {
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);
+      await this.publishSubmissionScanEvent(data);
       // Increment challenge submission counters if challengeId present
       if (body.challengeId) {
         try {
@@ -1155,6 +1252,7 @@ export class SubmissionService {
   }
 
   async listSubmission(
+    authUser: JwtUser,
     queryDto: SubmissionQueryDto,
     paginationDto?: PaginationDto,
     sortDto?: SortDto,
@@ -1170,6 +1268,30 @@ export class SubmissionService {
         };
       }
 
+      const requestedMemberId = queryDto.memberId
+        ? String(queryDto.memberId)
+        : undefined;
+
+      if (requestedMemberId) {
+        const userId = authUser.userId ? String(authUser.userId) : undefined;
+        const isRequestingMember = userId === requestedMemberId;
+        const hasCopilotRole = (authUser.roles ?? []).includes(
+          UserRole.Copilot,
+        );
+        const hasElevatedAccess = isAdmin(authUser) || hasCopilotRole;
+
+        if (!hasElevatedAccess && !isRequestingMember) {
+          throw new ForbiddenException({
+            message:
+              'You are not allowed to view submissions for the requested member',
+            code: 'FORBIDDEN_SUBMISSION_ACCESS',
+            details: {
+              requestedMemberId,
+            },
+          });
+        }
+      }
+
       // Build the where clause for submissions based on available filter parameters
       const submissionWhereClause: any = {};
       if (queryDto.type) {
@@ -1180,6 +1302,9 @@ export class SubmissionService {
       }
       if (queryDto.challengeId) {
         submissionWhereClause.challengeId = queryDto.challengeId;
+      }
+      if (requestedMemberId) {
+        submissionWhereClause.memberId = requestedMemberId;
       }
       if (queryDto.legacySubmissionId) {
         submissionWhereClause.legacySubmissionId = queryDto.legacySubmissionId;

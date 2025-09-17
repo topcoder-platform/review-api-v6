@@ -59,6 +59,16 @@ export class SubmissionQueryDto {
   challengeId?: string;
 
   @ApiProperty({
+    name: 'memberId',
+    description: 'The member id to filter by',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  memberId?: string;
+
+  @ApiProperty({
     name: 'legacySubmissionId',
     description: 'The legacy submission id to filter by',
     required: false,
