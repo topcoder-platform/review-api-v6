@@ -45,6 +45,8 @@ export class AiWorkflowController {
     UserRole.Copilot,
     UserRole.ProjectManager,
     UserRole.Admin,
+    UserRole.Reviewer,
+    UserRole.User,
   )
   @ApiOperation({ summary: 'Create a comment for a specific run item' })
   @ApiResponse({
