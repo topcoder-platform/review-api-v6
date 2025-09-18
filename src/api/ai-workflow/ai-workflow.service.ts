@@ -493,6 +493,7 @@ export class AiWorkflowService {
     runId: string,
     itemId: string,
     patchData: UpdateAiWorkflowRunItemDto,
+    user: JwtUser,
   ) {
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id: workflowId },
@@ -533,6 +534,27 @@ export class AiWorkflowService {
     }
     if (patchData.downVotes !== undefined) {
       updateData.downVotes = patchData.downVotes;
+    }
+
+    if (!user.isMachine) {
+      const keys = Object.keys(patchData);
+      const prohibitedKeys = ['content', 'questionScore'];
+      if (keys.some((key) => prohibitedKeys.includes(key))) {
+        throw new BadRequestException(
+          `Users cannot update one of these properties - ${prohibitedKeys.join(',')}`,
+        );
+      }
+    }
+
+    // Update properties which can be updated only via m2m
+    if (user.isMachine) {
+      if (patchData.content) {
+        updateData.content = patchData.content;
+      }
+
+      if (patchData.questionScore) {
+        updateData.questionScore = patchData.questionScore;
+      }
     }
 
     return this.prisma.aiWorkflowRunItem.update({

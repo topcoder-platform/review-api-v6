@@ -164,10 +164,4 @@ export class UpdateAiWorkflowRunItemDto extends PartialType(
 ) {
   @IsEmpty({ message: 'scorecardQuestionId cannot be updated' })
   scorecardQuestionId?: never;
-
-  @IsEmpty({ message: 'content cannot be updated' })
-  content?: never;
-
-  @IsEmpty({ message: 'questionScore cannot be updated' })
-  questionScore?: never;
 }
