@@ -46,7 +46,6 @@ export class AiWorkflowController {
     UserRole.ProjectManager,
     UserRole.Admin,
   )
-  @Scopes(Scope.CreateWorkflowRun)
   @ApiOperation({ summary: 'Create a comment for a specific run item' })
   @ApiResponse({
     status: 201,
