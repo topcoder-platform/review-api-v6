@@ -138,3 +138,15 @@ export class CreateAiWorkflowRunItemsDto {
   @Type(() => CreateAiWorkflowRunItemDto)
   items: CreateAiWorkflowRunItemDto[];
 }
+
+export class CreateRunItemCommentDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  parentId?: string;
+}
