@@ -76,6 +76,7 @@ workflows:
                               - develop
                               - feat/ai-workflows
                               - pm-1782
+                              - pm-1955
 
             - 'build-prod':
                   context: org-global
