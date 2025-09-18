@@ -75,7 +75,6 @@ export class AiWorkflowService {
         content: body.content,
         parentId: body.parentId ?? null,
         userId: user.userId!,
-        createdAt: new Date(),
       },
     });
 
