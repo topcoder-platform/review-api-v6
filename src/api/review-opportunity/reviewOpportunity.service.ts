@@ -16,6 +16,7 @@ import {
   QueryReviewOpportunityDto,
   ReviewOpportunityResponseDto,
   ReviewOpportunityStatus,
+  ReviewOpportunitySummaryDto,
   UpdateReviewOpportunityDto,
 } from 'src/dto/reviewOpportunity.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
@@ -27,6 +28,33 @@ import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-cat
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
+import { Prisma, ReviewApplicationStatus } from '@prisma/client';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+
+type SubmissionPhaseSummary = {
+  scheduledEndDate: Date | null;
+  actualEndDate: Date | null;
+};
+
+type ChallengeSummaryRow = {
+  id: string;
+  name: string;
+  status: string;
+  numOfSubmissions: number | null;
+  submissionEndDate: Date | null;
+};
+
+type SubmissionPhaseRow = {
+  challengeId: string;
+  scheduledEndDate: Date | null;
+  actualEndDate: Date | null;
+};
+
+type ReviewerTotalRow = {
+  challengeId: string;
+  total: number | bigint | null;
+};
 
 @Injectable()
 export class ReviewOpportunityService {
@@ -36,6 +64,7 @@ export class ReviewOpportunityService {
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
     private readonly challengeCatalog: ChallengeCatalogService,
+    private readonly challengePrisma: ChallengePrismaService,
     private readonly prismaErrorService: PrismaErrorService,
   ) {}
 
@@ -378,6 +407,168 @@ export class ReviewOpportunityService {
     }
   }
 
+  async getSummary(): Promise<ReviewOpportunitySummaryDto[]> {
+    try {
+      const opportunities = await this.prisma.reviewOpportunity.findMany({
+        include: {
+          applications: {
+            select: {
+              status: true,
+            },
+          },
+        },
+      });
+
+      if (!opportunities.length) {
+        return [];
+      }
+
+      const challengeIds = [
+        ...new Set(opportunities.map((o) => o.challengeId).filter(Boolean)),
+      ];
+
+      if (challengeIds.length === 0) {
+        return [];
+      }
+
+      const challengeRows = await this.challengePrisma.$queryRaw<
+        ChallengeSummaryRow[]
+      >(
+        Prisma.sql`
+          SELECT
+            c.id,
+            c.name,
+            c.status::text AS status,
+            c."numOfSubmissions" AS "numOfSubmissions",
+            c."submissionEndDate" AS "submissionEndDate"
+          FROM "Challenge" c
+          WHERE c.id IN (${Prisma.join(
+            challengeIds.map((id) => Prisma.sql`${id}`),
+          )})
+            AND c.status::text = ${ChallengeStatus.ACTIVE}
+        `,
+      );
+
+      if (!challengeRows.length) {
+        return [];
+      }
+
+      const challengeMap = new Map<string, ChallengeSummaryRow>();
+      for (const challenge of challengeRows) {
+        challengeMap.set(challenge.id, challenge);
+      }
+
+      const phaseRows = await this.challengePrisma.$queryRaw<
+        SubmissionPhaseRow[]
+      >(
+        Prisma.sql`
+          SELECT
+            cp."challengeId" AS "challengeId",
+            cp."scheduledEndDate" AS "scheduledEndDate",
+            cp."actualEndDate" AS "actualEndDate"
+          FROM "ChallengePhase" cp
+          WHERE cp."challengeId" IN (${Prisma.join(
+            challengeIds.map((id) => Prisma.sql`${id}`),
+          )})
+            AND cp.name = ${'Submission'}
+        `,
+      );
+
+      const phaseMap = new Map<string, SubmissionPhaseSummary[]>();
+      for (const phase of phaseRows) {
+        const bucket = phaseMap.get(phase.challengeId) ?? [];
+        bucket.push({
+          scheduledEndDate: phase.scheduledEndDate ?? null,
+          actualEndDate: phase.actualEndDate ?? null,
+        });
+        phaseMap.set(phase.challengeId, bucket);
+      }
+
+      const reviewerRows = await this.challengePrisma.$queryRaw<
+        ReviewerTotalRow[]
+      >(
+        Prisma.sql`
+          SELECT
+            cr."challengeId" AS "challengeId",
+            COALESCE(SUM(cr."memberReviewerCount"), 0) AS "total"
+          FROM "ChallengeReviewer" cr
+          WHERE cr."challengeId" IN (${Prisma.join(
+            challengeIds.map((id) => Prisma.sql`${id}`),
+          )})
+          GROUP BY cr."challengeId"
+        `,
+      );
+
+      const reviewerMap = new Map<string, number>();
+      for (const reviewer of reviewerRows) {
+        const totalValue =
+          typeof reviewer.total === 'bigint'
+            ? Number(reviewer.total)
+            : (reviewer.total ?? 0);
+        reviewerMap.set(reviewer.challengeId, totalValue);
+      }
+
+      const summaries: ReviewOpportunitySummaryDto[] = [];
+
+      for (const opportunity of opportunities) {
+        const challenge = challengeMap.get(opportunity.challengeId);
+        if (!challenge) {
+          continue;
+        }
+
+        const submissionPhase = this.findLatestSubmissionPhase(
+          phaseMap.get(challenge.id),
+        );
+        const submissionEndDate =
+          submissionPhase?.actualEndDate ??
+          submissionPhase?.scheduledEndDate ??
+          challenge.submissionEndDate ??
+          null;
+
+        const numberOfPendingApplications = opportunity.applications.reduce(
+          (total, application) =>
+            application.status === ReviewApplicationStatus.PENDING
+              ? total + 1
+              : total,
+          0,
+        );
+
+        const numberOfApprovedApplications = opportunity.applications.reduce(
+          (total, application) =>
+            application.status === ReviewApplicationStatus.APPROVED
+              ? total + 1
+              : total,
+          0,
+        );
+
+        const numberOfReviewerSpots = reviewerMap.get(challenge.id) ?? 0;
+
+        summaries.push({
+          challengeId: challenge.id,
+          challengeName: challenge.name,
+          challengeStatus: challenge.status as ChallengeStatus,
+          submissionEndDate,
+          numberOfSubmissions: challenge.numOfSubmissions ?? 0,
+          numberOfReviewerSpots,
+          numberOfPendingApplications,
+          numberOfApprovedApplications,
+        });
+      }
+
+      return summaries;
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        'fetching review opportunity summary',
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
   /**
    * Check review opportunity exists or not.
    * @param id review opportunity id
@@ -536,5 +727,49 @@ export class ReviewOpportunityService {
       }
     }
     return ret;
+  }
+
+  private findLatestSubmissionPhase(
+    phases: SubmissionPhaseSummary[] | undefined,
+  ): SubmissionPhaseSummary | null {
+    if (!phases || phases.length === 0) {
+      return null;
+    }
+
+    let latest: SubmissionPhaseSummary | null = null;
+    for (const phase of phases) {
+      if (!phase) {
+        continue;
+      }
+
+      if (!latest) {
+        latest = phase;
+        continue;
+      }
+
+      const latestEnd = this.resolvePhaseEndDate(latest);
+      const candidateEnd = this.resolvePhaseEndDate(phase);
+
+      if (!latestEnd) {
+        if (candidateEnd) {
+          latest = phase;
+        }
+        continue;
+      }
+
+      if (!candidateEnd) {
+        continue;
+      }
+
+      if (candidateEnd.getTime() > latestEnd.getTime()) {
+        latest = phase;
+      }
+    }
+
+    return latest;
+  }
+
+  private resolvePhaseEndDate(phase: SubmissionPhaseSummary): Date | null {
+    return phase.actualEndDate ?? phase.scheduledEndDate ?? null;
   }
 }
