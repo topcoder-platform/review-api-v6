@@ -259,6 +259,11 @@ export class ReviewApplicationService {
         where: { opportunityId, status: ReviewApplicationStatus.PENDING },
         include: { opportunity: true },
       });
+      if (!entityList.length) {
+        throw new NotFoundException(
+          `Review opportunity with ID ${opportunityId} does not have any pending review applications to reject.`,
+        );
+      }
       // update all pending
       await this.prisma.reviewApplication.updateMany({
         where: { opportunityId, status: ReviewApplicationStatus.PENDING },
@@ -269,6 +274,11 @@ export class ReviewApplicationService {
       // send emails to these users
       await this.sendEmails(entityList, ReviewApplicationStatus.REJECTED);
     } catch (error) {
+      // Re-throw NotFoundException from empty pending list as-is
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `rejecting all pending applications for opportunity ${opportunityId}`,

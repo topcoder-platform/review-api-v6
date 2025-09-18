@@ -19,7 +19,6 @@ import {
 import { MemberService } from 'src/shared/modules/global/member.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { CommonConfig } from 'src/shared/config/common.config';
-import { UserRole } from 'src/shared/enums/userRole.enum';
 
 @Injectable()
 export class ContactRequestsService {
@@ -47,12 +46,21 @@ export class ContactRequestsService {
 
     try {
       // Validate requester has access
-      const requesterResource =
-        await this.resourceApiService.validateResourcesRoles(
-          [UserRole.Reviewer, UserRole.User],
-          authUser,
+      if (!authUser.userId) {
+        throw new ForbiddenException('Insufficient permissions');
+      }
+
+      const memberResources =
+        await this.resourceApiService.getMemberResourcesRoles(
           body.challengeId,
+          authUser.userId,
         );
+
+      if (!memberResources.length) {
+        throw new ForbiddenException('Insufficient permissions');
+      }
+
+      const requesterResource = memberResources[0];
 
       // Persist contact request
       const data = await this.prisma.contactRequest.create({

@@ -61,12 +61,11 @@ export class SubmissionController {
   }
 
   @Post()
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User)
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
     summary: 'Create a new submission',
-    description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission',
+    description: 'Roles: Admin, Copilot, User | Scopes: create:submission',
   })
   @ApiResponse({
     status: 201,
@@ -286,13 +285,12 @@ export class SubmissionController {
   }
 
   @Post('/:submissionId/artifacts')
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.User)
   @Scopes(Scope.CreateSubmissionArtifacts)
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({
     summary: 'Create artifact for the given submission ID',
-    description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: create:submission-artifacts',
+    description: 'Roles: Admin, User | Scopes: create:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
@@ -390,13 +388,12 @@ export class SubmissionController {
   }
 
   @Delete('/:submissionId/artifacts/:artifactId')
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User, UserRole.Reviewer)
+  @Roles(UserRole.Admin, UserRole.User)
   @Scopes(Scope.DeleteSubmissionArtifacts)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a artifact',
-    description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: delete:submission-artifacts',
+    description: 'Roles: Admin, User | Scopes: delete:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',

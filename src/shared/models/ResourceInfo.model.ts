@@ -7,6 +7,7 @@ export interface ResourceInfo {
   memberId: string;
   memberHandle: string;
   roleId: string;
+  phaseId?: string | null;
   roleName?: string; // this field is calculated
   createdBy: string;
   created: string | Date;
