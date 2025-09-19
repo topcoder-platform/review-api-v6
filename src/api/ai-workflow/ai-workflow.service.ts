@@ -70,12 +70,16 @@ export class AiWorkflowService {
       );
     }
 
+    if (!user.userId) {
+      throw new BadRequestException(`User id is not available`);
+    }
+
     const createdComment = await this.prisma.aiWorkflowRunItemComment.create({
       data: {
         workflowRunItemId: itemId,
         content: body.content,
         parentId: body.parentId ?? null,
-        userId: user.userId!,
+        userId: user.userId.toString(),
       },
     });
 
