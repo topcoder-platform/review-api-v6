@@ -407,6 +407,28 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });
 
+  it('rejects attempts to change immutable identifiers', async () => {
+    await expect(
+      service.updateReview(nonPrivilegedUser, 'review-1', {
+        ...updatePayload,
+        resourceId: 'new-resource',
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({
+        code: 'REVIEW_UPDATE_IMMUTABLE_FIELDS',
+        details: expect.objectContaining({
+          reviewId: 'review-1',
+          fields: ['resourceId'],
+        }),
+      }),
+    });
+
+    expect(prismaMock.review.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.review.update).not.toHaveBeenCalled();
+    expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+  });
+
   it('allows reviewer tokens to update when the challenge is not completed', async () => {
     const result = await service.updateReview(
       nonPrivilegedUser,

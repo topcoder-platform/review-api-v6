@@ -610,6 +610,21 @@ export class ReviewService {
   ): Promise<ReviewResponseDto> {
     this.logger.log(`Updating review with ID: ${id}`);
 
+    const immutableFields = ['resourceId', 'phaseId', 'submissionId'] as const;
+    const forbiddenUpdates = immutableFields.filter(
+      (field) => (body as Record<string, unknown>)[field] !== undefined,
+    );
+
+    if (forbiddenUpdates.length > 0) {
+      throw new BadRequestException({
+        message: `The following fields cannot be updated: ${forbiddenUpdates.join(
+          ', ',
+        )}.`,
+        code: 'REVIEW_UPDATE_IMMUTABLE_FIELDS',
+        details: { reviewId: id, fields: forbiddenUpdates },
+      });
+    }
+
     const existingReview = await this.prisma.review.findUnique({
       where: { id },
       include: {
