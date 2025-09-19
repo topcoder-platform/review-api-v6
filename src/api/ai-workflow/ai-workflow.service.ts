@@ -14,6 +14,7 @@ import {
   UpdateAiWorkflowDto,
   UpdateAiWorkflowRunDto,
   UpdateAiWorkflowRunItemDto,
+  UpdateRunItemCommentDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
@@ -36,6 +37,91 @@ export class AiWorkflowService {
     private readonly resourceApiService: ResourceApiService,
   ) {
     this.logger = LoggerService.forRoot('AiWorkflowService');
+  }
+
+  async updateCommentById(
+    user: JwtUser,
+    workflowId: string,
+    runId: string,
+    itemId: string,
+    commentId: string,
+    patchData: UpdateRunItemCommentDto,
+  ) {
+    this.logger.log(
+      `Updating comment ${commentId} for workflow ${workflowId}, run ${runId}, item ${itemId}`,
+    );
+
+    try {
+      const workflow = await this.prisma.aiWorkflow.findUnique({
+        where: { id: workflowId },
+      });
+      if (!workflow) {
+        throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+      }
+
+      const run = await this.prisma.aiWorkflowRun.findUnique({
+        where: { id: runId },
+      });
+      if (!run || run.workflowId !== workflowId) {
+        throw new NotFoundException(
+          `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+        );
+      }
+
+      const item = await this.prisma.aiWorkflowRunItem.findUnique({
+        where: { id: itemId },
+      });
+      if (!item || item.workflowRunId !== runId) {
+        throw new NotFoundException(
+          `Item with id ${itemId} not found or does not belong to run ${runId}.`,
+        );
+      }
+
+      const comment = await this.prisma.aiWorkflowRunItemComment.findUnique({
+        where: { id: commentId },
+      });
+      if (!comment || comment.workflowRunItemId !== itemId) {
+        throw new NotFoundException(
+          `Comment with id ${commentId} not found or does not belong to item ${itemId}.`,
+        );
+      }
+
+      if (String(comment.userId) !== String(user.userId)) {
+        throw new ForbiddenException(
+          'User is not the creator of this comment and cannot update it.',
+        );
+      }
+
+      const allowedFields = ['content', 'upVotes', 'downVotes'];
+      const updateData: any = {};
+      for (const key of allowedFields) {
+        if (key in patchData) {
+          updateData[key] = patchData[key];
+        }
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        throw new BadRequestException('No valid fields provided for update.');
+      }
+
+      const updatedComment = await this.prisma.aiWorkflowRunItemComment.update({
+        where: { id: commentId },
+        data: updateData,
+      });
+
+      return updatedComment;
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      this.logger.error(`Failed to update comment ${commentId}`, error);
+      throw new InternalServerErrorException('Failed to update comment');
+    }
   }
 
   async createRunItemComment(
