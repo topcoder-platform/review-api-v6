@@ -11,6 +11,7 @@ import { ChallengeApiService } from './challenge.service';
 import { EventBusService } from './eventBus.service';
 import { MemberService } from './member.service';
 import { ResourceApiService } from './resource.service';
+import { ResourcePrismaService } from './resource-prisma.service';
 import { KafkaModule } from '../kafka/kafka.module';
 import { SubmissionBaseService } from './submission-base.service';
 import { GiteaService } from './gitea.service';
@@ -42,6 +43,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
     ChallengeApiService,
     ChallengeCatalogService,
     ChallengePrismaService,
+    ResourcePrismaService,
     ResourceApiService,
     EventBusService,
     MemberService,
@@ -59,6 +61,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
     ChallengeApiService,
     ChallengeCatalogService,
     ChallengePrismaService,
+    ResourcePrismaService,
     ResourceApiService,
     EventBusService,
     MemberService,

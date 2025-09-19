@@ -128,10 +128,12 @@ export class AppealController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Appeal response not found.' })
   async createAppealResponse(
+    @Req() req: Request,
     @Param('appealId') appealId: string,
     @Body() body: AppealResponseRequestDto,
   ): Promise<AppealResponseResponseDto> {
-    return this.appealService.createAppealResponse(appealId, body);
+    const authUser = req['user'] as JwtUser;
+    return this.appealService.createAppealResponse(authUser, appealId, body);
   }
 
   @Patch('/response/:appealResponseId')

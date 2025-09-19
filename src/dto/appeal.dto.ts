@@ -1,15 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsBoolean, IsNotEmpty, IsString } from 'class-validator';
 
-export class AppealResponseBaseDto {
-  @ApiProperty({
-    description: 'The resource ID associated with the appeal response',
-    example: 'resource456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  resourceId: string;
-
+export class AppealResponseRequestDto {
   @ApiProperty({
     description: 'The content of the appeal response',
     example: 'This is the content of the appeal response.',
@@ -26,9 +18,13 @@ export class AppealResponseBaseDto {
   success: boolean;
 }
 
-export class AppealResponseRequestDto extends AppealResponseBaseDto {}
+export class AppealResponseResponseDto extends AppealResponseRequestDto {
+  @ApiProperty({
+    description: 'The resource ID associated with the appeal response',
+    example: 'resource456',
+  })
+  resourceId: string;
 
-export class AppealResponseResponseDto extends AppealResponseBaseDto {
   @ApiProperty({
     description: 'The appeal ID associated with the response',
     example: 'appeal123',
@@ -145,7 +141,6 @@ export function mapAppealResponseRequestToDto(
 ) {
   // Only forward allowed fields; relation ID is set by Prisma in nested create
   return {
-    resourceId: request.resourceId,
     content: request.content,
     success: request.success,
   };

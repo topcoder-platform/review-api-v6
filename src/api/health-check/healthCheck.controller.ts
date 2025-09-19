@@ -33,7 +33,6 @@ export class HealthCheckController {
     const response = new GetHealthCheckResponseDto();
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
       this.prisma.scorecard.findFirst({
         select: {
           id: true,

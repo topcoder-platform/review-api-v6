@@ -351,7 +351,7 @@ export class AiWorkflowService {
 
     const challengeId = submission.challengeId;
     const challenge: ChallengeData =
-      await this.challengeApiService.getChallengeDetail(challengeId!);
+      await this.challengeApiService.getChallengeDetail(challengeId);
 
     if (!challenge) {
       throw new InternalServerErrorException(
@@ -370,7 +370,7 @@ export class AiWorkflowService {
 
       const memberRoles = (
         await this.resourceApiService.getMemberResourcesRoles(
-          challengeId!,
+          challengeId,
           user.userId,
         )
       ).filter((resource) =>

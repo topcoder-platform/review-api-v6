@@ -18,6 +18,7 @@ import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.servi
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 
 @Injectable()
 export class AppealService {
@@ -27,6 +28,7 @@ export class AppealService {
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
   ) {}
 
   async createAppeal(
@@ -326,6 +328,7 @@ export class AppealService {
   }
 
   async createAppealResponse(
+    authUser: JwtUser,
     appealId: string,
     body: AppealResponseRequestDto,
   ): Promise<AppealResponseResponseDto> {
@@ -340,7 +343,8 @@ export class AppealService {
               reviewItem: {
                 include: {
                   review: {
-                    include: {
+                    select: {
+                      resourceId: true,
                       submission: {
                         select: { challengeId: true },
                       },
@@ -361,8 +365,75 @@ export class AppealService {
         });
       }
 
-      const challengeId =
-        appeal.reviewItemComment.reviewItem.review.submission?.challengeId;
+      if (!authUser) {
+        throw new ForbiddenException({
+          message:
+            'Only the reviewer assigned to this review or an admin may respond to the appeal.',
+          code: 'APPEAL_RESPONSE_FORBIDDEN',
+        });
+      }
+
+      const review = appeal.reviewItemComment.reviewItem.review;
+      const reviewerResourceId = review?.resourceId
+        ? String(review.resourceId)
+        : '';
+
+      if (!reviewerResourceId) {
+        throw new BadRequestException({
+          message: `No reviewer resource found for appeal ${appealId}.`,
+          code: 'MISSING_REVIEWER_RESOURCE',
+        });
+      }
+
+      const reviewerResource = await this.resourcePrisma.resource.findUnique({
+        where: { id: reviewerResourceId },
+      });
+
+      if (!reviewerResource) {
+        throw new NotFoundException({
+          message: `Reviewer resource ${reviewerResourceId} not found for appeal ${appealId}.`,
+          code: 'REVIEWER_RESOURCE_NOT_FOUND',
+          details: { appealId, reviewerResourceId },
+        });
+      }
+
+      const reviewerMemberId = reviewerResource.memberId
+        ? String(reviewerResource.memberId)
+        : '';
+
+      if (!reviewerMemberId) {
+        throw new BadRequestException({
+          message: `Reviewer resource ${reviewerResourceId} does not have a memberId.`,
+          code: 'MISSING_REVIEWER_MEMBER_ID',
+          details: { appealId, reviewerResourceId },
+        });
+      }
+
+      const hasAdminPrivileges = Boolean(
+        authUser.isMachine || isAdmin(authUser),
+      );
+
+      if (!hasAdminPrivileges) {
+        const requesterMemberId = authUser.userId
+          ? String(authUser.userId)
+          : '';
+
+        if (!requesterMemberId || requesterMemberId !== reviewerMemberId) {
+          throw new ForbiddenException({
+            message:
+              'Only the reviewer assigned to this review or an admin may respond to the appeal.',
+            code: 'APPEAL_RESPONSE_FORBIDDEN',
+            details: {
+              appealId,
+              reviewerMemberId,
+              requesterMemberId,
+              reviewerResourceId,
+            },
+          });
+        }
+      }
+
+      const challengeId = review?.submission?.challengeId;
       if (!challengeId) {
         throw new BadRequestException({
           message: `No challengeId found for appeal ${appealId}`,
@@ -378,7 +449,10 @@ export class AppealService {
         where: { id: appealId },
         data: {
           appealResponse: {
-            create: mapAppealResponseRequestToDto(body),
+            create: {
+              ...mapAppealResponseRequestToDto(body),
+              resourceId: reviewerResourceId,
+            },
           },
         },
         include: {
@@ -389,6 +463,10 @@ export class AppealService {
       this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
       return data.appealResponse as AppealResponseResponseDto;
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+
       if (error instanceof BadRequestException) {
         throw error;
       }

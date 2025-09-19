@@ -19,7 +19,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma"
+    "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.744.0",

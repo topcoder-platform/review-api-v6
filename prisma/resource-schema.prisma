@@ -1,0 +1,29 @@
+// Prisma client for Resource DB (subset used for reviewer/member lookups)
+
+generator client {
+  provider      = "prisma-client-js"
+  // Generate a separate client so we can import it as @prisma/client-resource
+  output        = "../node_modules/@prisma/client-resource"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("RESOURCE_DB_URL")
+}
+
+model Resource {
+  id           String    @id @default(uuid())
+  challengeId  String
+  memberId     String
+  memberHandle String
+  roleId       String
+  legacyId     Int?
+  createdAt    DateTime  @default(now())
+  createdBy    String
+  updatedAt    DateTime? @updatedAt
+  updatedBy    String?
+
+  @@index([challengeId, memberId], map: "resource-challengeIdMemberId-index")
+  @@index([memberId, roleId], map: "resource-memberIdRoleId-index")
+}
