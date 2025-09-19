@@ -56,7 +56,9 @@ export class AiWorkflowService {
         where: { id: workflowId },
       });
       if (!workflow) {
-        throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+        throw new NotFoundException(
+          `Workflow with id ${workflowId} not found.`,
+        );
       }
 
       const run = await this.prisma.aiWorkflowRun.findUnique({

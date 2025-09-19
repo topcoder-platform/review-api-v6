@@ -71,14 +71,18 @@ export class AiWorkflowController {
     status: 200,
     description: 'Comment updated successfully.',
   })
-  @ApiResponse({ status: 403, description: 'Forbidden. User not comment creator.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden. User not comment creator.',
+  })
   @ApiResponse({ status: 404, description: 'Comment not found.' })
   async updateRunItemComment(
     @Param('workflowId') workflowId: string,
     @Param('runId') runId: string,
     @Param('itemId') itemId: string,
     @Param('commentId') commentId: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true })) body: UpdateRunItemCommentDto,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: UpdateRunItemCommentDto,
     @User() user: JwtUser,
   ) {
     return this.aiWorkflowService.updateCommentById(
