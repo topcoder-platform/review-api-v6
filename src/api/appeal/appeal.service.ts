@@ -334,6 +334,7 @@ export class AppealService {
       const appeal = await this.prisma.appeal.findUniqueOrThrow({
         where: { id: appealId },
         include: {
+          appealResponse: true,
           reviewItemComment: {
             include: {
               reviewItem: {
@@ -351,6 +352,14 @@ export class AppealService {
           },
         },
       });
+
+      if (appeal.appealResponse) {
+        throw new BadRequestException({
+          message: `Appeal with ID ${appealId} already has a response.`,
+          code: 'APPEAL_ALREADY_RESPONDED',
+          details: { appealResponseId: appeal.appealResponse.id },
+        });
+      }
 
       const challengeId =
         appeal.reviewItemComment.reviewItem.review.submission?.challengeId;
@@ -380,6 +389,10 @@ export class AppealService {
       this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
       return data.appealResponse as AppealResponseResponseDto;
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
       if (
         error.message &&
         typeof error.message === 'string' &&
@@ -400,6 +413,14 @@ export class AppealService {
         throw new NotFoundException({
           message: `Appeal with ID ${appealId} was not found. Cannot create response for a non-existent appeal.`,
           code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      if (errorResponse.code === 'UNIQUE_CONSTRAINT_FAILED') {
+        throw new BadRequestException({
+          message: `Appeal with ID ${appealId} already has a response.`,
+          code: 'APPEAL_ALREADY_RESPONDED',
           details: errorResponse.details,
         });
       }
