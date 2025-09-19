@@ -10,6 +10,8 @@ import {
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
+  ForbiddenException,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -36,6 +38,8 @@ import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
+import { JwtUser, isAdmin } from '../../shared/modules/global/jwt.service';
+import { Request } from 'express';
 
 @ApiTags('Appeal')
 @ApiBearerAuth()
@@ -52,11 +56,12 @@ export class AppealController {
   }
 
   @Post()
-  @Roles(UserRole.User)
+  @Roles(UserRole.User, UserRole.Admin)
   @Scopes(Scope.CreateAppeal)
   @ApiOperation({
     summary: 'Create an appeal for a specific review item comment',
-    description: 'Roles: User | Scopes: create:appeal',
+    description:
+      'Roles: User (only for the review of their own submission) | Admin | Scopes: create:appeal',
   })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
   @ApiResponse({
@@ -66,9 +71,11 @@ export class AppealController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async createAppeal(
+    @Req() req: Request,
     @Body() body: AppealRequestDto,
   ): Promise<AppealResponseDto> {
     this.logger.log(`Creating appeal`);
+    const authUser = req['user'] as JwtUser;
     try {
       // Get challengeId by following the relationship chain
       const reviewItemComment =
@@ -80,7 +87,7 @@ export class AppealController {
                 review: {
                   include: {
                     submission: {
-                      select: { challengeId: true },
+                      select: { challengeId: true, memberId: true },
                     },
                   },
                 },
@@ -89,14 +96,21 @@ export class AppealController {
           },
         });
 
-      const challengeId =
-        reviewItemComment.reviewItem.review.submission?.challengeId;
+      const submission = reviewItemComment.reviewItem.review.submission;
+      const challengeId = submission?.challengeId;
       if (!challengeId) {
         throw new BadRequestException({
           message: `No challengeId found for reviewItemComment ${body.reviewItemCommentId}`,
           code: 'MISSING_CHALLENGE_ID',
         });
       }
+
+      this.ensureAppealPermission(
+        authUser,
+        submission?.memberId,
+        'create',
+        'APPEAL_CREATE_FORBIDDEN',
+      );
 
       // Validate that appeal submission is allowed for this challenge
       await this.challengeApiService.validateAppealSubmission(challengeId);
@@ -118,6 +132,14 @@ export class AppealController {
         });
       }
 
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating appeal for review item comment: ${body.reviewItemCommentId}`,
@@ -132,11 +154,12 @@ export class AppealController {
   }
 
   @Patch('/:appealId')
-  @Roles(UserRole.User)
+  @Roles(UserRole.User, UserRole.Admin)
   @Scopes(Scope.UpdateAppeal)
   @ApiOperation({
     summary: 'Update an appeal',
-    description: 'Roles: User | Scopes: update:appeal',
+    description:
+      'Roles: User (only for the review of their own submission) | Admin | Scopes: update:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to update' })
   @ApiBody({ description: 'Appeal request body', type: AppealRequestDto })
@@ -148,11 +171,69 @@ export class AppealController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Appeal not found.' })
   async updateAppeal(
+    @Req() req: Request,
     @Param('appealId') appealId: string,
     @Body() body: AppealRequestDto,
   ): Promise<AppealResponseDto> {
     this.logger.log(`Updating appeal with ID: ${appealId}`);
+    const authUser = req['user'] as JwtUser;
     try {
+      const existingAppeal = await this.getAppealContext(appealId);
+
+      if (!existingAppeal) {
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found. Please verify the appeal ID is correct.`,
+          code: 'RECORD_NOT_FOUND',
+        });
+      }
+
+      this.ensureAppealPermission(
+        authUser,
+        existingAppeal.reviewItemComment.reviewItem.review.submission?.memberId,
+        'update',
+        'APPEAL_UPDATE_FORBIDDEN',
+      );
+
+      if (
+        !authUser?.isMachine &&
+        !isAdmin(authUser) &&
+        body.resourceId !== existingAppeal.resourceId
+      ) {
+        throw new ForbiddenException({
+          message: 'Submitters cannot change the resourceId for an appeal.',
+          code: 'APPEAL_RESOURCE_UPDATE_FORBIDDEN',
+          details: {
+            appealId,
+            requestedResourceId: body.resourceId,
+            existingResourceId: existingAppeal.resourceId,
+          },
+        });
+      }
+
+      if (
+        body.reviewItemCommentId !== existingAppeal.reviewItemCommentId &&
+        !authUser?.isMachine &&
+        !isAdmin(authUser)
+      ) {
+        const newComment = await this.getReviewItemCommentContext(
+          body.reviewItemCommentId,
+        );
+
+        if (!newComment) {
+          throw new NotFoundException({
+            message: `Review item comment with ID ${body.reviewItemCommentId} was not found.`,
+            code: 'REVIEW_ITEM_COMMENT_NOT_FOUND',
+          });
+        }
+
+        this.ensureAppealPermission(
+          authUser,
+          newComment.reviewItem.review.submission?.memberId,
+          'update',
+          'APPEAL_UPDATE_FORBIDDEN',
+        );
+      }
+
       const data = await this.prisma.appeal.update({
         where: { id: appealId },
         data: { ...body },
@@ -160,6 +241,14 @@ export class AppealController {
       this.logger.log(`Appeal updated successfully: ${appealId}`);
       return data as AppealResponseDto;
     } catch (error) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `updating appeal ${appealId}`,
@@ -182,25 +271,51 @@ export class AppealController {
   }
 
   @Delete('/:appealId')
-  @Roles(UserRole.User)
+  @Roles(UserRole.User, UserRole.Admin)
   @Scopes(Scope.DeleteAppeal)
   @ApiOperation({
     summary: 'Delete an appeal',
-    description: 'Roles: User | Scopes: delete:appeal',
+    description:
+      'Roles: User (only for the review of their own submission) | Admin | Scopes: delete:appeal',
   })
   @ApiParam({ name: 'appealId', description: 'The ID of the appeal to delete' })
   @ApiResponse({ status: 200, description: 'Appeal deleted successfully.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Appeal not found.' })
-  async deleteAppeal(@Param('appealId') appealId: string) {
+  async deleteAppeal(@Req() req: Request, @Param('appealId') appealId: string) {
     this.logger.log(`Deleting appeal with ID: ${appealId}`);
+    const authUser = req['user'] as JwtUser;
     try {
+      const existingAppeal = await this.getAppealContext(appealId);
+
+      if (!existingAppeal) {
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found. Cannot delete a non-existent appeal.`,
+          code: 'RECORD_NOT_FOUND',
+        });
+      }
+
+      this.ensureAppealPermission(
+        authUser,
+        existingAppeal.reviewItemComment.reviewItem.review.submission?.memberId,
+        'delete',
+        'APPEAL_DELETE_FORBIDDEN',
+      );
+
       await this.prisma.appeal.delete({
         where: { id: appealId },
       });
       this.logger.log(`Appeal deleted successfully: ${appealId}`);
       return { message: `Appeal ${appealId} deleted successfully.` };
     } catch (error) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `deleting appeal ${appealId}`,
@@ -220,6 +335,81 @@ export class AppealController {
         details: errorResponse.details,
       });
     }
+  }
+
+  private ensureAppealPermission(
+    authUser: JwtUser,
+    submissionMemberId: string | null | undefined,
+    action: 'create' | 'update' | 'delete',
+    errorCode: string,
+  ): void {
+    if (!authUser) {
+      throw new ForbiddenException({
+        message: `Only the submission owner or an admin can ${action} this appeal.`,
+        code: errorCode,
+      });
+    }
+
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return;
+    }
+
+    const requesterId = authUser.userId ? String(authUser.userId) : '';
+    const ownerId = submissionMemberId ? String(submissionMemberId) : '';
+
+    if (!requesterId || !ownerId || requesterId !== ownerId) {
+      throw new ForbiddenException({
+        message: `Only the submission owner or an admin can ${action} this appeal.`,
+        code: errorCode,
+        details: {
+          action,
+          requesterId,
+          submissionMemberId,
+        },
+      });
+    }
+  }
+
+  private async getAppealContext(appealId: string) {
+    return this.prisma.appeal.findUnique({
+      where: { id: appealId },
+      include: {
+        reviewItemComment: {
+          include: {
+            reviewItem: {
+              include: {
+                review: {
+                  include: {
+                    submission: {
+                      select: { id: true, memberId: true, challengeId: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  private async getReviewItemCommentContext(reviewItemCommentId: string) {
+    return this.prisma.reviewItemComment.findUnique({
+      where: { id: reviewItemCommentId },
+      include: {
+        reviewItem: {
+          include: {
+            review: {
+              include: {
+                submission: {
+                  select: { id: true, memberId: true, challengeId: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   }
 
   @Post('/:appealId/response')
