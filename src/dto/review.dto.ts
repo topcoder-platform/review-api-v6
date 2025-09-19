@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiHideProperty, ApiProperty, OmitType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsString,
@@ -12,6 +12,7 @@ import {
   ValidateNested,
   IsEnum,
   IsInt,
+  IsEmpty,
 } from 'class-validator';
 
 export enum ReviewItemCommentType {
@@ -282,35 +283,38 @@ export class ReviewRequestDto extends ReviewCommonDto {
   reviewItems?: ReviewItemRequestDto[];
 }
 
-export class ReviewPutRequestDto extends ReviewCommonDto {}
+const ReviewPutBase = OmitType(ReviewCommonDto, [
+  'resourceId',
+  'phaseId',
+  'submissionId',
+] as const);
+
+export class ReviewPutRequestDto extends ReviewPutBase {
+  @ApiHideProperty()
+  @IsEmpty({ message: 'resourceId cannot be updated.' })
+  resourceId?: never;
+
+  @ApiHideProperty()
+  @IsEmpty({ message: 'phaseId cannot be updated.' })
+  phaseId?: never;
+
+  @ApiHideProperty()
+  @IsEmpty({ message: 'submissionId cannot be updated.' })
+  submissionId?: never;
+}
 
 export class ReviewPatchRequestDto {
-  @ApiProperty({
-    description: 'Resource ID associated with the review',
-    example: 'resource123',
-  })
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  resourceId?: string;
+  @ApiHideProperty()
+  @IsEmpty({ message: 'resourceId cannot be updated.' })
+  resourceId?: never;
 
-  @ApiProperty({
-    description: 'Phase ID of the challenge',
-    example: 'phase456',
-  })
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  phaseId?: string;
+  @ApiHideProperty()
+  @IsEmpty({ message: 'phaseId cannot be updated.' })
+  phaseId?: never;
 
-  @ApiProperty({
-    description: 'Submission ID being reviewed',
-    example: 'submission789',
-  })
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  submissionId?: string;
+  @ApiHideProperty()
+  @IsEmpty({ message: 'submissionId cannot be updated.' })
+  submissionId?: never;
 
   @ApiProperty({
     description: 'Scorecard ID used for the review',
@@ -450,9 +454,13 @@ export function mapReviewRequestToDto(
       },
     };
   } else {
-    return {
-      ...request,
-    };
+    const sanitizedRequest = { ...request } as Partial<ReviewPatchRequestDto> &
+      Record<string, unknown>;
+    ['resourceId', 'phaseId', 'submissionId'].forEach((field) => {
+      delete sanitizedRequest[field];
+    });
+
+    return sanitizedRequest as ReviewPatchRequestDto;
   }
 }
 
