@@ -1,4 +1,9 @@
-import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
+import {
+  ApiHideProperty,
+  ApiProperty,
+  OmitType,
+  PartialType,
+} from '@nestjs/swagger';
 import {
   IsString,
   IsNotEmpty,
@@ -162,6 +167,19 @@ export class CommentDto {
 export class UpdateAiWorkflowRunItemDto extends PartialType(
   CreateAiWorkflowRunItemDto,
 ) {
+  @ApiHideProperty()
   @IsEmpty({ message: 'scorecardQuestionId cannot be updated' })
   scorecardQuestionId?: never;
+}
+
+export class CreateRunItemCommentDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  parentId?: string;
 }

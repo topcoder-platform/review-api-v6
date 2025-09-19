@@ -10,6 +10,7 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
   CreateAiWorkflowDto,
   CreateAiWorkflowRunDto,
+  CreateRunItemCommentDto,
   UpdateAiWorkflowDto,
   UpdateAiWorkflowRunDto,
   UpdateAiWorkflowRunItemDto,
@@ -35,6 +36,50 @@ export class AiWorkflowService {
     private readonly resourceApiService: ResourceApiService,
   ) {
     this.logger = LoggerService.forRoot('AiWorkflowService');
+  }
+
+  async createRunItemComment(
+    workflowId: string,
+    runId: string,
+    itemId: string,
+    body: CreateRunItemCommentDto,
+    user: JwtUser,
+  ) {
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id: workflowId },
+    });
+    if (!workflow) {
+      throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+    }
+
+    const run = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: runId },
+    });
+    if (!run || run.workflowId !== workflowId) {
+      throw new NotFoundException(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+    }
+
+    const item = await this.prisma.aiWorkflowRunItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!item || item.workflowRunId !== runId) {
+      throw new NotFoundException(
+        `Item with id ${itemId} not found or does not belong to run ${runId}.`,
+      );
+    }
+
+    const createdComment = await this.prisma.aiWorkflowRunItemComment.create({
+      data: {
+        workflowRunItemId: itemId,
+        content: body.content,
+        parentId: body.parentId ?? null,
+        userId: user.userId!,
+      },
+    });
+
+    return createdComment;
   }
 
   async scorecardExists(scorecardId: string): Promise<boolean> {

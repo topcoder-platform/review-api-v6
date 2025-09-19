@@ -24,6 +24,7 @@ import {
   UpdateAiWorkflowDto,
   CreateAiWorkflowRunItemsDto,
   UpdateAiWorkflowRunDto,
+  CreateRunItemCommentDto,
   UpdateAiWorkflowRunItemDto,
 } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
@@ -38,6 +39,44 @@ import { User } from 'src/shared/decorators/user.decorator';
 @Controller('/workflows')
 export class AiWorkflowController {
   constructor(private readonly aiWorkflowService: AiWorkflowService) {}
+
+  @Post('/:workflowId/runs/:runId/items/:itemId/comments')
+  @Roles(
+    UserRole.Submitter,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Admin,
+    UserRole.Reviewer,
+    UserRole.User,
+  )
+  @ApiOperation({ summary: 'Create a comment for a specific run item' })
+  @ApiResponse({
+    status: 201,
+    description: 'Comment created successfully.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({
+    status: 404,
+    description: 'Workflow, Run, or Item not found.',
+  })
+  async createRunItemComment(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Param('itemId') itemId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: CreateRunItemCommentDto,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.createRunItemComment(
+      workflowId,
+      runId,
+      itemId,
+      body,
+      user,
+    );
+  }
 
   @Post()
   @Roles(UserRole.Admin)
