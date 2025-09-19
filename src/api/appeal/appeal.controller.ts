@@ -77,6 +77,14 @@ export class AppealController {
     this.logger.log(`Creating appeal`);
     const authUser = req['user'] as JwtUser;
     try {
+      const trimmedContent = body.content?.trim();
+      if (!trimmedContent) {
+        throw new BadRequestException({
+          message: 'Appeal content must not be empty.',
+          code: 'EMPTY_APPEAL_CONTENT',
+        });
+      }
+
       // Get challengeId by following the relationship chain
       const reviewItemComment =
         await this.prisma.reviewItemComment.findUniqueOrThrow({
@@ -116,7 +124,7 @@ export class AppealController {
       await this.challengeApiService.validateAppealSubmission(challengeId);
 
       const data = await this.prisma.appeal.create({
-        data: { ...body },
+        data: { ...body, content: trimmedContent },
       });
       this.logger.log(`Appeal created with ID: ${data.id}`);
       return data as AppealResponseDto;
