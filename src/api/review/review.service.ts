@@ -647,6 +647,63 @@ export class ReviewService {
     const requester = authUser ?? ({ isMachine: false } as JwtUser);
     const isPrivileged = isAdmin(requester);
     const challengeId = existingReview.submission?.challengeId;
+    const isMemberRequester = !requester?.isMachine;
+
+    if (isMemberRequester && !isPrivileged) {
+      const requesterMemberId = String(requester?.userId ?? '');
+
+      if (!requesterMemberId) {
+        throw new ForbiddenException({
+          message:
+            'Authenticated user information is missing the user identifier required for authorization checks.',
+          code: 'REVIEW_UPDATE_FORBIDDEN_MISSING_MEMBER_ID',
+          details: {
+            reviewId: id,
+          },
+        });
+      }
+
+      let requesterResources: ResourceInfo[] = [];
+      try {
+        requesterResources = await this.resourceApiService.getResources({
+          memberId: requesterMemberId,
+          ...(challengeId ? { challengeId } : {}),
+        });
+      } catch (error) {
+        this.logger.error(
+          `[updateReview] Failed to verify ownership for review ${id} and member ${requesterMemberId}`,
+          error,
+        );
+        throw new ForbiddenException({
+          message:
+            'Unable to verify ownership of the review for the authenticated user.',
+          code: 'REVIEW_UPDATE_FORBIDDEN_OWNERSHIP_UNVERIFIED',
+          details: {
+            reviewId: id,
+            challengeId,
+            requester: requesterMemberId,
+          },
+        });
+      }
+
+      const ownsReview = requesterResources?.some(
+        (resource) => resource.id === existingReview.resourceId,
+      );
+
+      if (!ownsReview) {
+        throw new ForbiddenException({
+          message:
+            'Only the reviewer who owns this review or an admin may update it.',
+          code: 'REVIEW_UPDATE_FORBIDDEN_NOT_OWNER',
+          details: {
+            reviewId: id,
+            challengeId,
+            requester: requesterMemberId,
+            reviewResourceId: existingReview.resourceId,
+          },
+        });
+      }
+    }
 
     if (!isPrivileged && challengeId) {
       let challenge;

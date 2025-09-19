@@ -327,6 +327,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
 
     prismaMock.review.findUnique.mockResolvedValue({
       id: 'review-1',
+      resourceId: 'resource-1',
       submission: {
         challengeId: 'challenge-1',
       },
@@ -338,7 +339,17 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       handleError: jest.fn(),
     } as any;
 
-    resourceApiServiceMock = {} as any;
+    resourceApiServiceMock = {
+      getResources: jest.fn(),
+    } as any;
+
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        id: 'resource-1',
+        challengeId: 'challenge-1',
+        memberId: 'reviewer-1',
+      },
+    ]);
 
     challengeApiServiceMock = {
       getChallengeDetail: jest.fn(),
@@ -383,6 +394,10 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     });
 
     expect(prismaMock.review.update).not.toHaveBeenCalled();
+    expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
+      challengeId: 'challenge-1',
+      memberId: 'reviewer-1',
+    });
     expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
       'challenge-1',
     );
@@ -403,6 +418,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
 
     expect(result).toEqual({ id: 'review-1' });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });
@@ -427,6 +443,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(prismaMock.review.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.review.update).not.toHaveBeenCalled();
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
   });
 
   it('allows reviewer tokens to update when the challenge is not completed', async () => {
@@ -438,9 +455,35 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
 
     expect(result).toEqual({ id: 'review-1' });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+    expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
+      challengeId: 'challenge-1',
+      memberId: 'reviewer-1',
+    });
     expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
       'challenge-1',
     );
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+  });
+
+  it('prevents non-admin tokens from updating reviews they do not own', async () => {
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        id: 'resource-2',
+        challengeId: 'challenge-1',
+        memberId: 'some-other-user',
+      },
+    ]);
+
+    await expect(
+      service.updateReview(nonPrivilegedUser, 'review-1', updatePayload),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_UPDATE_FORBIDDEN_NOT_OWNER',
+      }),
+      status: 403,
+    });
+
+    expect(prismaMock.review.update).not.toHaveBeenCalled();
+    expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
   });
 });
