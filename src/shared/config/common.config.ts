@@ -6,11 +6,8 @@ const paymentConfig: Record<string, Record<string, number>> = {};
 
 paymentConfig[ReviewOpportunityType.REGULAR_REVIEW] = {};
 paymentConfig[ReviewOpportunityType.REGULAR_REVIEW][
-  ReviewApplicationRole.PRIMARY_REVIEWER
+  ReviewApplicationRole.REVIEWER
 ] = 1;
-paymentConfig[ReviewOpportunityType.REGULAR_REVIEW][
-  ReviewApplicationRole.SECONDARY_REVIEWER
-] = 0.8;
 
 paymentConfig[ReviewOpportunityType.ITERATIVE_REVIEW] = {};
 paymentConfig[ReviewOpportunityType.ITERATIVE_REVIEW][

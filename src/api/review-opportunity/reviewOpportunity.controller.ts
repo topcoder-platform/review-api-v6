@@ -22,6 +22,7 @@ import {
   CreateReviewOpportunityDto,
   QueryReviewOpportunityDto,
   ReviewOpportunityResponseDto,
+  ReviewOpportunitySummaryDto,
   UpdateReviewOpportunityDto,
 } from 'src/dto/reviewOpportunity.dto';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -181,6 +182,27 @@ export class ReviewOpportunityController {
   async create(@Req() req: Request, @Body() dto: CreateReviewOpportunityDto) {
     const authUser: JwtUser = req['user'] as JwtUser;
     return OkResponse(await this.service.create(authUser, dto));
+  }
+
+  @ApiOperation({
+    summary: 'Get review opportunity summary',
+    description:
+      'Roles: Admin | Scopes: read:review_opportunity, all:review_opportunity',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Review opportunity summary list',
+    type: ResponseDto<ReviewOpportunitySummaryDto[]>,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 500, description: 'Internal Error' })
+  @Get('/summary')
+  @ApiBearerAuth()
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.ReadReviewOpportunity, Scope.AllReviewOpportunity)
+  async summary() {
+    return OkResponse(await this.service.getSummary());
   }
 
   @ApiOperation({

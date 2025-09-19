@@ -1,4 +1,4 @@
-import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
+import { ApiHideProperty, ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
 import {
   IsString,
   IsNotEmpty,
@@ -9,7 +9,9 @@ import {
   IsInt,
   IsDate,
   Min,
+  IsUUID,
   Max,
+  IsEmpty,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -137,6 +139,32 @@ export class CreateAiWorkflowRunItemsDto {
   @ValidateNested({ each: true })
   @Type(() => CreateAiWorkflowRunItemDto)
   items: CreateAiWorkflowRunItemDto[];
+}
+
+export class CommentDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
+  @ApiProperty()
+  @IsString()
+  @Transform(trimTransformer)
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  parentId?: string;
+}
+
+export class UpdateAiWorkflowRunItemDto extends PartialType(
+  CreateAiWorkflowRunItemDto,
+) {
+  @ApiHideProperty()
+  @IsEmpty({ message: 'scorecardQuestionId cannot be updated' })
+  scorecardQuestionId?: never;
 }
 
 export class CreateRunItemCommentDto {

@@ -25,6 +25,7 @@ import {
   CreateAiWorkflowRunItemsDto,
   UpdateAiWorkflowRunDto,
   CreateRunItemCommentDto,
+  UpdateAiWorkflowRunItemDto,
 } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -263,6 +264,52 @@ export class AiWorkflowController {
       workflowId,
       runId,
       createItemsDto.items,
+    );
+  }
+
+  @Patch('/:workflowId/runs/:runId/items/:itemId')
+  @Scopes(Scope.UpdateWorkflowRun)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+    UserRole.User,
+  )
+  @ApiOperation({ summary: 'Update an AIWorkflowRunItem by id' })
+  @ApiParam({ name: 'workflowId', description: 'The ID of the AI workflow' })
+  @ApiParam({ name: 'runId', description: 'The ID of the AI workflow run' })
+  @ApiParam({
+    name: 'itemId',
+    description: 'The ID of the AI workflow run item',
+  })
+  @ApiBody({
+    description: 'AIWorkflowRunItem update data',
+    type: UpdateAiWorkflowRunItemDto,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'AIWorkflowRunItem updated successfully.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Workflow, Run or Item not found.' })
+  async updateRunItem(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Param('itemId') itemId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    patchData: UpdateAiWorkflowRunItemDto,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.updateRunItem(
+      workflowId,
+      runId,
+      itemId,
+      patchData,
+      user,
     );
   }
 

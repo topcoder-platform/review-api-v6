@@ -18,6 +18,7 @@ import {
 } from 'class-validator';
 import { ReviewApplicationResponseDto } from './reviewApplication.dto';
 import { Expose, Transform } from 'class-transformer';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 const toNormalizedStrings = (input: unknown): string[] => {
   if (Array.isArray(input)) {
@@ -202,6 +203,40 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
     description: 'Review payments',
   })
   payments: ReviewPaymentDto[] | null;
+}
+
+export class ReviewOpportunitySummaryDto {
+  @ApiProperty({ description: 'Challenge id' })
+  challengeId: string;
+
+  @ApiProperty({ description: 'Challenge name' })
+  challengeName: string;
+
+  @ApiProperty({
+    description: 'Challenge status',
+    enum: ChallengeStatus,
+    example: ChallengeStatus.ACTIVE,
+  })
+  challengeStatus: ChallengeStatus;
+
+  @ApiPropertyOptional({
+    description: 'Submission phase end date',
+    type: String,
+    format: 'date-time',
+  })
+  submissionEndDate?: Date | null;
+
+  @ApiProperty({ description: 'Number of submissions received' })
+  numberOfSubmissions: number;
+
+  @ApiProperty({ description: 'Number of reviewer spots available' })
+  numberOfReviewerSpots: number;
+
+  @ApiProperty({ description: 'Number of pending review applications' })
+  numberOfPendingApplications: number;
+
+  @ApiProperty({ description: 'Number of approved review applications' })
+  numberOfApprovedApplications: number;
 }
 
 export class QueryReviewOpportunityDto {
