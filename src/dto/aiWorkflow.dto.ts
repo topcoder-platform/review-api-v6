@@ -9,7 +9,9 @@ import {
   IsInt,
   IsDate,
   Min,
+  IsUUID,
   Max,
+  IsEmpty,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -137,4 +139,29 @@ export class CreateAiWorkflowRunItemsDto {
   @ValidateNested({ each: true })
   @Type(() => CreateAiWorkflowRunItemDto)
   items: CreateAiWorkflowRunItemDto[];
+}
+
+export class CommentDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
+  @ApiProperty()
+  @IsString()
+  @Transform(trimTransformer)
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  parentId?: string;
+}
+
+export class UpdateAiWorkflowRunItemDto extends PartialType(
+  CreateAiWorkflowRunItemDto,
+) {
+  @IsEmpty({ message: 'scorecardQuestionId cannot be updated' })
+  scorecardQuestionId?: never;
 }

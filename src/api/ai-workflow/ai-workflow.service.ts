@@ -12,6 +12,7 @@ import {
   CreateAiWorkflowRunDto,
   UpdateAiWorkflowDto,
   UpdateAiWorkflowRunDto,
+  UpdateAiWorkflowRunItemDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
@@ -444,12 +445,12 @@ export class AiWorkflowService {
         UserRole.Submitter,
       ].map((r) => r.toLowerCase());
 
-      const memberRoles = (
-        await this.resourceApiService.getMemberResourcesRoles(
-          challengeId,
-          user.userId,
-        )
-      ).filter((resource) =>
+      const userRoles = await this.resourceApiService.getMemberResourcesRoles(
+        challengeId,
+        user.userId,
+      );
+
+      const memberRoles = userRoles.filter((resource) =>
         requiredRoles.some(
           (role) =>
             resource.roleName!.toLowerCase().indexOf(role.toLowerCase()) >= 0,
@@ -485,5 +486,83 @@ export class AiWorkflowService {
     });
 
     return items;
+  }
+
+  async updateRunItem(
+    workflowId: string,
+    runId: string,
+    itemId: string,
+    patchData: UpdateAiWorkflowRunItemDto,
+    user: JwtUser,
+  ) {
+    const workflow = await this.prisma.aiWorkflow.findUnique({
+      where: { id: workflowId },
+    });
+    if (!workflow) {
+      this.logger.error(`Workflow with id ${workflowId} not found.`);
+      throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+    }
+
+    const run = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: runId },
+    });
+    if (!run || run.workflowId !== workflowId) {
+      this.logger.error(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+      throw new NotFoundException(
+        `Run with id ${runId} not found or does not belong to workflow ${workflowId}.`,
+      );
+    }
+
+    const runItem = await this.prisma.aiWorkflowRunItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!runItem || runItem.workflowRunId !== runId) {
+      this.logger.error(
+        `Run item with id ${itemId} not found or does not belong to run ${runId}.`,
+      );
+      throw new NotFoundException(
+        `Run item with id ${itemId} not found or does not belong to run ${runId}.`,
+      );
+    }
+
+    const updateData: any = {};
+
+    if (patchData.upVotes !== undefined) {
+      updateData.upVotes = patchData.upVotes;
+    }
+    if (patchData.downVotes !== undefined) {
+      updateData.downVotes = patchData.downVotes;
+    }
+
+    if (!user.isMachine) {
+      const keys = Object.keys(patchData);
+      const prohibitedKeys = ['content', 'questionScore'];
+      if (keys.some((key) => prohibitedKeys.includes(key))) {
+        throw new BadRequestException(
+          `Users cannot update one of these properties - ${prohibitedKeys.join(',')}`,
+        );
+      }
+    }
+
+    // Update properties which can be updated only via m2m
+    if (user.isMachine) {
+      if (patchData.content) {
+        updateData.content = patchData.content;
+      }
+
+      if (patchData.questionScore) {
+        updateData.questionScore = patchData.questionScore;
+      }
+    }
+
+    return this.prisma.aiWorkflowRunItem.update({
+      where: { id: itemId },
+      include: {
+        comments: true,
+      },
+      data: updateData,
+    });
   }
 }
