@@ -652,9 +652,43 @@ export class ReviewService {
   ): Promise<ReviewItemResponseDto> {
     this.logger.log(`Updating review item with ID: ${itemId}`);
     try {
+      // First get the existing review item to find the associated review's resourceId
+      const existingItem = await this.prisma.reviewItem.findUnique({
+        where: { id: itemId },
+        include: {
+          review: {
+            select: {
+              resourceId: true,
+            },
+          },
+        },
+      });
+
+      if (!existingItem) {
+        throw new NotFoundException({
+          message: `Review item with ID ${itemId} was not found. Please check the ID and try again.`,
+          code: 'RECORD_NOT_FOUND',
+          details: { itemId },
+        });
+      }
+
+      // Get the mapped data for update
+      const mappedData = mapReviewItemRequestForUpdate(body);
+
+      // If there are review item comments to update, set the resourceId
+      if (mappedData.reviewItemComments?.create) {
+        mappedData.reviewItemComments.create =
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+          mappedData.reviewItemComments.create.map((comment: any) => ({
+            ...comment,
+            // Use the review's resourceId as the commenter
+            resourceId: comment.resourceId || existingItem.review.resourceId,
+          }));
+      }
+
       const data = await this.prisma.reviewItem.update({
         where: { id: itemId },
-        data: mapReviewItemRequestForUpdate(body),
+        data: mappedData,
         include: {
           reviewItemComments: true,
         },
