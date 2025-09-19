@@ -11,6 +11,7 @@ import { ReviewController } from './review/review.controller';
 import { ProjectResultModule } from './project-result/projectResult.module';
 
 import { ReviewTypeController } from './review-type/review-type.controller';
+import { ReviewTypeService } from './review-type/review-type.service';
 import { SubmissionController } from './submission/submission.controller';
 import { ReviewSummationController } from './review-summation/review-summation.controller';
 import { ReviewOpportunityController } from './review-opportunity/reviewOpportunity.controller';
@@ -71,6 +72,7 @@ import { ProjectResultController } from './project-result/projectResult.controll
     ReviewSummationService,
     AiWorkflowService,
     ProjectResultService,
+    ReviewTypeService,
   ],
 })
 export class ApiModule {}

@@ -84,11 +84,11 @@ export class ReviewController {
   }
 
   @Patch('/:reviewId')
-  @Roles(UserRole.Reviewer)
+  @Roles(UserRole.Reviewer, UserRole.Admin)
   @Scopes(Scope.UpdateReview)
   @ApiOperation({
     summary: 'Update a review partially',
-    description: 'Roles: Reviewer | Scopes: update:review',
+    description: 'Roles: Reviewer, Admin | Scopes: update:review',
   })
   @ApiParam({
     name: 'reviewId',
@@ -103,18 +103,20 @@ export class ReviewController {
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async updateReview(
+    @Req() req: Request,
     @Param('reviewId') reviewId: string,
     @Body() body: ReviewPatchRequestDto,
   ): Promise<ReviewResponseDto> {
-    return this.reviewService.updateReview(reviewId, body);
+    const authUser = req['user'];
+    return this.reviewService.updateReview(authUser as any, reviewId, body);
   }
 
   @Put('/:reviewId')
-  @Roles(UserRole.Reviewer)
+  @Roles(UserRole.Reviewer, UserRole.Admin)
   @Scopes(Scope.UpdateReview)
   @ApiOperation({
     summary: 'Update a review partially',
-    description: 'Roles: Reviewer | Scopes: update:review',
+    description: 'Roles: Reviewer, Admin | Scopes: update:review',
   })
   @ApiParam({
     name: 'reviewId',
@@ -129,10 +131,12 @@ export class ReviewController {
   })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async updatePutReview(
+    @Req() req: Request,
     @Param('reviewId') reviewId: string,
     @Body() body: ReviewPutRequestDto,
   ): Promise<ReviewResponseDto> {
-    return this.reviewService.updateReview(reviewId, body);
+    const authUser = req['user'];
+    return this.reviewService.updateReview(authUser as any, reviewId, body);
   }
 
   @Patch('/items/:itemId')
