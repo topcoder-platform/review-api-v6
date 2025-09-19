@@ -496,11 +496,23 @@ export function mapReviewItemRequestForUpdate(
     reviewItemComments?: any[];
   } & ReviewItemRequestDto;
 
-  // For updates, we only include the core review item fields
-  // Comments should be handled separately via dedicated comment endpoints
   const payload: Partial<MappedReviewItem> = {
     ...rest,
   };
+
+  // Handle review item comments update if provided
+  // Strategy: Delete all existing comments and create new ones
+  if (reviewItemComments !== undefined) {
+    payload.reviewItemComments = {
+      deleteMany: {}, // Delete all existing comments for this review item
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      create: reviewItemComments?.map((comment) => ({
+        ...comment,
+        // resourceId is required on reviewItemComment; leave population to controller/service
+        resourceId: '',
+      })),
+    } as any;
+  }
 
   return payload;
 }
