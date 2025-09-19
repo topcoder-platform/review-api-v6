@@ -604,10 +604,62 @@ export class ReviewService {
   }
 
   async updateReview(
+    authUser: JwtUser,
     id: string,
     body: ReviewPatchRequestDto | ReviewPutRequestDto,
   ): Promise<ReviewResponseDto> {
     this.logger.log(`Updating review with ID: ${id}`);
+
+    const existingReview = await this.prisma.review.findUnique({
+      where: { id },
+      include: {
+        submission: {
+          select: {
+            challengeId: true,
+          },
+        },
+      },
+    });
+
+    if (!existingReview) {
+      throw new NotFoundException({
+        message: `Review with ID ${id} was not found. Please check the ID and try again.`,
+        code: 'RECORD_NOT_FOUND',
+        details: { reviewId: id },
+      });
+    }
+
+    const requester = authUser ?? ({ isMachine: false } as JwtUser);
+    const isPrivileged = isAdmin(requester);
+    const challengeId = existingReview.submission?.challengeId;
+
+    if (!isPrivileged && challengeId) {
+      let challenge;
+      try {
+        challenge =
+          await this.challengeApiService.getChallengeDetail(challengeId);
+      } catch (error) {
+        this.logger.error(
+          `[updateReview] Unable to fetch challenge ${challengeId} for review ${id}`,
+          error,
+        );
+        throw new InternalServerErrorException({
+          message: `Unable to verify the challenge status for challenge ${challengeId}. Please try again later.`,
+          code: 'CHALLENGE_STATUS_UNAVAILABLE',
+          details: { challengeId, reviewId: id },
+        });
+      }
+
+      if (challenge.status === ChallengeStatus.COMPLETED) {
+        throw new ForbiddenException({
+          message:
+            'Reviews for challenges in COMPLETED status cannot be updated.  Only an admin can update a review once the challenge is complete.',
+          code: 'REVIEW_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+          details: { reviewId: id, challengeId },
+        });
+      }
+    }
+
     try {
       const data = await this.prisma.review.update({
         where: { id },

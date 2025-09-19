@@ -8,6 +8,7 @@ import { ReviewService } from './review.service';
 import { ReviewStatus } from 'src/dto/review.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 
 describe('ReviewService.createReview authorization checks', () => {
   const prismaMock = {
@@ -295,5 +296,129 @@ describe('ReviewService.getReview authorization checks', () => {
     await expect(
       service.getReview(baseAuthUser, 'review-1'),
     ).resolves.toMatchObject({ id: 'review-1', resourceId: 'resource-1' });
+  });
+});
+
+describe('ReviewService.updateReview challenge status enforcement', () => {
+  let prismaMock: any;
+  let prismaErrorServiceMock: any;
+  let resourceApiServiceMock: any;
+  let challengeApiServiceMock: any;
+  let service: ReviewService;
+  let recomputeSpy: jest.SpyInstance;
+
+  const updatePayload = {
+    status: ReviewStatus.IN_PROGRESS,
+  } as any;
+
+  const nonPrivilegedUser: JwtUser = {
+    userId: 'reviewer-1',
+    roles: [],
+    isMachine: false,
+  };
+
+  beforeEach(() => {
+    prismaMock = {
+      review: {
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
+    } as any;
+
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      submission: {
+        challengeId: 'challenge-1',
+      },
+    });
+
+    prismaMock.review.update.mockResolvedValue({ id: 'review-1' });
+
+    prismaErrorServiceMock = {
+      handleError: jest.fn(),
+    } as any;
+
+    resourceApiServiceMock = {} as any;
+
+    challengeApiServiceMock = {
+      getChallengeDetail: jest.fn(),
+    } as any;
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+      phases: [],
+    });
+
+    service = new ReviewService(
+      prismaMock,
+      prismaErrorServiceMock,
+      resourceApiServiceMock,
+      challengeApiServiceMock,
+    );
+
+    recomputeSpy = jest
+      .spyOn(service as any, 'recomputeAndUpdateReviewScores')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    recomputeSpy.mockRestore();
+  });
+
+  it('prevents non-admin tokens from updating reviews when the challenge is completed', async () => {
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+      phases: [],
+    });
+
+    await expect(
+      service.updateReview(nonPrivilegedUser, 'review-1', updatePayload),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+      }),
+      status: 403,
+    });
+
+    expect(prismaMock.review.update).not.toHaveBeenCalled();
+    expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+      'challenge-1',
+    );
+  });
+
+  it('allows admin tokens to update reviews even when the challenge is completed', async () => {
+    const adminUser: JwtUser = {
+      userId: 'admin-1',
+      roles: [UserRole.Admin],
+      isMachine: false,
+    };
+
+    const result = await service.updateReview(
+      adminUser,
+      'review-1',
+      updatePayload,
+    );
+
+    expect(result).toEqual({ id: 'review-1' });
+    expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+    expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+  });
+
+  it('allows reviewer tokens to update when the challenge is not completed', async () => {
+    const result = await service.updateReview(
+      nonPrivilegedUser,
+      'review-1',
+      updatePayload,
+    );
+
+    expect(result).toEqual({ id: 'review-1' });
+    expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+    expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+      'challenge-1',
+    );
+    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });
 });

@@ -8,8 +8,6 @@ import {
   Body,
   Param,
   Query,
-  NotFoundException,
-  InternalServerErrorException,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -32,24 +30,15 @@ import {
   ReviewTypeRequestDto,
   ReviewTypeUpdateRequestDto,
 } from 'src/dto/reviewType.dto';
-import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
-import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ReviewTypeService } from './review-type.service';
 
 @ApiTags('ReviewTypes')
 @ApiBearerAuth()
 @Controller('/reviewTypes')
 export class ReviewTypeController {
-  private readonly logger: LoggerService;
-
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly prismaErrorService: PrismaErrorService,
-  ) {
-    this.logger = LoggerService.forRoot('ReviewTypeController');
-  }
+  constructor(private readonly reviewTypeService: ReviewTypeService) {}
 
   @Post()
   @Roles(UserRole.Admin, UserRole.Copilot)
@@ -67,25 +56,7 @@ export class ReviewTypeController {
   async createReviewType(
     @Body() body: ReviewTypeRequestDto,
   ): Promise<ReviewTypeResponseDto> {
-    this.logger.log(
-      `Creating review type with request boy: ${JSON.stringify(body)}`,
-    );
-    try {
-      const data = await this.prisma.reviewType.create({
-        data: body,
-      });
-      this.logger.log(`Review type created with ID: ${data.id}`);
-      return data as ReviewTypeResponseDto;
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        'creating review type',
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-      });
-    }
+    return this.reviewTypeService.createReviewType(body);
   }
 
   @Patch('/:reviewTypeId')
@@ -113,7 +84,7 @@ export class ReviewTypeController {
     @Param('reviewTypeId') reviewTypeId: string,
     @Body() body: ReviewTypeUpdateRequestDto,
   ): Promise<ReviewTypeResponseDto> {
-    return this._updateReviewType(reviewTypeId, body);
+    return this.reviewTypeService.updateReviewType(reviewTypeId, body);
   }
 
   @Put('/:reviewTypeId')
@@ -138,31 +109,7 @@ export class ReviewTypeController {
     @Param('reviewTypeId') reviewTypeId: string,
     @Body() body: ReviewTypeRequestDto,
   ): Promise<ReviewTypeResponseDto> {
-    return this._updateReviewType(reviewTypeId, body);
-  }
-
-  /**
-   * The inner update method for entity
-   */
-  async _updateReviewType(
-    reviewTypeId: string,
-    body: ReviewTypeUpdateRequestDto,
-  ): Promise<ReviewTypeResponseDto> {
-    this.logger.log(`Updating review type with ID: ${reviewTypeId}`);
-    try {
-      const data = await this.prisma.reviewType.update({
-        where: { id: reviewTypeId },
-        data: body,
-      });
-      this.logger.log(`Review type updated successfully: ${reviewTypeId}`);
-      return data as ReviewTypeResponseDto;
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        reviewTypeId,
-        `updating review type ${reviewTypeId}`,
-      );
-    }
+    return this.reviewTypeService.updateReviewType(reviewTypeId, body);
   }
 
   @Get()
@@ -183,63 +130,11 @@ export class ReviewTypeController {
     @Query() paginationDto?: PaginationDto,
     @Query() sortDto?: SortDto,
   ): Promise<ReviewTypeResponseDto[]> {
-    this.logger.log(
-      `Getting review types with filters - ${JSON.stringify(queryDto)}`,
+    return this.reviewTypeService.listReviewTypes(
+      queryDto,
+      paginationDto,
+      sortDto,
     );
-
-    const { page = 1, perPage = 10 } = paginationDto || {};
-    const skip = (page - 1) * perPage;
-    let orderBy;
-
-    if (sortDto && sortDto.orderBy && sortDto.sortBy) {
-      orderBy = {
-        [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
-      };
-    }
-
-    try {
-      // Build the where clause for review types based on available filter parameters
-      const reviewTypeWhereClause: any = {};
-      if (queryDto.name) {
-        reviewTypeWhereClause.name = queryDto.name;
-      }
-      if (queryDto.isActive !== undefined) {
-        reviewTypeWhereClause.isActive =
-          queryDto.isActive.toLowerCase() === 'true';
-      }
-
-      // find entities by filters
-      const reviewTypes = await this.prisma.reviewType.findMany({
-        where: {
-          ...reviewTypeWhereClause,
-        },
-        skip,
-        take: perPage,
-        orderBy,
-      });
-
-      // Count total entities matching the filter for pagination metadata
-      const totalCount = await this.prisma.reviewType.count({
-        where: {
-          ...reviewTypeWhereClause,
-        },
-      });
-
-      this.logger.log(
-        `Found ${reviewTypes.length} review types (page ${page} of ${Math.ceil(totalCount / perPage)})`,
-      );
-
-      return reviewTypes as ReviewTypeResponseDto[];
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        'fetching review types',
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-      });
-    }
   }
 
   @Get('/:reviewTypeId')
@@ -262,21 +157,7 @@ export class ReviewTypeController {
   async getReviewType(
     @Param('reviewTypeId') reviewTypeId: string,
   ): Promise<ReviewTypeResponseDto> {
-    this.logger.log(`Getting review type with ID: ${reviewTypeId}`);
-    try {
-      const data = await this.prisma.reviewType.findUniqueOrThrow({
-        where: { id: reviewTypeId },
-      });
-
-      this.logger.log(`Review type found: ${reviewTypeId}`);
-      return data as ReviewTypeResponseDto;
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        reviewTypeId,
-        `fetching review type ${reviewTypeId}`,
-      );
-    }
+    return this.reviewTypeService.getReviewType(reviewTypeId);
   }
 
   @Delete('/:reviewTypeId')
@@ -298,38 +179,6 @@ export class ReviewTypeController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review not found.' })
   async deleteReviewType(@Param('reviewTypeId') reviewTypeId: string) {
-    this.logger.log(`Deleting review type with ID: ${reviewTypeId}`);
-    try {
-      await this.prisma.reviewType.delete({
-        where: { id: reviewTypeId },
-      });
-      this.logger.log(`Review type deleted successfully: ${reviewTypeId}`);
-      return { message: `Review type ${reviewTypeId} deleted successfully.` };
-    } catch (error) {
-      throw this._rethrowError(
-        error,
-        reviewTypeId,
-        `deleting review type ${reviewTypeId}`,
-      );
-    }
-  }
-
-  /**
-   * Build exception by error code
-   */
-  _rethrowError(error: any, reviewTypeId: string, message: string) {
-    const errorResponse = this.prismaErrorService.handleError(error, message);
-
-    if (errorResponse.code === 'RECORD_NOT_FOUND') {
-      return new NotFoundException({
-        message: `Review type with ID ${reviewTypeId} was not found`,
-        code: errorResponse.code,
-      });
-    }
-
-    return new InternalServerErrorException({
-      message: errorResponse.message,
-      code: errorResponse.code,
-    });
+    return this.reviewTypeService.deleteReviewType(reviewTypeId);
   }
 }
