@@ -44,9 +44,17 @@ export class TokenRolesGuard implements CanActivate {
       }
 
       // Check role-based access for regular users
-      if (user.roles && requiredRoles.length > 0) {
-        const hasRole = requiredRoles.some((role) =>
-          user.roles ? user.roles.includes(role) : false,
+      if (Array.isArray(user.roles) && requiredRoles.length > 0) {
+        const normalizedUserRoles = user.roles
+          .map((role) => String(role).trim().toLowerCase())
+          .filter((role) => role.length > 0);
+
+        const normalizedRequiredRoles = requiredRoles.map((role) =>
+          String(role).trim().toLowerCase(),
+        );
+
+        const hasRole = normalizedRequiredRoles.some((role) =>
+          normalizedUserRoles.includes(role),
         );
         if (hasRole) {
           return true;

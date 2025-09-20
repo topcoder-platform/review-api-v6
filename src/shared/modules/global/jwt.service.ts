@@ -20,7 +20,25 @@ export interface JwtUser {
 }
 
 export const isAdmin = (user: JwtUser): boolean => {
-  return user.isMachine || (user.roles ?? []).includes(UserRole.Admin);
+  if (!user) {
+    return false;
+  }
+
+  if (user.isMachine) {
+    return true;
+  }
+
+  if (!Array.isArray(user.roles)) {
+    return false;
+  }
+
+  const normalizedRoles = user.roles
+    .map((role) => String(role).trim().toLowerCase())
+    .filter((role) => role.length > 0);
+
+  const adminRole = String(UserRole.Admin).trim().toLowerCase();
+
+  return normalizedRoles.includes(adminRole);
 };
 
 @Injectable()

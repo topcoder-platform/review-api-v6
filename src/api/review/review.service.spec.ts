@@ -423,6 +423,26 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });
 
+  it('allows admin tokens with alternative casing to update reviews', async () => {
+    const adminUser: JwtUser = {
+      userId: 'admin-2',
+      roles: ['Administrator' as unknown as UserRole],
+      isMachine: false,
+    };
+
+    const result = await service.updateReview(
+      adminUser,
+      'review-1',
+      updatePayload,
+    );
+
+    expect(result).toEqual({ id: 'review-1' });
+    expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
+    expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+  });
+
   it('rejects attempts to change immutable identifiers', async () => {
     await expect(
       service.updateReview(nonPrivilegedUser, 'review-1', {

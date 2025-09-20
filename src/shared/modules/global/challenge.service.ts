@@ -36,7 +36,7 @@ export class ChallengeData {
 export class WorkflowData {
   workflowId: string;
   ref: string;
-  params: Record<string, unknown>;
+  params: Record<string, string>;
 }
 
 interface ChallengeRow {
@@ -337,12 +337,39 @@ export class ChallengeApiService {
     };
   }
 
-  private coerceWorkflowParams(input: unknown): Record<string, unknown> {
+  private coerceWorkflowParams(input: unknown): Record<string, string> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       return {};
     }
 
-    return input as Record<string, unknown>;
+    const params: Record<string, string> = {};
+    for (const [key, value] of Object.entries(
+      input as Record<string, unknown>,
+    )) {
+      if (value == null) {
+        continue;
+      }
+
+      if (typeof value === 'object') {
+        this.logger.warn(`Skipping workflow parameter for key "${key}"`);
+        continue;
+      }
+
+      if (
+        typeof value !== 'string' &&
+        typeof value !== 'number' &&
+        typeof value !== 'boolean'
+      ) {
+        this.logger.warn(
+          `Skipping workflow parameter for key "${key}" due to unsupported type`,
+        );
+        continue;
+      }
+
+      params[key] = String(value);
+    }
+
+    return params;
   }
 
   private parseWorkflowEntries(entries: unknown[]): WorkflowData[] {
