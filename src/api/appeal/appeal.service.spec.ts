@@ -5,35 +5,134 @@ jest.mock('nanoid', () => ({
 
 import { AppealService } from './appeal.service';
 
+const prismaMock = {
+  appeal: {
+    findUniqueOrThrow: jest.fn(),
+    update: jest.fn(),
+    create: jest.fn(),
+  },
+  reviewItemComment: {
+    findUniqueOrThrow: jest.fn(),
+  },
+} as unknown as any;
+
+const resourcePrismaMock = {
+  resource: {
+    findUnique: jest.fn(),
+  },
+} as unknown as any;
+
+const prismaErrorServiceMock = {
+  handleError: jest.fn(),
+} as unknown as any;
+
+const challengeApiServiceMock = {
+  validateAppealResponseSubmission: jest.fn(),
+  validateAppealSubmission: jest.fn(),
+} as unknown as any;
+
+const service = new AppealService(
+  prismaMock,
+  prismaErrorServiceMock,
+  challengeApiServiceMock,
+  resourcePrismaMock,
+);
+
+describe('AppealService.createAppeal', () => {
+  const baseReviewItemComment = {
+    id: 'review-item-comment-1',
+    reviewItem: {
+      review: {
+        submission: {
+          challengeId: 'challenge-1',
+          memberId: 'member-123',
+        },
+      },
+    },
+  } as any;
+
+  const baseRequest = {
+    reviewItemCommentId: baseReviewItemComment.id,
+    content: '  Please reconsider this appeal.  ',
+    resourceId: 'different-resource',
+  } as any;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    prismaMock.reviewItemComment.findUniqueOrThrow.mockResolvedValue(
+      baseReviewItemComment,
+    );
+    prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
+      throw error;
+    });
+    challengeApiServiceMock.validateAppealSubmission.mockResolvedValue(
+      undefined,
+    );
+    prismaMock.appeal.create.mockResolvedValue({
+      id: 'appeal-1',
+      resourceId: 'member-123',
+      content: 'Please reconsider this appeal.',
+    });
+  });
+
+  it('allows machine tokens with appeal scopes to create appeals', async () => {
+    const machineUser = {
+      isMachine: true,
+      userId: undefined,
+      scopes: ['create:appeal'],
+    } as any;
+
+    const request = { ...baseRequest };
+
+    await expect(service.createAppeal(machineUser, request)).resolves.toEqual(
+      expect.objectContaining({
+        id: 'appeal-1',
+        resourceId: 'member-123',
+        content: 'Please reconsider this appeal.',
+      }),
+    );
+
+    expect(prismaMock.reviewItemComment.findUniqueOrThrow).toHaveBeenCalledWith(
+      {
+        where: { id: baseRequest.reviewItemCommentId },
+        include: expect.any(Object),
+      },
+    );
+    expect(prismaMock.appeal.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        resourceId: 'member-123',
+        content: 'Please reconsider this appeal.',
+      }),
+    });
+    expect(
+      challengeApiServiceMock.validateAppealSubmission,
+    ).toHaveBeenCalledWith('challenge-1');
+  });
+
+  it('still prevents non-owners without admin privileges from creating appeals', async () => {
+    const regularUser = {
+      userId: 'member-999',
+      isMachine: false,
+      roles: [],
+    } as any;
+
+    const request = { ...baseRequest };
+
+    await expect(
+      service.createAppeal(regularUser, request),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'APPEAL_CREATE_FORBIDDEN',
+      }),
+    });
+
+    expect(prismaMock.appeal.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('AppealService.createAppealResponse', () => {
-  const prismaMock = {
-    appeal: {
-      findUniqueOrThrow: jest.fn(),
-      update: jest.fn(),
-    },
-  } as unknown as any;
-
-  const resourcePrismaMock = {
-    resource: {
-      findUnique: jest.fn(),
-    },
-  } as unknown as any;
-
-  const prismaErrorServiceMock = {
-    handleError: jest.fn(),
-  } as unknown as any;
-
-  const challengeApiServiceMock = {
-    validateAppealResponseSubmission: jest.fn(),
-  } as unknown as any;
-
-  const service = new AppealService(
-    prismaMock,
-    prismaErrorServiceMock,
-    challengeApiServiceMock,
-    resourcePrismaMock,
-  );
-
   const baseAppeal = {
     id: 'appeal-1',
     reviewItemComment: {
@@ -65,6 +164,9 @@ describe('AppealService.createAppealResponse', () => {
     challengeApiServiceMock.validateAppealResponseSubmission.mockResolvedValue(
       undefined,
     );
+    prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
+      throw error;
+    });
 
     resourcePrismaMock.resource.findUnique.mockResolvedValue({
       id: 'resource-1',

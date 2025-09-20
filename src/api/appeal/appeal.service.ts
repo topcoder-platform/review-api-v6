@@ -68,6 +68,7 @@ export class AppealService {
         ? String(submission.memberId)
         : '';
       const requesterMemberId = authUser?.userId ? String(authUser.userId) : '';
+      const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
       const challengeId = submission?.challengeId;
 
       if (!challengeId) {
@@ -84,36 +85,38 @@ export class AppealService {
         });
       }
 
-      if (!requesterMemberId) {
-        throw new ForbiddenException({
-          message:
-            'Only authenticated submitters may create appeals for review item comments.',
-          code: 'APPEAL_CREATE_FORBIDDEN',
-        });
-      }
+      if (!isPrivilegedRequester) {
+        if (!requesterMemberId) {
+          throw new ForbiddenException({
+            message:
+              'Only authenticated submitters may create appeals for review item comments.',
+            code: 'APPEAL_CREATE_FORBIDDEN',
+          });
+        }
 
-      if (submissionMemberId !== requesterMemberId) {
-        throw new ForbiddenException({
-          message: `Only the submission owner can create this appeal.`,
-          code: 'APPEAL_CREATE_FORBIDDEN',
-          details: {
-            requesterMemberId,
-            submissionMemberId,
-            reviewItemCommentId: body.reviewItemCommentId,
-          },
-        });
-      }
+        if (submissionMemberId !== requesterMemberId) {
+          throw new ForbiddenException({
+            message: `Only the submission owner can create this appeal.`,
+            code: 'APPEAL_CREATE_FORBIDDEN',
+            details: {
+              requesterMemberId,
+              submissionMemberId,
+              reviewItemCommentId: body.reviewItemCommentId,
+            },
+          });
+        }
 
-      if (body.resourceId && body.resourceId !== submissionMemberId) {
-        throw new BadRequestException({
-          message:
-            'Submitters cannot appeal a review item comment for a review that is not their own.',
-          code: 'RESOURCE_ID_MISMATCH',
-          details: {
-            requestedResourceId: body.resourceId,
-            submissionMemberId,
-          },
-        });
+        if (body.resourceId && body.resourceId !== submissionMemberId) {
+          throw new BadRequestException({
+            message:
+              'Submitters cannot appeal a review item comment for a review that is not their own.',
+            code: 'RESOURCE_ID_MISMATCH',
+            details: {
+              requestedResourceId: body.resourceId,
+              submissionMemberId,
+            },
+          });
+        }
       }
 
       this.ensureAppealPermission(
