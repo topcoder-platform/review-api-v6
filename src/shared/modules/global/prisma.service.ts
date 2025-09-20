@@ -70,15 +70,24 @@ const checkForNestedUpdateCreateOps = (
       }
 
       const nestedContainer = value as Record<string, any>;
-      const nestedData =
-        (nestedContainer.create as object | Array<object> | undefined) ??
-        (nestedContainer.update as object | Array<object> | undefined);
+      const nestedCreate = nestedContainer.create as
+        | object
+        | Array<object>
+        | undefined;
+      const nestedUpdate = nestedContainer.update as
+        | object
+        | Array<object>
+        | undefined;
 
-      if (!nestedData) {
-        return;
+      if (nestedCreate) {
+        // Nested creates should receive both createdBy and updatedBy fields.
+        addUserAuditField(nestedModel, auditField.createdBy, nestedCreate);
+        addUserAuditField(nestedModel, auditField.updatedBy, nestedCreate);
       }
 
-      addUserAuditField(nestedModel, field, nestedData);
+      if (nestedUpdate) {
+        addUserAuditField(nestedModel, field, nestedUpdate);
+      }
     });
 };
 
@@ -113,6 +122,12 @@ const addUserAuditField = (
     record[field] = userId;
     checkForNestedUpdateCreateOps(model, field, record);
   }
+};
+
+export const __test__ = {
+  auditField,
+  addUserAuditField,
+  checkForNestedUpdateCreateOps,
 };
 
 /**
