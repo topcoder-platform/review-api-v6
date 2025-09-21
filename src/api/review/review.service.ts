@@ -590,7 +590,7 @@ export class ReviewService {
 
       const review = await this.prisma.review.findUnique({
         where: { id: reviewId },
-        select: { id: true },
+        select: { id: true, scorecardId: true },
       });
 
       if (!review) {
@@ -598,6 +598,44 @@ export class ReviewService {
           message: `Review with ID ${reviewId} does not exist. Cannot create review items for a non-existent review.`,
           code: 'REVIEW_NOT_FOUND',
           details: { reviewId },
+        });
+      }
+
+      const question = await this.prisma.scorecardQuestion.findUnique({
+        where: { id: body.scorecardQuestionId },
+        select: {
+          id: true,
+          section: {
+            select: {
+              group: {
+                select: { scorecardId: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!question) {
+        throw new BadRequestException({
+          message: `Scorecard question with ID ${body.scorecardQuestionId} was not found.`,
+          code: 'SCORECARD_QUESTION_NOT_FOUND',
+          details: { scorecardQuestionId: body.scorecardQuestionId },
+        });
+      }
+
+      if (
+        question.section?.group?.scorecardId &&
+        review.scorecardId &&
+        question.section.group.scorecardId !== review.scorecardId
+      ) {
+        throw new BadRequestException({
+          message: `Scorecard question ${body.scorecardQuestionId} does not belong to review scorecard ${review.scorecardId}.`,
+          code: 'SCORECARD_QUESTION_MISMATCH',
+          details: {
+            scorecardQuestionId: body.scorecardQuestionId,
+            reviewScorecardId: review.scorecardId,
+            questionScorecardId: question.section.group.scorecardId,
+          },
         });
       }
 

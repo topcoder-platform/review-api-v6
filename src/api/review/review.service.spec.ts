@@ -525,6 +525,9 @@ describe('ReviewService.createReviewItemComments', () => {
       review: {
         findUnique: jest.fn(),
       },
+      scorecardQuestion: {
+        findUnique: jest.fn(),
+      },
       reviewItem: {
         create: jest.fn(),
       },
@@ -564,6 +567,7 @@ describe('ReviewService.createReviewItemComments', () => {
     });
 
     expect(prismaMock.reviewItem.create).not.toHaveBeenCalled();
+    expect(prismaMock.scorecardQuestion.findUnique).not.toHaveBeenCalled();
   });
 
   it('creates a review item when the review exists', async () => {
@@ -575,7 +579,14 @@ describe('ReviewService.createReviewItemComments', () => {
       reviewItemComments: [],
     };
 
-    prismaMock.review.findUnique.mockResolvedValue({ id: 'review-1' });
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      scorecardId: 'scorecard-1',
+    });
+    prismaMock.scorecardQuestion.findUnique.mockResolvedValue({
+      id: 'question-1',
+      section: { group: { scorecardId: 'scorecard-1' } },
+    });
     prismaMock.reviewItem.create.mockResolvedValue(createdReviewItem);
 
     const result = await service.createReviewItemComments({ ...basePayload });
@@ -583,7 +594,20 @@ describe('ReviewService.createReviewItemComments', () => {
     expect(result).toEqual(createdReviewItem);
     expect(prismaMock.review.findUnique).toHaveBeenCalledWith({
       where: { id: 'review-1' },
-      select: { id: true },
+      select: { id: true, scorecardId: true },
+    });
+    expect(prismaMock.scorecardQuestion.findUnique).toHaveBeenCalledWith({
+      where: { id: 'question-1' },
+      select: {
+        id: true,
+        section: {
+          select: {
+            group: {
+              select: { scorecardId: true },
+            },
+          },
+        },
+      },
     });
     expect(prismaMock.reviewItem.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -593,5 +617,52 @@ describe('ReviewService.createReviewItemComments', () => {
       include: { reviewItemComments: true },
     });
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+  });
+
+  it('throws a BadRequestException when the scorecard question does not exist', async () => {
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      scorecardId: 'scorecard-1',
+    });
+    prismaMock.scorecardQuestion.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.createReviewItemComments({ ...basePayload }),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({
+        code: 'SCORECARD_QUESTION_NOT_FOUND',
+        details: { scorecardQuestionId: 'question-1' },
+      }),
+    });
+
+    expect(prismaMock.reviewItem.create).not.toHaveBeenCalled();
+  });
+
+  it('throws a BadRequestException when the question belongs to a different scorecard', async () => {
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      scorecardId: 'scorecard-1',
+    });
+    prismaMock.scorecardQuestion.findUnique.mockResolvedValue({
+      id: 'question-1',
+      section: { group: { scorecardId: 'scorecard-2' } },
+    });
+
+    await expect(
+      service.createReviewItemComments({ ...basePayload }),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({
+        code: 'SCORECARD_QUESTION_MISMATCH',
+        details: expect.objectContaining({
+          scorecardQuestionId: 'question-1',
+          reviewScorecardId: 'scorecard-1',
+          questionScorecardId: 'scorecard-2',
+        }),
+      }),
+    });
+
+    expect(prismaMock.reviewItem.create).not.toHaveBeenCalled();
   });
 });
