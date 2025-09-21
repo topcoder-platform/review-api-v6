@@ -232,6 +232,139 @@ export class ReviewService {
     }
   }
 
+  private async ensureReviewItemChangeAccess(
+    authUser: JwtUser | undefined,
+    review: {
+      id: string;
+      resourceId: string;
+      submission?: { challengeId?: string | null } | null;
+    },
+    context: { action: 'create' | 'update' | 'delete'; itemId?: string },
+  ) {
+    const requester = authUser ?? ({ isMachine: false } as JwtUser);
+
+    if (requester.isMachine || isAdmin(requester)) {
+      return;
+    }
+
+    const actionVerbMap = {
+      create: 'create',
+      update: 'update',
+      delete: 'delete',
+    } as const;
+    const actionVerb = actionVerbMap[context.action];
+
+    const normalizedRoles = Array.isArray(requester.roles)
+      ? requester.roles.map((role) => String(role).trim().toLowerCase())
+      : [];
+
+    const hasReviewerRole = normalizedRoles.includes(
+      String(UserRole.Reviewer).trim().toLowerCase(),
+    );
+    const hasCopilotRole = normalizedRoles.includes(
+      String(UserRole.Copilot).trim().toLowerCase(),
+    );
+
+    if (!hasReviewerRole && !hasCopilotRole) {
+      throw new ForbiddenException({
+        message: `You do not have permission to ${actionVerb} review items.`,
+        code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_ROLE`,
+        details: {
+          reviewId: review.id,
+          itemId: context.itemId,
+          requesterRoles: requester.roles,
+        },
+      });
+    }
+
+    const requesterMemberId = String(requester.userId ?? '');
+
+    if (!requesterMemberId) {
+      throw new ForbiddenException({
+        message:
+          'Authenticated user information is missing the user identifier required for authorization checks.',
+        code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_MISSING_MEMBER_ID`,
+        details: {
+          reviewId: review.id,
+          itemId: context.itemId,
+        },
+      });
+    }
+
+    const challengeId = review.submission?.challengeId ?? undefined;
+
+    let requesterResources: ResourceInfo[] = [];
+    try {
+      requesterResources =
+        await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          requesterMemberId,
+        );
+    } catch (error) {
+      this.logger.error(
+        `[ensureReviewItemChangeAccess] Failed to verify roles for member ${requesterMemberId} on challenge ${challengeId ?? 'unknown'} during ${context.action}`,
+        error,
+      );
+      throw new ForbiddenException({
+        message:
+          'Unable to verify ownership of the review for the authenticated user.',
+        code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_OWNERSHIP_UNVERIFIED`,
+        details: {
+          reviewId: review.id,
+          itemId: context.itemId,
+          challengeId,
+          requester: requesterMemberId,
+        },
+      });
+    }
+
+    let ownsReview = false;
+
+    if (hasReviewerRole) {
+      ownsReview = requesterResources?.some(
+        (resource) => resource.id === review.resourceId,
+      );
+
+      if (!ownsReview) {
+        throw new ForbiddenException({
+          message: `Only the reviewer who owns this review may ${actionVerb} its review items.`,
+          code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_NOT_OWNER`,
+          details: {
+            reviewId: review.id,
+            itemId: context.itemId,
+            challengeId,
+            requester: requesterMemberId,
+            reviewResourceId: review.resourceId,
+          },
+        });
+      }
+    }
+
+    if (hasCopilotRole && !ownsReview) {
+      const hasCopilotAccess = requesterResources?.some((resource) => {
+        const normalizedRoleName = (resource.roleName || '').toLowerCase();
+        const matchesRole = normalizedRoleName.includes('copilot');
+        const matchesChallenge = challengeId
+          ? resource.challengeId === challengeId
+          : false;
+        return matchesRole && matchesChallenge;
+      });
+
+      if (!hasCopilotAccess) {
+        throw new ForbiddenException({
+          message: `Only a copilot assigned to this challenge may ${actionVerb} its review items.`,
+          code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_NOT_COPILOT`,
+          details: {
+            reviewId: review.id,
+            itemId: context.itemId,
+            challengeId,
+            requester: requesterMemberId,
+          },
+        });
+      }
+    }
+  }
+
   async createReview(
     authUser: JwtUser,
     body: ReviewRequestDto,
@@ -568,6 +701,7 @@ export class ReviewService {
   }
 
   async createReviewItemComments(
+    authUser: JwtUser | undefined,
     body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
     this.logger.log(`Creating review item for review`);
@@ -591,7 +725,16 @@ export class ReviewService {
 
       const review = await this.prisma.review.findUnique({
         where: { id: reviewId },
-        select: { id: true, scorecardId: true },
+        select: {
+          id: true,
+          resourceId: true,
+          scorecardId: true,
+          submission: {
+            select: {
+              challengeId: true,
+            },
+          },
+        },
       });
 
       if (!review) {
@@ -601,6 +744,18 @@ export class ReviewService {
           details: { reviewId },
         });
       }
+
+      await this.ensureReviewItemChangeAccess(
+        authUser,
+        {
+          id: review.id,
+          resourceId: review.resourceId,
+          submission: review.submission,
+        },
+        {
+          action: 'create',
+        },
+      );
 
       const question = await this.prisma.scorecardQuestion.findUnique({
         where: { id: body.scorecardQuestionId },
@@ -942,75 +1097,18 @@ export class ReviewService {
         });
       }
 
-      const requester = authUser ?? ({ isMachine: false } as JwtUser);
-      const isPrivileged = isAdmin(requester);
-      const normalizedRoles = Array.isArray(requester.roles)
-        ? requester.roles.map((role) => String(role).trim().toLowerCase())
-        : [];
-      const hasReviewerRole = normalizedRoles.includes(
-        String(UserRole.Reviewer).trim().toLowerCase(),
+      await this.ensureReviewItemChangeAccess(
+        authUser,
+        {
+          id: review.id,
+          resourceId: review.resourceId,
+          submission: review.submission,
+        },
+        {
+          action: 'update',
+          itemId,
+        },
       );
-
-      if (hasReviewerRole && !requester.isMachine && !isPrivileged) {
-        const requesterMemberId = String(requester.userId ?? '');
-
-        if (!requesterMemberId) {
-          throw new ForbiddenException({
-            message:
-              'Authenticated user information is missing the user identifier required for authorization checks.',
-            code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_MISSING_MEMBER_ID',
-            details: {
-              reviewId,
-              itemId,
-            },
-          });
-        }
-
-        const challengeId = review.submission?.challengeId;
-
-        let requesterResources: ResourceInfo[] = [];
-        try {
-          requesterResources = await this.resourceApiService.getResources({
-            memberId: requesterMemberId,
-            ...(challengeId ? { challengeId } : {}),
-          });
-        } catch (error) {
-          this.logger.error(
-            `[updateReviewItem] Failed to verify ownership for review ${reviewId} and member ${requesterMemberId}`,
-            error,
-          );
-          throw new ForbiddenException({
-            message:
-              'Unable to verify ownership of the review for the authenticated user.',
-            code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_OWNERSHIP_UNVERIFIED',
-            details: {
-              reviewId,
-              itemId,
-              challengeId,
-              requester: requesterMemberId,
-            },
-          });
-        }
-
-        const ownsReview = requesterResources?.some(
-          (resource) => resource.id === review.resourceId,
-        );
-
-        if (!ownsReview) {
-          throw new ForbiddenException({
-            message:
-              'Only the reviewer who owns this review may update its review items.',
-            code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_NOT_OWNER',
-            details: {
-              reviewId,
-              itemId,
-              challengeId,
-              requester: requesterMemberId,
-              reviewResourceId: review.resourceId,
-            },
-          });
-        }
-      }
 
       const mappedData = mapReviewItemRequestForUpdate(body);
 
@@ -1505,23 +1603,61 @@ export class ReviewService {
     }
   }
 
-  async deleteReviewItem(itemId: string) {
+  async deleteReviewItem(authUser: JwtUser | undefined, itemId: string) {
     this.logger.log(`Deleting review item with ID: ${itemId}`);
     try {
-      // Get parent reviewId before deletion
       const existing = await this.prisma.reviewItem.findUnique({
         where: { id: itemId },
-        select: { reviewId: true },
+        select: {
+          reviewId: true,
+          review: {
+            select: {
+              id: true,
+              resourceId: true,
+              submission: {
+                select: {
+                  challengeId: true,
+                },
+              },
+            },
+          },
+        },
       });
+
+      if (!existing || !existing.review) {
+        throw new NotFoundException({
+          message: `Review item with ID ${itemId} was not found. Cannot delete non-existent item.`,
+          code: 'RECORD_NOT_FOUND',
+          details: { itemId },
+        });
+      }
+
+      await this.ensureReviewItemChangeAccess(
+        authUser,
+        {
+          id: existing.review.id,
+          resourceId: existing.review.resourceId,
+          submission: existing.review.submission,
+        },
+        {
+          action: 'delete',
+          itemId,
+        },
+      );
+
+      const reviewId = existing.reviewId;
       await this.prisma.reviewItem.delete({
         where: { id: itemId },
       });
-      if (existing?.reviewId) {
-        await this.recomputeAndUpdateReviewScores(existing.reviewId);
+      if (reviewId) {
+        await this.recomputeAndUpdateReviewScores(reviewId);
       }
       this.logger.log(`Review item deleted successfully: ${itemId}`);
       return { message: `Review item ${itemId} deleted successfully.` };
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `deleting review item with ID: ${itemId}`,

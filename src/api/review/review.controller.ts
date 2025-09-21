@@ -78,9 +78,11 @@ export class ReviewController {
     type: ReviewItemResponseDto,
   })
   async createReviewItemComments(
+    @Req() req: Request,
     @Body() body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
-    return this.reviewService.createReviewItemComments(body);
+    const authUser = req['user'];
+    return this.reviewService.createReviewItemComments(authUser as any, body);
   }
 
   @Patch('/:reviewId')
@@ -281,8 +283,9 @@ export class ReviewController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review item not found.' })
-  async deleteReviewItem(@Param('itemId') itemId: string) {
-    return this.reviewService.deleteReviewItem(itemId);
+  async deleteReviewItem(@Req() req: Request, @Param('itemId') itemId: string) {
+    const authUser = req['user'];
+    return this.reviewService.deleteReviewItem(authUser as any, itemId);
   }
 
   @Get('/progress/:challengeId')

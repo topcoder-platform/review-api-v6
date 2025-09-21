@@ -319,7 +319,7 @@ describe('ReviewService.updateReviewItem validations', () => {
   } as unknown as any;
 
   const resourceApiServiceMock = {
-    getResources: jest.fn(),
+    getMemberResourcesRoles: jest.fn(),
   } as unknown as any;
 
   const challengeApiServiceMock = {} as unknown as any;
@@ -376,10 +376,12 @@ describe('ReviewService.updateReviewItem validations', () => {
       ...baseRequest,
       reviewItemComments: [],
     });
-    resourceApiServiceMock.getResources.mockResolvedValue([
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
       {
         id: 'resource-1',
         memberId: baseReviewer.userId,
+        roleName: 'Reviewer',
+        challengeId: 'challenge-1',
       },
     ]);
   });
@@ -398,7 +400,9 @@ describe('ReviewService.updateReviewItem validations', () => {
     });
 
     expect(prismaMock.scorecardQuestion.findUnique).not.toHaveBeenCalled();
-    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
+    expect(
+      resourceApiServiceMock.getMemberResourcesRoles,
+    ).not.toHaveBeenCalled();
   });
 
   it('throws when scorecard question cannot be found', async () => {
@@ -413,14 +417,18 @@ describe('ReviewService.updateReviewItem validations', () => {
       status: 400,
     });
 
-    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
+    expect(
+      resourceApiServiceMock.getMemberResourcesRoles,
+    ).not.toHaveBeenCalled();
   });
 
   it('throws when reviewer does not own the review', async () => {
-    resourceApiServiceMock.getResources.mockResolvedValue([
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
       {
         id: 'other-resource',
         memberId: baseReviewer.userId,
+        roleName: 'Reviewer',
+        challengeId: 'challenge-1',
       },
     ]);
 
@@ -433,11 +441,63 @@ describe('ReviewService.updateReviewItem validations', () => {
       status: 403,
     });
 
-    expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
-      memberId: baseReviewer.userId,
-      challengeId: 'challenge-1',
-    });
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      baseReviewer.userId,
+    );
     expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects copilots that are not assigned to the challenge when updating', async () => {
+    const copilotUser: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+    await expect(
+      service.updateReviewItem(copilotUser, 'item-1', baseRequest),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_NOT_COPILOT',
+      }),
+      status: 403,
+    });
+
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'copilot-1',
+    );
+    expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
+  });
+
+  it('allows copilots assigned to the challenge to update review items', async () => {
+    const copilotUser: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'copilot-1',
+        roleName: 'Copilot',
+        challengeId: 'challenge-1',
+      },
+    ]);
+
+    await expect(
+      service.updateReviewItem(copilotUser, 'item-1', baseRequest),
+    ).resolves.toMatchObject({ id: 'item-1' });
+
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'copilot-1',
+    );
+    expect(prismaMock.reviewItem.update).toHaveBeenCalled();
   });
 });
 
@@ -653,8 +713,11 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
 describe('ReviewService.createReviewItemComments', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;
+  let resourceApiServiceMock: any;
   let service: ReviewService;
   let recomputeSpy: jest.SpyInstance;
+
+  const machineUser = { isMachine: true } as JwtUser;
 
   const basePayload = {
     reviewId: 'review-1',
@@ -679,10 +742,15 @@ describe('ReviewService.createReviewItemComments', () => {
       handleError: jest.fn(),
     } as any;
 
+    resourceApiServiceMock = {
+      getMemberResourcesRoles: jest.fn(),
+    } as any;
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
+
     service = new ReviewService(
       prismaMock,
       prismaErrorServiceMock,
-      {} as any,
+      resourceApiServiceMock,
       {} as any,
     );
 
@@ -699,7 +767,7 @@ describe('ReviewService.createReviewItemComments', () => {
     prismaMock.review.findUnique.mockResolvedValue(null);
 
     await expect(
-      service.createReviewItemComments({ ...basePayload }),
+      service.createReviewItemComments(machineUser, { ...basePayload }),
     ).rejects.toMatchObject({
       status: 400,
       response: expect.objectContaining({
@@ -723,7 +791,9 @@ describe('ReviewService.createReviewItemComments', () => {
 
     prismaMock.review.findUnique.mockResolvedValue({
       id: 'review-1',
+      resourceId: 'resource-1',
       scorecardId: 'scorecard-1',
+      submission: { challengeId: 'challenge-1' },
     });
     prismaMock.scorecardQuestion.findUnique.mockResolvedValue({
       id: 'question-1',
@@ -731,12 +801,23 @@ describe('ReviewService.createReviewItemComments', () => {
     });
     prismaMock.reviewItem.create.mockResolvedValue(createdReviewItem);
 
-    const result = await service.createReviewItemComments({ ...basePayload });
+    const result = await service.createReviewItemComments(machineUser, {
+      ...basePayload,
+    });
 
     expect(result).toEqual(createdReviewItem);
     expect(prismaMock.review.findUnique).toHaveBeenCalledWith({
       where: { id: 'review-1' },
-      select: { id: true, scorecardId: true },
+      select: {
+        id: true,
+        resourceId: true,
+        scorecardId: true,
+        submission: {
+          select: {
+            challengeId: true,
+          },
+        },
+      },
     });
     expect(prismaMock.scorecardQuestion.findUnique).toHaveBeenCalledWith({
       where: { id: 'question-1' },
@@ -764,12 +845,14 @@ describe('ReviewService.createReviewItemComments', () => {
   it('throws a BadRequestException when the scorecard question does not exist', async () => {
     prismaMock.review.findUnique.mockResolvedValue({
       id: 'review-1',
+      resourceId: 'resource-1',
       scorecardId: 'scorecard-1',
+      submission: { challengeId: 'challenge-1' },
     });
     prismaMock.scorecardQuestion.findUnique.mockResolvedValue(null);
 
     await expect(
-      service.createReviewItemComments({ ...basePayload }),
+      service.createReviewItemComments(machineUser, { ...basePayload }),
     ).rejects.toMatchObject({
       status: 400,
       response: expect.objectContaining({
@@ -784,7 +867,9 @@ describe('ReviewService.createReviewItemComments', () => {
   it('throws a BadRequestException when the question belongs to a different scorecard', async () => {
     prismaMock.review.findUnique.mockResolvedValue({
       id: 'review-1',
+      resourceId: 'resource-1',
       scorecardId: 'scorecard-1',
+      submission: { challengeId: 'challenge-1' },
     });
     prismaMock.scorecardQuestion.findUnique.mockResolvedValue({
       id: 'question-1',
@@ -792,7 +877,7 @@ describe('ReviewService.createReviewItemComments', () => {
     });
 
     await expect(
-      service.createReviewItemComments({ ...basePayload }),
+      service.createReviewItemComments(machineUser, { ...basePayload }),
     ).rejects.toMatchObject({
       status: 400,
       response: expect.objectContaining({
@@ -806,5 +891,85 @@ describe('ReviewService.createReviewItemComments', () => {
     });
 
     expect(prismaMock.reviewItem.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects copilot tokens that are not assigned to the challenge', async () => {
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      resourceId: 'resource-1',
+      scorecardId: 'scorecard-1',
+      submission: { challengeId: 'challenge-1' },
+    });
+    prismaMock.scorecardQuestion.findUnique.mockResolvedValue({
+      id: 'question-1',
+      section: { group: { scorecardId: 'scorecard-1' } },
+    });
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+    const copilotUser: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    await expect(
+      service.createReviewItemComments(copilotUser, { ...basePayload }),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_CREATE_FORBIDDEN_NOT_COPILOT',
+      }),
+    });
+
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'copilot-1',
+    );
+  });
+
+  it('allows copilots assigned to the challenge to create review items', async () => {
+    const createdReviewItem = {
+      id: 'review-item-1',
+      reviewId: 'review-1',
+      scorecardQuestionId: 'question-1',
+      initialAnswer: 'YES',
+      reviewItemComments: [],
+    };
+
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      resourceId: 'resource-1',
+      scorecardId: 'scorecard-1',
+      submission: { challengeId: 'challenge-1' },
+    });
+    prismaMock.scorecardQuestion.findUnique.mockResolvedValue({
+      id: 'question-1',
+      section: { group: { scorecardId: 'scorecard-1' } },
+    });
+    prismaMock.reviewItem.create.mockResolvedValue(createdReviewItem);
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'copilot-1',
+        roleName: 'Copilot',
+        challengeId: 'challenge-1',
+      },
+    ]);
+
+    const copilotUser: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    const result = await service.createReviewItemComments(copilotUser, {
+      ...basePayload,
+    });
+
+    expect(result).toEqual(createdReviewItem);
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'copilot-1',
+    );
   });
 });
