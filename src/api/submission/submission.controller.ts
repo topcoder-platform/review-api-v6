@@ -64,8 +64,10 @@ export class SubmissionController {
   @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User)
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
-    summary: 'Create a new submission',
-    description: 'Roles: Admin, Copilot, User | Scopes: create:submission',
+    summary:
+      'Create a new submission, assuming the challenge is active and the submission phase is open',
+    description:
+      'Roles: Admin, User (must be registered to the challenge) | Scopes: create:submission',
   })
   @ApiResponse({
     status: 201,
@@ -228,8 +230,7 @@ export class SubmissionController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a submission',
-    description:
-      'Roles: Admin, Copilot, User, Reviewer | Scopes: delete:submission',
+    description: 'Roles: Admin, User | Scopes: delete:submission',
   })
   @ApiParam({
     name: 'submissionId',

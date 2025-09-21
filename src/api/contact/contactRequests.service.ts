@@ -19,6 +19,7 @@ import {
 import { MemberService } from 'src/shared/modules/global/member.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 
 @Injectable()
 export class ContactRequestsService {
@@ -31,6 +32,7 @@ export class ContactRequestsService {
     private readonly eventBusService: EventBusService,
     private readonly memberService: MemberService,
     private readonly challengeService: ChallengeApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
   ) {}
 
   /**
@@ -46,21 +48,31 @@ export class ContactRequestsService {
 
     try {
       // Validate requester has access
-      if (!authUser.userId) {
-        throw new ForbiddenException('Insufficient permissions');
+      const memberId = authUser?.userId ? String(authUser.userId) : '';
+
+      if (!memberId) {
+        throw new ForbiddenException({
+          message:
+            'You must be registered on this challenge to contact its managers.',
+          code: 'CONTACT_REQUEST_FORBIDDEN',
+        });
       }
 
-      const memberResources =
-        await this.resourceApiService.getMemberResourcesRoles(
-          body.challengeId,
-          authUser.userId,
-        );
+      const requesterResource = await this.resourcePrisma.resource.findFirst({
+        where: {
+          challengeId: body.challengeId,
+          memberId: memberId,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
 
-      if (!memberResources.length) {
-        throw new ForbiddenException('Insufficient permissions');
+      if (!requesterResource) {
+        throw new ForbiddenException({
+          message:
+            'You must be registered on this challenge to contact its managers.',
+          code: 'CONTACT_REQUEST_FORBIDDEN',
+        });
       }
-
-      const requesterResource = memberResources[0];
 
       // Persist contact request
       const data = await this.prisma.contactRequest.create({

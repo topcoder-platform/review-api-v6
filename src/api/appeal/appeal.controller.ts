@@ -110,7 +110,7 @@ export class AppealController {
   @Scopes(Scope.CreateAppealResponse)
   @ApiOperation({
     summary: 'Create a response for an appeal',
-    description: 'Roles: Reviewer | Scopes: create:appeal-response',
+    description: 'Roles: Reviewer | Admin | Scopes: create:appeal-response',
   })
   @ApiParam({
     name: 'appealId',
@@ -141,7 +141,7 @@ export class AppealController {
   @Scopes(Scope.UpdateAppealResponse)
   @ApiOperation({
     summary: 'Update a response for an appeal',
-    description: 'Roles: Reviewer | Scopes: update:appeal-response',
+    description: 'Roles: Reviewer | Admin | Scopes: update:appeal-response',
   })
   @ApiParam({
     name: 'appealResponseId',
@@ -159,10 +159,16 @@ export class AppealController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Appeal response not found.' })
   async updateAppealResponse(
+    @Req() req: Request,
     @Param('appealResponseId') appealResponseId: string,
     @Body() body: AppealResponseRequestDto,
   ): Promise<AppealResponseRequestDto> {
-    return this.appealService.updateAppealResponse(appealResponseId, body);
+    const authUser = req['user'] as JwtUser;
+    return this.appealService.updateAppealResponse(
+      authUser,
+      appealResponseId,
+      body,
+    );
   }
 
   @Get('/')

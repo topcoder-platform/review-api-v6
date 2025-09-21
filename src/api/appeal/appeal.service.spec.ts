@@ -11,6 +11,10 @@ const prismaMock = {
     update: jest.fn(),
     create: jest.fn(),
   },
+  appealResponse: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+  },
   reviewItemComment: {
     findUniqueOrThrow: jest.fn(),
   },
@@ -129,6 +133,128 @@ describe('AppealService.createAppeal', () => {
     });
 
     expect(prismaMock.appeal.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppealService.updateAppealResponse', () => {
+  const baseAppealResponse = {
+    id: 'appeal-response-1',
+    appealId: 'appeal-1',
+    content: 'Original content',
+    success: false,
+    appeal: {
+      id: 'appeal-1',
+      reviewItemComment: {
+        reviewItem: {
+          review: {
+            resourceId: 'resource-1',
+          },
+        },
+      },
+    },
+  } as any;
+
+  const updateRequest = {
+    content: 'Updated response content',
+    success: true,
+  } as any;
+
+  const reviewerAuthUser = {
+    userId: 'member-123',
+    isMachine: false,
+    roles: ['Copilot'],
+  } as any;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    prismaMock.appealResponse.findUnique.mockResolvedValue(baseAppealResponse);
+    prismaMock.appealResponse.update.mockResolvedValue({
+      id: baseAppealResponse.id,
+      content: updateRequest.content,
+      success: updateRequest.success,
+    });
+    resourcePrismaMock.resource.findUnique.mockResolvedValue({
+      id: 'resource-1',
+      memberId: 'member-123',
+    });
+    prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
+      throw error;
+    });
+  });
+
+  it('allows the assigned reviewer to update the appeal response', async () => {
+    await expect(
+      service.updateAppealResponse(
+        reviewerAuthUser,
+        baseAppealResponse.id,
+        updateRequest,
+      ),
+    ).resolves.toMatchObject({
+      id: baseAppealResponse.id,
+      content: updateRequest.content,
+      success: updateRequest.success,
+    });
+
+    expect(prismaMock.appealResponse.findUnique).toHaveBeenCalledWith({
+      where: { id: baseAppealResponse.id },
+      include: expect.any(Object),
+    });
+    expect(resourcePrismaMock.resource.findUnique).toHaveBeenCalledWith({
+      where: { id: 'resource-1' },
+    });
+    expect(prismaMock.appealResponse.update).toHaveBeenCalledWith({
+      where: { id: baseAppealResponse.id },
+      data: expect.objectContaining({
+        content: updateRequest.content,
+        success: updateRequest.success,
+      }),
+    });
+  });
+
+  it('throws ForbiddenException when requester is not the reviewer', async () => {
+    const otherReviewerAuthUser = {
+      userId: 'member-999',
+      isMachine: false,
+      roles: ['Copilot'],
+    } as any;
+
+    await expect(
+      service.updateAppealResponse(
+        otherReviewerAuthUser,
+        baseAppealResponse.id,
+        updateRequest,
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'APPEAL_RESPONSE_FORBIDDEN',
+      }),
+    });
+
+    expect(prismaMock.appealResponse.update).not.toHaveBeenCalled();
+  });
+
+  it('allows machine users to update another reviewers appeal response', async () => {
+    const machineAuthUser = {
+      isMachine: true,
+      userId: undefined,
+      roles: ['Copilot'],
+    } as any;
+
+    await expect(
+      service.updateAppealResponse(
+        machineAuthUser,
+        baseAppealResponse.id,
+        updateRequest,
+      ),
+    ).resolves.toMatchObject({
+      id: baseAppealResponse.id,
+      content: updateRequest.content,
+      success: updateRequest.success,
+    });
+
+    expect(prismaMock.appealResponse.update).toHaveBeenCalled();
   });
 });
 
