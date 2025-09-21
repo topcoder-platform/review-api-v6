@@ -4,18 +4,22 @@ jest.mock('nanoid', () => ({
 }));
 
 import { AppealService } from './appeal.service';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 const prismaMock = {
   appeal: {
+    findUnique: jest.fn(),
     findUniqueOrThrow: jest.fn(),
     update: jest.fn(),
     create: jest.fn(),
+    delete: jest.fn(),
   },
   appealResponse: {
     findUnique: jest.fn(),
     update: jest.fn(),
   },
   reviewItemComment: {
+    findUnique: jest.fn(),
     findUniqueOrThrow: jest.fn(),
   },
 } as unknown as any;
@@ -33,6 +37,7 @@ const prismaErrorServiceMock = {
 const challengeApiServiceMock = {
   validateAppealResponseSubmission: jest.fn(),
   validateAppealSubmission: jest.fn(),
+  getChallengeDetail: jest.fn(),
 } as unknown as any;
 
 const service = new AppealService(
@@ -64,6 +69,10 @@ describe('AppealService.createAppeal', () => {
   beforeEach(() => {
     jest.resetAllMocks();
 
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+    });
     prismaMock.reviewItemComment.findUniqueOrThrow.mockResolvedValue(
       baseReviewItemComment,
     );
@@ -136,6 +145,171 @@ describe('AppealService.createAppeal', () => {
   });
 });
 
+describe('AppealService.updateAppeal', () => {
+  const baseAppeal = {
+    id: 'appeal-1',
+    resourceId: 'member-123',
+    reviewItemCommentId: 'review-item-comment-1',
+    content: 'Original appeal content',
+    reviewItemComment: {
+      reviewItem: {
+        review: {
+          submission: {
+            id: 'submission-1',
+            memberId: 'member-123',
+            challengeId: 'challenge-1',
+          },
+        },
+      },
+    },
+  } as any;
+
+  const updateRequest = {
+    reviewItemCommentId: baseAppeal.reviewItemCommentId,
+    content: 'Updated appeal content',
+    resourceId: baseAppeal.resourceId,
+  } as any;
+
+  const submitterAuthUser = {
+    userId: 'member-123',
+    isMachine: false,
+    roles: [],
+  } as any;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+    });
+    prismaMock.appeal.findUnique.mockResolvedValue(baseAppeal);
+    prismaMock.appeal.update.mockResolvedValue({
+      ...baseAppeal,
+      content: updateRequest.content,
+    });
+    prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
+      throw error;
+    });
+  });
+
+  it('updates the appeal when the challenge is still active', async () => {
+    await expect(
+      service.updateAppeal(submitterAuthUser, baseAppeal.id, updateRequest),
+    ).resolves.toMatchObject({
+      id: baseAppeal.id,
+      content: updateRequest.content,
+    });
+
+    expect(prismaMock.appeal.findUnique).toHaveBeenCalledWith({
+      where: { id: baseAppeal.id },
+      include: expect.any(Object),
+    });
+    expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+      'challenge-1',
+    );
+    expect(prismaMock.appeal.update).toHaveBeenCalledWith({
+      where: { id: baseAppeal.id },
+      data: expect.objectContaining({
+        content: updateRequest.content,
+      }),
+    });
+  });
+
+  it('prevents updates when the challenge is completed for non-admins', async () => {
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+    });
+
+    await expect(
+      service.updateAppeal(submitterAuthUser, baseAppeal.id, updateRequest),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'APPEAL_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+      }),
+    });
+
+    expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppealService.deleteAppeal', () => {
+  const baseAppeal = {
+    id: 'appeal-1',
+    resourceId: 'member-123',
+    reviewItemComment: {
+      reviewItem: {
+        review: {
+          submission: {
+            id: 'submission-1',
+            memberId: 'member-123',
+            challengeId: 'challenge-1',
+          },
+        },
+      },
+    },
+  } as any;
+
+  const submitterAuthUser = {
+    userId: 'member-123',
+    isMachine: false,
+    roles: [],
+  } as any;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+    });
+    prismaMock.appeal.findUnique.mockResolvedValue(baseAppeal);
+    prismaMock.appeal.delete.mockResolvedValue(undefined);
+    prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
+      throw error;
+    });
+  });
+
+  it('deletes the appeal when the challenge is still active', async () => {
+    await expect(
+      service.deleteAppeal(submitterAuthUser, baseAppeal.id),
+    ).resolves.toMatchObject({
+      message: `Appeal ${baseAppeal.id} deleted successfully.`,
+    });
+
+    expect(prismaMock.appeal.findUnique).toHaveBeenCalledWith({
+      where: { id: baseAppeal.id },
+      include: expect.any(Object),
+    });
+    expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+      'challenge-1',
+    );
+    expect(prismaMock.appeal.delete).toHaveBeenCalledWith({
+      where: { id: baseAppeal.id },
+    });
+  });
+
+  it('prevents deletion when the challenge is completed for non-admins', async () => {
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+    });
+
+    await expect(
+      service.deleteAppeal(submitterAuthUser, baseAppeal.id),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'APPEAL_DELETE_FORBIDDEN_CHALLENGE_COMPLETED',
+      }),
+    });
+
+    expect(prismaMock.appeal.delete).not.toHaveBeenCalled();
+  });
+});
+
 describe('AppealService.updateAppealResponse', () => {
   const baseAppealResponse = {
     id: 'appeal-response-1',
@@ -148,6 +322,9 @@ describe('AppealService.updateAppealResponse', () => {
         reviewItem: {
           review: {
             resourceId: 'resource-1',
+            submission: {
+              challengeId: 'challenge-1',
+            },
           },
         },
       },
@@ -168,6 +345,10 @@ describe('AppealService.updateAppealResponse', () => {
   beforeEach(() => {
     jest.resetAllMocks();
 
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+    });
     prismaMock.appealResponse.findUnique.mockResolvedValue(baseAppealResponse);
     prismaMock.appealResponse.update.mockResolvedValue({
       id: baseAppealResponse.id,
@@ -210,6 +391,28 @@ describe('AppealService.updateAppealResponse', () => {
         success: updateRequest.success,
       }),
     });
+  });
+
+  it('prevents non-admin reviewers from updating responses once the challenge is completed', async () => {
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+    });
+
+    await expect(
+      service.updateAppealResponse(
+        reviewerAuthUser,
+        baseAppealResponse.id,
+        updateRequest,
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'APPEAL_RESPONSE_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+      }),
+    });
+
+    expect(prismaMock.appealResponse.update).not.toHaveBeenCalled();
   });
 
   it('throws ForbiddenException when requester is not the reviewer', async () => {

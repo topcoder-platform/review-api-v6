@@ -19,6 +19,7 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 @Injectable()
 export class AppealService {
@@ -195,6 +196,21 @@ export class AppealService {
         'APPEAL_UPDATE_FORBIDDEN',
       );
 
+      const challengeId =
+        existingAppeal.reviewItemComment.reviewItem.review.submission
+          ?.challengeId;
+      const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      if (!isPrivileged) {
+        await this.ensureChallengeAllowsAppealChange(challengeId, {
+          logContext: 'updateAppeal',
+          appealId,
+          errorCode: 'APPEAL_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+          errorMessage:
+            'Appeals for challenges in COMPLETED status cannot be updated. Only an admin can update an appeal once the challenge is complete.',
+        });
+      }
+
       if (
         !authUser?.isMachine &&
         !isAdmin(authUser) &&
@@ -293,6 +309,21 @@ export class AppealService {
         'delete',
         'APPEAL_DELETE_FORBIDDEN',
       );
+
+      const challengeId =
+        existingAppeal.reviewItemComment.reviewItem.review.submission
+          ?.challengeId;
+      const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      if (!isPrivileged) {
+        await this.ensureChallengeAllowsAppealChange(challengeId, {
+          logContext: 'deleteAppeal',
+          appealId,
+          errorCode: 'APPEAL_DELETE_FORBIDDEN_CHALLENGE_COMPLETED',
+          errorMessage:
+            'Appeals for challenges in COMPLETED status cannot be deleted. Only an admin can delete an appeal once the challenge is complete.',
+        });
+      }
 
       await this.prisma.appeal.delete({
         where: { id: appealId },
@@ -489,7 +520,12 @@ export class AppealService {
                   reviewItem: {
                     include: {
                       review: {
-                        select: { resourceId: true },
+                        select: {
+                          resourceId: true,
+                          submission: {
+                            select: { challengeId: true },
+                          },
+                        },
                       },
                     },
                   },
@@ -526,6 +562,20 @@ export class AppealService {
         reviewerResourceId,
         appealId,
       );
+
+      const challengeId = review?.submission?.challengeId;
+      const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      if (!isPrivileged) {
+        await this.ensureChallengeAllowsAppealChange(challengeId, {
+          logContext: 'updateAppealResponse',
+          appealId,
+          appealResponseId,
+          errorCode: 'APPEAL_RESPONSE_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+          errorMessage:
+            'Appeal responses for challenges in COMPLETED status cannot be updated. Only an admin can update an appeal response once the challenge is complete.',
+        });
+      }
 
       const data = await this.prisma.appealResponse.update({
         where: { id: appealResponseId },
@@ -697,6 +747,53 @@ export class AppealService {
     }
 
     return reviewerMemberId;
+  }
+
+  private async ensureChallengeAllowsAppealChange(
+    challengeId: string | null | undefined,
+    context: {
+      logContext: string;
+      appealId?: string;
+      appealResponseId?: string;
+      errorCode: string;
+      errorMessage: string;
+    },
+  ): Promise<void> {
+    if (!challengeId) {
+      return;
+    }
+
+    let challenge;
+    try {
+      challenge =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+    } catch (error) {
+      this.logger.error(
+        `[${context.logContext}] Unable to fetch challenge ${challengeId}`,
+        error,
+      );
+      throw new InternalServerErrorException({
+        message: `Unable to verify the challenge status for challenge ${challengeId}. Please try again later.`,
+        code: 'CHALLENGE_STATUS_UNAVAILABLE',
+        details: {
+          challengeId,
+          appealId: context.appealId,
+          appealResponseId: context.appealResponseId,
+        },
+      });
+    }
+
+    if (challenge.status === ChallengeStatus.COMPLETED) {
+      throw new ForbiddenException({
+        message: context.errorMessage,
+        code: context.errorCode,
+        details: {
+          challengeId,
+          appealId: context.appealId,
+          appealResponseId: context.appealResponseId,
+        },
+      });
+    }
   }
 
   private ensureAppealPermission(
