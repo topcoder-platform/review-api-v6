@@ -27,6 +27,7 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 
 @Injectable()
@@ -848,24 +849,31 @@ export class ReviewService {
   }
 
   async updateReviewItem(
+    authUser: JwtUser | undefined,
     itemId: string,
     body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
     this.logger.log(`Updating review item with ID: ${itemId}`);
     try {
-      // First get the existing review item to find the associated review's resourceId
       const existingItem = await this.prisma.reviewItem.findUnique({
         where: { id: itemId },
         include: {
           review: {
             select: {
+              id: true,
               resourceId: true,
+              scorecardId: true,
+              submission: {
+                select: {
+                  challengeId: true,
+                },
+              },
             },
           },
         },
       });
 
-      if (!existingItem) {
+      if (!existingItem || !existingItem.review) {
         throw new NotFoundException({
           message: `Review item with ID ${itemId} was not found. Please check the ID and try again.`,
           code: 'RECORD_NOT_FOUND',
@@ -873,17 +881,145 @@ export class ReviewService {
         });
       }
 
-      // Get the mapped data for update
+      const reviewId = existingItem.reviewId;
+      const review = existingItem.review;
+
+      if (!reviewId) {
+        throw new NotFoundException({
+          message: `Unable to determine the parent review for review item ${itemId}.`,
+          code: 'REVIEW_NOT_FOUND',
+          details: { itemId },
+        });
+      }
+
+      if (body.reviewId && body.reviewId !== reviewId) {
+        throw new BadRequestException({
+          message: `Review item ${itemId} belongs to review ${reviewId}. The provided reviewId ${body.reviewId} is invalid for this item.`,
+          code: 'REVIEW_ITEM_REVIEW_MISMATCH',
+          details: {
+            itemId,
+            expectedReviewId: reviewId,
+            providedReviewId: body.reviewId,
+          },
+        });
+      }
+
+      const question = await this.prisma.scorecardQuestion.findUnique({
+        where: { id: body.scorecardQuestionId },
+        select: {
+          id: true,
+          section: {
+            select: {
+              group: {
+                select: { scorecardId: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!question) {
+        throw new BadRequestException({
+          message: `Scorecard question with ID ${body.scorecardQuestionId} was not found.`,
+          code: 'SCORECARD_QUESTION_NOT_FOUND',
+          details: { scorecardQuestionId: body.scorecardQuestionId },
+        });
+      }
+
+      if (
+        review.scorecardId &&
+        question.section?.group?.scorecardId &&
+        review.scorecardId !== question.section.group.scorecardId
+      ) {
+        throw new BadRequestException({
+          message: `Scorecard question ${body.scorecardQuestionId} does not belong to review scorecard ${review.scorecardId}.`,
+          code: 'SCORECARD_QUESTION_MISMATCH',
+          details: {
+            scorecardQuestionId: body.scorecardQuestionId,
+            reviewScorecardId: review.scorecardId,
+            questionScorecardId: question.section.group.scorecardId,
+          },
+        });
+      }
+
+      const requester = authUser ?? ({ isMachine: false } as JwtUser);
+      const isPrivileged = isAdmin(requester);
+      const normalizedRoles = Array.isArray(requester.roles)
+        ? requester.roles.map((role) => String(role).trim().toLowerCase())
+        : [];
+      const hasReviewerRole = normalizedRoles.includes(
+        String(UserRole.Reviewer).trim().toLowerCase(),
+      );
+
+      if (hasReviewerRole && !requester.isMachine && !isPrivileged) {
+        const requesterMemberId = String(requester.userId ?? '');
+
+        if (!requesterMemberId) {
+          throw new ForbiddenException({
+            message:
+              'Authenticated user information is missing the user identifier required for authorization checks.',
+            code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_MISSING_MEMBER_ID',
+            details: {
+              reviewId,
+              itemId,
+            },
+          });
+        }
+
+        const challengeId = review.submission?.challengeId;
+
+        let requesterResources: ResourceInfo[] = [];
+        try {
+          requesterResources = await this.resourceApiService.getResources({
+            memberId: requesterMemberId,
+            ...(challengeId ? { challengeId } : {}),
+          });
+        } catch (error) {
+          this.logger.error(
+            `[updateReviewItem] Failed to verify ownership for review ${reviewId} and member ${requesterMemberId}`,
+            error,
+          );
+          throw new ForbiddenException({
+            message:
+              'Unable to verify ownership of the review for the authenticated user.',
+            code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_OWNERSHIP_UNVERIFIED',
+            details: {
+              reviewId,
+              itemId,
+              challengeId,
+              requester: requesterMemberId,
+            },
+          });
+        }
+
+        const ownsReview = requesterResources?.some(
+          (resource) => resource.id === review.resourceId,
+        );
+
+        if (!ownsReview) {
+          throw new ForbiddenException({
+            message:
+              'Only the reviewer who owns this review may update its review items.',
+            code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_NOT_OWNER',
+            details: {
+              reviewId,
+              itemId,
+              challengeId,
+              requester: requesterMemberId,
+              reviewResourceId: review.resourceId,
+            },
+          });
+        }
+      }
+
       const mappedData = mapReviewItemRequestForUpdate(body);
 
-      // If there are review item comments to update, set the resourceId
       if (mappedData.reviewItemComments?.create) {
         mappedData.reviewItemComments.create =
           // eslint-disable-next-line @typescript-eslint/no-unsafe-return
           mappedData.reviewItemComments.create.map((comment: any) => ({
             ...comment,
-            // Use the review's resourceId as the commenter
-            resourceId: comment.resourceId || existingItem.review.resourceId,
+            resourceId: comment.resourceId || review.resourceId,
           }));
       }
 
@@ -894,13 +1030,17 @@ export class ReviewService {
           reviewItemComments: true,
         },
       });
-      // Recalculate parent review scores
+
       if (data?.reviewId) {
         await this.recomputeAndUpdateReviewScores(data.reviewId);
       }
+
       this.logger.log(`Review item updated successfully: ${itemId}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `updating review item with ID: ${itemId}`,

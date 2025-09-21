@@ -299,6 +299,148 @@ describe('ReviewService.getReview authorization checks', () => {
   });
 });
 
+describe('ReviewService.updateReviewItem validations', () => {
+  const prismaMock = {
+    reviewItem: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    scorecardQuestion: {
+      findUnique: jest.fn(),
+    },
+  } as unknown as any;
+
+  const prismaErrorServiceMock = {
+    handleError: jest.fn((error: any) => ({
+      message: error.message,
+      code: error.response?.code ?? 'UNKNOWN',
+      details: error.response?.details,
+    })),
+  } as unknown as any;
+
+  const resourceApiServiceMock = {
+    getResources: jest.fn(),
+  } as unknown as any;
+
+  const challengeApiServiceMock = {} as unknown as any;
+
+  const service = new ReviewService(
+    prismaMock,
+    prismaErrorServiceMock,
+    resourceApiServiceMock,
+    challengeApiServiceMock,
+  );
+
+  const baseReviewer: JwtUser = {
+    userId: 'reviewer-1',
+    roles: [UserRole.Reviewer],
+    isMachine: false,
+  };
+
+  const baseExistingItem = {
+    id: 'item-1',
+    reviewId: 'review-1',
+    review: {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      scorecardId: 'scorecard-1',
+      submission: {
+        challengeId: 'challenge-1',
+      },
+    },
+  } as any;
+
+  const baseQuestion = {
+    id: 'question-1',
+    section: {
+      group: {
+        scorecardId: 'scorecard-1',
+      },
+    },
+  } as any;
+
+  const baseRequest = {
+    reviewId: 'review-1',
+    scorecardQuestionId: 'question-1',
+    initialAnswer: 'Yes',
+    finalAnswer: 'Yes',
+  } as any;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    prismaMock.reviewItem.findUnique.mockResolvedValue(baseExistingItem);
+    prismaMock.scorecardQuestion.findUnique.mockResolvedValue(baseQuestion);
+    prismaMock.reviewItem.update.mockResolvedValue({
+      ...baseExistingItem,
+      ...baseRequest,
+      reviewItemComments: [],
+    });
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: baseReviewer.userId,
+      },
+    ]);
+  });
+
+  it('throws when provided reviewId does not match the existing review', async () => {
+    await expect(
+      service.updateReviewItem(baseReviewer, 'item-1', {
+        ...baseRequest,
+        reviewId: 'review-2',
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_REVIEW_MISMATCH',
+      }),
+      status: 400,
+    });
+
+    expect(prismaMock.scorecardQuestion.findUnique).not.toHaveBeenCalled();
+    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
+  });
+
+  it('throws when scorecard question cannot be found', async () => {
+    prismaMock.scorecardQuestion.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.updateReviewItem(baseReviewer, 'item-1', baseRequest),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'SCORECARD_QUESTION_NOT_FOUND',
+      }),
+      status: 400,
+    });
+
+    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
+  });
+
+  it('throws when reviewer does not own the review', async () => {
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        id: 'other-resource',
+        memberId: baseReviewer.userId,
+      },
+    ]);
+
+    await expect(
+      service.updateReviewItem(baseReviewer, 'item-1', baseRequest),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_NOT_OWNER',
+      }),
+      status: 403,
+    });
+
+    expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
+      memberId: baseReviewer.userId,
+      challengeId: 'challenge-1',
+    });
+    expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('ReviewService.updateReview challenge status enforcement', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;

@@ -160,10 +160,12 @@ export class ReviewController {
   })
   @ApiResponse({ status: 404, description: 'Review item not found.' })
   async updateReviewItem(
+    @Req() req: Request,
     @Param('itemId') itemId: string,
     @Body() body: ReviewItemRequestDto,
   ): Promise<ReviewItemResponseDto> {
-    return this.reviewService.updateReviewItem(itemId, body);
+    const authUser = req['user'];
+    return this.reviewService.updateReviewItem(authUser as any, itemId, body);
   }
 
   @Get()
