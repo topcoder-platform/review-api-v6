@@ -507,3 +507,91 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
   });
 });
+
+describe('ReviewService.createReviewItemComments', () => {
+  let prismaMock: any;
+  let prismaErrorServiceMock: any;
+  let service: ReviewService;
+  let recomputeSpy: jest.SpyInstance;
+
+  const basePayload = {
+    reviewId: 'review-1',
+    scorecardQuestionId: 'question-1',
+    initialAnswer: 'YES',
+  } as any;
+
+  beforeEach(() => {
+    prismaMock = {
+      review: {
+        findUnique: jest.fn(),
+      },
+      reviewItem: {
+        create: jest.fn(),
+      },
+    } as any;
+
+    prismaErrorServiceMock = {
+      handleError: jest.fn(),
+    } as any;
+
+    service = new ReviewService(
+      prismaMock,
+      prismaErrorServiceMock,
+      {} as any,
+      {} as any,
+    );
+
+    recomputeSpy = jest
+      .spyOn(service as any, 'recomputeAndUpdateReviewScores')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    recomputeSpy.mockRestore();
+  });
+
+  it('throws a BadRequestException when the review does not exist', async () => {
+    prismaMock.review.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.createReviewItemComments({ ...basePayload }),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({
+        code: 'REVIEW_NOT_FOUND',
+        details: { reviewId: 'review-1' },
+      }),
+    });
+
+    expect(prismaMock.reviewItem.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a review item when the review exists', async () => {
+    const createdReviewItem = {
+      id: 'review-item-1',
+      reviewId: 'review-1',
+      scorecardQuestionId: 'question-1',
+      initialAnswer: 'YES',
+      reviewItemComments: [],
+    };
+
+    prismaMock.review.findUnique.mockResolvedValue({ id: 'review-1' });
+    prismaMock.reviewItem.create.mockResolvedValue(createdReviewItem);
+
+    const result = await service.createReviewItemComments({ ...basePayload });
+
+    expect(result).toEqual(createdReviewItem);
+    expect(prismaMock.review.findUnique).toHaveBeenCalledWith({
+      where: { id: 'review-1' },
+      select: { id: true },
+    });
+    expect(prismaMock.reviewItem.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scorecardQuestionId: 'question-1',
+        initialAnswer: 'YES',
+      }),
+      include: { reviewItemComments: true },
+    });
+    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+  });
+});

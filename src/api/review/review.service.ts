@@ -578,6 +578,29 @@ export class ReviewService {
           code: 'VALIDATION_ERROR',
         });
       }
+
+      const reviewId = body.reviewId ?? mapped.review?.connect?.id;
+
+      if (!reviewId) {
+        throw new BadRequestException({
+          message: 'reviewId is required when creating a review item',
+          code: 'VALIDATION_ERROR',
+        });
+      }
+
+      const review = await this.prisma.review.findUnique({
+        where: { id: reviewId },
+        select: { id: true },
+      });
+
+      if (!review) {
+        throw new BadRequestException({
+          message: `Review with ID ${reviewId} does not exist. Cannot create review items for a non-existent review.`,
+          code: 'REVIEW_NOT_FOUND',
+          details: { reviewId },
+        });
+      }
+
       const data = await this.prisma.reviewItem.create({
         data: mapped as any,
         include: {
@@ -591,10 +614,26 @@ export class ReviewService {
       this.logger.log(`Review item created with ID: ${data.id}`);
       return data as unknown as ReviewItemResponseDto;
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating review item for reviewId: ${body.reviewId}`,
+        body,
       );
+      if (
+        errorResponse.code === 'RECORD_NOT_FOUND' ||
+        errorResponse.code === 'FOREIGN_KEY_CONSTRAINT_FAILED' ||
+        errorResponse.code === 'VALIDATION_ERROR'
+      ) {
+        throw new BadRequestException({
+          message: errorResponse.message,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
       throw new InternalServerErrorException({
         message: errorResponse.message,
         code: errorResponse.code,
