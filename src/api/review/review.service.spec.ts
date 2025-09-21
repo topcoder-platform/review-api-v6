@@ -973,3 +973,137 @@ describe('ReviewService.createReviewItemComments', () => {
     );
   });
 });
+
+describe('ReviewService.deleteReview', () => {
+  let prismaMock: any;
+  let prismaErrorServiceMock: any;
+  let resourceApiServiceMock: any;
+  let service: ReviewService;
+
+  const copilotUser: JwtUser = {
+    userId: 'copilot-1',
+    roles: [UserRole.Copilot],
+    isMachine: false,
+  };
+
+  const adminUser: JwtUser = {
+    userId: 'admin-1',
+    roles: [UserRole.Admin],
+    isMachine: false,
+  };
+
+  beforeEach(() => {
+    prismaMock = {
+      review: {
+        findUnique: jest.fn(),
+        delete: jest.fn(),
+      },
+    } as any;
+
+    prismaErrorServiceMock = {
+      handleError: jest.fn(),
+    } as any;
+
+    resourceApiServiceMock = {
+      getMemberResourcesRoles: jest.fn(),
+    } as any;
+
+    service = new ReviewService(
+      prismaMock,
+      prismaErrorServiceMock,
+      resourceApiServiceMock,
+      {} as any,
+    );
+  });
+
+  it('throws NotFoundException when the review does not exist', async () => {
+    prismaMock.review.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.deleteReview(undefined, 'review-1'),
+    ).rejects.toMatchObject({
+      status: 404,
+      response: expect.objectContaining({
+        code: 'RECORD_NOT_FOUND',
+        details: { reviewId: 'review-1' },
+      }),
+    });
+
+    expect(prismaMock.review.delete).not.toHaveBeenCalled();
+    expect(
+      resourceApiServiceMock.getMemberResourcesRoles,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects copilots that are not assigned to the challenge', async () => {
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      submission: { challengeId: 'challenge-1' },
+    });
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+    await expect(
+      service.deleteReview(copilotUser, 'review-1'),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'REVIEW_DELETE_FORBIDDEN_NOT_COPILOT',
+      }),
+    });
+
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'copilot-1',
+    );
+    expect(prismaMock.review.delete).not.toHaveBeenCalled();
+  });
+
+  it('allows copilots assigned to the challenge to delete the review', async () => {
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      submission: { challengeId: 'challenge-1' },
+    });
+    prismaMock.review.delete.mockResolvedValue({});
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'copilot-1',
+        roleName: 'Copilot',
+        challengeId: 'challenge-1',
+      },
+    ]);
+
+    const result = await service.deleteReview(copilotUser, 'review-1');
+
+    expect(result).toEqual({
+      message: 'Review review-1 deleted successfully.',
+    });
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'copilot-1',
+    );
+    expect(prismaMock.review.delete).toHaveBeenCalledWith({
+      where: { id: 'review-1' },
+    });
+  });
+
+  it('allows admins to delete reviews without copilot validation', async () => {
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      submission: { challengeId: 'challenge-1' },
+    });
+    prismaMock.review.delete.mockResolvedValue({});
+
+    const result = await service.deleteReview(adminUser, 'review-1');
+
+    expect(result).toEqual({
+      message: 'Review review-1 deleted successfully.',
+    });
+    expect(
+      resourceApiServiceMock.getMemberResourcesRoles,
+    ).not.toHaveBeenCalled();
+    expect(prismaMock.review.delete).toHaveBeenCalledWith({
+      where: { id: 'review-1' },
+    });
+  });
+});

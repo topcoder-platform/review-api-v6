@@ -365,6 +365,110 @@ export class ReviewService {
     }
   }
 
+  private async ensureReviewDeleteAccess(
+    authUser: JwtUser | undefined,
+    review: {
+      id: string;
+      submission?: { challengeId?: string | null } | null;
+    },
+  ) {
+    const requester = authUser ?? ({ isMachine: false } as JwtUser);
+
+    if (requester.isMachine || isAdmin(requester)) {
+      return;
+    }
+
+    const normalizedRoles = Array.isArray(requester.roles)
+      ? requester.roles.map((role) => String(role).trim().toLowerCase())
+      : [];
+
+    const hasCopilotRole = normalizedRoles.includes(
+      String(UserRole.Copilot).trim().toLowerCase(),
+    );
+
+    if (!hasCopilotRole) {
+      throw new ForbiddenException({
+        message: 'You do not have permission to delete this review.',
+        code: 'REVIEW_DELETE_FORBIDDEN_ROLE',
+        details: {
+          reviewId: review.id,
+          requesterRoles: requester.roles,
+        },
+      });
+    }
+
+    const requesterMemberId = String(requester.userId ?? '');
+
+    if (!requesterMemberId) {
+      throw new ForbiddenException({
+        message:
+          'Authenticated user information is missing the user identifier required for authorization checks.',
+        code: 'REVIEW_DELETE_FORBIDDEN_MISSING_MEMBER_ID',
+        details: {
+          reviewId: review.id,
+        },
+      });
+    }
+
+    const challengeId = review.submission?.challengeId ?? undefined;
+
+    if (!challengeId) {
+      throw new ForbiddenException({
+        message:
+          'Unable to determine the challenge associated with this review for authorization checks.',
+        code: 'REVIEW_DELETE_FORBIDDEN_MISSING_CHALLENGE',
+        details: {
+          reviewId: review.id,
+        },
+      });
+    }
+
+    let requesterResources: ResourceInfo[] = [];
+
+    try {
+      requesterResources =
+        await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          requesterMemberId,
+        );
+    } catch (error) {
+      this.logger.error(
+        `[ensureReviewDeleteAccess] Failed to verify copilot roles for member ${requesterMemberId} on challenge ${challengeId} while deleting review ${review.id}`,
+        error,
+      );
+      throw new ForbiddenException({
+        message:
+          'Unable to verify copilot assignment for the authenticated user.',
+        code: 'REVIEW_DELETE_FORBIDDEN_OWNERSHIP_UNVERIFIED',
+        details: {
+          reviewId: review.id,
+          challengeId,
+          requester: requesterMemberId,
+        },
+      });
+    }
+
+    const hasCopilotAccess = requesterResources?.some((resource) => {
+      const normalizedRoleName = (resource.roleName || '').toLowerCase();
+      const matchesRole = normalizedRoleName.includes('copilot');
+      const matchesChallenge = resource.challengeId === challengeId;
+      return matchesRole && matchesChallenge;
+    });
+
+    if (!hasCopilotAccess) {
+      throw new ForbiddenException({
+        message:
+          'Only a copilot assigned to this challenge may delete this review.',
+        code: 'REVIEW_DELETE_FORBIDDEN_NOT_COPILOT',
+        details: {
+          reviewId: review.id,
+          challengeId,
+          requester: requesterMemberId,
+        },
+      });
+    }
+  }
+
   async createReview(
     authUser: JwtUser,
     body: ReviewRequestDto,
@@ -1573,8 +1677,30 @@ export class ReviewService {
     }
   }
 
-  async deleteReview(reviewId: string) {
+  async deleteReview(authUser: JwtUser | undefined, reviewId: string) {
     this.logger.log(`Deleting review with ID: ${reviewId}`);
+    const review = await this.prisma.review.findUnique({
+      where: { id: reviewId },
+      select: {
+        id: true,
+        submission: {
+          select: {
+            challengeId: true,
+          },
+        },
+      },
+    });
+
+    if (!review) {
+      throw new NotFoundException({
+        message: `Review with ID ${reviewId} was not found. Cannot delete non-existent review.`,
+        code: 'RECORD_NOT_FOUND',
+        details: { reviewId },
+      });
+    }
+
+    await this.ensureReviewDeleteAccess(authUser, review);
+
     try {
       await this.prisma.review.delete({
         where: { id: reviewId },

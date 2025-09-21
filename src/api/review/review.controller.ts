@@ -261,8 +261,9 @@ export class ReviewController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Review not found.' })
-  async deleteReview(@Param('reviewId') reviewId: string) {
-    return this.reviewService.deleteReview(reviewId);
+  async deleteReview(@Req() req: Request, @Param('reviewId') reviewId: string) {
+    const authUser = req['user'];
+    return this.reviewService.deleteReview(authUser as any, reviewId);
   }
 
   @Delete('/items/:itemId')
