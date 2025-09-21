@@ -183,3 +183,32 @@ export class CreateRunItemCommentDto {
   @IsOptional()
   parentId?: string;
 }
+
+export class UpdateRunItemCommentDto {
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  content?: string;
+
+  @ApiProperty({ required: false })
+  @IsInt()
+  @IsOptional()
+  upVotes?: number;
+
+  @ApiProperty({ required: false })
+  @IsInt()
+  @IsOptional()
+  downVotes?: number;
+
+  @ApiHideProperty()
+  @IsEmpty({ message: 'parentId cannot be updated' })
+  parentId?: never;
+
+  @ApiHideProperty()
+  @IsEmpty({ message: 'userId cannot be updated' })
+  userId?: never;
+
+  @ApiHideProperty()
+  @IsEmpty({ message: 'workflowRunItemId cannot be updated' })
+  workflowRunItemId?: never;
+}

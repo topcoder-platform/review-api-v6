@@ -26,6 +26,7 @@ import {
   UpdateAiWorkflowRunDto,
   CreateRunItemCommentDto,
   UpdateAiWorkflowRunItemDto,
+  UpdateRunItemCommentDto,
 } from '../../dto/aiWorkflow.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -39,6 +40,60 @@ import { User } from 'src/shared/decorators/user.decorator';
 @Controller('/workflows')
 export class AiWorkflowController {
   constructor(private readonly aiWorkflowService: AiWorkflowService) {}
+
+  @Patch('/:workflowId/runs/:runId/items/:itemId/comments/:commentId')
+  @Roles(
+    UserRole.Submitter,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Admin,
+    UserRole.Reviewer,
+    UserRole.User,
+  )
+  @ApiOperation({ summary: 'Update a comment by id' })
+  @ApiParam({ name: 'workflowId', description: 'Workflow ID' })
+  @ApiParam({ name: 'runId', description: 'Run ID' })
+  @ApiParam({ name: 'itemId', description: 'Item ID' })
+  @ApiParam({ name: 'commentId', description: 'Comment ID' })
+  @ApiBody({
+    description: 'Partial comment data to update',
+    schema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string' },
+        upVotes: { type: 'number' },
+        downVotes: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Comment updated successfully.',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden. User not comment creator.',
+  })
+  @ApiResponse({ status: 404, description: 'Comment not found.' })
+  async updateRunItemComment(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Param('itemId') itemId: string,
+    @Param('commentId') commentId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: UpdateRunItemCommentDto,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.updateCommentById(
+      user,
+      workflowId,
+      runId,
+      itemId,
+      commentId,
+      body,
+    );
+  }
 
   @Post('/:workflowId/runs/:runId/items/:itemId/comments')
   @Roles(
