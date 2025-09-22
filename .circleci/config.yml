@@ -75,7 +75,7 @@ workflows:
                           only:
                               - develop
                               - feat/ai-workflows
-                              - pm-1957
+                              - pm-1955_2
 
 
             - 'build-prod':

@@ -162,16 +162,21 @@ export class AiWorkflowService {
       throw new BadRequestException(`User id is not available`);
     }
 
-    const createdComment = await this.prisma.aiWorkflowRunItemComment.create({
-      data: {
-        workflowRunItemId: itemId,
-        content: body.content,
-        parentId: body.parentId ?? null,
-        userId: user.userId.toString(),
-      },
-    });
-
-    return createdComment;
+    try {
+      const createdComment = await this.prisma.aiWorkflowRunItemComment.create({
+        data: {
+          workflowRunItemId: itemId,
+          content: body.content,
+          parentId: body.parentId ?? null,
+          userId: user.userId.toString(),
+        },
+      });
+      return createdComment;
+    } catch (e) {
+      if (e.code === 'P2003') {
+        this.logger.debug(e.meta);
+      }
+    }
   }
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
