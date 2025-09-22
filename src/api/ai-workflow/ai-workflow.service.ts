@@ -178,7 +178,7 @@ export class AiWorkflowService {
           e.meta.field_name === 'aiWorkflowRunItemComment_parentId_fkey (index)'
         ) {
           throw new BadRequestException(
-            `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+            `Invalid parent id provided! Parent comment with id ${body.parentId} does not exist!`,
           );
         }
       }
