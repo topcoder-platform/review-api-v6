@@ -174,7 +174,9 @@ export class AiWorkflowService {
       return createdComment;
     } catch (e) {
       if (e.code === 'P2003') {
-        if (e.meta.field_name === 'aiWorkflowRunItemComment_parentId_fkey (index)') {
+        if (
+          e.meta.field_name === 'aiWorkflowRunItemComment_parentId_fkey (index)'
+        ) {
           throw new BadRequestException(
             `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
           );
@@ -405,7 +407,7 @@ export class AiWorkflowService {
       }
 
       this.logger.debug(challenge);
-      this.logger.debug("Challenge debug")
+      this.logger.debug('Challenge debug');
 
       // if ([ChallengeStatus.COMPLETED, ChallengeStatus.ACTIVE])
 
