@@ -4,7 +4,7 @@ jest.mock('nanoid', () => ({
 }));
 
 import { ReviewService } from './review.service';
-import { ReviewStatus } from 'src/dto/review.dto';
+import { ReviewRequestDto, ReviewStatus } from 'src/dto/review.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -50,18 +50,21 @@ describe('ReviewService.createReview authorization checks', () => {
     isMachine: false,
   };
 
-  const baseReviewRequest = {
-    id: 'review-1',
-    resourceId: 'resource-1',
-    submissionId: 'submission-1',
-    scorecardId: 'scorecard-1',
-    typeId: 'type-1',
-    metadata: {},
-    status: ReviewStatus.PENDING,
-    reviewDate: new Date().toISOString(),
-    committed: false,
-    reviewItems: [],
-  } as any;
+  const buildReviewRequest = (
+    overrides: Partial<ReviewRequestDto> = {},
+  ): ReviewRequestDto =>
+    ({
+      id: 'review-1',
+      submissionId: 'submission-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      metadata: {},
+      status: ReviewStatus.PENDING,
+      reviewDate: new Date().toISOString(),
+      committed: false,
+      reviewItems: [],
+      ...overrides,
+    }) as ReviewRequestDto;
 
   const baseChallengeDetail = {
     id: 'challenge-1',
@@ -116,6 +119,7 @@ describe('ReviewService.createReview authorization checks', () => {
   });
 
   it('throws when resource does not belong to non-admin user', async () => {
+    const request = buildReviewRequest({ resourceId: 'resource-1' });
     resourceApiServiceMock.getResources.mockResolvedValue([
       {
         ...baseResource,
@@ -124,7 +128,7 @@ describe('ReviewService.createReview authorization checks', () => {
     ]);
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
+      service.createReview(baseAuthUser, request),
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'RESOURCE_MEMBER_MISMATCH' }),
       status: 403,
@@ -144,7 +148,7 @@ describe('ReviewService.createReview authorization checks', () => {
     });
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
+      service.createReview(baseAuthUser, buildReviewRequest()),
     ).rejects.toMatchObject({
       response: expect.objectContaining({
         code: 'REVIEW_PHASE_NOT_FOUND',
@@ -154,6 +158,7 @@ describe('ReviewService.createReview authorization checks', () => {
   });
 
   it('throws when resource phase does not match the requested phase', async () => {
+    const request = buildReviewRequest({ resourceId: 'resource-1' });
     resourceApiServiceMock.getResources.mockResolvedValue([
       {
         ...baseResource,
@@ -162,25 +167,37 @@ describe('ReviewService.createReview authorization checks', () => {
     ]);
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
+      service.createReview(baseAuthUser, request),
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'RESOURCE_PHASE_MISMATCH' }),
       status: 400,
     });
   });
 
+  it('throws when no reviewer resource can be inferred for the requester', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+    await expect(
+      service.createReview(baseAuthUser, buildReviewRequest()),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'FORBIDDEN_CREATE_REVIEW' }),
+      status: 403,
+    });
+  });
+
   it('derives the Review phase id from the challenge when creating a review', async () => {
+    const request = buildReviewRequest();
     const reviewCreateResult = {
-      id: baseReviewRequest.id,
-      resourceId: baseReviewRequest.resourceId,
+      id: request.id,
+      resourceId: baseResource.id,
       phaseId: 'phase-review',
-      submissionId: baseReviewRequest.submissionId,
-      scorecardId: baseReviewRequest.scorecardId,
-      typeId: baseReviewRequest.typeId,
-      metadata: baseReviewRequest.metadata,
-      status: baseReviewRequest.status,
-      reviewDate: new Date(baseReviewRequest.reviewDate),
-      committed: baseReviewRequest.committed,
+      submissionId: request.submissionId,
+      scorecardId: request.scorecardId,
+      typeId: request.typeId,
+      metadata: request.metadata,
+      status: request.status,
+      reviewDate: new Date(request.reviewDate),
+      committed: request.committed,
       initialScore: null,
       finalScore: null,
       reviewItems: [],
@@ -189,28 +206,32 @@ describe('ReviewService.createReview authorization checks', () => {
     prismaMock.review.create.mockResolvedValue(reviewCreateResult);
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
+      service.createReview(baseAuthUser, request),
     ).resolves.toMatchObject({ phaseId: 'phase-review' });
 
     expect(prismaMock.review.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ phaseId: 'phase-review' }),
+        data: expect.objectContaining({
+          phaseId: 'phase-review',
+          resourceId: baseResource.id,
+        }),
       }),
     );
   });
 
   it('falls back to the Iterative Review phase when a Review phase is not present', async () => {
+    const request = buildReviewRequest();
     const reviewCreateResult = {
-      id: baseReviewRequest.id,
-      resourceId: baseReviewRequest.resourceId,
+      id: request.id,
+      resourceId: baseResource.id,
       phaseId: 'phase-iterative',
-      submissionId: baseReviewRequest.submissionId,
-      scorecardId: baseReviewRequest.scorecardId,
-      typeId: baseReviewRequest.typeId,
-      metadata: baseReviewRequest.metadata,
-      status: baseReviewRequest.status,
-      reviewDate: new Date(baseReviewRequest.reviewDate),
-      committed: baseReviewRequest.committed,
+      submissionId: request.submissionId,
+      scorecardId: request.scorecardId,
+      typeId: request.typeId,
+      metadata: request.metadata,
+      status: request.status,
+      reviewDate: new Date(request.reviewDate),
+      committed: request.committed,
       initialScore: null,
       finalScore: null,
       reviewItems: [],
@@ -233,16 +254,26 @@ describe('ReviewService.createReview authorization checks', () => {
         phaseId: 'phase-iterative',
       },
     ]);
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        ...baseResource,
+        phaseId: 'phase-iterative',
+        roleName: 'Reviewer',
+      },
+    ]);
 
     prismaMock.review.create.mockResolvedValue(reviewCreateResult);
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
+      service.createReview(baseAuthUser, request),
     ).resolves.toMatchObject({ phaseId: 'phase-iterative' });
 
     expect(prismaMock.review.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ phaseId: 'phase-iterative' }),
+        data: expect.objectContaining({
+          phaseId: 'phase-iterative',
+          resourceId: baseResource.id,
+        }),
       }),
     );
   });

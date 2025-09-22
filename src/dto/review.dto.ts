@@ -201,10 +201,12 @@ export class ReviewCommonDto {
   @ApiProperty({
     description: 'Resource ID associated with the review',
     example: 'resource123',
+    required: false,
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  resourceId: string;
+  resourceId?: string;
 
   @ApiProperty({
     description: 'Submission ID being reviewed',
@@ -434,7 +436,7 @@ export function mapReviewRequestToDto(
                 (comment: MappedReviewItemComment) => ({
                   ...comment,
                   // Default commenter to the review's resourceId if not provided
-                  resourceId: comment.resourceId || request.resourceId,
+                  resourceId: comment.resourceId ?? request.resourceId ?? '',
                 }),
               );
           }
