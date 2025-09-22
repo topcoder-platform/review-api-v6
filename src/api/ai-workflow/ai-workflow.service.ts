@@ -174,7 +174,11 @@ export class AiWorkflowService {
       return createdComment;
     } catch (e) {
       if (e.code === 'P2003') {
-        this.logger.debug(e.meta);
+        if (e.meta.field_name === 'aiWorkflowRunItemComment_parentId_fkey (index)') {
+          throw new BadRequestException(
+            `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+          );
+        }
       }
     }
   }
@@ -375,6 +379,36 @@ export class AiWorkflowService {
 
   async createWorkflowRun(workflowId: string, runData: CreateAiWorkflowRunDto) {
     try {
+      const submission = runData.submissionId
+        ? await this.prisma.submission.findUnique({
+            where: { id: runData.submissionId },
+          })
+        : null;
+      const challengeId = submission?.challengeId;
+
+      if (!challengeId) {
+        this.logger.error(
+          `Challenge ID not found for submission ${runData.submissionId}`,
+        );
+        throw new InternalServerErrorException(
+          `Challenge ID not found for submission ${runData.submissionId}`,
+        );
+      }
+
+      const challenge: ChallengeData =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+
+      if (!challenge) {
+        throw new InternalServerErrorException(
+          `Challenge with id ${challengeId} was not found!`,
+        );
+      }
+
+      this.logger.debug(challenge);
+      this.logger.debug("Challenge debug")
+
+      // if ([ChallengeStatus.COMPLETED, ChallengeStatus.ACTIVE])
+
       return await this.prisma.aiWorkflowRun.create({
         data: {
           ...runData,
