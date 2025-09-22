@@ -536,34 +536,35 @@ export class ReviewService {
       );
 
       const challengePhases = challenge?.phases ?? [];
-      const requestedPhaseId = String(body.phaseId);
       const resolvePhaseId = (phase: (typeof challengePhases)[number]) =>
         String((phase as any)?.id ?? (phase as any)?.phaseId ?? '');
 
-      const matchingPhase = challengePhases.find((phase) => {
-        const candidate = resolvePhaseId(phase);
-        return candidate && candidate === requestedPhaseId;
-      });
+      const matchPhaseByName = (name: string) =>
+        challengePhases.find((phase) => {
+          const phaseName = (phase?.name ?? '').trim().toLowerCase();
+          return phaseName === name;
+        });
 
-      if (!matchingPhase) {
+      const reviewPhase =
+        matchPhaseByName('review') ?? matchPhaseByName('iterative review');
+
+      if (!reviewPhase) {
         throw new BadRequestException({
-          message: `Phase ${body.phaseId} is not associated with challenge ${submission.challengeId}.`,
-          code: 'INVALID_REVIEW_PHASE',
+          message: `Challenge ${submission.challengeId} does not have a Review phase.`,
+          code: 'REVIEW_PHASE_NOT_FOUND',
           details: {
-            resourceId: body.resourceId,
-            submissionId: body.submissionId,
             challengeId: submission.challengeId,
           },
         });
       }
 
-      const matchingPhaseName = (matchingPhase.name ?? '').toLowerCase();
-      if (!matchingPhaseName.includes('review')) {
+      const reviewPhaseId = resolvePhaseId(reviewPhase);
+
+      if (!reviewPhaseId) {
         throw new BadRequestException({
-          message: `Phase ${body.phaseId} is not a Review phase for challenge ${submission.challengeId}.`,
-          code: 'INVALID_REVIEW_PHASE',
+          message: `Review phase for challenge ${submission.challengeId} is missing an identifier.`,
+          code: 'REVIEW_PHASE_NOT_FOUND',
           details: {
-            phaseName: matchingPhase.name,
             challengeId: submission.challengeId,
           },
         });
@@ -572,14 +573,14 @@ export class ReviewService {
       const resourcePhaseId = resource?.phaseId
         ? String(resource.phaseId)
         : undefined;
-      if (resourcePhaseId && resourcePhaseId !== requestedPhaseId) {
+      if (resourcePhaseId && resourcePhaseId !== reviewPhaseId) {
         throw new BadRequestException({
-          message: `Resource ${body.resourceId} is associated with phase ${resourcePhaseId}, which does not match the requested phase ${requestedPhaseId}.`,
+          message: `Resource ${body.resourceId} is associated with phase ${resourcePhaseId}, which does not match the Review phase ${reviewPhaseId}.`,
           code: 'RESOURCE_PHASE_MISMATCH',
           details: {
             resourceId: body.resourceId,
-            expectedPhaseId: resourcePhaseId,
-            requestedPhaseId,
+            resourcePhaseId,
+            expectedPhaseId: reviewPhaseId,
           },
         });
       }
@@ -710,6 +711,7 @@ export class ReviewService {
       }
 
       const prismaBody = mapReviewRequestToDto(body) as any;
+      prismaBody.phaseId = reviewPhaseId;
       const createdReview = await this.prisma.review.create({
         data: prismaBody,
         include: {

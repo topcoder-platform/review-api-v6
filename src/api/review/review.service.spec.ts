@@ -1,4 +1,3 @@
-import { BadRequestException } from '@nestjs/common';
 jest.mock('nanoid', () => ({
   __esModule: true,
   nanoid: () => 'mock-nanoid',
@@ -20,6 +19,7 @@ describe('ReviewService.createReview authorization checks', () => {
     },
     review: {
       create: jest.fn(),
+      update: jest.fn(),
     },
   } as unknown as any;
 
@@ -53,7 +53,6 @@ describe('ReviewService.createReview authorization checks', () => {
   const baseReviewRequest = {
     id: 'review-1',
     resourceId: 'resource-1',
-    phaseId: 'phase-review',
     submissionId: 'submission-1',
     scorecardId: 'scorecard-1',
     typeId: 'type-1',
@@ -93,7 +92,10 @@ describe('ReviewService.createReview authorization checks', () => {
   beforeEach(() => {
     jest.resetAllMocks();
 
-    prismaMock.scorecard.findUnique.mockResolvedValue({ id: 'scorecard-1' });
+    prismaMock.scorecard.findUnique.mockResolvedValue({
+      id: 'scorecard-1',
+      scorecardGroups: [],
+    });
     prismaMock.submission.findUnique.mockResolvedValue({
       id: 'submission-1',
       challengeId: 'challenge-1',
@@ -129,7 +131,7 @@ describe('ReviewService.createReview authorization checks', () => {
     });
   });
 
-  it('throws when phaseId is not a review phase for the challenge', async () => {
+  it('throws when challenge does not have a Review phase', async () => {
     challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
       ...baseChallengeDetail,
       phases: [
@@ -143,7 +145,12 @@ describe('ReviewService.createReview authorization checks', () => {
 
     await expect(
       service.createReview(baseAuthUser, baseReviewRequest),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_PHASE_NOT_FOUND',
+      }),
+      status: 400,
+    });
   });
 
   it('throws when resource phase does not match the requested phase', async () => {
@@ -160,6 +167,84 @@ describe('ReviewService.createReview authorization checks', () => {
       response: expect.objectContaining({ code: 'RESOURCE_PHASE_MISMATCH' }),
       status: 400,
     });
+  });
+
+  it('derives the Review phase id from the challenge when creating a review', async () => {
+    const reviewCreateResult = {
+      id: baseReviewRequest.id,
+      resourceId: baseReviewRequest.resourceId,
+      phaseId: 'phase-review',
+      submissionId: baseReviewRequest.submissionId,
+      scorecardId: baseReviewRequest.scorecardId,
+      typeId: baseReviewRequest.typeId,
+      metadata: baseReviewRequest.metadata,
+      status: baseReviewRequest.status,
+      reviewDate: new Date(baseReviewRequest.reviewDate),
+      committed: baseReviewRequest.committed,
+      initialScore: null,
+      finalScore: null,
+      reviewItems: [],
+    } as any;
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+
+    await expect(
+      service.createReview(baseAuthUser, baseReviewRequest),
+    ).resolves.toMatchObject({ phaseId: 'phase-review' });
+
+    expect(prismaMock.review.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ phaseId: 'phase-review' }),
+      }),
+    );
+  });
+
+  it('falls back to the Iterative Review phase when a Review phase is not present', async () => {
+    const reviewCreateResult = {
+      id: baseReviewRequest.id,
+      resourceId: baseReviewRequest.resourceId,
+      phaseId: 'phase-iterative',
+      submissionId: baseReviewRequest.submissionId,
+      scorecardId: baseReviewRequest.scorecardId,
+      typeId: baseReviewRequest.typeId,
+      metadata: baseReviewRequest.metadata,
+      status: baseReviewRequest.status,
+      reviewDate: new Date(baseReviewRequest.reviewDate),
+      committed: baseReviewRequest.committed,
+      initialScore: null,
+      finalScore: null,
+      reviewItems: [],
+    } as any;
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      phases: [
+        {
+          id: 'phase-iterative',
+          name: 'Iterative Review',
+          isOpen: true,
+        },
+      ],
+    });
+
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        ...baseResource,
+        phaseId: 'phase-iterative',
+      },
+    ]);
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+
+    await expect(
+      service.createReview(baseAuthUser, baseReviewRequest),
+    ).resolves.toMatchObject({ phaseId: 'phase-iterative' });
+
+    expect(prismaMock.review.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ phaseId: 'phase-iterative' }),
+      }),
+    );
   });
 });
 

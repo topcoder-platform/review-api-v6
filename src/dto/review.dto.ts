@@ -207,14 +207,6 @@ export class ReviewCommonDto {
   resourceId: string;
 
   @ApiProperty({
-    description: 'Phase ID of the challenge',
-    example: 'phase456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  phaseId: string;
-
-  @ApiProperty({
     description: 'Submission ID being reviewed',
     example: 'submission789',
   })
@@ -285,7 +277,6 @@ export class ReviewRequestDto extends ReviewCommonDto {
 
 const ReviewPutBase = OmitType(ReviewCommonDto, [
   'resourceId',
-  'phaseId',
   'submissionId',
 ] as const);
 
@@ -293,10 +284,6 @@ export class ReviewPutRequestDto extends ReviewPutBase {
   @ApiHideProperty()
   @IsEmpty({ message: 'resourceId cannot be updated.' })
   resourceId?: never;
-
-  @ApiHideProperty()
-  @IsEmpty({ message: 'phaseId cannot be updated.' })
-  phaseId?: never;
 
   @ApiHideProperty()
   @IsEmpty({ message: 'submissionId cannot be updated.' })
@@ -307,10 +294,6 @@ export class ReviewPatchRequestDto {
   @ApiHideProperty()
   @IsEmpty({ message: 'resourceId cannot be updated.' })
   resourceId?: never;
-
-  @ApiHideProperty()
-  @IsEmpty({ message: 'phaseId cannot be updated.' })
-  phaseId?: never;
 
   @ApiHideProperty()
   @IsEmpty({ message: 'submissionId cannot be updated.' })
@@ -368,6 +351,12 @@ export class ReviewPatchRequestDto {
 export class ReviewResponseDto extends ReviewCommonDto {
   @ApiProperty({ description: 'The ID of the review', example: '123' })
   id: string;
+
+  @ApiProperty({
+    description: 'Phase ID of the challenge',
+    example: 'phase456',
+  })
+  phaseId: string;
 
   @ApiProperty({ description: 'Final score of the review', example: 85.5 })
   finalScore: number | null;
@@ -456,7 +445,7 @@ export function mapReviewRequestToDto(
   } else {
     const sanitizedRequest = { ...request } as Partial<ReviewPatchRequestDto> &
       Record<string, unknown>;
-    ['resourceId', 'phaseId', 'submissionId'].forEach((field) => {
+    ['resourceId', 'submissionId'].forEach((field) => {
       delete sanitizedRequest[field];
     });
 
