@@ -413,7 +413,7 @@ export class AiWorkflowService {
       );
 
       if (!isInAllowedPhase) {
-        if (challenge.status !== 'COMPLETED') {
+        if (challenge.status !== ChallengeStatus.COMPLETED) {
           throw new InternalServerErrorException(
             `Challenge ${submission.challengeId} is not in an allowed phase and is not completed.`,
           );
