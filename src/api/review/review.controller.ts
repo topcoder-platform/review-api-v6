@@ -65,11 +65,11 @@ export class ReviewController {
   }
 
   @Post('/items')
-  @Roles(UserRole.Reviewer, UserRole.Copilot)
+  @Roles(UserRole.Reviewer, UserRole.Admin)
   @Scopes(Scope.CreateReviewItem)
   @ApiOperation({
     summary: 'Create review item',
-    description: 'Roles: Reviewer, Copilot | Scopes: create:review-item',
+    description: 'Roles: Reviewer, Admin | Scopes: create:review-item',
   })
   @ApiBody({ description: 'Review item data', type: ReviewItemRequestDto })
   @ApiResponse({
@@ -142,12 +142,12 @@ export class ReviewController {
   }
 
   @Patch('/items/:itemId')
-  @Roles(UserRole.Reviewer, UserRole.Copilot, UserRole.Admin)
+  @Roles(UserRole.Reviewer, UserRole.Admin)
   @Scopes(Scope.UpdateReviewItem)
   @ApiOperation({
     summary:
       'Update a specific review item, if copilot is patching, manager comment is required',
-    description: 'Roles: Reviewer, Copilot, Admin | Scopes: update:review-item',
+    description: 'Roles: Reviewer, Admin | Scopes: update:review-item',
   })
   @ApiParam({
     name: 'itemId',
