@@ -99,6 +99,9 @@ export class AppealService {
         }
 
         if (submissionMemberId !== requesterMemberId) {
+          this.logger.debug(
+            `Requester memberId: ${requesterMemberId} does not match submission owner memberId: ${submissionMemberId}`,
+          );
           throw new ForbiddenException({
             message:
               'Only the submission owner can create an appeal for this review item comment.',
