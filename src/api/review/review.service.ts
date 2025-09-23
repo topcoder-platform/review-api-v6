@@ -277,7 +277,7 @@ export class ReviewService {
       });
     }
 
-    const requesterMemberId = String(requester.userId ?? '');
+    const requesterMemberId = String(requester.userId ?? '').trim();
 
     if (!requesterMemberId) {
       throw new ForbiddenException({
@@ -321,9 +321,15 @@ export class ReviewService {
     let ownsReview = false;
 
     if (hasReviewerRole) {
-      ownsReview = requesterResources?.some(
-        (resource) => resource.id === review.resourceId,
-      );
+      const normalizedReviewResourceId = String(review.resourceId ?? '').trim();
+      ownsReview = requesterResources?.some((resource) => {
+        const resourceId = String(resource.id ?? '').trim();
+        const resourceMemberId = String(resource.memberId ?? '').trim();
+        return (
+          resourceId === normalizedReviewResourceId &&
+          resourceMemberId === requesterMemberId
+        );
+      });
 
       if (!ownsReview) {
         throw new ForbiddenException({
@@ -806,6 +812,7 @@ export class ReviewService {
 
       const prismaBody = mapReviewRequestToDto(body) as any;
       prismaBody.phaseId = reviewPhaseId;
+      prismaBody.resourceId = reviewerResource.id;
       const createdReview = await this.prisma.review.create({
         data: prismaBody,
         include: {

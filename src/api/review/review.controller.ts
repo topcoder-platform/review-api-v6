@@ -267,11 +267,12 @@ export class ReviewController {
   }
 
   @Delete('/items/:itemId')
-  @Roles(UserRole.Copilot, UserRole.Admin)
+  @Roles(UserRole.Copilot, UserRole.Reviewer, UserRole.Admin)
   @Scopes(Scope.DeleteReviewItem)
   @ApiOperation({
     summary: 'Delete a review item',
-    description: 'Roles: Copilot, Admin | Scopes: delete:review-item',
+    description:
+      'Roles: Copilot, Reviewers (their own review items), Admin | Scopes: delete:review-item',
   })
   @ApiParam({
     name: 'itemId',

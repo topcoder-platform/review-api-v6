@@ -204,6 +204,11 @@ describe('ReviewService.createReview authorization checks', () => {
     } as any;
 
     prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue({
+      ...reviewCreateResult,
+      initialScore: 0,
+      finalScore: 0,
+    });
 
     await expect(
       service.createReview(baseAuthUser, request),
@@ -263,6 +268,11 @@ describe('ReviewService.createReview authorization checks', () => {
     ]);
 
     prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue({
+      ...reviewCreateResult,
+      initialScore: 0,
+      finalScore: 0,
+    });
 
     await expect(
       service.createReview(baseAuthUser, request),
@@ -1220,6 +1230,124 @@ describe('ReviewService.deleteReview', () => {
     ).not.toHaveBeenCalled();
     expect(prismaMock.review.delete).toHaveBeenCalledWith({
       where: { id: 'review-1' },
+    });
+  });
+});
+
+describe('ReviewService.deleteReviewItem authorization checks', () => {
+  const prismaMock = {
+    reviewItem: {
+      findUnique: jest.fn(),
+      delete: jest.fn(),
+    },
+  } as unknown as any;
+
+  const prismaErrorServiceMock = {
+    handleError: jest.fn((error: any) => ({
+      message: error.message,
+      code: error.response?.code ?? 'UNKNOWN',
+      details: error.response?.details,
+    })),
+  } as unknown as any;
+
+  const resourceApiServiceMock = {
+    getMemberResourcesRoles: jest.fn(),
+  } as unknown as any;
+
+  const challengeApiServiceMock = {} as unknown as any;
+
+  const service = new ReviewService(
+    prismaMock,
+    prismaErrorServiceMock,
+    resourceApiServiceMock,
+    challengeApiServiceMock,
+  );
+
+  const reviewerUser: JwtUser = {
+    userId: 'member-100',
+    roles: [UserRole.Reviewer],
+    isMachine: false,
+  };
+
+  const baseReviewItem = {
+    id: 'item-1',
+    reviewId: 'review-1',
+    review: {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      submission: {
+        challengeId: 'challenge-1',
+      },
+    },
+  } as any;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    prismaMock.reviewItem.findUnique.mockResolvedValue(baseReviewItem);
+    prismaMock.reviewItem.delete.mockResolvedValue(undefined);
+
+    jest
+      .spyOn(service as any, 'recomputeAndUpdateReviewScores')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('blocks reviewers from deleting review items they do not own', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'someone-else',
+        challengeId: 'challenge-1',
+        memberHandle: 'otherHandle',
+        roleId: 'role-reviewer',
+        createdBy: 'system',
+        created: new Date().toISOString(),
+        roleName: 'Reviewer',
+      },
+    ]);
+
+    await expect(
+      service.deleteReviewItem(reviewerUser, 'item-1'),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_DELETE_FORBIDDEN_NOT_OWNER',
+      }),
+    });
+
+    expect(prismaMock.reviewItem.delete).not.toHaveBeenCalled();
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'member-100',
+    );
+  });
+
+  it('allows reviewers to delete review items associated with their own review', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'member-100',
+        challengeId: 'challenge-1',
+        memberHandle: 'reviewerHandle',
+        roleId: 'role-reviewer',
+        createdBy: 'system',
+        created: new Date().toISOString(),
+        roleName: 'Reviewer',
+      },
+    ]);
+
+    await expect(
+      service.deleteReviewItem(reviewerUser, 'item-1'),
+    ).resolves.toMatchObject({
+      message: 'Review item item-1 deleted successfully.',
+    });
+
+    expect(prismaMock.reviewItem.delete).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
     });
   });
 });
