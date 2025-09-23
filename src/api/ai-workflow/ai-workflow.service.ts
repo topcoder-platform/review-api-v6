@@ -411,9 +411,9 @@ export class AiWorkflowService {
         'Review',
         'Iterative Review',
       ];
-      const isNotInSubmissionOrReviewPhases = challenge.phases?.some((item) =>
-        aiWorkflowAllowedPhases.includes(item.name),
-      );
+      const isNotInSubmissionOrReviewPhases = challenge.phases
+        ?.filter((item) => item.isOpen)
+        .some((item) => aiWorkflowAllowedPhases.includes(item.name));
       if (
         challenge.status !== ChallengeStatus.COMPLETED ||
         isNotInSubmissionOrReviewPhases
