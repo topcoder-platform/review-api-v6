@@ -162,16 +162,27 @@ export class AiWorkflowService {
       throw new BadRequestException(`User id is not available`);
     }
 
-    const createdComment = await this.prisma.aiWorkflowRunItemComment.create({
-      data: {
-        workflowRunItemId: itemId,
-        content: body.content,
-        parentId: body.parentId ?? null,
-        userId: user.userId.toString(),
-      },
-    });
-
-    return createdComment;
+    try {
+      const createdComment = await this.prisma.aiWorkflowRunItemComment.create({
+        data: {
+          workflowRunItemId: itemId,
+          content: body.content,
+          parentId: body.parentId ?? null,
+          userId: user.userId.toString(),
+        },
+      });
+      return createdComment;
+    } catch (e) {
+      if (e.code === 'P2003') {
+        if (
+          e.meta.field_name === 'aiWorkflowRunItemComment_parentId_fkey (index)'
+        ) {
+          throw new BadRequestException(
+            `Invalid parent id provided! Parent comment with id ${body.parentId} does not exist!`,
+          );
+        }
+      }
+    }
   }
 
   async scorecardExists(scorecardId: string): Promise<boolean> {
@@ -370,6 +381,45 @@ export class AiWorkflowService {
 
   async createWorkflowRun(workflowId: string, runData: CreateAiWorkflowRunDto) {
     try {
+      const submission = runData.submissionId
+        ? await this.prisma.submission.findUnique({
+            where: { id: runData.submissionId },
+          })
+        : null;
+      const challengeId = submission?.challengeId;
+
+      if (!challengeId) {
+        this.logger.error(
+          `Challenge ID not found for submission ${runData.submissionId}`,
+        );
+        throw new InternalServerErrorException(
+          `Challenge ID not found for submission ${runData.submissionId}`,
+        );
+      }
+
+      const challenge: ChallengeData =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+
+      if (!challenge) {
+        throw new InternalServerErrorException(
+          `Challenge with id ${challengeId} was not found!`,
+        );
+      }
+
+      const allowedPhases = ['Submission', 'Review', 'Iterative Review'];
+      const phases = challenge.phases || [];
+      const isInAllowedPhase = phases.some(
+        (phase) => allowedPhases.includes(phase.name) && phase.isOpen,
+      );
+
+      if (!isInAllowedPhase) {
+        if (challenge.status !== ChallengeStatus.COMPLETED) {
+          throw new InternalServerErrorException(
+            `Challenge ${submission.challengeId} is not in an allowed phase and is not completed.`,
+          );
+        }
+      }
+
       return await this.prisma.aiWorkflowRun.create({
         data: {
           ...runData,
