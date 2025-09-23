@@ -415,7 +415,7 @@ export class AiWorkflowService {
         ?.filter((item) => item.isOpen)
         .some((item) => aiWorkflowAllowedPhases.includes(item.name));
       if (
-        challenge.status !== ChallengeStatus.COMPLETED ||
+        challenge.status !== ChallengeStatus.COMPLETED &&
         isNotInSubmissionOrReviewPhases
       ) {
         throw new InternalServerErrorException(
