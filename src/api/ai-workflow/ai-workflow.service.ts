@@ -269,7 +269,19 @@ export class AiWorkflowService {
             provider: true,
           },
         },
-        scorecard: true,
+        scorecard: {
+          include: {
+            scorecardGroups: {
+              include: {
+                sections: {
+                  include: {
+                    questions: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
     if (!workflow) {
