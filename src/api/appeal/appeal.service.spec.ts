@@ -5,6 +5,7 @@ jest.mock('nanoid', () => ({
 
 import { AppealService } from './appeal.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 import { CommonConfig } from 'src/shared/config/common.config';
 
 const prismaMock = {
@@ -479,7 +480,12 @@ describe('AppealService.updateAppealResponse', () => {
     expect(prismaMock.appealResponse.update).not.toHaveBeenCalled();
   });
 
-  it('allows machine users to update another reviewers appeal response', async () => {
+  it('allows machine users to update an appeal response even when the challenge is completed', async () => {
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+    });
+
     const machineAuthUser = {
       isMachine: true,
       userId: undefined,
@@ -499,6 +505,67 @@ describe('AppealService.updateAppealResponse', () => {
     });
 
     expect(prismaMock.appealResponse.update).toHaveBeenCalled();
+  });
+
+  it('allows admin users to update an appeal response even when the challenge is completed', async () => {
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+    });
+
+    const adminAuthUser = {
+      userId: 'admin-1',
+      isMachine: false,
+      roles: [UserRole.Admin],
+    } as any;
+
+    await expect(
+      service.updateAppealResponse(
+        adminAuthUser,
+        baseAppealResponse.id,
+        updateRequest,
+      ),
+    ).resolves.toMatchObject({
+      id: baseAppealResponse.id,
+      content: updateRequest.content,
+      success: updateRequest.success,
+    });
+
+    expect(prismaMock.appealResponse.update).toHaveBeenCalled();
+  });
+
+  it('throws BadRequestException when challengeId cannot be determined for non-privileged users', async () => {
+    prismaMock.appealResponse.findUnique.mockResolvedValueOnce({
+      ...baseAppealResponse,
+      appeal: {
+        ...baseAppealResponse.appeal,
+        reviewItemComment: {
+          reviewItem: {
+            review: {
+              resourceId: 'resource-1',
+              submission: {
+                challengeId: undefined,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await expect(
+      service.updateAppealResponse(
+        reviewerAuthUser,
+        baseAppealResponse.id,
+        updateRequest,
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({
+        code: 'MISSING_CHALLENGE_ID',
+      }),
+    });
+
+    expect(prismaMock.appealResponse.update).not.toHaveBeenCalled();
   });
 });
 

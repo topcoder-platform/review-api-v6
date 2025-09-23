@@ -618,14 +618,21 @@ export class AppealService {
       const challengeId = review?.submission?.challengeId;
       const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
 
-      if (!isPrivileged) {
+      if (!challengeId) {
+        if (!isPrivileged) {
+          throw new BadRequestException({
+            message: `No challengeId found for appeal ${appealId}.`,
+            code: 'MISSING_CHALLENGE_ID',
+          });
+        }
+      } else if (!isPrivileged) {
         await this.ensureChallengeAllowsAppealChange(challengeId, {
           logContext: 'updateAppealResponse',
           appealId,
           appealResponseId,
           errorCode: 'APPEAL_RESPONSE_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
           errorMessage:
-            'Appeal responses for challenges in COMPLETED status cannot be updated. Only an admin can update an appeal response once the challenge is complete.',
+            'Appeal responses for challenges in COMPLETED status cannot be updated. Only an admin or M2M token can update an appeal response once the challenge is complete.',
         });
       }
 
