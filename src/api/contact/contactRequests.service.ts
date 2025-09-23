@@ -11,7 +11,7 @@ import {
   ContactRequestDto,
   ContactRequestResponseDto,
 } from 'src/dto/contactRequest.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import {
   EventBusSendEmailPayload,
   EventBusService,
@@ -49,8 +49,9 @@ export class ContactRequestsService {
     try {
       // Validate requester has access
       const memberId = authUser?.userId ? String(authUser.userId) : '';
+      const requiresResourceCheck = !authUser?.isMachine && !isAdmin(authUser);
 
-      if (!memberId) {
+      if (requiresResourceCheck && !memberId) {
         throw new ForbiddenException({
           message:
             'You must be registered on this challenge to contact its managers.',
@@ -58,18 +59,30 @@ export class ContactRequestsService {
         });
       }
 
-      const requesterResource = await this.resourcePrisma.resource.findFirst({
+      const challengeResources = await this.resourcePrisma.resource.findMany({
         where: {
           challengeId: body.challengeId,
-          memberId: memberId,
         },
         orderBy: { createdAt: 'asc' },
       });
 
-      if (!requesterResource) {
+      const requesterResource = challengeResources.find((resource) => {
+        return String(resource.memberId) === memberId;
+      });
+      this.logger.debug(
+        `Found resource for requester: ${requesterResource?.id}`,
+      );
+      if (requiresResourceCheck && !requesterResource) {
         throw new ForbiddenException({
           message:
             'You must be registered on this challenge to contact its managers.',
+          code: 'CONTACT_REQUEST_FORBIDDEN',
+        });
+      }
+
+      if (!requesterResource) {
+        throw new ForbiddenException({
+          message: 'No associated resource was found for this request.',
           code: 'CONTACT_REQUEST_FORBIDDEN',
         });
       }

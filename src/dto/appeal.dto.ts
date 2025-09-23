@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class AppealResponseRequestDto {
   @ApiProperty({
@@ -69,10 +69,12 @@ export class AppealBaseDto {
   @ApiProperty({
     description: 'The resource ID associated with the appeal',
     example: 'resource123',
+    required: false,
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  resourceId: string;
+  resourceId?: string;
 
   @ApiProperty({
     description: 'The review item comment ID associated with the appeal',

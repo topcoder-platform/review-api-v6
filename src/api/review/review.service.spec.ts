@@ -1,11 +1,10 @@
-import { BadRequestException } from '@nestjs/common';
 jest.mock('nanoid', () => ({
   __esModule: true,
   nanoid: () => 'mock-nanoid',
 }));
 
 import { ReviewService } from './review.service';
-import { ReviewStatus } from 'src/dto/review.dto';
+import { ReviewRequestDto, ReviewStatus } from 'src/dto/review.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -20,6 +19,7 @@ describe('ReviewService.createReview authorization checks', () => {
     },
     review: {
       create: jest.fn(),
+      update: jest.fn(),
     },
   } as unknown as any;
 
@@ -50,19 +50,21 @@ describe('ReviewService.createReview authorization checks', () => {
     isMachine: false,
   };
 
-  const baseReviewRequest = {
-    id: 'review-1',
-    resourceId: 'resource-1',
-    phaseId: 'phase-review',
-    submissionId: 'submission-1',
-    scorecardId: 'scorecard-1',
-    typeId: 'type-1',
-    metadata: {},
-    status: ReviewStatus.PENDING,
-    reviewDate: new Date().toISOString(),
-    committed: false,
-    reviewItems: [],
-  } as any;
+  const buildReviewRequest = (
+    overrides: Partial<ReviewRequestDto> = {},
+  ): ReviewRequestDto =>
+    ({
+      id: 'review-1',
+      submissionId: 'submission-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      metadata: {},
+      status: ReviewStatus.PENDING,
+      reviewDate: new Date().toISOString(),
+      committed: false,
+      reviewItems: [],
+      ...overrides,
+    }) as ReviewRequestDto;
 
   const baseChallengeDetail = {
     id: 'challenge-1',
@@ -93,7 +95,10 @@ describe('ReviewService.createReview authorization checks', () => {
   beforeEach(() => {
     jest.resetAllMocks();
 
-    prismaMock.scorecard.findUnique.mockResolvedValue({ id: 'scorecard-1' });
+    prismaMock.scorecard.findUnique.mockResolvedValue({
+      id: 'scorecard-1',
+      scorecardGroups: [],
+    });
     prismaMock.submission.findUnique.mockResolvedValue({
       id: 'submission-1',
       challengeId: 'challenge-1',
@@ -114,6 +119,7 @@ describe('ReviewService.createReview authorization checks', () => {
   });
 
   it('throws when resource does not belong to non-admin user', async () => {
+    const request = buildReviewRequest({ resourceId: 'resource-1' });
     resourceApiServiceMock.getResources.mockResolvedValue([
       {
         ...baseResource,
@@ -122,14 +128,14 @@ describe('ReviewService.createReview authorization checks', () => {
     ]);
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
+      service.createReview(baseAuthUser, request),
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'RESOURCE_MEMBER_MISMATCH' }),
       status: 403,
     });
   });
 
-  it('throws when phaseId is not a review phase for the challenge', async () => {
+  it('throws when challenge does not have a Review phase', async () => {
     challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
       ...baseChallengeDetail,
       phases: [
@@ -142,11 +148,17 @@ describe('ReviewService.createReview authorization checks', () => {
     });
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
-    ).rejects.toBeInstanceOf(BadRequestException);
+      service.createReview(baseAuthUser, buildReviewRequest()),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_PHASE_NOT_FOUND',
+      }),
+      status: 400,
+    });
   });
 
   it('throws when resource phase does not match the requested phase', async () => {
+    const request = buildReviewRequest({ resourceId: 'resource-1' });
     resourceApiServiceMock.getResources.mockResolvedValue([
       {
         ...baseResource,
@@ -155,11 +167,125 @@ describe('ReviewService.createReview authorization checks', () => {
     ]);
 
     await expect(
-      service.createReview(baseAuthUser, baseReviewRequest),
+      service.createReview(baseAuthUser, request),
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'RESOURCE_PHASE_MISMATCH' }),
       status: 400,
     });
+  });
+
+  it('throws when no reviewer resource can be inferred for the requester', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+    await expect(
+      service.createReview(baseAuthUser, buildReviewRequest()),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'FORBIDDEN_CREATE_REVIEW' }),
+      status: 403,
+    });
+  });
+
+  it('derives the Review phase id from the challenge when creating a review', async () => {
+    const request = buildReviewRequest();
+    const reviewCreateResult = {
+      id: request.id,
+      resourceId: baseResource.id,
+      phaseId: 'phase-review',
+      submissionId: request.submissionId,
+      scorecardId: request.scorecardId,
+      typeId: request.typeId,
+      metadata: request.metadata,
+      status: request.status,
+      reviewDate: new Date(request.reviewDate),
+      committed: request.committed,
+      initialScore: null,
+      finalScore: null,
+      reviewItems: [],
+    } as any;
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue({
+      ...reviewCreateResult,
+      initialScore: 0,
+      finalScore: 0,
+    });
+
+    await expect(
+      service.createReview(baseAuthUser, request),
+    ).resolves.toMatchObject({ phaseId: 'phase-review' });
+
+    expect(prismaMock.review.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          phaseId: 'phase-review',
+          resourceId: baseResource.id,
+        }),
+      }),
+    );
+  });
+
+  it('falls back to the Iterative Review phase when a Review phase is not present', async () => {
+    const request = buildReviewRequest();
+    const reviewCreateResult = {
+      id: request.id,
+      resourceId: baseResource.id,
+      phaseId: 'phase-iterative',
+      submissionId: request.submissionId,
+      scorecardId: request.scorecardId,
+      typeId: request.typeId,
+      metadata: request.metadata,
+      status: request.status,
+      reviewDate: new Date(request.reviewDate),
+      committed: request.committed,
+      initialScore: null,
+      finalScore: null,
+      reviewItems: [],
+    } as any;
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      phases: [
+        {
+          id: 'phase-iterative',
+          name: 'Iterative Review',
+          isOpen: true,
+        },
+      ],
+    });
+
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        ...baseResource,
+        phaseId: 'phase-iterative',
+      },
+    ]);
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        ...baseResource,
+        phaseId: 'phase-iterative',
+        roleName: 'Reviewer',
+      },
+    ]);
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue({
+      ...reviewCreateResult,
+      initialScore: 0,
+      finalScore: 0,
+    });
+
+    await expect(
+      service.createReview(baseAuthUser, request),
+    ).resolves.toMatchObject({ phaseId: 'phase-iterative' });
+
+    expect(prismaMock.review.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          phaseId: 'phase-iterative',
+          resourceId: baseResource.id,
+        }),
+      }),
+    );
   });
 });
 
@@ -1104,6 +1230,124 @@ describe('ReviewService.deleteReview', () => {
     ).not.toHaveBeenCalled();
     expect(prismaMock.review.delete).toHaveBeenCalledWith({
       where: { id: 'review-1' },
+    });
+  });
+});
+
+describe('ReviewService.deleteReviewItem authorization checks', () => {
+  const prismaMock = {
+    reviewItem: {
+      findUnique: jest.fn(),
+      delete: jest.fn(),
+    },
+  } as unknown as any;
+
+  const prismaErrorServiceMock = {
+    handleError: jest.fn((error: any) => ({
+      message: error.message,
+      code: error.response?.code ?? 'UNKNOWN',
+      details: error.response?.details,
+    })),
+  } as unknown as any;
+
+  const resourceApiServiceMock = {
+    getMemberResourcesRoles: jest.fn(),
+  } as unknown as any;
+
+  const challengeApiServiceMock = {} as unknown as any;
+
+  const service = new ReviewService(
+    prismaMock,
+    prismaErrorServiceMock,
+    resourceApiServiceMock,
+    challengeApiServiceMock,
+  );
+
+  const reviewerUser: JwtUser = {
+    userId: 'member-100',
+    roles: [UserRole.Reviewer],
+    isMachine: false,
+  };
+
+  const baseReviewItem = {
+    id: 'item-1',
+    reviewId: 'review-1',
+    review: {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      submission: {
+        challengeId: 'challenge-1',
+      },
+    },
+  } as any;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    prismaMock.reviewItem.findUnique.mockResolvedValue(baseReviewItem);
+    prismaMock.reviewItem.delete.mockResolvedValue(undefined);
+
+    jest
+      .spyOn(service as any, 'recomputeAndUpdateReviewScores')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('blocks reviewers from deleting review items they do not own', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'someone-else',
+        challengeId: 'challenge-1',
+        memberHandle: 'otherHandle',
+        roleId: 'role-reviewer',
+        createdBy: 'system',
+        created: new Date().toISOString(),
+        roleName: 'Reviewer',
+      },
+    ]);
+
+    await expect(
+      service.deleteReviewItem(reviewerUser, 'item-1'),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_DELETE_FORBIDDEN_NOT_OWNER',
+      }),
+    });
+
+    expect(prismaMock.reviewItem.delete).not.toHaveBeenCalled();
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'member-100',
+    );
+  });
+
+  it('allows reviewers to delete review items associated with their own review', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'member-100',
+        challengeId: 'challenge-1',
+        memberHandle: 'reviewerHandle',
+        roleId: 'role-reviewer',
+        createdBy: 'system',
+        created: new Date().toISOString(),
+        roleName: 'Reviewer',
+      },
+    ]);
+
+    await expect(
+      service.deleteReviewItem(reviewerUser, 'item-1'),
+    ).resolves.toMatchObject({
+      message: 'Review item item-1 deleted successfully.',
+    });
+
+    expect(prismaMock.reviewItem.delete).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
     });
   });
 });

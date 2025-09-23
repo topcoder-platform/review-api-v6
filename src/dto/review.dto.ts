@@ -201,18 +201,12 @@ export class ReviewCommonDto {
   @ApiProperty({
     description: 'Resource ID associated with the review',
     example: 'resource123',
+    required: false,
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  resourceId: string;
-
-  @ApiProperty({
-    description: 'Phase ID of the challenge',
-    example: 'phase456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  phaseId: string;
+  resourceId?: string;
 
   @ApiProperty({
     description: 'Submission ID being reviewed',
@@ -285,7 +279,6 @@ export class ReviewRequestDto extends ReviewCommonDto {
 
 const ReviewPutBase = OmitType(ReviewCommonDto, [
   'resourceId',
-  'phaseId',
   'submissionId',
 ] as const);
 
@@ -293,10 +286,6 @@ export class ReviewPutRequestDto extends ReviewPutBase {
   @ApiHideProperty()
   @IsEmpty({ message: 'resourceId cannot be updated.' })
   resourceId?: never;
-
-  @ApiHideProperty()
-  @IsEmpty({ message: 'phaseId cannot be updated.' })
-  phaseId?: never;
 
   @ApiHideProperty()
   @IsEmpty({ message: 'submissionId cannot be updated.' })
@@ -307,10 +296,6 @@ export class ReviewPatchRequestDto {
   @ApiHideProperty()
   @IsEmpty({ message: 'resourceId cannot be updated.' })
   resourceId?: never;
-
-  @ApiHideProperty()
-  @IsEmpty({ message: 'phaseId cannot be updated.' })
-  phaseId?: never;
 
   @ApiHideProperty()
   @IsEmpty({ message: 'submissionId cannot be updated.' })
@@ -368,6 +353,12 @@ export class ReviewPatchRequestDto {
 export class ReviewResponseDto extends ReviewCommonDto {
   @ApiProperty({ description: 'The ID of the review', example: '123' })
   id: string;
+
+  @ApiProperty({
+    description: 'Phase ID of the challenge',
+    example: 'phase456',
+  })
+  phaseId: string;
 
   @ApiProperty({ description: 'Final score of the review', example: 85.5 })
   finalScore: number | null;
@@ -445,7 +436,7 @@ export function mapReviewRequestToDto(
                 (comment: MappedReviewItemComment) => ({
                   ...comment,
                   // Default commenter to the review's resourceId if not provided
-                  resourceId: comment.resourceId || request.resourceId,
+                  resourceId: comment.resourceId ?? request.resourceId ?? '',
                 }),
               );
           }
@@ -456,7 +447,7 @@ export function mapReviewRequestToDto(
   } else {
     const sanitizedRequest = { ...request } as Partial<ReviewPatchRequestDto> &
       Record<string, unknown>;
-    ['resourceId', 'phaseId', 'submissionId'].forEach((field) => {
+    ['resourceId', 'submissionId'].forEach((field) => {
       delete sanitizedRequest[field];
     });
 
