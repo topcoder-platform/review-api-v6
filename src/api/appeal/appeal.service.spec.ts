@@ -5,6 +5,7 @@ jest.mock('nanoid', () => ({
 
 import { AppealService } from './appeal.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { CommonConfig } from 'src/shared/config/common.config';
 
 const prismaMock = {
   appeal: {
@@ -26,6 +27,7 @@ const prismaMock = {
 
 const resourcePrismaMock = {
   resource: {
+    findMany: jest.fn(),
     findUnique: jest.fn(),
   },
 } as unknown as any;
@@ -63,7 +65,7 @@ describe('AppealService.createAppeal', () => {
   const baseRequest = {
     reviewItemCommentId: baseReviewItemComment.id,
     content: '  Please reconsider this appeal.  ',
-    resourceId: 'different-resource',
+    resourceId: 'resource-123',
   } as any;
 
   beforeEach(() => {
@@ -84,9 +86,16 @@ describe('AppealService.createAppeal', () => {
     );
     prismaMock.appeal.create.mockResolvedValue({
       id: 'appeal-1',
-      resourceId: 'member-123',
+      resourceId: 'resource-123',
       content: 'Please reconsider this appeal.',
     });
+    resourcePrismaMock.resource.findMany.mockResolvedValue([
+      {
+        id: 'resource-123',
+        memberId: 'member-123',
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+    ]);
   });
 
   it('allows machine tokens with appeal scopes to create appeals', async () => {
@@ -101,7 +110,7 @@ describe('AppealService.createAppeal', () => {
     await expect(service.createAppeal(machineUser, request)).resolves.toEqual(
       expect.objectContaining({
         id: 'appeal-1',
-        resourceId: 'member-123',
+        resourceId: 'resource-123',
         content: 'Please reconsider this appeal.',
       }),
     );
@@ -114,13 +123,45 @@ describe('AppealService.createAppeal', () => {
     );
     expect(prismaMock.appeal.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        resourceId: 'member-123',
+        resourceId: 'resource-123',
         content: 'Please reconsider this appeal.',
       }),
     });
     expect(
       challengeApiServiceMock.validateAppealSubmission,
     ).toHaveBeenCalledWith('challenge-1');
+  });
+
+  it('infers the submitter resourceId when submitter omits it from the request', async () => {
+    const regularUser = {
+      userId: 'member-123',
+      isMachine: false,
+      roles: [],
+    } as any;
+
+    const request = { ...baseRequest };
+    delete request.resourceId;
+
+    await expect(service.createAppeal(regularUser, request)).resolves.toEqual(
+      expect.objectContaining({
+        id: 'appeal-1',
+        resourceId: 'resource-123',
+      }),
+    );
+
+    expect(resourcePrismaMock.resource.findMany).toHaveBeenCalledWith({
+      where: {
+        challengeId: 'challenge-1',
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    expect(prismaMock.appeal.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        resourceId: 'resource-123',
+      }),
+    });
   });
 
   it('still prevents non-owners without admin privileges from creating appeals', async () => {

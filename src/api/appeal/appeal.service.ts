@@ -19,6 +19,7 @@ import { ChallengeApiService } from 'src/shared/modules/global/challenge.service
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 @Injectable()
@@ -86,6 +87,8 @@ export class AppealService {
         });
       }
 
+      let resourceId = body.resourceId ? String(body.resourceId) : undefined;
+
       if (!isPrivilegedRequester) {
         if (!requesterMemberId) {
           throw new ForbiddenException({
@@ -97,7 +100,8 @@ export class AppealService {
 
         if (submissionMemberId !== requesterMemberId) {
           throw new ForbiddenException({
-            message: `Only the submission owner can create this appeal.`,
+            message:
+              'Only the submission owner can create an appeal for this review item comment.',
             code: 'APPEAL_CREATE_FORBIDDEN',
             details: {
               requesterMemberId,
@@ -107,17 +111,65 @@ export class AppealService {
           });
         }
 
-        if (body.resourceId && body.resourceId !== submissionMemberId) {
-          throw new BadRequestException({
+        const submitterResource = await this.findSubmitterResource(
+          challengeId,
+          requesterMemberId,
+        );
+
+        if (!submitterResource) {
+          throw new ForbiddenException({
             message:
-              'Submitters cannot appeal a review item comment for a review that is not their own.',
-            code: 'RESOURCE_ID_MISMATCH',
+              'You must be registered on this challenge as a submitter to create an appeal.',
+            code: 'APPEAL_CREATE_FORBIDDEN',
             details: {
-              requestedResourceId: body.resourceId,
-              submissionMemberId,
+              challengeId,
+              requesterMemberId,
             },
           });
         }
+
+        if (resourceId && resourceId !== submitterResource.id) {
+          throw new BadRequestException({
+            message:
+              'Submitters cannot override the resourceId when creating an appeal.',
+            code: 'RESOURCE_ID_MISMATCH',
+            details: {
+              requestedResourceId: resourceId,
+              expectedResourceId: submitterResource.id,
+            },
+          });
+        }
+
+        resourceId = submitterResource.id
+          ? String(submitterResource.id)
+          : undefined;
+      } else {
+        if (!resourceId && submissionMemberId) {
+          const submitterResource = await this.findSubmitterResource(
+            challengeId,
+            submissionMemberId,
+          );
+          resourceId = submitterResource?.id
+            ? String(submitterResource.id)
+            : resourceId;
+        }
+
+        if (!resourceId) {
+          resourceId = submissionMemberId || resourceId;
+        }
+      }
+
+      if (!resourceId) {
+        throw new BadRequestException({
+          message:
+            'Unable to determine the resourceId for this appeal. Please provide a valid resourceId.',
+          code: 'MISSING_RESOURCE_ID',
+          details: {
+            challengeId,
+            submissionMemberId,
+            requestedResourceId: body.resourceId,
+          },
+        });
       }
 
       this.ensureAppealPermission(
@@ -132,7 +184,7 @@ export class AppealService {
       const data = await this.prisma.appeal.create({
         data: {
           ...body,
-          resourceId: submissionMemberId,
+          resourceId,
           content: trimmedContent,
         },
       });
@@ -747,6 +799,24 @@ export class AppealService {
     }
 
     return reviewerMemberId;
+  }
+
+  private async findSubmitterResource(challengeId: string, memberId: string) {
+    if (!challengeId || !memberId) {
+      return null;
+    }
+
+    const resources = await this.resourcePrisma.resource.findMany({
+      where: {
+        challengeId,
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return resources.find(
+      (resource) => String(resource.memberId) === String(memberId),
+    );
   }
 
   private async ensureChallengeAllowsAppealChange(
