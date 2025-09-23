@@ -406,10 +406,13 @@ export class AiWorkflowService {
         );
       }
 
-      this.logger.debug(challenge);
-      this.logger.debug('Challenge debug');
-
-      // if ([ChallengeStatus.COMPLETED, ChallengeStatus.ACTIVE])
+      const aiWorkflowAllowedPhases = ['Submission', 'Review', 'Iterative Review'];
+      const isNotInSubmissionOrReviewPhases = challenge.phases?.some(item => aiWorkflowAllowedPhases.includes(item.name));
+      if (challenge.status !== ChallengeStatus.COMPLETED || isNotInSubmissionOrReviewPhases) {
+        throw new InternalServerErrorException(
+          `Challenge is either not completed or its not in one of these phases ${aiWorkflowAllowedPhases.join(',')}`,
+        );
+      }
 
       return await this.prisma.aiWorkflowRun.create({
         data: {
