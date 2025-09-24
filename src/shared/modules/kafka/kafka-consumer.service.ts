@@ -4,16 +4,37 @@ import {
   OnModuleDestroy,
   OnApplicationBootstrap,
 } from '@nestjs/common';
-import { Kafka, Consumer, Producer, KafkaMessage, SASLOptions } from 'kafkajs';
+import {
+  Consumer,
+  Producer,
+  type Message,
+  MessagesStream,
+  type ConsumerOptions,
+  type ProducerOptions,
+  type SASLOptions as PlatformaticSASLOptions,
+} from '@platformatic/kafka';
 import { KafkaHandlerRegistry } from './kafka-handler.registry';
 import { LoggerService } from '../global/logger.service';
+
+export type KafkaSaslMechanism =
+  | 'plain'
+  | 'scram-sha-256'
+  | 'scram-sha-512'
+  | 'oauthbearer';
+
+export interface KafkaSaslOptions {
+  mechanism: KafkaSaslMechanism;
+  username?: string;
+  password?: string;
+  token?: string;
+}
 
 export interface KafkaModuleOptions {
   brokers: string[];
   clientId: string;
   groupId: string;
   ssl?: boolean;
-  sasl?: SASLOptions;
+  sasl?: KafkaSaslOptions;
   connectionTimeout?: number;
   requestTimeout?: number;
   retry?: {
@@ -26,116 +47,173 @@ export interface KafkaModuleOptions {
     topicSuffix: string;
     maxRetries: number;
   };
+  disabled?: boolean;
 }
 
 @Injectable()
 export class KafkaConsumerService
   implements OnModuleInit, OnModuleDestroy, OnApplicationBootstrap
 {
-  private kafka: Kafka;
-  private consumer: Consumer;
-  private producer: Producer;
+  private consumer?: Consumer<Buffer, Buffer, Buffer, Buffer>;
+  private producer?: Producer<Buffer, Buffer, Buffer, Buffer>;
+  private stream?: MessagesStream<Buffer, Buffer, Buffer, Buffer>;
+  private consumerLoop?: Promise<void>;
   private logger: LoggerService;
   private messageRetryCount: Map<string, number> = new Map();
+  private readonly isDisabled: boolean;
 
   constructor(
     private readonly options: KafkaModuleOptions,
     private readonly handlerRegistry: KafkaHandlerRegistry,
   ) {
     this.logger = LoggerService.forRoot('KafkaConsumerService');
+    this.isDisabled = options.disabled ?? false;
   }
 
   onModuleInit() {
+    if (this.isDisabled) {
+      this.logger.warn(
+        'Kafka consumer disabled via DISABLE_KAFKA environment variable.',
+      );
+      return;
+    }
     this.connect();
   }
 
   async onApplicationBootstrap() {
-    // await this.subscribeToTopics();
-    // await this.startConsumer();
+    if (this.isDisabled) {
+      return;
+    }
+    await this.startConsumer();
   }
 
   async onModuleDestroy() {
+    if (this.isDisabled) {
+      return;
+    }
     await this.disconnect();
   }
 
   connect(): void {
     try {
-      this.kafka = new Kafka({
-        clientId: this.options.clientId,
-        brokers: this.options.brokers,
-        ssl: this.options.ssl || false,
-        sasl: this.options.sasl,
-        connectionTimeout: this.options.connectionTimeout || 10000,
-        requestTimeout: this.options.requestTimeout || 30000,
-        retry: this.options.retry || {
-          retries: 5,
-          initialRetryTime: 100,
-          maxRetryTime: 30000,
-        },
-      });
+      this.consumer = new Consumer(this.createConsumerOptions());
+      this.producer = new Producer(this.createProducerOptions());
 
-      this.consumer = this.kafka.consumer({
-        groupId: this.options.groupId,
-      });
-
-      this.producer = this.kafka.producer();
-
-      this.logger.log('Kafka client and consumer initialized successfully');
+      this.logger.log('Kafka consumer and producer initialized successfully');
     } catch (error) {
-      this.logger.error('Failed to initialize Kafka client', error);
+      const trace =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      this.logger.error('Failed to initialize Kafka client', trace);
       throw error;
     }
   }
 
   async disconnect(): Promise<void> {
     try {
+      if (this.stream) {
+        await this.stream.close();
+        this.stream.removeAllListeners();
+        this.stream = undefined;
+      }
+
+      if (this.consumerLoop) {
+        try {
+          await this.consumerLoop;
+        } catch (error) {
+          const trace =
+            error instanceof Error
+              ? (error.stack ?? error.message)
+              : String(error);
+          this.logger.error('Kafka consumer loop terminated with error', trace);
+        } finally {
+          this.consumerLoop = undefined;
+        }
+      }
+
       if (this.consumer) {
-        await this.consumer.disconnect();
+        await Promise.resolve(this.consumer.close(true));
         this.logger.log('Kafka consumer disconnected successfully');
       }
+
       if (this.producer) {
-        await this.producer.disconnect();
+        await Promise.resolve(this.producer.close());
         this.logger.log('Kafka producer disconnected successfully');
       }
     } catch (error) {
-      this.logger.error('Error during Kafka disconnect', error);
+      const trace =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      this.logger.error('Error during Kafka disconnect', trace);
     }
   }
 
-  async subscribeToTopics(): Promise<void> {
+  subscribeToTopics(): void {
+    const topics = this.handlerRegistry.getAllTopics();
+
+    if (topics.length === 0) {
+      this.logger.warn(
+        'No topics registered for subscription. Skipping Kafka initialization.',
+      );
+      return;
+    }
+
+    this.logger.log({
+      message: 'Kafka topics registered for consumption',
+      topics,
+    });
+  }
+
+  private async startConsumer(): Promise<void> {
+    if (!this.consumer || !this.producer) {
+      throw new Error('Kafka consumer is not initialized');
+    }
+
+    const topics = this.handlerRegistry.getAllTopics();
+
+    if (topics.length === 0) {
+      this.logger.warn(
+        'No topics registered for subscription. Skipping Kafka consumer start.',
+      );
+      return;
+    }
+
     try {
-      const topics = this.handlerRegistry.getAllTopics();
+      await this.producer.connectToBrokers(null);
 
-      if (topics.length === 0) {
-        this.logger.warn(
-          'No topics registered for subscription. Skipping Kafka initialization.',
-        );
-        return;
-      }
+      this.stream = await this.consumer.consume({
+        topics,
+        autocommit: false,
+      });
 
-      for (const topic of topics) {
-        await this.consumer.subscribe({ topic });
-        this.logger.log(`Subscribed to topic: ${topic}`);
-      }
+      this.stream.on('error', (error) => {
+        const trace =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+        this.logger.error('Kafka consumer stream error', trace);
+      });
+
+      this.consumerLoop = this.consumeStream(this.stream);
+
+      this.logger.log('Kafka consumer started successfully');
     } catch (error) {
-      this.logger.error('Failed to subscribe to topics', error);
+      const trace =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      this.logger.error('Failed to start Kafka consumer', trace);
       throw error;
     }
   }
 
-  private async startConsumer(): Promise<void> {
+  private async consumeStream(
+    stream: MessagesStream<Buffer, Buffer, Buffer, Buffer>,
+  ): Promise<void> {
     try {
-      await this.producer.connect();
-
-      await this.consumer.run({
-        eachMessage: async ({ topic, partition, message }) => {
-          await this.processMessage(topic, partition, message);
-        },
-      });
-
-      this.logger.log('Kafka consumer started successfully');
+      for await (const message of stream) {
+        await this.processMessage(message.topic, message.partition, message);
+      }
     } catch (error) {
-      this.logger.error('Failed to start Kafka consumer', error);
+      const trace =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      this.logger.error('Kafka consumer stream processing failed', trace);
       throw error;
     }
   }
@@ -143,114 +221,148 @@ export class KafkaConsumerService
   async processMessage(
     topic: string,
     partition: number,
-    message: KafkaMessage,
+    message: Message<Buffer, Buffer, Buffer, Buffer>,
   ): Promise<void> {
     const startTime = Date.now();
-    const messageKey = `${topic}-${partition}-${message.offset}`;
+    const offsetString = message.offset.toString();
+    const messageKey = `${topic}-${partition}-${offsetString}`;
 
-    try {
-      this.logger.log({
-        message: 'Received Kafka message',
-        topic,
-        partition,
-        offset: message.offset,
-        timestamp: message.timestamp,
-      });
+    this.logger.log({
+      message: 'Received Kafka message',
+      topic,
+      partition,
+      offset: offsetString,
+      timestamp: message.timestamp?.toString(),
+    });
 
-      const handler = this.handlerRegistry.getHandler(topic);
+    const handler = this.handlerRegistry.getHandler(topic);
 
-      if (!handler) {
-        this.logger.warn(`No handler registered for topic: ${topic}`);
-        return;
-      }
+    if (!handler) {
+      this.logger.warn(`No handler registered for topic: ${topic}`);
+      await this.commitMessage(message);
+      return;
+    }
 
-      let payload;
+    let payload: any = null;
+
+    if (message.value) {
       try {
-        payload = message.value ? JSON.parse(message.value.toString()) : null;
+        payload = JSON.parse(message.value.toString());
       } catch (parseError) {
+        const trace =
+          parseError instanceof Error
+            ? (parseError.stack ?? parseError.message)
+            : String(parseError);
         this.logger.error(
           `Failed to parse message payload for topic ${topic}`,
-          parseError,
+          trace,
         );
         await this.sendToDLQ(topic, message, 'Parse error');
+        await this.commitMessage(message);
         return;
       }
+    }
 
-      this.logger.log({
-        message: 'Processing message with handler',
-        topic,
-        handlerName: handler.constructor.name,
-      });
+    this.logger.log({
+      message: 'Processing message with handler',
+      topic,
+      handlerName: handler.constructor.name,
+    });
 
-      await handler.handle(payload);
+    let attempt = this.messageRetryCount.get(messageKey) ?? 0;
 
-      // Reset retry count on successful processing
-      this.messageRetryCount.delete(messageKey);
+    while (true) {
+      try {
+        await handler.handle(payload);
+        this.messageRetryCount.delete(messageKey);
 
-      const processingTime = Date.now() - startTime;
-      this.logger.log({
-        message: 'Message processed successfully',
-        topic,
-        processingTime: `${processingTime}ms`,
-      });
-    } catch (error) {
-      const processingTime = Date.now() - startTime;
-      this.logger.error({
-        message: 'Failed to process message',
-        topic,
-        error: error.message,
-        processingTime: `${processingTime}ms`,
-      });
+        const processingTime = Date.now() - startTime;
+        this.logger.log({
+          message: 'Message processed successfully',
+          topic,
+          processingTime: `${processingTime}ms`,
+        });
 
-      await this.handleFailedMessage(topic, message, error, messageKey);
+        await this.commitMessage(message);
+        return;
+      } catch (error) {
+        const processingTime = Date.now() - startTime;
+        this.logger.error({
+          message: 'Failed to process message',
+          topic,
+          error: (error as Error).message,
+          attempt: attempt + 1,
+          processingTime: `${processingTime}ms`,
+        });
+
+        const shouldRetry = await this.handleFailedMessage(
+          topic,
+          message,
+          error as Error,
+          messageKey,
+          attempt,
+        );
+
+        if (!shouldRetry) {
+          this.messageRetryCount.delete(messageKey);
+          await this.commitMessage(message);
+          return;
+        }
+
+        attempt += 1;
+        this.messageRetryCount.set(messageKey, attempt);
+
+        await this.wait(this.getRetryDelay(attempt));
+      }
     }
   }
 
   private async handleFailedMessage(
     topic: string,
-    message: KafkaMessage,
+    message: Message<Buffer, Buffer, Buffer, Buffer>,
     error: Error,
     messageKey: string,
-  ): Promise<void> {
+    currentRetryCount: number,
+  ): Promise<boolean> {
     if (!this.options.dlq?.enabled) {
       this.logger.error({
         message: 'Message processing failed and DLQ is disabled',
         topic,
         error: error.message,
       });
-      return;
+      return false;
     }
 
-    const currentRetryCount = this.messageRetryCount.get(messageKey) || 0;
     const maxRetries = this.options.dlq.maxRetries || 3;
 
     if (currentRetryCount < maxRetries) {
-      this.messageRetryCount.set(messageKey, currentRetryCount + 1);
       this.logger.warn({
         message: `Message processing failed, retry ${currentRetryCount + 1}/${maxRetries}`,
         topic,
         messageKey,
         error: error.message,
       });
-      throw error; // Re-throw to trigger Kafka's retry mechanism
-    } else {
-      this.logger.error({
-        message: `Message processing failed after ${maxRetries} retries, sending to DLQ`,
-        topic,
-        messageKey,
-        error: error.message,
-      });
-      await this.sendToDLQ(topic, message, error.message);
-      this.messageRetryCount.delete(messageKey);
+
+      return true;
     }
+
+    this.logger.error({
+      message: `Message processing failed after ${maxRetries} retries, sending to DLQ`,
+      topic,
+      messageKey,
+      error: error.message,
+    });
+
+    await this.sendToDLQ(topic, message, error.message);
+    return false;
   }
 
   private async sendToDLQ(
     originalTopic: string,
-    message: KafkaMessage,
+    message: Message<Buffer, Buffer, Buffer, Buffer>,
     errorReason: string,
   ): Promise<void> {
-    if (!this.options.dlq?.enabled) {
+    if (!this.options.dlq?.enabled || !this.producer) {
       return;
     }
 
@@ -259,28 +371,27 @@ export class KafkaConsumerService
 
       const dlqMessage = {
         originalTopic,
-        originalPartition: 0, // Will be set by the partition parameter
-        originalOffset: message.offset,
-        originalTimestamp: message.timestamp,
+        originalPartition: message.partition,
+        originalOffset: message.offset.toString(),
+        originalTimestamp: message.timestamp?.toString(),
         originalKey: message.key?.toString(),
         originalValue: message.value?.toString(),
         errorReason,
         failedAt: new Date().toISOString(),
-        headers: message.headers,
+        headers: this.extractHeaders(message),
       };
 
       await this.producer.send({
-        topic: dlqTopic,
         messages: [
           {
+            topic: dlqTopic,
             key: message.key,
-            value: JSON.stringify(dlqMessage),
-            headers: {
-              ...message.headers,
+            value: Buffer.from(JSON.stringify(dlqMessage)),
+            headers: this.buildProducerHeaders(message, {
               'dlq-original-topic': originalTopic,
               'dlq-error-reason': errorReason,
               'dlq-failed-at': new Date().toISOString(),
-            },
+            }),
           },
         ],
       });
@@ -296,8 +407,185 @@ export class KafkaConsumerService
         message: 'Failed to send message to DLQ',
         originalTopic,
         errorReason,
-        dlqError: dlqError.message,
+        dlqError:
+          dlqError instanceof Error ? dlqError.message : String(dlqError),
       });
     }
+  }
+
+  private extractHeaders(
+    message: Message<Buffer, Buffer, Buffer, Buffer>,
+  ): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    for (const [headerKey, headerValue] of message.headers.entries()) {
+      headers[headerKey.toString()] = headerValue.toString();
+    }
+
+    return headers;
+  }
+
+  private buildProducerHeaders(
+    message: Message<Buffer, Buffer, Buffer, Buffer>,
+    extras: Record<string, string>,
+  ): Record<string, Buffer> {
+    const headers: Record<string, Buffer> = {};
+
+    for (const [headerKey, headerValue] of message.headers.entries()) {
+      headers[headerKey.toString()] = headerValue;
+    }
+
+    for (const [key, value] of Object.entries(extras)) {
+      headers[key] = Buffer.from(value);
+    }
+
+    return headers;
+  }
+
+  private async commitMessage(
+    message: Message<Buffer, Buffer, Buffer, Buffer>,
+  ): Promise<void> {
+    try {
+      await message.commit();
+    } catch (commitError) {
+      const error =
+        commitError instanceof Error
+          ? commitError
+          : new Error(String(commitError));
+      this.logger.error(
+        'Failed to commit message offset',
+        error.stack ?? error.message,
+      );
+    }
+  }
+
+  private async wait(delayMs: number): Promise<void> {
+    if (delayMs <= 0) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  private getRetryDelay(attempt: number): number {
+    const baseDelay = this.options.retry?.initialRetryTime ?? 100;
+    const maxDelay = this.options.retry?.maxRetryTime ?? 30000;
+    const exponent = Math.max(attempt - 1, 0);
+    const calculatedDelay = baseDelay * Math.pow(2, exponent);
+
+    return Math.min(calculatedDelay, maxDelay);
+  }
+
+  private createConsumerOptions(): ConsumerOptions<
+    Buffer,
+    Buffer,
+    Buffer,
+    Buffer
+  > {
+    const consumerOptions: ConsumerOptions<Buffer, Buffer, Buffer, Buffer> = {
+      clientId: this.options.clientId,
+      bootstrapBrokers: this.options.brokers,
+      groupId: this.options.groupId,
+      autocommit: false,
+    };
+
+    if (this.options.connectionTimeout !== undefined) {
+      consumerOptions.connectTimeout = this.options.connectionTimeout;
+    }
+
+    if (this.options.requestTimeout !== undefined) {
+      consumerOptions.timeout = this.options.requestTimeout;
+      consumerOptions.maxWaitTime = this.options.requestTimeout;
+    }
+
+    if (this.options.retry?.retries !== undefined) {
+      consumerOptions.retries = this.options.retry.retries;
+    }
+
+    if (this.options.retry?.initialRetryTime !== undefined) {
+      consumerOptions.retryDelay = this.options.retry.initialRetryTime;
+    }
+
+    const sasl = this.mapSaslOptions(this.options.sasl);
+    if (sasl) {
+      consumerOptions.sasl = sasl;
+    }
+
+    if (this.options.ssl) {
+      consumerOptions.tls = {};
+    }
+
+    return consumerOptions;
+  }
+
+  private createProducerOptions(): ProducerOptions<
+    Buffer,
+    Buffer,
+    Buffer,
+    Buffer
+  > {
+    const producerOptions: ProducerOptions<Buffer, Buffer, Buffer, Buffer> = {
+      clientId: this.options.clientId,
+      bootstrapBrokers: this.options.brokers,
+    };
+
+    if (this.options.connectionTimeout !== undefined) {
+      producerOptions.connectTimeout = this.options.connectionTimeout;
+    }
+
+    if (this.options.requestTimeout !== undefined) {
+      producerOptions.timeout = this.options.requestTimeout;
+    }
+
+    if (this.options.retry?.retries !== undefined) {
+      producerOptions.retries = this.options.retry.retries;
+    }
+
+    if (this.options.retry?.initialRetryTime !== undefined) {
+      producerOptions.retryDelay = this.options.retry.initialRetryTime;
+    }
+
+    const sasl = this.mapSaslOptions(this.options.sasl);
+    if (sasl) {
+      producerOptions.sasl = sasl;
+    }
+
+    if (this.options.ssl) {
+      producerOptions.tls = {};
+    }
+
+    return producerOptions;
+  }
+
+  private mapSaslOptions(
+    sasl?: KafkaSaslOptions,
+  ): PlatformaticSASLOptions | undefined {
+    if (!sasl) {
+      return undefined;
+    }
+
+    const mechanismMap: Record<
+      KafkaSaslMechanism,
+      PlatformaticSASLOptions['mechanism']
+    > = {
+      plain: 'PLAIN',
+      'scram-sha-256': 'SCRAM-SHA-256',
+      'scram-sha-512': 'SCRAM-SHA-512',
+      oauthbearer: 'OAUTHBEARER',
+    };
+
+    const mechanism = mechanismMap[sasl.mechanism];
+
+    if (!mechanism) {
+      this.logger.warn(`Unsupported SASL mechanism: ${sasl.mechanism}`);
+      return undefined;
+    }
+
+    return {
+      mechanism,
+      username: sasl.username,
+      password: sasl.password,
+      token: sasl.token,
+    };
   }
 }

@@ -63,6 +63,7 @@ export class KafkaModule {
         topicSuffix: process.env.KAFKA_DLQ_TOPIC_SUFFIX || '.dlq',
         maxRetries: parseInt(process.env.KAFKA_DLQ_MAX_RETRIES || '3'),
       },
+      disabled: process.env.DISABLE_KAFKA === 'true',
     };
 
     return this.register(kafkaOptions);
