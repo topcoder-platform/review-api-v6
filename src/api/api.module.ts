@@ -33,6 +33,8 @@ import { ReviewService } from './review/review.service';
 import { ContactRequestsService } from './contact/contactRequests.service';
 import { ProjectResultService } from './project-result/projectResult.service';
 import { ProjectResultController } from './project-result/projectResult.controller';
+import { MyReviewController } from './my-review/myReview.controller';
+import { MyReviewService } from './my-review/myReview.service';
 
 @Module({
   imports: [
@@ -53,6 +55,7 @@ import { ProjectResultController } from './project-result/projectResult.controll
     ReviewOpportunityController,
     ReviewApplicationController,
     ReviewHistoryController,
+    MyReviewController,
     WebhookController,
     AiWorkflowController,
     ProjectResultController,
@@ -73,6 +76,7 @@ import { ProjectResultController } from './project-result/projectResult.controll
     AiWorkflowService,
     ProjectResultService,
     ReviewTypeService,
+    MyReviewService,
   ],
 })
 export class ApiModule {}
