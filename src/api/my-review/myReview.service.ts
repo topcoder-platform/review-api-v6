@@ -171,7 +171,9 @@ export class MyReviewService {
       FROM challenges."Challenge" c
       ${joinClause}
       WHERE ${whereClause}
-      ORDER BY c.name ASC
+      ORDER BY
+        c."createdAt" DESC NULLS LAST,
+        c.name ASC
     `;
 
     const challengeQueryDetails = rowQuery.inspect();
