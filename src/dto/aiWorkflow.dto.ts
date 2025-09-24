@@ -73,12 +73,14 @@ export class CreateAiWorkflowRunDto {
   submissionId: string;
 
   @ApiProperty()
+  @IsOptional()
   @IsDate()
   @IsNotEmpty()
   @Transform(({ value }) => new Date(value))
-  startedAt: Date;
+  startedAt?: Date;
 
   @ApiProperty()
+  @IsOptional()
   @IsDate()
   @IsNotEmpty()
   @Transform(({ value }) => (value ? new Date(value) : undefined))
