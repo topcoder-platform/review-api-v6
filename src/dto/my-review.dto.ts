@@ -17,6 +17,15 @@ export class MyReviewFilterDto {
   @IsOptional()
   @IsString()
   challengeTypeName?: string;
+
+  @ApiProperty({
+    description:
+      'Whether or not to include current challenges or past challenges',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  past?: string;
 }
 
 export class MyReviewSummaryDto {

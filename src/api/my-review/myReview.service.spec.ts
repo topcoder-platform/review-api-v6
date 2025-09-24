@@ -81,4 +81,30 @@ describe('MyReviewService', () => {
     expect(result).toEqual([]);
     expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
   });
+
+  it('queries past challenge statuses when past filter is true', async () => {
+    const pastStatuses = [
+      'COMPLETED',
+      'CANCELLED',
+      'CANCELLED_FAILED_REVIEW',
+      'CANCELLED_FAILED_SCREENING',
+      'CANCELLED_ZERO_SUBMISSIONS',
+      'CANCELLED_CLIENT_REQUEST',
+    ];
+
+    challengePrismaMock.$queryRaw.mockResolvedValueOnce([]);
+
+    const result = await service.getMyReviews(
+      { isMachine: false, userId: '123' },
+      { past: 'true' },
+    );
+
+    expect(result).toEqual([]);
+    const query = challengePrismaMock.$queryRaw.mock.calls[0][0];
+    const queryDetails = query.inspect();
+
+    expect(queryDetails.sql).toContain('c.status IN');
+    expect(queryDetails.values).toEqual(expect.arrayContaining(pastStatuses));
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+  });
 });

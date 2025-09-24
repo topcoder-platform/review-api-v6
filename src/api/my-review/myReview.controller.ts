@@ -31,9 +31,10 @@ export class MyReviewController {
   )
   @Scopes(Scope.ReadReview)
   @ApiOperation({
-    summary: 'Return active challenges assigned to the authenticated user',
+    summary:
+      'Return active or past challenges assigned to the authenticated user',
     description:
-      'Lists active challenges and review progress for the authenticated user. Admins receive all active challenges.',
+      'Lists challenges and review progress for the authenticated user. Admins receive matching challenges.',
   })
   @ApiQuery({
     name: 'challengeTypeId',
@@ -44,6 +45,12 @@ export class MyReviewController {
     name: 'challengeTypeName',
     required: false,
     description: 'Filter by exact challenge type name (case-insensitive)',
+  })
+  @ApiQuery({
+    name: 'past',
+    required: false,
+    description:
+      'When true, returns past challenges instead of active ones (default: false)',
   })
   @ApiResponse({
     status: 200,

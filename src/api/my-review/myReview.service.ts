@@ -23,6 +23,15 @@ interface ReviewProgressRow {
   completedReviews: bigint;
 }
 
+const PAST_CHALLENGE_STATUSES = [
+  'COMPLETED',
+  'CANCELLED',
+  'CANCELLED_FAILED_REVIEW',
+  'CANCELLED_FAILED_SCREENING',
+  'CANCELLED_ZERO_SUBMISSIONS',
+  'CANCELLED_CLIENT_REQUEST',
+] as const;
+
 const joinSqlFragments = (
   fragments: Prisma.Sql[],
   separator: Prisma.Sql,
@@ -66,7 +75,22 @@ export class MyReviewService {
     const challengeTypeId = filters.challengeTypeId?.trim();
     const challengeTypeName = filters.challengeTypeName?.trim();
 
-    const whereFragments: Prisma.Sql[] = [Prisma.sql`c.status = 'ACTIVE'`];
+    const shouldFetchPastChallenges =
+      typeof filters.past === 'string'
+        ? filters.past.toLowerCase() === 'true'
+        : false;
+
+    const whereFragments: Prisma.Sql[] = [];
+
+    if (shouldFetchPastChallenges) {
+      const statusFragments = PAST_CHALLENGE_STATUSES.map(
+        (status) => Prisma.sql`${status}::"ChallengeStatusEnum"`,
+      );
+      const statusList = joinSqlFragments(statusFragments, Prisma.sql`, `);
+      whereFragments.push(Prisma.sql`c.status IN (${statusList})`);
+    } else {
+      whereFragments.push(Prisma.sql`c.status = 'ACTIVE'`);
+    }
 
     const joins: Prisma.Sql[] = [];
 
