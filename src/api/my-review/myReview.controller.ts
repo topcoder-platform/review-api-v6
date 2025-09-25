@@ -9,6 +9,7 @@ import {
 import { Request } from 'express';
 import { MyReviewService } from './myReview.service';
 import { MyReviewFilterDto, MyReviewSummaryDto } from 'src/dto/my-review.dto';
+import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
@@ -60,8 +61,9 @@ export class MyReviewController {
   async getMyReviews(
     @Req() req: Request,
     @Query() filters: MyReviewFilterDto,
-  ): Promise<MyReviewSummaryDto[]> {
+    @Query() paginationDto?: PaginationDto,
+  ): Promise<PaginatedResponse<MyReviewSummaryDto>> {
     const authUser = req['user'];
-    return this.myReviewService.getMyReviews(authUser, filters);
+    return this.myReviewService.getMyReviews(authUser, filters, paginationDto);
   }
 }

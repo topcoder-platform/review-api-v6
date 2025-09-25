@@ -4,6 +4,7 @@ import { ChallengePrismaService } from 'src/shared/modules/global/challenge-pris
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { MyReviewFilterDto, MyReviewSummaryDto } from 'src/dto/my-review.dto';
+import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 
 interface ChallengeSummaryRow {
@@ -60,16 +61,23 @@ export class MyReviewService {
   async getMyReviews(
     authUser: JwtUser,
     filters: MyReviewFilterDto,
-  ): Promise<MyReviewSummaryDto[]> {
+    paginationDto?: PaginationDto,
+  ): Promise<PaginatedResponse<MyReviewSummaryDto>> {
     if (!authUser || (!authUser.userId && !isAdmin(authUser))) {
       throw new UnauthorizedException('User information is required');
     }
 
     const adminUser = isAdmin(authUser);
     const normalizedUserId = authUser.userId ? String(authUser.userId) : null;
+    const rawPage = paginationDto?.page ?? 1;
+    const rawPerPage = paginationDto?.perPage ?? 10;
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+    const perPage =
+      Number.isFinite(rawPerPage) && rawPerPage > 0 ? rawPerPage : 10;
+    const offset = (page - 1) * perPage;
 
     this.logger.log(
-      `Fetching active challenges for user ${normalizedUserId ?? 'admin'} with filters ${JSON.stringify(filters)}`,
+      `Fetching active challenges for user ${normalizedUserId ?? 'admin'} with filters ${JSON.stringify(filters)} (page ${page}, perPage ${perPage})`,
     );
 
     const challengeTypeId = filters.challengeTypeId?.trim();
@@ -158,6 +166,38 @@ export class MyReviewService {
     const joinClause = joinSqlFragments(joins, Prisma.sql``);
     const whereClause = joinSqlFragments(whereFragments, Prisma.sql` AND `);
 
+    const countQuery = Prisma.sql`
+      SELECT COUNT(DISTINCT c.id) AS "total"
+      FROM challenges."Challenge" c
+      ${joinClause}
+      WHERE ${whereClause}
+    `;
+
+    const countQueryDetails = countQuery.inspect();
+    this.logger.debug({
+      message: 'Executing challenge count query',
+      sql: countQueryDetails.sql,
+      parameters: countQueryDetails.values,
+    });
+
+    const countResult =
+      await this.challengePrisma.$queryRaw<{ total: bigint }[]>(countQuery);
+    const totalCountBigInt = countResult?.[0]?.total ?? 0n;
+    const totalCount = Number(totalCountBigInt);
+    const totalPages = totalCount ? Math.ceil(totalCount / perPage) : 0;
+
+    if (!totalCount) {
+      return {
+        data: [],
+        meta: {
+          page,
+          perPage,
+          totalCount: 0,
+          totalPages: 0,
+        },
+      };
+    }
+
     const rowQuery = Prisma.sql`
       SELECT
         c.id AS "challengeId",
@@ -174,6 +214,8 @@ export class MyReviewService {
       ORDER BY
         c."createdAt" DESC NULLS LAST,
         c.name ASC
+      LIMIT ${perPage}
+      OFFSET ${offset}
     `;
 
     const challengeQueryDetails = rowQuery.inspect();
@@ -187,7 +229,15 @@ export class MyReviewService {
       await this.challengePrisma.$queryRaw<ChallengeSummaryRow[]>(rowQuery);
 
     if (!challengeRows.length) {
-      return [];
+      return {
+        data: [],
+        meta: {
+          page,
+          perPage,
+          totalCount,
+          totalPages,
+        },
+      };
     }
 
     const challengeIds = Array.from(
@@ -202,7 +252,7 @@ export class MyReviewService {
     const now = Date.now();
     const adminRoleLabel = adminUser ? 'Admin' : null;
 
-    return challengeRows.map((row) => {
+    const data = challengeRows.map((row) => {
       const phaseEnd =
         row.currentPhaseActualEnd ?? row.currentPhaseScheduledEnd;
       let timeLeftSeconds = 0;
@@ -230,6 +280,16 @@ export class MyReviewService {
         reviewProgress,
       };
     });
+
+    return {
+      data,
+      meta: {
+        page,
+        perPage,
+        totalCount,
+        totalPages,
+      },
+    };
   }
 
   private async fetchReviewProgress(

@@ -27,18 +27,20 @@ describe('MyReviewService', () => {
     const now = new Date();
     const future = new Date(now.getTime() + 60_000);
 
-    challengePrismaMock.$queryRaw.mockResolvedValue([
-      {
-        challengeId: 'challenge-1',
-        challengeName: 'Test Challenge',
-        challengeTypeId: 'type-1',
-        challengeTypeName: 'Development',
-        currentPhaseName: 'Review',
-        currentPhaseScheduledEnd: future,
-        currentPhaseActualEnd: null,
-        resourceRoleName: null,
-      },
-    ]);
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: BigInt(1) }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-1',
+          challengeName: 'Test Challenge',
+          challengeTypeId: 'type-1',
+          challengeTypeName: 'Development',
+          currentPhaseName: 'Review',
+          currentPhaseScheduledEnd: future,
+          currentPhaseActualEnd: null,
+          resourceRoleName: null,
+        },
+      ]);
 
     prismaMock.$queryRaw.mockResolvedValue([
       {
@@ -50,8 +52,8 @@ describe('MyReviewService', () => {
 
     const result = await service.getMyReviews({ isMachine: true }, {});
 
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({
       challengeId: 'challenge-1',
       challengeName: 'Test Challenge',
       challengeTypeId: 'type-1',
@@ -60,7 +62,13 @@ describe('MyReviewService', () => {
       resourceRoleName: 'Admin',
       reviewProgress: 0.5,
     });
-    expect(result[0].timeLeftInCurrentPhase).toBeGreaterThan(0);
+    expect(result.data[0].timeLeftInCurrentPhase).toBeGreaterThan(0);
+    expect(result.meta).toEqual({
+      page: 1,
+      perPage: 10,
+      totalCount: 1,
+      totalPages: 1,
+    });
     expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
@@ -71,14 +79,22 @@ describe('MyReviewService', () => {
   });
 
   it('short-circuits when no challenges are found', async () => {
-    challengePrismaMock.$queryRaw.mockResolvedValue([]);
+    challengePrismaMock.$queryRaw.mockResolvedValueOnce([{ total: 0n }]);
 
     const result = await service.getMyReviews(
       { isMachine: true },
       { challengeTypeId: 'type-2' },
     );
 
-    expect(result).toEqual([]);
+    expect(result).toEqual({
+      data: [],
+      meta: {
+        page: 1,
+        perPage: 10,
+        totalCount: 0,
+        totalPages: 0,
+      },
+    });
     expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
   });
 
@@ -92,14 +108,22 @@ describe('MyReviewService', () => {
       'CANCELLED_CLIENT_REQUEST',
     ];
 
-    challengePrismaMock.$queryRaw.mockResolvedValueOnce([]);
+    challengePrismaMock.$queryRaw.mockResolvedValueOnce([{ total: 0n }]);
 
     const result = await service.getMyReviews(
       { isMachine: false, userId: '123' },
       { past: 'true' },
     );
 
-    expect(result).toEqual([]);
+    expect(result).toEqual({
+      data: [],
+      meta: {
+        page: 1,
+        perPage: 10,
+        totalCount: 0,
+        totalPages: 0,
+      },
+    });
     const query = challengePrismaMock.$queryRaw.mock.calls[0][0];
     const queryDetails = query.inspect();
 
