@@ -225,3 +225,42 @@ export class ReviewSummationResponseDto {
   })
   updatedBy: string | null;
 }
+
+export class ReviewSummationBatchResponseDto {
+  @ApiProperty({
+    description: 'Challenge identifier that was processed',
+    example: '3b0149a5-ff1c-4fd2-b861-1234567890ab',
+  })
+  challengeId: string;
+
+  @ApiProperty({
+    description: 'Stage of aggregation that was executed',
+    enum: ['INITIAL', 'FINAL'],
+    example: 'INITIAL',
+  })
+  stage: 'INITIAL' | 'FINAL';
+
+  @ApiProperty({
+    description: 'Total submissions considered for aggregation',
+    example: 5,
+  })
+  processedSubmissions: number;
+
+  @ApiProperty({
+    description: 'Number of review summations created during this run',
+    example: 3,
+  })
+  createdCount: number;
+
+  @ApiProperty({
+    description: 'Number of existing review summations that were updated',
+    example: 2,
+  })
+  updatedCount: number;
+
+  @ApiProperty({
+    description: 'Submissions skipped due to insufficient data',
+    example: 1,
+  })
+  skippedCount: number;
+}

@@ -26,6 +26,7 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import {
+  ReviewSummationBatchResponseDto,
   ReviewSummationQueryDto,
   ReviewSummationResponseDto,
   ReviewSummationRequestDto,
@@ -37,6 +38,7 @@ import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
 import { ReviewSummationService } from './review-summation.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { Request } from 'express';
 
 @ApiTags('ReviewSummations')
 @ApiBearerAuth()
@@ -180,6 +182,65 @@ export class ReviewSummationController {
   ): Promise<ReviewSummationResponseDto> {
     this.logger.log(`Getting review summation with ID: ${reviewSummationId}`);
     return this.service.getSummation(reviewSummationId);
+  }
+
+  @Post('/challenges/:challengeId/initial')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.UpdateReviewSummation)
+  @ApiOperation({
+    summary: 'Generate initial review summations for a challenge',
+    description:
+      'Roles: Admin | Scopes: update:review_summation. Creates or refreshes review summations using initial scores once the review phase is closed.',
+  })
+  @ApiParam({
+    name: 'challengeId',
+    description: 'The ID of the challenge to aggregate',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Summations generated successfully.',
+    type: ReviewSummationBatchResponseDto,
+  })
+  async generateInitialSummations(
+    @Req() req: Request,
+    @Param('challengeId') challengeId: string,
+  ): Promise<ReviewSummationBatchResponseDto> {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    this.logger.log(
+      `Generating initial review summations for challenge ${challengeId}`,
+    );
+    return this.service.generateInitialSummationsForChallenge(
+      authUser,
+      challengeId,
+    );
+  }
+
+  @Post('/challenges/:challengeId/final')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.UpdateReviewSummation)
+  @ApiOperation({
+    summary: 'Finalize review summations for a challenge',
+    description:
+      'Roles: Admin | Scopes: update:review_summation. Updates review summations with final scores once reviews are completed.',
+  })
+  @ApiParam({
+    name: 'challengeId',
+    description: 'The ID of the challenge to finalize',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Summations finalized successfully.',
+    type: ReviewSummationBatchResponseDto,
+  })
+  async finalizeSummations(
+    @Req() req: Request,
+    @Param('challengeId') challengeId: string,
+  ): Promise<ReviewSummationBatchResponseDto> {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    this.logger.log(
+      `Finalizing review summations for challenge ${challengeId}`,
+    );
+    return this.service.finalizeSummationsForChallenge(authUser, challengeId);
   }
 
   @Delete('/:reviewSummationId')

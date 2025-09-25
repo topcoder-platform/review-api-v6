@@ -1,10 +1,4 @@
-import {
-  Controller,
-  Post,
-  Body,
-  Req,
-  InternalServerErrorException,
-} from '@nestjs/common';
+import { Controller, Post, Body, Req } from '@nestjs/common';
 import {
   ApiOperation,
   ApiResponse,
@@ -12,6 +6,7 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
@@ -21,7 +16,6 @@ import {
   ContactRequestResponseDto,
 } from 'src/dto/contactRequest.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
-import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { ContactRequestsService } from './contactRequests.service';
 
@@ -31,10 +25,7 @@ import { ContactRequestsService } from './contactRequests.service';
 export class ContactRequestsController {
   private readonly logger: LoggerService;
 
-  constructor(
-    private readonly contactRequestsService: ContactRequestsService,
-    private readonly prismaErrorService: PrismaErrorService,
-  ) {
+  constructor(private readonly contactRequestsService: ContactRequestsService) {
     this.logger = LoggerService.forRoot('ContactRequestsController');
   }
 
@@ -57,21 +48,6 @@ export class ContactRequestsController {
     @Body() body: ContactRequestDto,
   ): Promise<ContactRequestResponseDto> {
     const authUser: JwtUser = req['user'] as JwtUser;
-    try {
-      return await this.contactRequestsService.createContactRequest(
-        authUser,
-        body,
-      );
-    } catch (error) {
-      const errorResponse = this.prismaErrorService.handleError(
-        error,
-        `creating contact request for challenge ${body.challengeId}`,
-      );
-      throw new InternalServerErrorException({
-        message: errorResponse.message,
-        code: errorResponse.code,
-        details: errorResponse.details,
-      });
-    }
+    return this.contactRequestsService.createContactRequest(authUser, body);
   }
 }
