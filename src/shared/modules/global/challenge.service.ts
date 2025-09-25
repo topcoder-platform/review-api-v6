@@ -404,7 +404,18 @@ export class ChallengeApiService {
         return false;
       }
 
-      return phase.isOpen;
+      if (phase.isOpen) {
+        return true;
+      }
+
+      const computedOpen = this.isPhaseWindowOpen(phase);
+      if (computedOpen) {
+        this.logger.debug(
+          `Derived '${phaseName}' phase open state from schedule for challenge ${challengeId}`,
+        );
+      }
+
+      return computedOpen;
     } catch (error) {
       this.logger.error(
         `Error checking phase status for challenge ${challengeId}:`,
@@ -412,6 +423,45 @@ export class ChallengeApiService {
       );
       throw error;
     }
+  }
+
+  private isPhaseWindowOpen(
+    phase: PhaseData,
+    referenceDate = new Date(),
+  ): boolean {
+    const start = this.parsePhaseDate(
+      phase.actualStartTime ?? phase.scheduledStartTime,
+    );
+    if (!start) {
+      return false;
+    }
+
+    if (referenceDate < start) {
+      return false;
+    }
+
+    const end = this.parsePhaseDate(
+      phase.actualEndTime ?? phase.scheduledEndTime,
+    );
+    if (end && referenceDate > end) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private parsePhaseDate(value?: string): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      this.logger.debug(`Could not parse phase date '${value}'`);
+      return undefined;
+    }
+
+    return parsed;
   }
 
   /**
