@@ -5,6 +5,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   CreateReviewApplicationDto,
   ReviewApplicationResponseDto,
@@ -13,6 +14,7 @@ import {
 } from 'src/dto/reviewApplication.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import {
   EventBusSendEmailPayload,
   EventBusService,
@@ -22,11 +24,20 @@ import { MemberService } from 'src/shared/modules/global/member.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 
+const RECENT_REVIEW_WINDOW_DAYS = 60;
+
+interface ReviewerMetricsRow {
+  memberId: string;
+  openReviews: bigint;
+  latestCompletedReviews: bigint;
+}
+
 @Injectable()
 export class ReviewApplicationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
+    private readonly challengePrisma: ChallengePrismaService,
     private readonly memberService: MemberService,
     private readonly eventBusService: EventBusService,
     private readonly prismaErrorService: PrismaErrorService,
@@ -166,7 +177,25 @@ export class ReviewApplicationService {
       const entityList = await this.prisma.reviewApplication.findMany({
         where: { opportunityId },
       });
-      return entityList.map((e) => this.buildResponse(e));
+      if (!entityList.length) {
+        return [];
+      }
+
+      const userIds = Array.from(
+        new Set(
+          entityList
+            .map((entity) =>
+              entity.userId != null ? String(entity.userId) : undefined,
+            )
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+
+      const reviewerMetrics = await this.getReviewerMetrics(userIds);
+
+      return entityList.map((entity) =>
+        this.buildResponse(entity, reviewerMetrics.get(String(entity.userId))),
+      );
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
@@ -178,6 +207,76 @@ export class ReviewApplicationService {
         details: errorResponse.details,
       });
     }
+  }
+
+  private async getReviewerMetrics(
+    userIds: string[],
+  ): Promise<
+    Map<string, { openReviews: number; latestCompletedReviews: number }>
+  > {
+    const metrics = new Map<
+      string,
+      { openReviews: number; latestCompletedReviews: number }
+    >();
+
+    const normalizedIds = Array.from(
+      new Set(
+        userIds
+          .map((id) => id?.trim())
+          .filter((id): id is string => Boolean(id && id.length > 0)),
+      ),
+    );
+
+    if (!normalizedIds.length) {
+      return metrics;
+    }
+
+    const memberIdList = Prisma.join(
+      normalizedIds.map((id) => Prisma.sql`${id}`),
+    );
+    const recentThreshold = new Date();
+    recentThreshold.setDate(
+      recentThreshold.getDate() - RECENT_REVIEW_WINDOW_DAYS,
+    );
+
+    const metricsQuery = Prisma.sql`
+      SELECT
+        r."memberId" AS "memberId",
+        COUNT(DISTINCT CASE WHEN c.status = 'ACTIVE' THEN c.id END)::bigint AS "openReviews",
+        COUNT(
+          DISTINCT CASE
+            WHEN c.status IN ('COMPLETED', 'CANCELLED_FAILED_REVIEW')
+             AND c."updatedAt" >= ${recentThreshold}
+            THEN c.id
+          END
+        )::bigint AS "latestCompletedReviews"
+      FROM resources."Resource" r
+      INNER JOIN challenges."Challenge" c
+        ON c.id = r."challengeId"
+      INNER JOIN resources."ResourceRole" rr
+        ON rr.id = r."roleId"
+      WHERE r."memberId" IN (${memberIdList})
+        AND LOWER(rr.name) LIKE '%reviewer%'
+      GROUP BY r."memberId"
+    `;
+
+    const rows =
+      await this.challengePrisma.$queryRaw<ReviewerMetricsRow[]>(metricsQuery);
+
+    rows.forEach((row) => {
+      metrics.set(row.memberId, {
+        openReviews: Number(row.openReviews),
+        latestCompletedReviews: Number(row.latestCompletedReviews),
+      });
+    });
+
+    normalizedIds
+      .filter((id) => !metrics.has(id))
+      .forEach((id) =>
+        metrics.set(id, { openReviews: 0, latestCompletedReviews: 0 }),
+      );
+
+    return metrics;
   }
 
   /**
@@ -415,7 +514,13 @@ export class ReviewApplicationService {
    * @param entity prisma entity
    * @returns response dto
    */
-  private buildResponse(entity): ReviewApplicationResponseDto {
+  private buildResponse(
+    entity,
+    metrics?: {
+      openReviews?: number;
+      latestCompletedReviews?: number;
+    },
+  ): ReviewApplicationResponseDto {
     const ret = new ReviewApplicationResponseDto();
     ret.id = entity.id;
     ret.userId = entity.userId;
@@ -424,6 +529,8 @@ export class ReviewApplicationService {
     ret.role = entity.role;
     ret.status = entity.status;
     ret.applicationDate = entity.createdAt;
+    ret.openReviews = metrics?.openReviews ?? 0;
+    ret.latestCompletedReviews = metrics?.latestCompletedReviews ?? 0;
     return ret;
   }
 }

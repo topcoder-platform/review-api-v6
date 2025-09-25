@@ -118,4 +118,18 @@ export class ReviewApplicationResponseDto {
     description: 'Review Application create time',
   })
   applicationDate: string;
+
+  @ApiProperty({
+    description:
+      'Number of active challenges where the applicant is currently a reviewer',
+    example: 3,
+  })
+  openReviews = 0;
+
+  @ApiProperty({
+    description:
+      'Number of review challenges completed in the past 60 days where the applicant was a reviewer',
+    example: 2,
+  })
+  latestCompletedReviews = 0;
 }
