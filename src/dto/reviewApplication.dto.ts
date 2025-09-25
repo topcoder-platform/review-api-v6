@@ -39,15 +39,15 @@ export const ReviewApplicationRoleOpportunityTypeMap: Record<
   ReviewApplicationRole,
   ReviewOpportunityType
 > = {
-  PRIMARY_REVIEWER: ReviewOpportunityType.REGULAR_REVIEW,
-  SECONDARY_REVIEWER: ReviewOpportunityType.REGULAR_REVIEW,
+  PRIMARY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
+  SECONDARY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
   PRIMARY_FAILURE_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
   ACCURACY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
   STRESS_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
   FAILURE_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
   SPECIFICATION_REVIEWER: ReviewOpportunityType.SPEC_REVIEW,
   ITERATIVE_REVIEWER: ReviewOpportunityType.ITERATIVE_REVIEW,
-  REVIEWER: ReviewOpportunityType.SCENARIOS_REVIEW,
+  REVIEWER: ReviewOpportunityType.REGULAR_REVIEW,
 };
 
 const allReviewApplicationRole = Object.values(ReviewApplicationRole);
