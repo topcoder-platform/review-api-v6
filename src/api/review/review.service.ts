@@ -19,6 +19,7 @@ import {
   mapReviewItemRequestToDto,
   mapReviewRequestToDto,
 } from 'src/dto/review.dto';
+import { Prisma } from '@prisma/client';
 import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
@@ -193,16 +194,26 @@ export class ReviewService {
     }
   }
 
-  private async recomputeAndUpdateReviewScores(reviewId: string) {
+  private async recomputeAndUpdateReviewScores(reviewId: string): Promise<{
+    initialScore: number | null;
+    finalScore: number | null;
+  } | null> {
     try {
       const review = await this.prisma.review.findUnique({
         where: { id: reviewId },
         select: {
           id: true,
           scorecardId: true,
+          initialScore: true,
+          finalScore: true,
         },
       });
-      if (!review?.scorecardId) return;
+      if (!review?.scorecardId) {
+        return {
+          initialScore: review?.initialScore ?? null,
+          finalScore: review?.finalScore ?? null,
+        };
+      }
 
       const items = await this.prisma.reviewItem.findMany({
         where: { reviewId },
@@ -217,21 +228,34 @@ export class ReviewService {
         review.scorecardId,
         items,
       );
-      await this.prisma.review.update({
-        where: { id: reviewId },
-        data: {
-          initialScore: scores.initialScore,
-          finalScore: scores.finalScore,
-        },
-      });
-      this.logger.debug(
-        `[recomputeAndUpdateReviewScores] Updated scores for review ${reviewId}: ${JSON.stringify(scores)}`,
-      );
+      const needsUpdate =
+        scores.initialScore !== review.initialScore ||
+        scores.finalScore !== review.finalScore;
+
+      if (needsUpdate) {
+        await this.prisma.review.update({
+          where: { id: reviewId },
+          data: {
+            initialScore: scores.initialScore,
+            finalScore: scores.finalScore,
+          },
+        });
+        this.logger.debug(
+          `[recomputeAndUpdateReviewScores] Updated scores for review ${reviewId}: ${JSON.stringify(scores)}`,
+        );
+      } else {
+        this.logger.debug(
+          `[recomputeAndUpdateReviewScores] Scores unchanged for review ${reviewId}.`,
+        );
+      }
+
+      return scores;
     } catch (e) {
       this.logger.error(
         `[recomputeAndUpdateReviewScores] Failed for review ${reviewId}`,
         e,
       );
+      return null;
     }
   }
 
@@ -1286,10 +1310,74 @@ export class ReviewService {
       }
     }
 
+    const incomingReviewItems =
+      'reviewItems' in body ? (body.reviewItems ?? undefined) : undefined;
+
+    const baseUpdateData = mapReviewRequestToDto(
+      'reviewItems' in body
+        ? ({ ...body, reviewItems: undefined } as ReviewPatchRequestDto)
+        : (body as ReviewPatchRequestDto),
+    );
+
+    const reviewItemsUpdate =
+      incomingReviewItems !== undefined
+        ? {
+            reviewItems: {
+              deleteMany: {},
+              create: incomingReviewItems.map((item) => {
+                const {
+                  reviewItemComments,
+                  managerComment,
+                  finalAnswer,
+                  reviewId: _ignoredReviewId,
+                  ...rest
+                } = item ?? {};
+                void _ignoredReviewId;
+
+                const { scorecardQuestionId, initialAnswer } = rest as {
+                  scorecardQuestionId: string;
+                  initialAnswer: string;
+                };
+
+                const reviewItemCreate: Record<string, unknown> = {
+                  scorecardQuestionId,
+                  initialAnswer,
+                };
+
+                if (finalAnswer !== undefined) {
+                  reviewItemCreate.finalAnswer = finalAnswer;
+                }
+
+                if (managerComment !== undefined) {
+                  reviewItemCreate.managerComment = managerComment ?? null;
+                }
+
+                if (reviewItemComments?.length) {
+                  reviewItemCreate.reviewItemComments = {
+                    create: reviewItemComments.map((comment) => ({
+                      content: comment.content,
+                      type: comment.type,
+                      sortOrder: comment.sortOrder ?? 0,
+                      resourceId: existingReview.resourceId,
+                    })),
+                  };
+                }
+
+                return reviewItemCreate;
+              }),
+            },
+          }
+        : undefined;
+
+    const updateData = {
+      ...baseUpdateData,
+      ...(reviewItemsUpdate ?? {}),
+    } as Prisma.reviewUpdateInput;
+
     try {
       const data = await this.prisma.review.update({
         where: { id },
-        data: mapReviewRequestToDto(body as ReviewPatchRequestDto),
+        data: updateData,
         include: {
           reviewItems: {
             include: {
@@ -1299,15 +1387,19 @@ export class ReviewService {
         },
       });
       // Recalculate scores based on current review items
-      await this.recomputeAndUpdateReviewScores(id);
+      const recomputedScores = await this.recomputeAndUpdateReviewScores(id);
       if (
         existingReview.status !== ReviewStatus.COMPLETED &&
         data.status === ReviewStatus.COMPLETED
       ) {
         await this.publishReviewCompletedEvent(id);
       }
+      const responsePayload = {
+        ...data,
+        ...(recomputedScores ?? {}),
+      } as ReviewResponseDto;
       this.logger.log(`Review updated successfully: ${id}`);
-      return data as unknown as ReviewResponseDto;
+      return responsePayload;
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,

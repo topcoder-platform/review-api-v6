@@ -348,6 +348,17 @@ export class ReviewPatchRequestDto {
   @IsOptional()
   @IsBoolean()
   committed?: boolean;
+
+  @ApiProperty({
+    description: 'List of review items to replace the current set with',
+    type: [ReviewItemRequestDto],
+    required: false,
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReviewItemRequestDto)
+  reviewItems?: ReviewItemRequestDto[];
 }
 
 export class ReviewResponseDto extends ReviewCommonDto {
@@ -418,7 +429,7 @@ type MappedReviewItem = {
 };
 
 export function mapReviewRequestToDto(
-  request: ReviewRequestDto | ReviewPatchRequestDto,
+  request: ReviewRequestDto | ReviewPatchRequestDto | ReviewPutRequestDto,
 ) {
   if (request instanceof ReviewRequestDto) {
     return {
@@ -445,9 +456,11 @@ export function mapReviewRequestToDto(
       },
     };
   } else {
-    const sanitizedRequest = { ...request } as Partial<ReviewPatchRequestDto> &
+    const sanitizedRequest = {
+      ...request,
+    } as Partial<ReviewPatchRequestDto | ReviewPutRequestDto> &
       Record<string, unknown>;
-    ['resourceId', 'submissionId'].forEach((field) => {
+    ['resourceId', 'submissionId', 'reviewItems'].forEach((field) => {
       delete sanitizedRequest[field];
     });
 

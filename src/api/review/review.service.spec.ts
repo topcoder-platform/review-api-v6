@@ -1022,6 +1022,35 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });
 
+  it('returns recomputed scores when available', async () => {
+    recomputeSpy.mockResolvedValueOnce({
+      initialScore: 88.5,
+      finalScore: 90.25,
+    });
+
+    prismaMock.review.update.mockResolvedValueOnce({
+      id: 'review-1',
+      initialScore: null,
+      finalScore: null,
+      status: ReviewStatus.IN_PROGRESS,
+      reviewItems: [],
+    });
+
+    const result = await service.updateReview(
+      nonPrivilegedUser,
+      'review-1',
+      updatePayload,
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'review-1',
+        initialScore: 88.5,
+        finalScore: 90.25,
+      }),
+    );
+  });
+
   it('publishes completion event when review status transitions to COMPLETED', async () => {
     const completionDate = new Date('2024-02-01T10:00:00Z');
 
