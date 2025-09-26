@@ -272,7 +272,7 @@ export class ReviewController {
   @ApiOperation({
     summary: 'Delete a review item',
     description:
-      'Roles: Copilot, Reviewers (their own review items), Admin | Scopes: delete:review-item',
+      'Roles: Reviewers (their own review items), Admin | Scopes: delete:review-item',
   })
   @ApiParam({
     name: 'itemId',
