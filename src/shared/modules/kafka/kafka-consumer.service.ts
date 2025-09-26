@@ -388,6 +388,7 @@ export class KafkaConsumerService
             key: message.key,
             value: Buffer.from(JSON.stringify(dlqMessage)),
             headers: this.buildProducerHeaders(message, {
+              originator: 'review-api-v6',
               'dlq-original-topic': originalTopic,
               'dlq-error-reason': errorReason,
               'dlq-failed-at': new Date().toISOString(),

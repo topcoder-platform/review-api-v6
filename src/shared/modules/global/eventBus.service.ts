@@ -44,7 +44,7 @@ export class EventBusService {
   private async postMessage<T>(
     topic: string,
     payload: T,
-    originator = 'ap-review-microservice',
+    originator = 'review-api-v6',
   ): Promise<void> {
     // Get M2M token
     const token = await this.m2mService.getM2MToken();
