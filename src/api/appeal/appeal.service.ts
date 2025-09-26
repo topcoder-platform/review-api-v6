@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { Resource } from '@prisma/client-resource';
 import {
   AppealRequestDto,
   AppealResponseDto,
@@ -21,6 +22,7 @@ import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 
 @Injectable()
 export class AppealService {
@@ -31,6 +33,7 @@ export class AppealService {
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourcePrisma: ResourcePrismaService,
+    private readonly eventBusService: EventBusService,
   ) {}
 
   async createAppeal(
@@ -450,9 +453,16 @@ export class AppealService {
                 include: {
                   review: {
                     select: {
+                      id: true,
                       resourceId: true,
+                      submissionId: true,
+                      scorecardId: true,
                       submission: {
-                        select: { challengeId: true },
+                        select: {
+                          id: true,
+                          challengeId: true,
+                          memberId: true,
+                        },
                       },
                     },
                   },
@@ -480,7 +490,16 @@ export class AppealService {
       }
 
       const review = appeal.reviewItemComment.reviewItem.review;
-      const reviewerResourceId = review?.resourceId
+
+      if (!review?.id) {
+        throw new BadRequestException({
+          message: `No review found for appeal ${appealId}.`,
+          code: 'MISSING_REVIEW',
+          details: { appealId },
+        });
+      }
+
+      const reviewerResourceId = review.resourceId
         ? String(review.resourceId)
         : '';
 
@@ -491,11 +510,12 @@ export class AppealService {
         });
       }
 
-      await this.ensureReviewerAccessToAppealResponse(
-        authUser,
-        reviewerResourceId,
-        appealId,
-      );
+      const { reviewerResource } =
+        await this.ensureReviewerAccessToAppealResponse(
+          authUser,
+          reviewerResourceId,
+          appealId,
+        );
 
       const challengeId = review?.submission?.challengeId;
       if (!challengeId) {
@@ -525,6 +545,12 @@ export class AppealService {
       });
 
       this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
+      await this.publishAppealRespondedEvent({
+        appealId,
+        appealResponseId: data.appealResponse?.id ?? null,
+        reviewId: review.id,
+        reviewerResource,
+      });
       return data.appealResponse as AppealResponseResponseDto;
     } catch (error) {
       if (error instanceof ForbiddenException) {
@@ -572,6 +598,99 @@ export class AppealService {
         code: errorResponse.code,
         details: errorResponse.details,
       });
+    }
+  }
+
+  private async publishAppealRespondedEvent(params: {
+    appealId: string;
+    appealResponseId: string | null;
+    reviewId: string;
+    reviewerResource: Resource;
+  }): Promise<void> {
+    const { appealId, appealResponseId, reviewId, reviewerResource } = params;
+
+    try {
+      const review = await this.prisma.review.findUnique({
+        where: { id: reviewId },
+        select: {
+          id: true,
+          scorecardId: true,
+          resourceId: true,
+          submissionId: true,
+          finalScore: true,
+          reviewDate: true,
+          updatedAt: true,
+          submission: {
+            select: {
+              id: true,
+              challengeId: true,
+              memberId: true,
+            },
+          },
+        },
+      });
+
+      if (!review) {
+        this.logger.warn(
+          `[publishAppealRespondedEvent] Review ${reviewId} not found; skipping event.`,
+        );
+        return;
+      }
+
+      const challengeId = review.submission?.challengeId ?? null;
+      const submissionId = review.submissionId ?? review.submission?.id ?? null;
+      const submitterMemberId = review.submission?.memberId
+        ? String(review.submission.memberId)
+        : null;
+
+      let submitterHandle: string | null = null;
+      if (challengeId && submitterMemberId) {
+        const submitterResource = await this.findSubmitterResource(
+          challengeId,
+          submitterMemberId,
+        );
+        submitterHandle = submitterResource?.memberHandle ?? null;
+      }
+
+      const reviewerHandle = reviewerResource.memberHandle ?? null;
+      const reviewerMemberId = reviewerResource.memberId
+        ? String(reviewerResource.memberId)
+        : null;
+
+      const completionDate = review.reviewDate ?? review.updatedAt ?? null;
+      const reviewCompletedAt = completionDate
+        ? completionDate.toISOString()
+        : null;
+
+      const payload = {
+        challengeId,
+        submissionId,
+        reviewId: review.id,
+        scorecardId: review.scorecardId,
+        appealId,
+        appealResponseId,
+        reviewerResourceId: review.resourceId,
+        reviewerHandle,
+        reviewerMemberId,
+        submitterHandle,
+        submitterMemberId,
+        reviewCompletedAt,
+        finalScore: review.finalScore ?? null,
+      };
+
+      await this.eventBusService.publish(
+        'review.action.appeal.responded',
+        payload,
+      );
+      this.logger.log(
+        `[publishAppealRespondedEvent] Published appeal responded event for appeal ${appealId} and review ${review.id}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `[publishAppealRespondedEvent] Failed to publish appeal responded event for appeal ${appealId}`,
+        error,
+      );
+      throw error;
     }
   }
 
@@ -778,7 +897,7 @@ export class AppealService {
     authUser: JwtUser,
     reviewerResourceId: string,
     appealId: string,
-  ): Promise<string> {
+  ): Promise<{ reviewerMemberId: string; reviewerResource: Resource }> {
     if (!authUser) {
       throw new ForbiddenException({
         message:
@@ -825,7 +944,7 @@ export class AppealService {
       }
     }
 
-    return reviewerMemberId;
+    return { reviewerMemberId, reviewerResource };
   }
 
   private async findSubmitterResource(challengeId: string, memberId: string) {

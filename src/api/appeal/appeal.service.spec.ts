@@ -20,6 +20,9 @@ const prismaMock = {
     findUnique: jest.fn(),
     update: jest.fn(),
   },
+  review: {
+    findUnique: jest.fn(),
+  },
   reviewItemComment: {
     findUnique: jest.fn(),
     findUniqueOrThrow: jest.fn(),
@@ -43,11 +46,16 @@ const challengeApiServiceMock = {
   getChallengeDetail: jest.fn(),
 } as unknown as any;
 
+const eventBusServiceMock = {
+  publish: jest.fn(),
+} as unknown as any;
+
 const service = new AppealService(
   prismaMock,
   prismaErrorServiceMock,
   challengeApiServiceMock,
   resourcePrismaMock,
+  eventBusServiceMock,
 );
 
 describe('AppealService.createAppeal', () => {
@@ -431,6 +439,7 @@ describe('AppealService.updateAppealResponse', () => {
     resourcePrismaMock.resource.findUnique.mockResolvedValue({
       id: 'resource-1',
       memberId: 'member-123',
+      memberHandle: 'reviewerHandle',
     });
     prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
       throw error;
@@ -606,9 +615,14 @@ describe('AppealService.createAppealResponse', () => {
     reviewItemComment: {
       reviewItem: {
         review: {
+          id: 'review-1',
           resourceId: 'resource-1',
+          submissionId: 'submission-1',
+          scorecardId: 'scorecard-1',
           submission: {
+            id: 'submission-1',
             challengeId: 'challenge-1',
+            memberId: 'submitter-456',
           },
         },
       },
@@ -639,7 +653,34 @@ describe('AppealService.createAppealResponse', () => {
     resourcePrismaMock.resource.findUnique.mockResolvedValue({
       id: 'resource-1',
       memberId: 'member-123',
+      memberHandle: 'reviewerHandle',
     });
+
+    resourcePrismaMock.resource.findMany.mockResolvedValue([
+      {
+        id: 'submitter-resource-1',
+        memberId: 'submitter-456',
+        memberHandle: 'submitterHandle',
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+    ]);
+
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      scorecardId: 'scorecard-1',
+      resourceId: 'resource-1',
+      submissionId: 'submission-1',
+      finalScore: 95.5,
+      reviewDate: new Date('2023-11-01T00:00:00.000Z'),
+      updatedAt: new Date('2023-11-01T00:00:00.000Z'),
+      submission: {
+        id: 'submission-1',
+        challengeId: 'challenge-1',
+        memberId: 'submitter-456',
+      },
+    });
+
+    eventBusServiceMock.publish.mockResolvedValue(undefined);
   });
 
   it('throws BadRequestException when the appeal already has a response', async () => {
@@ -662,6 +703,7 @@ describe('AppealService.createAppealResponse', () => {
     });
 
     expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+    expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 
   it('creates the appeal response using the reviewer resourceId', async () => {
@@ -673,6 +715,7 @@ describe('AppealService.createAppealResponse', () => {
     resourcePrismaMock.resource.findUnique.mockResolvedValue({
       id: 'resource-1',
       memberId: 'member-123',
+      memberHandle: 'reviewerHandle',
     });
 
     prismaMock.appeal.update.mockResolvedValue({
@@ -718,6 +761,28 @@ describe('AppealService.createAppealResponse', () => {
     expect(resourcePrismaMock.resource.findUnique).toHaveBeenCalledWith({
       where: { id: 'resource-1' },
     });
+    expect(prismaMock.review.findUnique).toHaveBeenCalledWith({
+      where: { id: 'review-1' },
+      select: expect.any(Object),
+    });
+    expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+      'review.action.appeal.responded',
+      expect.objectContaining({
+        appealId: 'appeal-1',
+        appealResponseId: 'appeal-response-1',
+        challengeId: 'challenge-1',
+        finalScore: 95.5,
+        reviewCompletedAt: '2023-11-01T00:00:00.000Z',
+        reviewerHandle: 'reviewerHandle',
+        reviewerMemberId: 'member-123',
+        reviewerResourceId: 'resource-1',
+        reviewId: 'review-1',
+        scorecardId: 'scorecard-1',
+        submissionId: 'submission-1',
+        submitterHandle: 'submitterHandle',
+        submitterMemberId: 'submitter-456',
+      }),
+    );
   });
 
   it('throws ForbiddenException when requester is not the reviewer', async () => {
@@ -751,6 +816,7 @@ describe('AppealService.createAppealResponse', () => {
     });
 
     expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+    expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 
   it('throws NotFoundException when reviewer resource is missing', async () => {
@@ -775,6 +841,7 @@ describe('AppealService.createAppealResponse', () => {
     });
 
     expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+    expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 
   it('translates Prisma unique constraint errors into BadRequestException', async () => {
@@ -809,5 +876,6 @@ describe('AppealService.createAppealResponse', () => {
       prismaError,
       `creating response for appeal ${baseAppeal.id}`,
     );
+    expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 });
