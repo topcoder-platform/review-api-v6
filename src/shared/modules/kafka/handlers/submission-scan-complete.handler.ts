@@ -4,6 +4,26 @@ import { KafkaHandlerRegistry } from '../kafka-handler.registry';
 import { LoggerService } from '../../global/logger.service';
 import { PrismaService } from '../../global/prisma.service';
 import { SubmissionScanCompleteOrchestrator } from '../../global/submission-scan-complete.orchestrator';
+import { ChallengeApiService } from '../../global/challenge.service';
+import { EventBusService } from '../../global/eventBus.service';
+import { ResourcePrismaService } from '../../global/resource-prisma.service';
+
+interface First2FinishSubmissionEventPayload {
+  submissionId: string;
+  challengeId: string;
+  submissionUrl: string;
+  memberHandle: string;
+  memberId: string;
+  submittedDate: string;
+}
+
+type SubmissionRecord = {
+  id: string;
+  challengeId: string | null;
+  memberId: string | null;
+  url: string | null;
+  createdAt: Date;
+};
 
 @Injectable()
 export class SubmissionScanCompleteHandler
@@ -16,6 +36,9 @@ export class SubmissionScanCompleteHandler
     private readonly handlerRegistry: KafkaHandlerRegistry,
     private readonly orchestrator: SubmissionScanCompleteOrchestrator,
     private readonly prisma: PrismaService,
+    private readonly challengeApiService: ChallengeApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
+    private readonly eventBusService: EventBusService,
   ) {
     super(LoggerService.forRoot('SubmissionScanCompleteHandler'));
   }
@@ -55,10 +78,17 @@ export class SubmissionScanCompleteHandler
       }
 
       if (!message.isInfected) {
-        await this.updateSubmissionUrl(message.submissionId, message.url);
+        const submission = await this.updateSubmissionUrl(
+          message.submissionId,
+          message.url,
+        );
 
         // delegate to orchestrator for further processing
         await this.orchestrator.orchestrateScanComplete(message.submissionId);
+
+        if (submission) {
+          await this.publishFirst2FinishEvent(submission);
+        }
       } else {
         this.logger.log(
           `Submission ${message.submissionId} is infected, skipping further processing.`,
@@ -78,32 +108,40 @@ export class SubmissionScanCompleteHandler
   private async updateSubmissionUrl(
     submissionId: string,
     url: string,
-  ): Promise<void> {
+  ): Promise<SubmissionRecord | null> {
     if (!submissionId) {
       this.logger.warn(
         'Submission ID is missing in the scan complete message.',
       );
-      return;
+      return null;
     }
 
     if (!url) {
       this.logger.warn(
         `URL is missing in scan complete message for submission ${submissionId}.`,
       );
-      return;
+      return null;
     }
 
     try {
-      await this.prisma.submission.update({
+      const updated = await this.prisma.submission.update({
         where: { id: submissionId },
         data: {
           url,
           updatedBy: 'SubmissionScanCompleteHandler',
         },
+        select: {
+          id: true,
+          challengeId: true,
+          memberId: true,
+          url: true,
+          createdAt: true,
+        },
       });
       this.logger.log(
         `Updated submission ${submissionId} with scanned artifact URL.`,
       );
+      return updated;
     } catch (error) {
       this.logger.error(
         `Failed to update submission ${submissionId} with scanned artifact URL`,
@@ -111,5 +149,88 @@ export class SubmissionScanCompleteHandler
       );
       throw error;
     }
+  }
+
+  private async publishFirst2FinishEvent(
+    submission: SubmissionRecord,
+  ): Promise<void> {
+    if (!submission.challengeId) {
+      this.logger.warn(
+        `Submission ${submission.id} missing challengeId. Skipping First2Finish event publish.`,
+      );
+      return;
+    }
+
+    const challenge = await this.challengeApiService.getChallengeDetail(
+      submission.challengeId,
+    );
+
+    if (!this.isFirst2FinishChallenge(challenge?.type)) {
+      this.logger.log(
+        `Challenge ${submission.challengeId} is not First2Finish. Skipping event publish for submission ${submission.id}.`,
+      );
+      return;
+    }
+
+    if (!submission.url) {
+      throw new Error(
+        `Updated submission ${submission.id} does not contain a URL required for First2Finish event payload.`,
+      );
+    }
+
+    if (!submission.memberId) {
+      throw new Error(
+        `Submission ${submission.id} missing memberId. Cannot publish First2Finish event.`,
+      );
+    }
+
+    const memberHandle = await this.lookupMemberHandle(
+      submission.challengeId,
+      submission.memberId,
+    );
+
+    if (!memberHandle) {
+      throw new Error(
+        `Unable to locate member handle for member ${submission.memberId} on challenge ${submission.challengeId}.`,
+      );
+    }
+
+    const submittedDate = submission.createdAt.toISOString();
+
+    const payload: First2FinishSubmissionEventPayload = {
+      submissionId: submission.id,
+      challengeId: submission.challengeId,
+      submissionUrl: submission.url,
+      memberHandle,
+      memberId: submission.memberId,
+      submittedDate,
+    };
+
+    await this.eventBusService.publish(
+      'first2finish.submission.received',
+      payload,
+    );
+
+    this.logger.log(
+      `Published first2finish.submission.received event for submission ${submission.id}.`,
+    );
+  }
+
+  private isFirst2FinishChallenge(typeName?: string): boolean {
+    return (typeName ?? '').trim().toLowerCase() === 'first2finish';
+  }
+
+  private async lookupMemberHandle(
+    challengeId: string,
+    memberId: string,
+  ): Promise<string | null> {
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: {
+        challengeId,
+        memberId,
+      },
+    });
+
+    return resource?.memberHandle ?? null;
   }
 }
