@@ -43,20 +43,33 @@ export class TokenRolesGuard implements CanActivate {
         throw new UnauthorizedException('Missing or invalid token!');
       }
 
-      // Check role-based access for regular users
-      if (Array.isArray(user.roles) && requiredRoles.length > 0) {
-        const normalizedUserRoles = user.roles
-          .map((role) => String(role).trim().toLowerCase())
-          .filter((role) => role.length > 0);
+      const normalizedRequiredRoles = requiredRoles.map((role) =>
+        String(role).trim().toLowerCase(),
+      );
 
-        const normalizedRequiredRoles = requiredRoles.map((role) =>
-          String(role).trim().toLowerCase(),
-        );
+      // Check role-based access for regular users
+      if (normalizedRequiredRoles.length > 0) {
+        const normalizedUserRoles = Array.isArray(user.roles)
+          ? user.roles
+              .map((role) => String(role).trim().toLowerCase())
+              .filter((role) => role.length > 0)
+          : [];
 
         const hasRole = normalizedRequiredRoles.some((role) =>
           normalizedUserRoles.includes(role),
         );
         if (hasRole) {
+          return true;
+        }
+
+        if (
+          this.allowSubmissionListByChallenge(
+            context,
+            request,
+            normalizedRequiredRoles,
+            user,
+          )
+        ) {
           return true;
         }
       }
@@ -94,5 +107,55 @@ export class TokenRolesGuard implements CanActivate {
       }
       throw new UnauthorizedException('Invalid token');
     }
+  }
+
+  private allowSubmissionListByChallenge(
+    context: ExecutionContext,
+    request: any,
+    normalizedRequiredRoles: string[],
+    user: any,
+  ): boolean {
+    const generalUserRole = String(UserRole.User).trim().toLowerCase();
+
+    if (user?.isMachine || !user?.userId) {
+      return false;
+    }
+
+    if (!normalizedRequiredRoles.includes(generalUserRole)) {
+      return false;
+    }
+
+    const handler = context.getHandler?.();
+    const controllerClass = context.getClass?.();
+
+    const isSubmissionListHandler =
+      controllerClass?.name === 'SubmissionController' &&
+      handler?.name === 'listSubmissions';
+
+    if (!isSubmissionListHandler) {
+      return false;
+    }
+
+    const method = (request?.method || '').toUpperCase();
+    if (method !== 'GET') {
+      return false;
+    }
+
+    const challengeId = request?.query?.challengeId;
+    if (!this.hasNonEmptyQueryParam(challengeId)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private hasNonEmptyQueryParam(value: unknown): boolean {
+    if (typeof value === 'string') {
+      return value.trim().length > 0;
+    }
+    if (Array.isArray(value)) {
+      return value.some((entry) => this.hasNonEmptyQueryParam(entry));
+    }
+    return false;
   }
 }
