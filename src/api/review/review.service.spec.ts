@@ -18,8 +18,12 @@ describe('ReviewService.createReview authorization checks', () => {
       findUnique: jest.fn(),
     },
     review: {
+      findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+    },
+    reviewItem: {
+      findMany: jest.fn(),
     },
   } as unknown as any;
 
@@ -37,11 +41,17 @@ describe('ReviewService.createReview authorization checks', () => {
     getChallengeDetail: jest.fn(),
   } as unknown as any;
 
+  const eventBusServiceMock = {
+    publish: jest.fn(),
+    sendEmail: jest.fn(),
+  } as unknown as any;
+
   const service = new ReviewService(
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
     challengeApiServiceMock,
+    eventBusServiceMock,
   );
 
   const baseAuthUser: JwtUser = {
@@ -185,6 +195,88 @@ describe('ReviewService.createReview authorization checks', () => {
     });
   });
 
+  it('publishes completion event when review is created with COMPLETED status', async () => {
+    const reviewDate = new Date('2024-01-01T12:00:00Z');
+    prismaMock.review.create.mockResolvedValue({
+      id: 'review-1',
+      resourceId: baseResource.id,
+      phaseId: 'phase-review',
+      submissionId: 'submission-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      metadata: {},
+      status: ReviewStatus.COMPLETED,
+      reviewDate,
+      committed: true,
+      initialScore: null,
+      finalScore: null,
+      reviewItems: [],
+    });
+
+    prismaMock.review.findUnique.mockResolvedValue({
+      id: 'review-1',
+      submissionId: 'submission-1',
+      scorecardId: 'scorecard-1',
+      resourceId: baseResource.id,
+      status: ReviewStatus.COMPLETED,
+      reviewDate,
+      initialScore: 88.5,
+      updatedAt: new Date('2024-01-01T12:05:00Z'),
+      submission: {
+        challengeId: 'challenge-1',
+        memberId: 'submitter-123',
+      },
+    });
+
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      baseResource,
+      {
+        id: 'resource-2',
+        challengeId: 'challenge-1',
+        memberId: 'submitter-123',
+        memberHandle: 'submitterHandle',
+        roleId: 'submitter-role',
+        phaseId: null,
+        createdBy: 'tc',
+        created: new Date().toISOString(),
+      },
+    ]);
+
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await service.createReview(
+        baseAuthUser,
+        buildReviewRequest({
+          status: ReviewStatus.COMPLETED,
+          committed: true,
+        }),
+      );
+    } finally {
+      computeSpy.mockRestore();
+    }
+
+    expect(eventBusServiceMock.publish).toHaveBeenCalledTimes(1);
+    expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+      'review.action.completed',
+      expect.objectContaining({
+        challengeId: 'challenge-1',
+        submissionId: 'submission-1',
+        reviewId: 'review-1',
+        scorecardId: 'scorecard-1',
+        reviewerResourceId: baseResource.id,
+        reviewerHandle: baseResource.memberHandle,
+        reviewerMemberId: baseResource.memberId,
+        submitterHandle: 'submitterHandle',
+        submitterMemberId: 'submitter-123',
+        completedAt: reviewDate.toISOString(),
+        initialScore: 88.5,
+      }),
+    );
+  });
+
   it('derives the Review phase id from the challenge when creating a review', async () => {
     const request = buildReviewRequest();
     const reviewCreateResult = {
@@ -311,11 +403,17 @@ describe('ReviewService.getReview authorization checks', () => {
     getChallengeDetail: jest.fn(),
   } as unknown as any;
 
+  const eventBusServiceMock = {
+    publish: jest.fn(),
+    sendEmail: jest.fn(),
+  } as unknown as any;
+
   const service = new ReviewService(
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
     challengeApiServiceMock,
+    eventBusServiceMock,
   );
 
   const baseAuthUser: JwtUser = {
@@ -430,6 +528,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
   let challengeApiServiceMock: any;
+  let eventBusServiceMock: any;
   let service: ReviewService;
 
   const baseAuthUser: JwtUser = {
@@ -478,11 +577,17 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       getChallenges: jest.fn(),
     };
 
+    eventBusServiceMock = {
+      publish: jest.fn(),
+      sendEmail: jest.fn(),
+    };
+
     service = new ReviewService(
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
       challengeApiServiceMock,
+      eventBusServiceMock,
     );
   });
 
@@ -541,11 +646,17 @@ describe('ReviewService.updateReviewItem validations', () => {
 
   const challengeApiServiceMock = {} as unknown as any;
 
+  const eventBusServiceMock = {
+    publish: jest.fn(),
+    sendEmail: jest.fn(),
+  } as unknown as any;
+
   const service = new ReviewService(
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
     challengeApiServiceMock,
+    eventBusServiceMock,
   );
 
   const baseReviewer: JwtUser = {
@@ -723,6 +834,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
   let challengeApiServiceMock: any;
+  let eventBusServiceMock: any;
   let service: ReviewService;
   let recomputeSpy: jest.SpyInstance;
 
@@ -780,11 +892,17 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       phases: [],
     });
 
+    eventBusServiceMock = {
+      publish: jest.fn(),
+      sendEmail: jest.fn(),
+    };
+
     service = new ReviewService(
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
       challengeApiServiceMock,
+      eventBusServiceMock,
     );
 
     recomputeSpy = jest
@@ -904,6 +1022,79 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });
 
+  it('publishes completion event when review status transitions to COMPLETED', async () => {
+    const completionDate = new Date('2024-02-01T10:00:00Z');
+
+    prismaMock.review.findUnique
+      .mockResolvedValueOnce({
+        id: 'review-1',
+        resourceId: 'resource-1',
+        status: ReviewStatus.PENDING,
+        submission: {
+          challengeId: 'challenge-1',
+          memberId: 'submitter-456',
+        },
+      })
+      .mockResolvedValueOnce({
+        id: 'review-1',
+        submissionId: 'submission-1',
+        scorecardId: 'scorecard-1',
+        resourceId: 'resource-1',
+        status: ReviewStatus.COMPLETED,
+        reviewDate: completionDate,
+        initialScore: 99.1,
+        updatedAt: completionDate,
+        submission: {
+          challengeId: 'challenge-1',
+          memberId: 'submitter-456',
+        },
+      });
+
+    prismaMock.review.update.mockResolvedValue({
+      id: 'review-1',
+      resourceId: 'resource-1',
+      status: ReviewStatus.COMPLETED,
+      submissionId: 'submission-1',
+      scorecardId: 'scorecard-1',
+    });
+
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        id: 'resource-1',
+        challengeId: 'challenge-1',
+        memberId: 'reviewer-1',
+        memberHandle: 'reviewerHandle',
+      },
+      {
+        id: 'resource-2',
+        challengeId: 'challenge-1',
+        memberId: 'submitter-456',
+        memberHandle: 'submitterHandle',
+        roleId: 'submitter-role',
+      },
+    ]);
+
+    await service.updateReview(nonPrivilegedUser, 'review-1', {
+      status: ReviewStatus.COMPLETED,
+    } as any);
+
+    expect(eventBusServiceMock.publish).toHaveBeenCalledTimes(1);
+    expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+      'review.action.completed',
+      expect.objectContaining({
+        reviewId: 'review-1',
+        challengeId: 'challenge-1',
+        submissionId: 'submission-1',
+        reviewerHandle: 'reviewerHandle',
+        reviewerMemberId: 'reviewer-1',
+        submitterHandle: 'submitterHandle',
+        submitterMemberId: 'submitter-456',
+        completedAt: completionDate.toISOString(),
+        initialScore: 99.1,
+      }),
+    );
+  });
+
   it('prevents non-admin tokens from updating reviews they do not own', async () => {
     resourceApiServiceMock.getResources.mockResolvedValue([
       {
@@ -931,6 +1122,7 @@ describe('ReviewService.createReviewItemComments', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
+  let eventBusServiceMock: any;
   let service: ReviewService;
   let recomputeSpy: jest.SpyInstance;
 
@@ -964,11 +1156,17 @@ describe('ReviewService.createReviewItemComments', () => {
     } as any;
     resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
 
+    eventBusServiceMock = {
+      publish: jest.fn(),
+      sendEmail: jest.fn(),
+    };
+
     service = new ReviewService(
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
       {} as any,
+      eventBusServiceMock,
     );
 
     recomputeSpy = jest
@@ -1195,6 +1393,7 @@ describe('ReviewService.deleteReview', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
+  let eventBusServiceMock: any;
   let service: ReviewService;
 
   const copilotUser: JwtUser = {
@@ -1225,11 +1424,17 @@ describe('ReviewService.deleteReview', () => {
       getMemberResourcesRoles: jest.fn(),
     } as any;
 
+    eventBusServiceMock = {
+      publish: jest.fn(),
+      sendEmail: jest.fn(),
+    };
+
     service = new ReviewService(
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
       {} as any,
+      eventBusServiceMock,
     );
   });
 
@@ -1347,11 +1552,17 @@ describe('ReviewService.deleteReviewItem authorization checks', () => {
 
   const challengeApiServiceMock = {} as unknown as any;
 
+  const eventBusServiceMock = {
+    publish: jest.fn(),
+    sendEmail: jest.fn(),
+  } as unknown as any;
+
   const service = new ReviewService(
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
     challengeApiServiceMock,
+    eventBusServiceMock,
   );
 
   const reviewerUser: JwtUser = {

@@ -26,6 +26,8 @@ import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { EventBusService } from 'src/shared/modules/global/eventBus.service';
+import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
@@ -39,6 +41,7 @@ export class ReviewService {
     private readonly prismaErrorService: PrismaErrorService,
     private readonly resourceApiService: ResourceApiService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly eventBusService: EventBusService,
   ) {
     this.logger = LoggerService.forRoot('ReviewService');
   }
@@ -229,6 +232,114 @@ export class ReviewService {
         `[recomputeAndUpdateReviewScores] Failed for review ${reviewId}`,
         e,
       );
+    }
+  }
+
+  private async publishReviewCompletedEvent(reviewId: string): Promise<void> {
+    try {
+      const review = await this.prisma.review.findUnique({
+        where: { id: reviewId },
+        select: {
+          id: true,
+          submissionId: true,
+          scorecardId: true,
+          resourceId: true,
+          status: true,
+          reviewDate: true,
+          initialScore: true,
+          updatedAt: true,
+          submission: {
+            select: {
+              challengeId: true,
+              memberId: true,
+            },
+          },
+        },
+      });
+
+      if (!review) {
+        this.logger.warn(
+          `[publishReviewCompletedEvent] Review ${reviewId} not found while preparing completion event.`,
+        );
+        return;
+      }
+
+      if (review.status !== ReviewStatus.COMPLETED) {
+        this.logger.debug(
+          `[publishReviewCompletedEvent] Review ${reviewId} status is ${review.status}; skipping completion event.`,
+        );
+        return;
+      }
+
+      const challengeId = review.submission?.challengeId ?? null;
+      const submissionId = review.submissionId ?? null;
+      let reviewerMemberId: string | null = null;
+      let reviewerHandle: string | null = null;
+      const submitterMemberId = review.submission?.memberId ?? null;
+      let submitterHandle: string | null = null;
+
+      if (challengeId) {
+        try {
+          const resources = await this.resourceApiService.getResources({
+            challengeId,
+          });
+          const reviewerResource = resources?.find(
+            (resource) => resource.id === review.resourceId,
+          );
+          if (reviewerResource) {
+            reviewerMemberId = reviewerResource.memberId ?? null;
+            reviewerHandle = reviewerResource.memberHandle ?? null;
+          }
+
+          if (submitterMemberId) {
+            const submitterResource =
+              resources?.find(
+                (resource) =>
+                  resource.memberId === submitterMemberId &&
+                  resource.roleId === CommonConfig.roles.submitterRoleId,
+              ) ??
+              resources?.find(
+                (resource) => resource.memberId === submitterMemberId,
+              );
+
+            if (submitterResource) {
+              submitterHandle = submitterResource.memberHandle ?? null;
+            }
+          }
+        } catch (error) {
+          this.logger.warn(
+            `[publishReviewCompletedEvent] Failed to load resources for challenge ${challengeId}: ${(error as Error)?.message}`,
+          );
+        }
+      }
+
+      const completionDate = review.reviewDate ?? review.updatedAt ?? null;
+      const completedAt = completionDate ? completionDate.toISOString() : null;
+
+      const payload = {
+        challengeId,
+        submissionId,
+        reviewId: review.id,
+        scorecardId: review.scorecardId,
+        reviewerResourceId: review.resourceId,
+        reviewerHandle,
+        reviewerMemberId,
+        submitterHandle,
+        submitterMemberId,
+        completedAt,
+        initialScore: review.initialScore ?? null,
+      };
+
+      await this.eventBusService.publish('review.action.completed', payload);
+      this.logger.log(
+        `[publishReviewCompletedEvent] Published review completion for review ${review.id} on challenge ${challengeId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `[publishReviewCompletedEvent] Failed to publish completion event for review ${reviewId}`,
+        error,
+      );
+      throw error;
     }
   }
 
@@ -857,6 +968,9 @@ export class ReviewService {
       }
 
       this.logger.log(`Review created with ID: ${reviewToReturn.id}`);
+      if (reviewToReturn.status === ReviewStatus.COMPLETED) {
+        await this.publishReviewCompletedEvent(reviewToReturn.id);
+      }
       return {
         ...reviewToReturn,
         initialScore: scores.initialScore,
@@ -1186,6 +1300,12 @@ export class ReviewService {
       });
       // Recalculate scores based on current review items
       await this.recomputeAndUpdateReviewScores(id);
+      if (
+        existingReview.status !== ReviewStatus.COMPLETED &&
+        data.status === ReviewStatus.COMPLETED
+      ) {
+        await this.publishReviewCompletedEvent(id);
+      }
       this.logger.log(`Review updated successfully: ${id}`);
       return data as unknown as ReviewResponseDto;
     } catch (error) {
