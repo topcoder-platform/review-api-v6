@@ -190,7 +190,7 @@ describe('AppealService.createAppeal', () => {
 describe('AppealService.updateAppeal', () => {
   const baseAppeal = {
     id: 'appeal-1',
-    resourceId: 'member-123',
+    resourceId: 'resource-123',
     reviewItemCommentId: 'review-item-comment-1',
     content: 'Original appeal content',
     reviewItemComment: {
@@ -209,7 +209,6 @@ describe('AppealService.updateAppeal', () => {
   const updateRequest = {
     reviewItemCommentId: baseAppeal.reviewItemCommentId,
     content: 'Updated appeal content',
-    resourceId: baseAppeal.resourceId,
   } as any;
 
   const submitterAuthUser = {
@@ -229,6 +228,10 @@ describe('AppealService.updateAppeal', () => {
     prismaMock.appeal.update.mockResolvedValue({
       ...baseAppeal,
       content: updateRequest.content,
+    });
+    resourcePrismaMock.resource.findUnique.mockResolvedValue({
+      id: baseAppeal.resourceId,
+      memberId: submitterAuthUser.userId,
     });
     prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
       throw error;
@@ -250,6 +253,9 @@ describe('AppealService.updateAppeal', () => {
     expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
       'challenge-1',
     );
+    expect(resourcePrismaMock.resource.findUnique).toHaveBeenCalledWith({
+      where: { id: baseAppeal.resourceId },
+    });
     expect(prismaMock.appeal.update).toHaveBeenCalledWith({
       where: { id: baseAppeal.id },
       data: expect.objectContaining({
@@ -275,12 +281,30 @@ describe('AppealService.updateAppeal', () => {
 
     expect(prismaMock.appeal.update).not.toHaveBeenCalled();
   });
+
+  it('prevents updates when resource ownership does not match the requester', async () => {
+    resourcePrismaMock.resource.findUnique.mockResolvedValueOnce({
+      id: baseAppeal.resourceId,
+      memberId: 'member-999',
+    });
+
+    await expect(
+      service.updateAppeal(submitterAuthUser, baseAppeal.id, updateRequest),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({
+        code: 'APPEAL_RESOURCE_OWNER_FORBIDDEN',
+      }),
+    });
+
+    expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('AppealService.deleteAppeal', () => {
   const baseAppeal = {
     id: 'appeal-1',
-    resourceId: 'member-123',
+    resourceId: 'resource-123',
     reviewItemComment: {
       reviewItem: {
         review: {
@@ -309,6 +333,10 @@ describe('AppealService.deleteAppeal', () => {
     });
     prismaMock.appeal.findUnique.mockResolvedValue(baseAppeal);
     prismaMock.appeal.delete.mockResolvedValue(undefined);
+    resourcePrismaMock.resource.findUnique.mockResolvedValue({
+      id: baseAppeal.resourceId,
+      memberId: submitterAuthUser.userId,
+    });
     prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
       throw error;
     });
@@ -328,6 +356,9 @@ describe('AppealService.deleteAppeal', () => {
     expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
       'challenge-1',
     );
+    expect(resourcePrismaMock.resource.findUnique).toHaveBeenCalledWith({
+      where: { id: baseAppeal.resourceId },
+    });
     expect(prismaMock.appeal.delete).toHaveBeenCalledWith({
       where: { id: baseAppeal.id },
     });

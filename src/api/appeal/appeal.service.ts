@@ -257,6 +257,14 @@ export class AppealService {
       const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
 
       if (!isPrivileged) {
+        await this.ensureAppealResourceOwnership(
+          authUser,
+          existingAppeal.resourceId,
+          appealId,
+        );
+      }
+
+      if (!isPrivileged) {
         await this.ensureChallengeAllowsAppealChange(challengeId, {
           logContext: 'updateAppeal',
           appealId,
@@ -269,6 +277,7 @@ export class AppealService {
       if (
         !authUser?.isMachine &&
         !isAdmin(authUser) &&
+        body.resourceId !== undefined &&
         body.resourceId !== existingAppeal.resourceId
       ) {
         throw new ForbiddenException({
@@ -369,6 +378,14 @@ export class AppealService {
         existingAppeal.reviewItemComment.reviewItem.review.submission
           ?.challengeId;
       const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      if (!isPrivileged) {
+        await this.ensureAppealResourceOwnership(
+          authUser,
+          existingAppeal.resourceId,
+          appealId,
+        );
+      }
 
       if (!isPrivileged) {
         await this.ensureChallengeAllowsAppealChange(challengeId, {
@@ -827,6 +844,67 @@ export class AppealService {
     return resources.find(
       (resource) => String(resource.memberId) === String(memberId),
     );
+  }
+
+  private async ensureAppealResourceOwnership(
+    authUser: JwtUser,
+    resourceId: string | null | undefined,
+    appealId: string,
+  ): Promise<void> {
+    const requesterMemberId = authUser?.userId ? String(authUser.userId) : '';
+
+    if (!requesterMemberId) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner of the resource associated with this appeal may modify it.',
+        code: 'APPEAL_RESOURCE_OWNER_FORBIDDEN',
+        details: { appealId, resourceId, requesterMemberId },
+      });
+    }
+
+    if (!resourceId) {
+      throw new BadRequestException({
+        message: `Appeal ${appealId} does not have an associated resourceId.`,
+        code: 'APPEAL_MISSING_RESOURCE_ID',
+        details: { appealId },
+      });
+    }
+
+    const resource = await this.resourcePrisma.resource.findUnique({
+      where: { id: resourceId },
+    });
+
+    if (!resource) {
+      throw new NotFoundException({
+        message: `Resource ${resourceId} associated with appeal ${appealId} was not found.`,
+        code: 'APPEAL_RESOURCE_NOT_FOUND',
+        details: { appealId, resourceId },
+      });
+    }
+
+    const resourceMemberId = resource.memberId ? String(resource.memberId) : '';
+
+    if (!resourceMemberId) {
+      throw new BadRequestException({
+        message: `Resource ${resourceId} associated with appeal ${appealId} does not have a memberId.`,
+        code: 'APPEAL_RESOURCE_MISSING_MEMBER_ID',
+        details: { appealId, resourceId },
+      });
+    }
+
+    if (resourceMemberId !== requesterMemberId) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner of the resource associated with this appeal may modify it.',
+        code: 'APPEAL_RESOURCE_OWNER_FORBIDDEN',
+        details: {
+          appealId,
+          resourceId,
+          resourceMemberId,
+          requesterMemberId,
+        },
+      });
+    }
   }
 
   private async ensureChallengeAllowsAppealChange(
