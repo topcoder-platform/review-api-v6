@@ -425,6 +425,97 @@ describe('ReviewService.getReview authorization checks', () => {
   });
 });
 
+describe('ReviewService.getReviews reviewer visibility', () => {
+  let prismaMock: any;
+  let prismaErrorServiceMock: any;
+  let resourceApiServiceMock: any;
+  let challengeApiServiceMock: any;
+  let service: ReviewService;
+
+  const baseAuthUser: JwtUser = {
+    userId: 'reviewer-1',
+    roles: [],
+    isMachine: false,
+  };
+
+  const baseSubmission = { id: 'submission-1' };
+
+  const buildResource = (roleName: string) => ({
+    id: 'resource-1',
+    challengeId: 'challenge-1',
+    memberId: baseAuthUser.userId,
+    memberHandle: 'reviewerHandle',
+    roleId: 'role-reviewer',
+    phaseId: 'phase-review',
+    createdBy: 'tc',
+    created: new Date().toISOString(),
+    roleName,
+  });
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+
+    prismaMock = {
+      submission: {
+        findMany: jest.fn().mockResolvedValue([baseSubmission]),
+      },
+      review: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+
+    prismaErrorServiceMock = {
+      handleError: jest.fn(),
+    };
+
+    resourceApiServiceMock = {
+      getMemberResourcesRoles: jest.fn(),
+    };
+
+    challengeApiServiceMock = {
+      getChallengeDetail: jest.fn(),
+      getChallenges: jest.fn(),
+    };
+
+    service = new ReviewService(
+      prismaMock,
+      prismaErrorServiceMock,
+      resourceApiServiceMock,
+      challengeApiServiceMock,
+    );
+  });
+
+  it('filters reviews by the reviewer resource id when the requester is a reviewer', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Reviewer'),
+    ]);
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      baseAuthUser.userId,
+    );
+
+    expect(prismaMock.review.findMany).toHaveBeenCalledTimes(1);
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
+    expect(callArgs.where.submissionId).toEqual({ in: [baseSubmission.id] });
+  });
+
+  it('does not restrict resource visibility for copilots', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Copilot'),
+    ]);
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.resourceId).toBeUndefined();
+  });
+});
+
 describe('ReviewService.updateReviewItem validations', () => {
   const prismaMock = {
     reviewItem: {

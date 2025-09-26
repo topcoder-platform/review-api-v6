@@ -1414,6 +1414,32 @@ export class ReviewService {
         }
       };
 
+      const restrictToResourceIds = (allowedIds: string[]) => {
+        if (!allowedIds || allowedIds.length === 0) {
+          reviewWhereClause.resourceId = { in: ['__none__'] };
+          return;
+        }
+        const existing = reviewWhereClause.resourceId;
+        if (!existing) {
+          reviewWhereClause.resourceId = { in: allowedIds };
+        } else if (typeof existing === 'string') {
+          if (!allowedIds.includes(existing)) {
+            reviewWhereClause.resourceId = { in: ['__none__'] };
+          } else {
+            reviewWhereClause.resourceId = existing;
+          }
+        } else if (existing.in && Array.isArray(existing.in)) {
+          const intersect = existing.in.filter((id: string) =>
+            allowedIds.includes(id),
+          );
+          reviewWhereClause.resourceId = {
+            in: intersect.length ? intersect : ['__none__'],
+          };
+        } else {
+          reviewWhereClause.resourceId = { in: allowedIds };
+        }
+      };
+
       if (submissionId) {
         reviewWhereClause.submissionId = submissionId;
       }
@@ -1452,17 +1478,24 @@ export class ReviewService {
 
         // If a challengeId is specified, check role context for that challenge
         if (challengeId) {
-          let isReviewerOrCopilot = false;
+          let reviewerResourceIds: string[] = [];
+          let hasCopilotRole = false;
           try {
             const resources =
               await this.resourceApiService.getMemberResourcesRoles(
                 challengeId,
                 uid,
               );
-            isReviewerOrCopilot = resources.some((r) => {
-              const rn = (r.roleName || '').toLowerCase();
-              return rn.includes('reviewer') || rn.includes('copilot');
-            });
+
+            const normalized = resources || [];
+            reviewerResourceIds = normalized
+              .filter((r) =>
+                (r.roleName || '').toLowerCase().includes('reviewer'),
+              )
+              .map((r) => r.id);
+            hasCopilotRole = normalized.some((r) =>
+              (r.roleName || '').toLowerCase().includes('copilot'),
+            );
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             this.logger.debug(
@@ -1470,7 +1503,11 @@ export class ReviewService {
             );
           }
 
-          if (!isReviewerOrCopilot) {
+          if (hasCopilotRole) {
+            // Copilots retain full visibility for the challenge
+          } else if (reviewerResourceIds.length) {
+            restrictToResourceIds(reviewerResourceIds);
+          } else {
             // Confirm the user has actually submitted to this challenge
             const mySubs = await this.prisma.submission.findMany({
               where: { challengeId, memberId: uid },
