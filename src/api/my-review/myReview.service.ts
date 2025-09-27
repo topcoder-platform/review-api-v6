@@ -16,6 +16,7 @@ interface ChallengeSummaryRow {
   currentPhaseScheduledEnd: Date | null;
   currentPhaseActualEnd: Date | null;
   resourceRoleName: string | null;
+  challengeEndDate: Date | null;
 }
 
 interface ReviewProgressRow {
@@ -207,7 +208,8 @@ export class MyReviewService {
         cp.name AS "currentPhaseName",
         cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
         cp."actualEndDate" AS "currentPhaseActualEnd",
-        rr.name AS "resourceRoleName"
+        rr.name AS "resourceRoleName",
+        c."endDate" AS "challengeEndDate"
       FROM challenges."Challenge" c
       ${joinClause}
       WHERE ${whereClause}
@@ -273,6 +275,9 @@ export class MyReviewService {
         challengeName: row.challengeName,
         challengeTypeId: row.challengeTypeId,
         challengeTypeName: row.challengeTypeName,
+        challengeEndDate: row.challengeEndDate
+          ? row.challengeEndDate.toISOString()
+          : null,
         currentPhaseName: row.currentPhaseName,
         currentPhaseEndDate: phaseEnd ? phaseEnd.toISOString() : null,
         timeLeftInCurrentPhase: timeLeftSeconds,

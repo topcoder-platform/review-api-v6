@@ -44,6 +44,12 @@ export class MyReviewSummaryDto {
   @ApiProperty({ description: 'Name of the challenge type', required: false })
   challengeTypeName?: string | null;
 
+  @ApiProperty({
+    description: 'Overall end date of the challenge',
+    required: false,
+  })
+  challengeEndDate?: string | null;
+
   @ApiProperty({ description: 'Current phase display name', required: false })
   currentPhaseName?: string | null;
 
