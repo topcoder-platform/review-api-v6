@@ -21,6 +21,20 @@ export const ALL_MY_REVIEW_SORT_FIELDS = [
 
 export type MyReviewSortField = (typeof ALL_MY_REVIEW_SORT_FIELDS)[number];
 
+export class MyReviewWinnerDto {
+  @ApiProperty({ description: 'Winner user identifier' })
+  userId: number;
+
+  @ApiProperty({ description: 'Winner handle' })
+  handle: string;
+
+  @ApiProperty({ description: 'Winner placement order' })
+  placement: number;
+
+  @ApiProperty({ description: 'Winner prize set type' })
+  type: string;
+}
+
 export class MyReviewFilterDto {
   @ApiProperty({
     description: 'Filter results to a specific challenge type ID',
@@ -118,4 +132,13 @@ export class MyReviewSummaryDto {
     description: 'Review progress expressed as a ratio between 0 and 1',
   })
   reviewProgress: number;
+
+  @ApiProperty({
+    description: 'Challenge winners when available',
+    required: false,
+    nullable: true,
+    isArray: true,
+    type: () => MyReviewWinnerDto,
+  })
+  winners?: MyReviewWinnerDto[] | null;
 }

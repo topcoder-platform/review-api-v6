@@ -7,6 +7,7 @@ import {
   MyReviewFilterDto,
   MyReviewSortField,
   MyReviewSummaryDto,
+  MyReviewWinnerDto,
   PAST_MY_REVIEW_SORT_FIELDS,
 } from 'src/dto/my-review.dto';
 import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
@@ -24,6 +25,7 @@ interface ChallengeSummaryRow {
   challengeEndDate: Date | null;
   totalReviews: bigint | null;
   completedReviews: bigint | null;
+  winners: Prisma.JsonValue | null;
 }
 
 const PAST_CHALLENGE_STATUSES = [
@@ -183,6 +185,22 @@ export class MyReviewService {
           WHERE s."challengeId" = c.id
         ) rp ON TRUE
       `,
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            jsonb_agg(
+              jsonb_build_object(
+                'userId', w."userId",
+                'handle', w.handle,
+                'placement', w."placement",
+                'type', w.type
+              )
+              ORDER BY w."placement" ASC
+            ) AS winners
+          FROM challenges."ChallengeWinner" w
+          WHERE w."challengeId" = c.id
+        ) cw ON TRUE
+      `,
     );
 
     if (challengeTypeId) {
@@ -303,7 +321,8 @@ export class MyReviewService {
         rr.name AS "resourceRoleName",
         c."endDate" AS "challengeEndDate",
         rp."totalReviews" AS "totalReviews",
-        rp."completedReviews" AS "completedReviews"
+        rp."completedReviews" AS "completedReviews",
+        cw.winners AS "winners"
       FROM challenges."Challenge" c
       ${joinClause}
       WHERE ${whereClause}
@@ -355,6 +374,14 @@ export class MyReviewService {
       const reviewProgress = totalReviews
         ? Math.min(1, Math.max(0, completedReviews / totalReviews))
         : 0;
+      let winners: MyReviewWinnerDto[] | null = null;
+
+      if (Array.isArray(row.winners)) {
+        const parsed = row.winners
+          .map((winner) => this.toWinnerDto(winner))
+          .filter((winner): winner is MyReviewWinnerDto => Boolean(winner));
+        winners = parsed.length ? parsed : null;
+      }
 
       return {
         challengeId: row.challengeId,
@@ -369,6 +396,7 @@ export class MyReviewService {
         timeLeftInCurrentPhase: timeLeftSeconds,
         resourceRoleName: row.resourceRoleName ?? adminRoleLabel,
         reviewProgress,
+        winners,
       };
     });
 
@@ -380,6 +408,49 @@ export class MyReviewService {
         totalCount,
         totalPages,
       },
+    };
+  }
+
+  private toWinnerDto(value: Prisma.JsonValue): MyReviewWinnerDto | null {
+    if (!value || Array.isArray(value) || typeof value !== 'object') {
+      return null;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    const rawUserId = candidate.userId;
+    const rawPlacement = candidate.placement;
+    const handle = candidate.handle;
+    const type = candidate.type;
+
+    const userId =
+      typeof rawUserId === 'number'
+        ? rawUserId
+        : typeof rawUserId === 'string' && rawUserId.trim().length
+          ? Number(rawUserId)
+          : null;
+    const placement =
+      typeof rawPlacement === 'number'
+        ? rawPlacement
+        : typeof rawPlacement === 'string' && rawPlacement.trim().length
+          ? Number(rawPlacement)
+          : null;
+
+    if (
+      userId === null ||
+      !Number.isFinite(userId) ||
+      placement === null ||
+      !Number.isFinite(placement) ||
+      typeof handle !== 'string' ||
+      typeof type !== 'string'
+    ) {
+      return null;
+    }
+
+    return {
+      userId,
+      handle,
+      placement,
+      type,
     };
   }
 }

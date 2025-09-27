@@ -36,6 +36,7 @@ describe('MyReviewService', () => {
           challengeEndDate: future,
           totalReviews: BigInt(4),
           completedReviews: BigInt(2),
+          winners: null,
         },
       ]);
 
@@ -58,6 +59,53 @@ describe('MyReviewService', () => {
       totalCount: 1,
       totalPages: 1,
     });
+  });
+
+  it('includes winners when available for past challenges', async () => {
+    const pastDate = new Date(Date.now() - 86_400_000);
+
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-2',
+          challengeName: 'Completed Challenge',
+          challengeTypeId: null,
+          challengeTypeName: null,
+          currentPhaseName: null,
+          currentPhaseScheduledEnd: null,
+          currentPhaseActualEnd: null,
+          resourceRoleName: 'Reviewer',
+          challengeEndDate: pastDate,
+          totalReviews: 1n,
+          completedReviews: 1n,
+          winners: [
+            {
+              userId: 12345,
+              handle: 'topcoder',
+              placement: 1,
+              type: 'CHALLENGE_PRIZES',
+            },
+          ],
+        },
+      ]);
+
+    const result = await service.getMyReviews(
+      { isMachine: false, userId: 'reviewer-1' },
+      { past: 'true' },
+    );
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].winners).toEqual([
+      {
+        userId: 12345,
+        handle: 'topcoder',
+        placement: 1,
+        type: 'CHALLENGE_PRIZES',
+      },
+    ]);
+    expect(result.data[0].timeLeftInCurrentPhase).toBe(0);
+    expect(result.data[0].resourceRoleName).toBe('Reviewer');
   });
 
   it('throws when user context is missing', async () => {
@@ -136,6 +184,7 @@ describe('MyReviewService', () => {
           challengeEndDate: future,
           totalReviews: 0n,
           completedReviews: 0n,
+          winners: null,
         },
       ]);
 
@@ -169,6 +218,7 @@ describe('MyReviewService', () => {
           challengeEndDate: future,
           totalReviews: 0n,
           completedReviews: 0n,
+          winners: null,
         },
       ]);
 
@@ -201,6 +251,7 @@ describe('MyReviewService', () => {
           challengeEndDate: future,
           totalReviews: 0n,
           completedReviews: 0n,
+          winners: null,
         },
       ]);
 
