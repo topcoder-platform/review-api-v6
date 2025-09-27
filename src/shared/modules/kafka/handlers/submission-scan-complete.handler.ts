@@ -70,21 +70,20 @@ export class SubmissionScanCompleteHandler
       this.logger.log('Payload: ' + JSON.stringify(message, null, 2));
       this.logger.log('==============================');
 
-      if (process.env.DISPATCH_AI_REVIEW_WORKFLOWS !== 'true') {
-        this.logger.log(
-          'AI Review Workflows are disabled. Skipping orchestration.',
-        );
-        return;
-      }
-
       if (!message.isInfected) {
         const submission = await this.updateSubmissionUrl(
           message.submissionId,
           message.url,
         );
 
-        // delegate to orchestrator for further processing
-        await this.orchestrator.orchestrateScanComplete(message.submissionId);
+        if (process.env.DISPATCH_AI_REVIEW_WORKFLOWS === 'true') {
+          // delegate to orchestrator for further processing
+          await this.orchestrator.orchestrateScanComplete(message.submissionId);
+        } else {
+          this.logger.log(
+            'AI Review Workflows are disabled. Skipping orchestration.',
+          );
+        }
 
         if (submission) {
           await this.publishFirst2FinishEvent(submission);
