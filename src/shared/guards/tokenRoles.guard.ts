@@ -49,11 +49,7 @@ export class TokenRolesGuard implements CanActivate {
 
       // Check role-based access for regular users
       if (normalizedRequiredRoles.length > 0) {
-        const normalizedUserRoles = Array.isArray(user.roles)
-          ? user.roles
-              .map((role) => String(role).trim().toLowerCase())
-              .filter((role) => role.length > 0)
-          : [];
+        const normalizedUserRoles = this.normalizeUserRoles(user.roles);
 
         const hasRole = normalizedRequiredRoles.some((role) =>
           normalizedUserRoles.includes(role),
@@ -157,5 +153,43 @@ export class TokenRolesGuard implements CanActivate {
       return value.some((entry) => this.hasNonEmptyQueryParam(entry));
     }
     return false;
+  }
+
+  private static readonly GENERAL_USER_ROLE_ALIASES = new Set(
+    [
+      String(UserRole.User).trim().toLowerCase(),
+      'member',
+      'topcoder member',
+      'topcoder user',
+      'topcoder talent',
+      'user',
+    ].filter((role) => role.length > 0),
+  );
+
+  private normalizeUserRoles(roles: unknown): string[] {
+    if (!Array.isArray(roles)) {
+      return [];
+    }
+
+    const normalizedRoles = new Set<string>();
+
+    for (const role of roles) {
+      const normalizedRole = String(role ?? '')
+        .trim()
+        .toLowerCase();
+      if (!normalizedRole) {
+        continue;
+      }
+
+      normalizedRoles.add(normalizedRole);
+
+      if (TokenRolesGuard.GENERAL_USER_ROLE_ALIASES.has(normalizedRole)) {
+        for (const alias of TokenRolesGuard.GENERAL_USER_ROLE_ALIASES) {
+          normalizedRoles.add(alias);
+        }
+      }
+    }
+
+    return Array.from(normalizedRoles);
   }
 }

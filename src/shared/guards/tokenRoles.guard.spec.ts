@@ -17,15 +17,6 @@ describe('TokenRolesGuard', () => {
 
   const handler = listSubmissions;
 
-  beforeAll(() => {
-    Reflect.defineMetadata(
-      ROLES_KEY,
-      [UserRole.Copilot, UserRole.Admin, UserRole.Reviewer, UserRole.User],
-      handler,
-    );
-    Reflect.defineMetadata(SCOPES_KEY, ['read:submission'], handler);
-  });
-
   type TestRequest = Record<string, unknown> & {
     method: string;
     query: Record<string, unknown>;
@@ -61,35 +52,85 @@ describe('TokenRolesGuard', () => {
     } as unknown as ExecutionContext;
   };
 
-  it('allows authenticated users without explicit roles when requesting submissions by challengeId', () => {
-    const request = {
-      method: 'GET',
-      query: { challengeId: '12345' },
-      user: {
-        userId: '1001',
-        isMachine: false,
-        roles: [],
-      },
-    };
+  describe('general user role aliases', () => {
+    beforeEach(() => {
+      Reflect.defineMetadata(ROLES_KEY, [UserRole.User], handler);
+      Reflect.defineMetadata(SCOPES_KEY, [], handler);
+    });
 
-    const context = createExecutionContext(request);
+    it('allows Member role to satisfy general user access', () => {
+      const request = {
+        method: 'GET',
+        query: {},
+        user: {
+          userId: '1001',
+          isMachine: false,
+          roles: ['Member'],
+        },
+      };
 
-    expect(guard.canActivate(context)).toBe(true);
+      const context = createExecutionContext(request);
+
+      expect(guard.canActivate(context)).toBe(true);
+    });
+
+    it('allows Topcoder Member role to satisfy general user access', () => {
+      const request = {
+        method: 'GET',
+        query: {},
+        user: {
+          userId: '1001',
+          isMachine: false,
+          roles: ['Topcoder Member'],
+        },
+      };
+
+      const context = createExecutionContext(request);
+
+      expect(guard.canActivate(context)).toBe(true);
+    });
   });
 
-  it('denies access when challengeId is missing', () => {
-    const request = {
-      method: 'GET',
-      query: {},
-      user: {
-        userId: '1001',
-        isMachine: false,
-        roles: [],
-      },
-    };
+  describe('submission list challenge fallback', () => {
+    beforeEach(() => {
+      Reflect.defineMetadata(
+        ROLES_KEY,
+        [UserRole.Copilot, UserRole.Admin, UserRole.Reviewer, UserRole.User],
+        handler,
+      );
+      Reflect.defineMetadata(SCOPES_KEY, ['read:submission'], handler);
+    });
 
-    const context = createExecutionContext(request);
+    it('allows authenticated users without explicit roles when requesting submissions by challengeId', () => {
+      const request = {
+        method: 'GET',
+        query: { challengeId: '12345' },
+        user: {
+          userId: '1001',
+          isMachine: false,
+          roles: [],
+        },
+      };
 
-    expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+      const context = createExecutionContext(request);
+
+      expect(guard.canActivate(context)).toBe(true);
+    });
+
+    it('denies access when challengeId is missing', () => {
+      const request = {
+        method: 'GET',
+        query: {},
+        user: {
+          userId: '1001',
+          isMachine: false,
+          roles: [],
+        },
+      };
+
+      const context = createExecutionContext(request);
+
+      expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+    });
   });
 });
