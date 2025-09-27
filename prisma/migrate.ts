@@ -816,6 +816,10 @@ async function processType(type: string, subtype?: string) {
           const processedData = jsonData[key].map((sc) => {
             const id = nanoid(14);
             scorecardIdMap.set(sc.scorecard_id, id);
+            const minScore = parseFloat(sc.min_score);
+            const passingScoreSource =
+              sc.minimum_passing_score ?? sc.passing_score ?? sc.min_score;
+            const parsedPassingScore = parseFloat(passingScoreSource);
             return {
               id: id,
               legacyId: sc.scorecard_id,
@@ -825,7 +829,10 @@ async function processType(type: string, subtype?: string) {
               challengeType: projectCategoryMap[sc.project_category_id].name,
               name: sc.name,
               version: sc.version,
-              minScore: parseFloat(sc.min_score),
+              minScore: minScore,
+              minimumPassingScore: Number.isFinite(parsedPassingScore)
+                ? parsedPassingScore
+                : minScore,
               maxScore: parseFloat(sc.max_score),
               createdAt: new Date(sc.create_date),
               createdBy: sc.create_user,

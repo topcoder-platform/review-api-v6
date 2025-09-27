@@ -2,8 +2,13 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { MyReviewFilterDto, MyReviewSummaryDto } from 'src/dto/my-review.dto';
+import {
+  ACTIVE_MY_REVIEW_SORT_FIELDS,
+  MyReviewFilterDto,
+  MyReviewSortField,
+  MyReviewSummaryDto,
+  PAST_MY_REVIEW_SORT_FIELDS,
+} from 'src/dto/my-review.dto';
 import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 
@@ -17,12 +22,8 @@ interface ChallengeSummaryRow {
   currentPhaseActualEnd: Date | null;
   resourceRoleName: string | null;
   challengeEndDate: Date | null;
-}
-
-interface ReviewProgressRow {
-  challengeId: string;
-  totalReviews: bigint;
-  completedReviews: bigint;
+  totalReviews: bigint | null;
+  completedReviews: bigint | null;
 }
 
 const PAST_CHALLENGE_STATUSES = [
@@ -54,10 +55,7 @@ const joinSqlFragments = (
 export class MyReviewService {
   private readonly logger = LoggerService.forRoot(MyReviewService.name);
 
-  constructor(
-    private readonly challengePrisma: ChallengePrismaService,
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly challengePrisma: ChallengePrismaService) {}
 
   async getMyReviews(
     authUser: JwtUser,
@@ -88,6 +86,26 @@ export class MyReviewService {
       typeof filters.past === 'string'
         ? filters.past.toLowerCase() === 'true'
         : false;
+
+    const requestedSortBy = filters.sortBy;
+    const allowedSortFields = new Set<MyReviewSortField>(
+      shouldFetchPastChallenges
+        ? [...PAST_MY_REVIEW_SORT_FIELDS]
+        : [...ACTIVE_MY_REVIEW_SORT_FIELDS],
+    );
+    const sortBy =
+      requestedSortBy && allowedSortFields.has(requestedSortBy)
+        ? requestedSortBy
+        : undefined;
+
+    if (requestedSortBy && !sortBy) {
+      this.logger.warn(
+        `Sort field ${requestedSortBy} is not supported for ${shouldFetchPastChallenges ? 'past' : 'active'} reviews. Falling back to default ordering.`,
+      );
+    }
+
+    const sortOrder =
+      filters.sortOrder?.toLowerCase() === 'desc' ? 'desc' : 'asc';
 
     const whereFragments: Prisma.Sql[] = [];
 
@@ -152,6 +170,19 @@ export class MyReviewService {
           LIMIT 1
         ) cp ON TRUE
       `,
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::bigint AS "totalReviews",
+            COALESCE(
+              SUM(CASE WHEN r.status = 'COMPLETED' THEN 1 ELSE 0 END),
+              0,
+            )::bigint AS "completedReviews"
+          FROM reviews.review r
+          INNER JOIN "submission" s ON s.id = r."submissionId"
+          WHERE s."challengeId" = c.id
+        ) rp ON TRUE
+      `,
     );
 
     if (challengeTypeId) {
@@ -166,6 +197,67 @@ export class MyReviewService {
 
     const joinClause = joinSqlFragments(joins, Prisma.sql``);
     const whereClause = joinSqlFragments(whereFragments, Prisma.sql` AND `);
+
+    const phaseEndExpression = Prisma.sql`
+      COALESCE(cp."actualEndDate", cp."scheduledEndDate")
+    `;
+    const timeLeftExpression = Prisma.sql`
+      GREATEST(EXTRACT(EPOCH FROM (${phaseEndExpression} - NOW())), 0)
+    `;
+    const reviewProgressExpression = Prisma.sql`
+      CASE
+        WHEN rp."totalReviews" IS NULL OR rp."totalReviews" = 0 THEN 0
+        ELSE LEAST(
+          1,
+          GREATEST(
+            0,
+            rp."completedReviews"::numeric / rp."totalReviews"::numeric,
+          ),
+        )
+      END
+    `;
+
+    const sortFragments: Prisma.Sql[] = [];
+    const directionSql =
+      sortOrder === 'desc' ? Prisma.sql`DESC` : Prisma.sql`ASC`;
+
+    switch (sortBy) {
+      case 'projectName':
+        sortFragments.push(Prisma.sql`c.name ${directionSql} NULLS LAST`);
+        break;
+      case 'phase':
+        sortFragments.push(Prisma.sql`cp.name ${directionSql} NULLS LAST`);
+        break;
+      case 'phaseEndDate':
+        sortFragments.push(
+          Prisma.sql`${phaseEndExpression} ${directionSql} NULLS LAST`,
+        );
+        break;
+      case 'timeLeft':
+        sortFragments.push(
+          Prisma.sql`${timeLeftExpression} ${directionSql} NULLS LAST`,
+        );
+        break;
+      case 'reviewProgress':
+        sortFragments.push(
+          Prisma.sql`${reviewProgressExpression} ${directionSql} NULLS LAST`,
+        );
+        break;
+      case 'challengeEndDate':
+        sortFragments.push(Prisma.sql`c."endDate" ${directionSql} NULLS LAST`);
+        break;
+      default:
+        break;
+    }
+
+    const fallbackOrderFragments = [
+      Prisma.sql`c."createdAt" DESC NULLS LAST`,
+      Prisma.sql`c.name ASC`,
+    ];
+    const orderFragments = sortFragments.length
+      ? [...sortFragments, ...fallbackOrderFragments]
+      : fallbackOrderFragments;
+    const orderClause = joinSqlFragments(orderFragments, Prisma.sql`, `);
 
     const countQuery = Prisma.sql`
       SELECT COUNT(DISTINCT c.id) AS "total"
@@ -209,13 +301,13 @@ export class MyReviewService {
         cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
         cp."actualEndDate" AS "currentPhaseActualEnd",
         rr.name AS "resourceRoleName",
-        c."endDate" AS "challengeEndDate"
+        c."endDate" AS "challengeEndDate",
+        rp."totalReviews" AS "totalReviews",
+        rp."completedReviews" AS "completedReviews"
       FROM challenges."Challenge" c
       ${joinClause}
       WHERE ${whereClause}
-      ORDER BY
-        c."createdAt" DESC NULLS LAST,
-        c.name ASC
+      ORDER BY ${orderClause}
       LIMIT ${perPage}
       OFFSET ${offset}
     `;
@@ -242,15 +334,6 @@ export class MyReviewService {
       };
     }
 
-    const challengeIds = Array.from(
-      new Set(challengeRows.map((row) => row.challengeId)),
-    );
-
-    const progressRows = await this.fetchReviewProgress(challengeIds);
-    const progressByChallenge = new Map(
-      progressRows.map((row) => [row.challengeId, row]),
-    );
-
     const now = Date.now();
     const adminRoleLabel = adminUser ? 'Admin' : null;
 
@@ -263,9 +346,12 @@ export class MyReviewService {
         timeLeftSeconds = diff > 0 ? Math.round(diff / 1000) : 0;
       }
 
-      const progress = progressByChallenge.get(row.challengeId);
-      const totalReviews = progress ? Number(progress.totalReviews) : 0;
-      const completedReviews = progress ? Number(progress.completedReviews) : 0;
+      const totalReviews =
+        typeof row.totalReviews === 'bigint' ? Number(row.totalReviews) : 0;
+      const completedReviews =
+        typeof row.completedReviews === 'bigint'
+          ? Number(row.completedReviews)
+          : 0;
       const reviewProgress = totalReviews
         ? Math.min(1, Math.max(0, completedReviews / totalReviews))
         : 0;
@@ -295,36 +381,5 @@ export class MyReviewService {
         totalPages,
       },
     };
-  }
-
-  private async fetchReviewProgress(
-    challengeIds: string[],
-  ): Promise<ReviewProgressRow[]> {
-    if (!challengeIds.length) {
-      return [];
-    }
-
-    const idFragments = challengeIds.map((id) => Prisma.sql`${id}`);
-    const inClause = joinSqlFragments(idFragments, Prisma.sql`, `);
-
-    const progressQuery = Prisma.sql`
-      SELECT
-        s."challengeId" AS "challengeId",
-        COUNT(*)::bigint AS "totalReviews",
-        SUM(CASE WHEN r.status = 'COMPLETED' THEN 1 ELSE 0 END)::bigint AS "completedReviews"
-      FROM reviews.review r
-      INNER JOIN "submission" s ON s.id = r."submissionId"
-      WHERE s."challengeId" IN (${inClause})
-      GROUP BY s."challengeId"
-    `;
-
-    const progressQueryDetails = progressQuery.inspect();
-    this.logger.debug({
-      message: 'Executing review progress query',
-      sql: progressQueryDetails.sql,
-      parameters: progressQueryDetails.values,
-    });
-
-    return this.prisma.$queryRaw<ReviewProgressRow[]>(progressQuery);
   }
 }

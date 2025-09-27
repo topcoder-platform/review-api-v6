@@ -24,6 +24,7 @@ model scorecard {
   name           String
   version        String
   minScore       Float
+  minimumPassingScore Float @default(0)
   maxScore       Float
   createdAt      DateTime        @default(now())
   createdBy      String?

@@ -11,16 +11,10 @@ describe('MyReviewService', () => {
   const challengePrismaMock = {
     $queryRaw: jest.fn(),
   };
-  const prismaMock = {
-    $queryRaw: jest.fn(),
-  };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new MyReviewService(
-      challengePrismaMock as any,
-      prismaMock as any,
-    );
+    service = new MyReviewService(challengePrismaMock as any);
   });
 
   it('returns mapped summaries for admin users', async () => {
@@ -39,16 +33,11 @@ describe('MyReviewService', () => {
           currentPhaseScheduledEnd: future,
           currentPhaseActualEnd: null,
           resourceRoleName: null,
+          challengeEndDate: future,
+          totalReviews: BigInt(4),
+          completedReviews: BigInt(2),
         },
       ]);
-
-    prismaMock.$queryRaw.mockResolvedValue([
-      {
-        challengeId: 'challenge-1',
-        totalReviews: BigInt(4),
-        completedReviews: BigInt(2),
-      },
-    ]);
 
     const result = await service.getMyReviews({ isMachine: true }, {});
 
@@ -69,7 +58,6 @@ describe('MyReviewService', () => {
       totalCount: 1,
       totalPages: 1,
     });
-    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('throws when user context is missing', async () => {
@@ -95,7 +83,6 @@ describe('MyReviewService', () => {
         totalPages: 0,
       },
     });
-    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('queries past challenge statuses when past filter is true', async () => {
@@ -129,6 +116,103 @@ describe('MyReviewService', () => {
 
     expect(queryDetails.sql).toContain('c.status IN');
     expect(queryDetails.values).toEqual(expect.arrayContaining(pastStatuses));
-    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('applies requested sorting for active challenges', async () => {
+    const future = new Date(Date.now() + 60_000);
+
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-1',
+          challengeName: 'Alpha',
+          challengeTypeId: null,
+          challengeTypeName: null,
+          currentPhaseName: 'Review',
+          currentPhaseScheduledEnd: future,
+          currentPhaseActualEnd: null,
+          resourceRoleName: null,
+          challengeEndDate: future,
+          totalReviews: 0n,
+          completedReviews: 0n,
+        },
+      ]);
+
+    await service.getMyReviews(
+      { isMachine: true },
+      { sortBy: 'projectName', sortOrder: 'desc' },
+    );
+
+    const query = challengePrismaMock.$queryRaw.mock.calls[1][0];
+    const sql = query.inspect().sql.replace(/\s+/g, ' ');
+    expect(sql).toContain('ORDER BY');
+    expect(sql).toContain('c.name DESC NULLS LAST');
+    expect(sql).toContain('c."createdAt" DESC NULLS LAST');
+  });
+
+  it('enables time left and challenge end sorting options', async () => {
+    const future = new Date(Date.now() + 120_000);
+
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-2',
+          challengeName: 'Beta',
+          challengeTypeId: null,
+          challengeTypeName: null,
+          currentPhaseName: 'Review',
+          currentPhaseScheduledEnd: future,
+          currentPhaseActualEnd: null,
+          resourceRoleName: null,
+          challengeEndDate: future,
+          totalReviews: 0n,
+          completedReviews: 0n,
+        },
+      ]);
+
+    await service.getMyReviews(
+      { isMachine: true },
+      {
+        past: 'true',
+        sortBy: 'challengeEndDate',
+        sortOrder: 'asc',
+      },
+    );
+
+    const rowQueryCall = challengePrismaMock.$queryRaw.mock.calls[1][0];
+    const sql = rowQueryCall.inspect().sql.replace(/\s+/g, ' ');
+    expect(sql).toContain('c."endDate" ASC NULLS LAST');
+
+    challengePrismaMock.$queryRaw.mockClear();
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-3',
+          challengeName: 'Gamma',
+          challengeTypeId: null,
+          challengeTypeName: null,
+          currentPhaseName: 'Review',
+          currentPhaseScheduledEnd: future,
+          currentPhaseActualEnd: null,
+          resourceRoleName: null,
+          challengeEndDate: future,
+          totalReviews: 0n,
+          completedReviews: 0n,
+        },
+      ]);
+
+    await service.getMyReviews(
+      { isMachine: true },
+      { sortBy: 'timeLeft', sortOrder: 'asc' },
+    );
+
+    const activeQuery = challengePrismaMock.$queryRaw.mock.calls[1][0];
+    const activeSql = activeQuery.inspect().sql.replace(/\s+/g, ' ');
+    expect(activeSql).toMatch(
+      /GREATEST\(EXTRACT\(EPOCH FROM \( ?COALESCE\(cp\."actualEndDate", cp\."scheduledEndDate"\) - NOW\(\)\)\), 0\) ASC NULLS LAST/,
+    );
   });
 });

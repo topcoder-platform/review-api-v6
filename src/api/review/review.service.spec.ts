@@ -108,6 +108,9 @@ describe('ReviewService.createReview authorization checks', () => {
     prismaMock.scorecard.findUnique.mockResolvedValue({
       id: 'scorecard-1',
       scorecardGroups: [],
+      minScore: 0,
+      minimumPassingScore: 0,
+      maxScore: 100,
     });
     prismaMock.submission.findUnique.mockResolvedValue({
       id: 'submission-1',

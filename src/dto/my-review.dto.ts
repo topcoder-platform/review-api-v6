@@ -1,5 +1,25 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
+
+export const ACTIVE_MY_REVIEW_SORT_FIELDS = [
+  'projectName',
+  'phase',
+  'phaseEndDate',
+  'timeLeft',
+  'reviewProgress',
+] as const;
+
+export const PAST_MY_REVIEW_SORT_FIELDS = [
+  'projectName',
+  'challengeEndDate',
+] as const;
+
+export const ALL_MY_REVIEW_SORT_FIELDS = [
+  ...ACTIVE_MY_REVIEW_SORT_FIELDS,
+  ...PAST_MY_REVIEW_SORT_FIELDS,
+] as const;
+
+export type MyReviewSortField = (typeof ALL_MY_REVIEW_SORT_FIELDS)[number];
 
 export class MyReviewFilterDto {
   @ApiProperty({
@@ -26,6 +46,28 @@ export class MyReviewFilterDto {
   @IsOptional()
   @IsString()
   past?: string;
+
+  @ApiProperty({
+    description:
+      'Field to sort the results by. Supported values differ for active vs past challenges.',
+    required: false,
+    enum: ALL_MY_REVIEW_SORT_FIELDS,
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(ALL_MY_REVIEW_SORT_FIELDS)
+  sortBy?: MyReviewSortField;
+
+  @ApiProperty({
+    description: 'Sort order for the selected field',
+    required: false,
+    enum: ['asc', 'desc'],
+    default: 'asc',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
 }
 
 export class MyReviewSummaryDto {

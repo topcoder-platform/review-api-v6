@@ -8,7 +8,11 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { MyReviewService } from './myReview.service';
-import { MyReviewFilterDto, MyReviewSummaryDto } from 'src/dto/my-review.dto';
+import {
+  ALL_MY_REVIEW_SORT_FIELDS,
+  MyReviewFilterDto,
+  MyReviewSummaryDto,
+} from 'src/dto/my-review.dto';
 import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -57,6 +61,18 @@ export class MyReviewController {
     status: 200,
     description: 'List of active challenges for the requesting user',
     type: [MyReviewSummaryDto],
+  })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    description: 'Sort the results by a supported field',
+    enum: ALL_MY_REVIEW_SORT_FIELDS,
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    required: false,
+    description: 'Sort order (ascending or descending)',
+    enum: ['asc', 'desc'],
   })
   async getMyReviews(
     @Req() req: Request,

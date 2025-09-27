@@ -260,6 +260,15 @@ export class ScorecardBaseDto {
   @IsSmallerThan('maxScore')
   minScore: number;
 
+  @ApiProperty({
+    description: 'The minimum score a submission must achieve to pass',
+    example: 75,
+  })
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  minimumPassingScore: number;
+
   @ApiProperty({ description: 'The maximum score', example: 100 })
   @IsNumber()
   @Max(100)
