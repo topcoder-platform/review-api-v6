@@ -2,7 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString } from 'class-validator';
 
 export const ACTIVE_MY_REVIEW_SORT_FIELDS = [
-  'projectName',
+  'challengeName',
   'phase',
   'phaseEndDate',
   'timeLeft',
@@ -10,7 +10,7 @@ export const ACTIVE_MY_REVIEW_SORT_FIELDS = [
 ] as const;
 
 export const PAST_MY_REVIEW_SORT_FIELDS = [
-  'projectName',
+  'challengeName',
   'challengeEndDate',
 ] as const;
 
@@ -33,6 +33,13 @@ export class MyReviewWinnerDto {
 
   @ApiProperty({ description: 'Winner prize set type' })
   type: string;
+
+  @ApiProperty({
+    description: 'Winner maximum rating across tracks',
+    required: false,
+    nullable: true,
+  })
+  maxRating?: number | null;
 }
 
 export class MyReviewFilterDto {

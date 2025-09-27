@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
+import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import {
   ACTIVE_MY_REVIEW_SORT_FIELDS,
@@ -57,7 +58,10 @@ const joinSqlFragments = (
 export class MyReviewService {
   private readonly logger = LoggerService.forRoot(MyReviewService.name);
 
-  constructor(private readonly challengePrisma: ChallengePrismaService) {}
+  constructor(
+    private readonly challengePrisma: ChallengePrismaService,
+    private readonly memberPrisma: MemberPrismaService,
+  ) {}
 
   async getMyReviews(
     authUser: JwtUser,
@@ -177,12 +181,13 @@ export class MyReviewService {
           SELECT
             COUNT(*)::bigint AS "totalReviews",
             COALESCE(
-              SUM(CASE WHEN r.status = 'COMPLETED' THEN 1 ELSE 0 END),
-              0,
+              SUM(CASE WHEN rv.status = 'COMPLETED' THEN 1 ELSE 0 END),
+              0
             )::bigint AS "completedReviews"
-          FROM reviews.review r
-          INNER JOIN "submission" s ON s.id = r."submissionId"
-          WHERE s."challengeId" = c.id
+          FROM reviews.review rv
+          INNER JOIN resources."Resource" rr
+            ON rr.id = rv."resourceId"
+          WHERE rr."challengeId" = c.id
         ) rp ON TRUE
       `,
       Prisma.sql`
@@ -240,7 +245,7 @@ export class MyReviewService {
       sortOrder === 'desc' ? Prisma.sql`DESC` : Prisma.sql`ASC`;
 
     switch (sortBy) {
-      case 'projectName':
+      case 'challengeName':
         sortFragments.push(Prisma.sql`c.name ${directionSql} NULLS LAST`);
         break;
       case 'phase':
@@ -355,6 +360,7 @@ export class MyReviewService {
 
     const now = Date.now();
     const adminRoleLabel = adminUser ? 'Admin' : null;
+    const winnerUserIds = new Set<number>();
 
     const data = challengeRows.map((row) => {
       const phaseEnd =
@@ -381,6 +387,9 @@ export class MyReviewService {
           .map((winner) => this.toWinnerDto(winner))
           .filter((winner): winner is MyReviewWinnerDto => Boolean(winner));
         winners = parsed.length ? parsed : null;
+        if (winners) {
+          winners.forEach((winner) => winnerUserIds.add(winner.userId));
+        }
       }
 
       return {
@@ -399,6 +408,51 @@ export class MyReviewService {
         winners,
       };
     });
+
+    if (winnerUserIds.size) {
+      try {
+        const userIdList = Array.from(winnerUserIds);
+        const members = await this.memberPrisma.member.findMany({
+          where: {
+            userId: {
+              in: userIdList.map((id) => BigInt(id)),
+            },
+          },
+          select: {
+            userId: true,
+            maxRating: {
+              select: {
+                rating: true,
+              },
+            },
+          },
+        });
+
+        const ratingByUserId = new Map<number, number | null>();
+        members.forEach((member) => {
+          const parsedUserId = Number(member.userId);
+          const rating = member.maxRating?.rating ?? null;
+          ratingByUserId.set(parsedUserId, rating);
+        });
+
+        data.forEach((item) => {
+          if (!item.winners) {
+            return;
+          }
+
+          item.winners = item.winners.map((winner) => ({
+            ...winner,
+            maxRating: ratingByUserId.get(winner.userId) ?? null,
+          }));
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? `Failed to enrich winners with member ratings: ${error.message}`
+            : 'Failed to enrich winners with member ratings';
+        this.logger.error(message);
+      }
+    }
 
     return {
       data,
@@ -451,6 +505,7 @@ export class MyReviewService {
       handle,
       placement,
       type,
+      maxRating: null,
     };
   }
 }

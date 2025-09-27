@@ -11,10 +11,19 @@ describe('MyReviewService', () => {
   const challengePrismaMock = {
     $queryRaw: jest.fn(),
   };
+  const memberPrismaMock = {
+    member: {
+      findMany: jest.fn(),
+    },
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new MyReviewService(challengePrismaMock as any);
+    memberPrismaMock.member.findMany.mockResolvedValue([]);
+    service = new MyReviewService(
+      challengePrismaMock as any,
+      memberPrismaMock as any,
+    );
   });
 
   it('returns mapped summaries for admin users', async () => {
@@ -64,6 +73,15 @@ describe('MyReviewService', () => {
   it('includes winners when available for past challenges', async () => {
     const pastDate = new Date(Date.now() - 86_400_000);
 
+    memberPrismaMock.member.findMany.mockResolvedValueOnce([
+      {
+        userId: BigInt(12345),
+        maxRating: {
+          rating: 2760,
+        },
+      },
+    ]);
+
     challengePrismaMock.$queryRaw
       .mockResolvedValueOnce([{ total: 1n }])
       .mockResolvedValueOnce([
@@ -102,10 +120,26 @@ describe('MyReviewService', () => {
         handle: 'topcoder',
         placement: 1,
         type: 'CHALLENGE_PRIZES',
+        maxRating: 2760,
       },
     ]);
     expect(result.data[0].timeLeftInCurrentPhase).toBe(0);
     expect(result.data[0].resourceRoleName).toBe('Reviewer');
+    expect(memberPrismaMock.member.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: {
+          in: [BigInt(12345)],
+        },
+      },
+      select: {
+        userId: true,
+        maxRating: {
+          select: {
+            rating: true,
+          },
+        },
+      },
+    });
   });
 
   it('throws when user context is missing', async () => {
@@ -190,7 +224,7 @@ describe('MyReviewService', () => {
 
     await service.getMyReviews(
       { isMachine: true },
-      { sortBy: 'projectName', sortOrder: 'desc' },
+      { sortBy: 'challengeName', sortOrder: 'desc' },
     );
 
     const query = challengePrismaMock.$queryRaw.mock.calls[1][0];

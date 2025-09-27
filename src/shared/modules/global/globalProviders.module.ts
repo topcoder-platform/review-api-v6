@@ -19,6 +19,7 @@ import { SubmissionScanCompleteOrchestrator } from './submission-scan-complete.o
 import { ChallengeCatalogService } from './challenge-catalog.service';
 import { SubmissionService } from 'src/api/submission/submission.service';
 import { ChallengePrismaService } from './challenge-prisma.service';
+import { MemberPrismaService } from './member-prisma.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -43,6 +44,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
     ChallengeApiService,
     ChallengeCatalogService,
     ChallengePrismaService,
+    MemberPrismaService,
     ResourcePrismaService,
     ResourceApiService,
     EventBusService,
@@ -61,6 +63,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
     ChallengeApiService,
     ChallengeCatalogService,
     ChallengePrismaService,
+    MemberPrismaService,
     ResourcePrismaService,
     ResourceApiService,
     EventBusService,
