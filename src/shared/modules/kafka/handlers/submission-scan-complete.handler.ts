@@ -72,8 +72,8 @@ export class SubmissionScanCompleteHandler
 
       if (!message.isInfected) {
         const submission = await this.updateSubmissionUrl(
-          message.submissionId,
-          message.url,
+          message.payload.submissionId,
+          message.payload.url,
         );
 
         if (process.env.DISPATCH_AI_REVIEW_WORKFLOWS === 'true') {
