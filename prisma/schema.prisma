@@ -181,6 +181,7 @@ model review {
   @@index([phaseId]) // Index for filtering by phase
   @@index([scorecardId]) // Index for joining with scorecard table
   @@index([status]) // Index for filtering by review status
+  @@unique([resourceId, submissionId, scorecardId])
 }
 
 model reviewItem {
