@@ -235,6 +235,7 @@ describe('ReviewService.createReview authorization checks', () => {
       submissionId: 'submission-1',
       scorecardId: 'scorecard-1',
       resourceId: baseResource.id,
+      phaseId: 'phase-review',
       status: ReviewStatus.COMPLETED,
       reviewDate,
       initialScore: 88.5,
@@ -281,6 +282,7 @@ describe('ReviewService.createReview authorization checks', () => {
       expect.objectContaining({
         challengeId: 'challenge-1',
         submissionId: 'submission-1',
+        phaseId: 'phase-review',
         reviewId: 'review-1',
         scorecardId: 'scorecard-1',
         reviewerResourceId: baseResource.id,
@@ -1207,6 +1209,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       .mockResolvedValueOnce({
         id: 'review-1',
         resourceId: 'resource-1',
+        phaseId: 'phase-review',
         status: ReviewStatus.PENDING,
         submission: {
           challengeId: 'challenge-1',
@@ -1218,6 +1221,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
         submissionId: 'submission-1',
         scorecardId: 'scorecard-1',
         resourceId: 'resource-1',
+        phaseId: 'phase-review',
         status: ReviewStatus.COMPLETED,
         reviewDate: completionDate,
         initialScore: 99.1,
@@ -1263,6 +1267,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
         reviewId: 'review-1',
         challengeId: 'challenge-1',
         submissionId: 'submission-1',
+        phaseId: 'phase-review',
         reviewerHandle: 'reviewerHandle',
         reviewerMemberId: 'reviewer-1',
         submitterHandle: 'submitterHandle',
