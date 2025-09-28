@@ -24,7 +24,9 @@ import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
@@ -41,6 +43,8 @@ export class ReviewService {
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
+    private readonly memberPrisma: MemberPrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly eventBusService: EventBusService,
   ) {
@@ -268,6 +272,7 @@ export class ReviewService {
           submissionId: true,
           scorecardId: true,
           resourceId: true,
+          phaseId: true,
           status: true,
           reviewDate: true,
           initialScore: true,
@@ -343,6 +348,7 @@ export class ReviewService {
       const payload = {
         challengeId,
         submissionId,
+        phaseId: review.phaseId ?? null,
         reviewId: review.id,
         scorecardId: review.scorecardId,
         reviewerResourceId: review.resourceId,
@@ -1844,6 +1850,101 @@ export class ReviewService {
         },
       });
 
+      const reviewerProfilesByResource = new Map<
+        string,
+        { handle: string | null; maxRating: number | null }
+      >();
+
+      if (reviews.length) {
+        try {
+          const resourceIds = Array.from(
+            new Set(
+              reviews
+                .map((review) => String(review.resourceId ?? '').trim())
+                .filter((id) => id.length),
+            ),
+          );
+
+          if (resourceIds.length) {
+            const resources = await this.resourcePrisma.resource.findMany({
+              where: { id: { in: resourceIds } },
+              select: { id: true, memberId: true },
+            });
+
+            const memberIds = Array.from(
+              new Set(
+                resources
+                  .map((resource) => String(resource.memberId ?? '').trim())
+                  .filter((id) => id.length),
+              ),
+            );
+
+            const memberIdsAsBigInt: bigint[] = [];
+            for (const id of memberIds) {
+              try {
+                memberIdsAsBigInt.push(BigInt(id));
+              } catch (error) {
+                this.logger.debug(
+                  `[getReviews] Skipping reviewer memberId ${id}: unable to convert to BigInt. ${error}`,
+                );
+              }
+            }
+
+            const memberInfoById = new Map<
+              string,
+              { handle: string | null; maxRating: number | null }
+            >();
+
+            if (memberIdsAsBigInt.length) {
+              const members = await this.memberPrisma.member.findMany({
+                where: { userId: { in: memberIdsAsBigInt } },
+                select: {
+                  userId: true,
+                  handle: true,
+                  maxRating: { select: { rating: true } },
+                },
+              });
+
+              members.forEach((member) => {
+                memberInfoById.set(member.userId.toString(), {
+                  handle: member.handle ?? null,
+                  maxRating: member.maxRating?.rating ?? null,
+                });
+              });
+            }
+
+            resources.forEach((resource) => {
+              const memberId = String(resource.memberId ?? '').trim();
+              const profile = memberInfoById.get(memberId) ?? {
+                handle: null,
+                maxRating: null,
+              };
+              reviewerProfilesByResource.set(resource.id, profile);
+            });
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `[getReviews] Failed to enrich reviewer metadata: ${message}`,
+          );
+        }
+      }
+
+      const enrichedReviews = reviews.map((review) => {
+        const profile = reviewerProfilesByResource.get(
+          String(review.resourceId ?? ''),
+        ) ?? {
+          handle: null,
+          maxRating: null,
+        };
+        return {
+          ...review,
+          reviewerHandle: profile.handle,
+          reviewerMaxRating: profile.maxRating,
+        };
+      });
+
       const totalCount = await this.prisma.review.count({
         where: reviewWhereClause,
       });
@@ -1853,7 +1954,7 @@ export class ReviewService {
       );
 
       return {
-        data: reviews as ReviewResponseDto[],
+        data: enrichedReviews as ReviewResponseDto[],
         meta: {
           page,
           perPage,

@@ -36,6 +36,18 @@ describe('ReviewService.createReview authorization checks', () => {
     getMemberResourcesRoles: jest.fn(),
   } as unknown as any;
 
+  const resourcePrismaMock = {
+    resource: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
+  const memberPrismaMock = {
+    member: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
   const challengeApiServiceMock = {
     validateReviewSubmission: jest.fn(),
     getChallengeDetail: jest.fn(),
@@ -50,6 +62,8 @@ describe('ReviewService.createReview authorization checks', () => {
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
+    resourcePrismaMock,
+    memberPrismaMock,
     challengeApiServiceMock,
     eventBusServiceMock,
   );
@@ -402,6 +416,18 @@ describe('ReviewService.getReview authorization checks', () => {
     getMemberResourcesRoles: jest.fn(),
   } as unknown as any;
 
+  const resourcePrismaMock = {
+    resource: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
+  const memberPrismaMock = {
+    member: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
   const challengeApiServiceMock = {
     getChallengeDetail: jest.fn(),
   } as unknown as any;
@@ -415,6 +441,8 @@ describe('ReviewService.getReview authorization checks', () => {
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
+    resourcePrismaMock,
+    memberPrismaMock,
     challengeApiServiceMock,
     eventBusServiceMock,
   );
@@ -530,6 +558,8 @@ describe('ReviewService.getReviews reviewer visibility', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
+  let resourcePrismaMock: any;
+  let memberPrismaMock: any;
   let challengeApiServiceMock: any;
   let eventBusServiceMock: any;
   let service: ReviewService;
@@ -542,10 +572,10 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
   const baseSubmission = { id: 'submission-1' };
 
-  const buildResource = (roleName: string) => ({
+  const buildResource = (roleName: string, memberId = baseAuthUser.userId) => ({
     id: 'resource-1',
     challengeId: 'challenge-1',
-    memberId: baseAuthUser.userId,
+    memberId,
     memberHandle: 'reviewerHandle',
     roleId: 'role-reviewer',
     phaseId: 'phase-review',
@@ -585,10 +615,24 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       sendEmail: jest.fn(),
     };
 
+    resourcePrismaMock = {
+      resource: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
+    memberPrismaMock = {
+      member: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
     service = new ReviewService(
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
+      resourcePrismaMock,
+      memberPrismaMock,
       challengeApiServiceMock,
       eventBusServiceMock,
     );
@@ -622,6 +666,78 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
     expect(callArgs.where.resourceId).toBeUndefined();
   });
+
+  it('enriches reviewer metadata when member data is available', async () => {
+    const now = new Date();
+
+    const reviewRecord = {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      submissionId: baseSubmission.id,
+      phaseId: 'phase-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: null,
+      reviewItems: [],
+      createdAt: now,
+      createdBy: 'creator',
+      updatedAt: now,
+      updatedBy: 'updater',
+      finalScore: 93,
+      initialScore: 91,
+    };
+
+    prismaMock.review.findMany.mockResolvedValue([reviewRecord]);
+    prismaMock.review.count.mockResolvedValue(1);
+
+    const numericReviewer: JwtUser = {
+      ...baseAuthUser,
+      userId: '123',
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Reviewer', '123'),
+    ]);
+
+    resourcePrismaMock.resource.findMany.mockResolvedValue([
+      { id: 'resource-1', memberId: '123' },
+    ]);
+
+    memberPrismaMock.member.findMany.mockResolvedValue([
+      {
+        userId: BigInt(123),
+        handle: 'reviewer123',
+        maxRating: { rating: 2760 },
+      },
+    ]);
+
+    const response = await service.getReviews(
+      numericReviewer,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data[0]).toMatchObject({
+      id: 'review-1',
+      reviewerHandle: 'reviewer123',
+      reviewerMaxRating: 2760,
+    });
+    expect(resourcePrismaMock.resource.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['resource-1'] } },
+      select: { id: true, memberId: true },
+    });
+    expect(memberPrismaMock.member.findMany).toHaveBeenCalledWith({
+      where: { userId: { in: [BigInt(123)] } },
+      select: {
+        userId: true,
+        handle: true,
+        maxRating: { select: { rating: true } },
+      },
+    });
+  });
 });
 
 describe('ReviewService.updateReviewItem validations', () => {
@@ -647,6 +763,18 @@ describe('ReviewService.updateReviewItem validations', () => {
     getMemberResourcesRoles: jest.fn(),
   } as unknown as any;
 
+  const resourcePrismaMock = {
+    resource: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
+  const memberPrismaMock = {
+    member: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
   const challengeApiServiceMock = {} as unknown as any;
 
   const eventBusServiceMock = {
@@ -658,6 +786,8 @@ describe('ReviewService.updateReviewItem validations', () => {
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
+    resourcePrismaMock,
+    memberPrismaMock,
     challengeApiServiceMock,
     eventBusServiceMock,
   );
@@ -836,6 +966,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
+  let resourcePrismaMock: any;
+  let memberPrismaMock: any;
   let challengeApiServiceMock: any;
   let eventBusServiceMock: any;
   let service: ReviewService;
@@ -885,6 +1017,18 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       },
     ]);
 
+    resourcePrismaMock = {
+      resource: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
+    memberPrismaMock = {
+      member: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
     challengeApiServiceMock = {
       getChallengeDetail: jest.fn(),
     } as any;
@@ -904,6 +1048,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
+      resourcePrismaMock,
+      memberPrismaMock,
       challengeApiServiceMock,
       eventBusServiceMock,
     );
@@ -1154,6 +1300,8 @@ describe('ReviewService.createReviewItemComments', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
+  let resourcePrismaMock: any;
+  let memberPrismaMock: any;
   let eventBusServiceMock: any;
   let service: ReviewService;
   let recomputeSpy: jest.SpyInstance;
@@ -1188,6 +1336,18 @@ describe('ReviewService.createReviewItemComments', () => {
     } as any;
     resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
 
+    resourcePrismaMock = {
+      resource: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
+    memberPrismaMock = {
+      member: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
     eventBusServiceMock = {
       publish: jest.fn(),
       sendEmail: jest.fn(),
@@ -1197,6 +1357,8 @@ describe('ReviewService.createReviewItemComments', () => {
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
+      resourcePrismaMock,
+      memberPrismaMock,
       {} as any,
       eventBusServiceMock,
     );
@@ -1425,6 +1587,8 @@ describe('ReviewService.deleteReview', () => {
   let prismaMock: any;
   let prismaErrorServiceMock: any;
   let resourceApiServiceMock: any;
+  let resourcePrismaMock: any;
+  let memberPrismaMock: any;
   let eventBusServiceMock: any;
   let service: ReviewService;
 
@@ -1456,6 +1620,18 @@ describe('ReviewService.deleteReview', () => {
       getMemberResourcesRoles: jest.fn(),
     } as any;
 
+    resourcePrismaMock = {
+      resource: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
+    memberPrismaMock = {
+      member: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+
     eventBusServiceMock = {
       publish: jest.fn(),
       sendEmail: jest.fn(),
@@ -1465,6 +1641,8 @@ describe('ReviewService.deleteReview', () => {
       prismaMock,
       prismaErrorServiceMock,
       resourceApiServiceMock,
+      resourcePrismaMock,
+      memberPrismaMock,
       {} as any,
       eventBusServiceMock,
     );
@@ -1582,6 +1760,18 @@ describe('ReviewService.deleteReviewItem authorization checks', () => {
     getMemberResourcesRoles: jest.fn(),
   } as unknown as any;
 
+  const resourcePrismaMock = {
+    resource: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
+  const memberPrismaMock = {
+    member: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  } as unknown as any;
+
   const challengeApiServiceMock = {} as unknown as any;
 
   const eventBusServiceMock = {
@@ -1593,6 +1783,8 @@ describe('ReviewService.deleteReviewItem authorization checks', () => {
     prismaMock,
     prismaErrorServiceMock,
     resourceApiServiceMock,
+    resourcePrismaMock,
+    memberPrismaMock,
     challengeApiServiceMock,
     eventBusServiceMock,
   );
