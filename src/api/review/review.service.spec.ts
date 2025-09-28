@@ -8,6 +8,7 @@ import { ReviewRequestDto, ReviewStatus } from 'src/dto/review.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
+import { CommonConfig } from 'src/shared/config/common.config';
 
 describe('ReviewService.createReview authorization checks', () => {
   const prismaMock = {
@@ -667,6 +668,39 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
     expect(callArgs.where.resourceId).toBeUndefined();
+  });
+
+  it('restricts submitters to their own submissions when submission phase is closed on an active challenge', async () => {
+    const submitterResource = {
+      ...buildResource('Submitter'),
+      roleId: CommonConfig.roles.submitterRoleId,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      submitterResource,
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Challenge Active',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        { id: 'phase-sub', name: 'Submission', isOpen: false },
+        { id: 'phase-review', name: 'Review', isOpen: false },
+      ],
+    });
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([baseSubmission]);
+      }
+      return Promise.resolve([baseSubmission, { id: 'submission-other' }]);
+    });
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.submissionId).toEqual({ in: [baseSubmission.id] });
   });
 
   it('enriches reviewer metadata when member data is available', async () => {

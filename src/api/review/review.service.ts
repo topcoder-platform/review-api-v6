@@ -1698,6 +1698,7 @@ export class ReviewService {
         if (challengeId) {
           let reviewerResourceIds: string[] = [];
           let hasCopilotRole = false;
+          let hasSubmitterRole = false;
           try {
             const resources =
               await this.resourceApiService.getMemberResourcesRoles(
@@ -1714,6 +1715,13 @@ export class ReviewService {
             hasCopilotRole = normalized.some((r) =>
               (r.roleName || '').toLowerCase().includes('copilot'),
             );
+            hasSubmitterRole = normalized.some((r) => {
+              const roleName = (r.roleName || '').toLowerCase();
+              return (
+                r.roleId === CommonConfig.roles.submitterRoleId ||
+                roleName.includes('submitter')
+              );
+            });
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             this.logger.debug(
@@ -1750,13 +1758,26 @@ export class ReviewService {
             const appealsResponseOpen = phases.some(
               (p) => p.name === 'Appeals Response' && p.isOpen,
             );
+            const submissionPhaseClosed = phases.some(
+              (p) =>
+                (p.name || '').toLowerCase() === 'submission' &&
+                p.isOpen === false,
+            );
+            const mySubmissionIds = mySubs.map((s) => s.id);
 
             if (challenge.status === ChallengeStatus.COMPLETED) {
               // Allowed to see all reviews on this challenge
               // reviewWhereClause already limited to submissions on this challenge
             } else if (appealsOpen || appealsResponseOpen) {
               // Restrict to own reviews (own submissions only)
-              restrictToSubmissionIds(mySubs.map((s) => s.id));
+              restrictToSubmissionIds(mySubmissionIds);
+            } else if (
+              challenge.status === ChallengeStatus.ACTIVE &&
+              submissionPhaseClosed &&
+              hasSubmitterRole
+            ) {
+              // Submitters can access their own submissions once submission phase closes
+              restrictToSubmissionIds(mySubmissionIds);
             } else {
               // No access for non-completed, non-appeals phases
               throw new ForbiddenException({
