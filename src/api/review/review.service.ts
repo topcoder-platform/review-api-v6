@@ -35,6 +35,18 @@ import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 
+const REVIEW_ITEM_COMMENTS_INCLUDE = {
+  reviewItemComments: {
+    include: {
+      appeal: {
+        include: {
+          appealResponse: true,
+        },
+      },
+    },
+  },
+} as const;
+
 @Injectable()
 export class ReviewService {
   private readonly logger: LoggerService;
@@ -958,9 +970,7 @@ export class ReviewService {
         data: prismaBody,
         include: {
           reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
+            include: REVIEW_ITEM_COMMENTS_INCLUDE,
           },
         },
       });
@@ -989,9 +999,7 @@ export class ReviewService {
           },
           include: {
             reviewItems: {
-              include: {
-                reviewItemComments: true,
-              },
+              include: REVIEW_ITEM_COMMENTS_INCLUDE,
             },
           },
         });
@@ -1148,9 +1156,7 @@ export class ReviewService {
 
       const data = await this.prisma.reviewItem.create({
         data: mapped as any,
-        include: {
-          reviewItemComments: true,
-        },
+        include: REVIEW_ITEM_COMMENTS_INCLUDE,
       });
       // Recalculate parent review scores
       if (data?.reviewId) {
@@ -1386,9 +1392,7 @@ export class ReviewService {
         data: updateData,
         include: {
           reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
+            include: REVIEW_ITEM_COMMENTS_INCLUDE,
           },
         },
       });
@@ -1549,9 +1553,7 @@ export class ReviewService {
       const data = await this.prisma.reviewItem.update({
         where: { id: itemId },
         data: mappedData,
-        include: {
-          reviewItemComments: true,
-        },
+        include: REVIEW_ITEM_COMMENTS_INCLUDE,
       });
 
       if (data?.reviewId) {
@@ -1864,9 +1866,7 @@ export class ReviewService {
         take: perPage,
         include: {
           reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
+            include: REVIEW_ITEM_COMMENTS_INCLUDE,
           },
         },
       });
@@ -2012,9 +2012,7 @@ export class ReviewService {
             select: { id: true, challengeId: true, memberId: true },
           },
           reviewItems: {
-            include: {
-              reviewItemComments: true,
-            },
+            include: REVIEW_ITEM_COMMENTS_INCLUDE,
           },
         },
       });

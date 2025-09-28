@@ -14,6 +14,7 @@ import {
   IsInt,
   IsEmpty,
 } from 'class-validator';
+import { AppealResponseDto } from 'src/dto/appeal.dto';
 
 export enum ReviewItemCommentType {
   COMMENT = 'COMMENT',
@@ -76,6 +77,16 @@ export class ReviewItemCommentResponseDto extends ReviewItemCommentBaseDto {
     example: '123',
   })
   id: string;
+
+  @ApiProperty({
+    description: 'Appeal linked to this comment, if one exists',
+    type: () => AppealResponseDto,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @Type(() => AppealResponseDto)
+  appeal?: AppealResponseDto | null;
 
   @ApiProperty({
     description: 'The creation timestamp',
