@@ -1603,6 +1603,11 @@ export class ReviewService {
 
     try {
       const reviewWhereClause: any = {};
+      let challengeDetail: {
+        status?: ChallengeStatus;
+        phases?: Array<{ name?: string | null; isOpen?: boolean | null }>;
+      } | null = null;
+      let requesterIsChallengeResource = false;
 
       // Utility to merge an allowed set of submission IDs into where clause
       const restrictToSubmissionIds = (allowedIds: string[]) => {
@@ -1701,6 +1706,7 @@ export class ReviewService {
           let reviewerResourceIds: string[] = [];
           let hasCopilotRole = false;
           let hasSubmitterRole = false;
+          let normalized: ResourceInfo[] = [];
           try {
             const resources =
               await this.resourceApiService.getMemberResourcesRoles(
@@ -1708,7 +1714,8 @@ export class ReviewService {
                 uid,
               );
 
-            const normalized = resources || [];
+            normalized = resources || [];
+            requesterIsChallengeResource = normalized.length > 0;
             reviewerResourceIds = normalized
               .filter((r) =>
                 (r.roleName || '').toLowerCase().includes('reviewer'),
@@ -1751,8 +1758,9 @@ export class ReviewService {
             }
 
             // Fetch challenge to determine phase-based visibility
-            const challenge =
+            challengeDetail =
               await this.challengeApiService.getChallengeDetail(challengeId);
+            const challenge = challengeDetail;
             const phases = challenge.phases || [];
             const appealsOpen = phases.some(
               (p) => p.name === 'Appeals' && p.isOpen,
@@ -1766,6 +1774,10 @@ export class ReviewService {
                 p.isOpen === false,
             );
             const mySubmissionIds = mySubs.map((s) => s.id);
+
+            if (!requesterIsChallengeResource && mySubs.length > 0) {
+              requesterIsChallengeResource = true;
+            }
 
             if (challenge.status === ChallengeStatus.COMPLETED) {
               // Allowed to see all reviews on this challenge
@@ -1857,6 +1869,28 @@ export class ReviewService {
         }
       }
 
+      if (challengeId && !challengeDetail) {
+        try {
+          challengeDetail =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[getReviews] Unable to fetch challenge detail for submitter enrichment: ${message}`,
+          );
+        }
+      }
+
+      const shouldIncludeSubmitterMetadata =
+        Boolean(challengeId) &&
+        !!challengeDetail &&
+        [
+          ChallengeStatus.COMPLETED,
+          ChallengeStatus.CANCELLED_FAILED_REVIEW,
+        ].includes(challengeDetail.status as ChallengeStatus) &&
+        (isAdmin(authUser) || requesterIsChallengeResource);
+
       this.logger.debug(`Fetching reviews with where clause:`);
       this.logger.debug(reviewWhereClause);
 
@@ -1868,10 +1902,17 @@ export class ReviewService {
           reviewItems: {
             include: REVIEW_ITEM_COMMENTS_INCLUDE,
           },
+          submission: {
+            select: { id: true, memberId: true, challengeId: true },
+          },
         },
       });
 
       const reviewerProfilesByResource = new Map<
+        string,
+        { handle: string | null; maxRating: number | null }
+      >();
+      const submitterProfilesBySubmission = new Map<
         string,
         { handle: string | null; maxRating: number | null }
       >();
@@ -1952,6 +1993,101 @@ export class ReviewService {
         }
       }
 
+      if (shouldIncludeSubmitterMetadata && reviews.length) {
+        try {
+          const submissionMembers = reviews
+            .map((review) => ({
+              submissionId: review.submissionId,
+              memberId: String(review.submission?.memberId ?? '').trim(),
+            }))
+            .filter(
+              (entry): entry is { submissionId: string; memberId: string } =>
+                Boolean(entry.submissionId && entry.memberId),
+            );
+
+          const uniqueMemberIds = Array.from(
+            new Set(submissionMembers.map((entry) => entry.memberId)),
+          );
+
+          if (uniqueMemberIds.length) {
+            const challengeIdForResources =
+              challengeId ?? reviews[0]?.submission?.challengeId ?? undefined;
+
+            const submitterHandles = new Map<string, string | null>();
+
+            if (challengeIdForResources) {
+              const submitterResources =
+                await this.resourcePrisma.resource.findMany({
+                  where: {
+                    challengeId: challengeIdForResources,
+                    memberId: { in: uniqueMemberIds },
+                  },
+                  select: { memberId: true, memberHandle: true },
+                });
+
+              submitterResources.forEach((resource) => {
+                const memberId = String(resource.memberId ?? '').trim();
+                if (!memberId || submitterHandles.has(memberId)) {
+                  return;
+                }
+                submitterHandles.set(memberId, resource.memberHandle ?? null);
+              });
+            }
+
+            const memberIdsAsBigInt: bigint[] = [];
+            for (const id of uniqueMemberIds) {
+              try {
+                memberIdsAsBigInt.push(BigInt(id));
+              } catch (error) {
+                this.logger.debug(
+                  `[getReviews] Skipping submitter memberId ${id}: unable to convert to BigInt. ${error}`,
+                );
+              }
+            }
+
+            const submitterMemberInfoById = new Map<
+              string,
+              { handle: string | null; maxRating: number | null }
+            >();
+
+            if (memberIdsAsBigInt.length) {
+              const submitterMembers = await this.memberPrisma.member.findMany({
+                where: { userId: { in: memberIdsAsBigInt } },
+                select: {
+                  userId: true,
+                  handle: true,
+                  maxRating: { select: { rating: true } },
+                },
+              });
+
+              submitterMembers.forEach((member) => {
+                submitterMemberInfoById.set(member.userId.toString(), {
+                  handle: member.handle ?? null,
+                  maxRating: member.maxRating?.rating ?? null,
+                });
+              });
+            }
+
+            submissionMembers.forEach((entry) => {
+              const profile = submitterMemberInfoById.get(entry.memberId);
+              const handle =
+                profile?.handle ?? submitterHandles.get(entry.memberId) ?? null;
+              const maxRating = profile?.maxRating ?? null;
+              submitterProfilesBySubmission.set(entry.submissionId, {
+                handle,
+                maxRating,
+              });
+            });
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `[getReviews] Failed to enrich submitter metadata: ${message}`,
+          );
+        }
+      }
+
       const enrichedReviews = reviews.map((review) => {
         const profile = reviewerProfilesByResource.get(
           String(review.resourceId ?? ''),
@@ -1959,11 +2095,28 @@ export class ReviewService {
           handle: null,
           maxRating: null,
         };
-        return {
-          ...review,
+        const submissionKey = review.submissionId ?? '';
+        const submitterProfile = shouldIncludeSubmitterMetadata
+          ? (submitterProfilesBySubmission.get(submissionKey) ?? {
+              handle: null,
+              maxRating: null,
+            })
+          : undefined;
+        const { submission: _submission, ...reviewData } = review;
+        void _submission;
+        const result = {
+          ...(reviewData as ReviewResponseDto),
           reviewerHandle: profile.handle,
           reviewerMaxRating: profile.maxRating,
+        } as ReviewResponseDto & {
+          submitterHandle?: string | null;
+          submitterMaxRating?: number | null;
         };
+        if (shouldIncludeSubmitterMetadata) {
+          result.submitterHandle = submitterProfile?.handle ?? null;
+          result.submitterMaxRating = submitterProfile?.maxRating ?? null;
+        }
+        return result;
       });
 
       const totalCount = await this.prisma.review.count({

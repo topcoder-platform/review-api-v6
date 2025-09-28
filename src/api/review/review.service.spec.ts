@@ -774,6 +774,180 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       },
     });
   });
+
+  it('includes submitter metadata for completed challenges when requester is a challenge resource', async () => {
+    const now = new Date();
+    const reviewRecord = {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      submissionId: baseSubmission.id,
+      phaseId: 'phase-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: null,
+      reviewItems: [],
+      createdAt: now,
+      createdBy: 'creator',
+      updatedAt: now,
+      updatedBy: 'updater',
+      finalScore: 90,
+      initialScore: 85,
+      submission: {
+        id: baseSubmission.id,
+        memberId: '456',
+        challengeId: 'challenge-1',
+      },
+    };
+
+    prismaMock.review.findMany.mockResolvedValue([reviewRecord]);
+    prismaMock.review.count.mockResolvedValue(1);
+
+    const numericReviewer: JwtUser = {
+      ...baseAuthUser,
+      userId: '123',
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Reviewer', '123'),
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.COMPLETED,
+      phases: [],
+    });
+
+    resourcePrismaMock.resource.findMany
+      .mockResolvedValueOnce([{ id: 'resource-1', memberId: '123' }])
+      .mockResolvedValueOnce([
+        { memberId: '456', memberHandle: 'submitterResource' },
+      ]);
+
+    memberPrismaMock.member.findMany
+      .mockResolvedValueOnce([
+        {
+          userId: BigInt(123),
+          handle: 'reviewer123',
+          maxRating: { rating: 2760 },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          userId: BigInt(456),
+          handle: 'submitterMember',
+          maxRating: { rating: 1540 },
+        },
+      ]);
+
+    const response = await service.getReviews(
+      numericReviewer,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data[0]).toMatchObject({
+      submitterHandle: 'submitterMember',
+      submitterMaxRating: 1540,
+    });
+
+    expect(resourcePrismaMock.resource.findMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        challengeId: 'challenge-1',
+        memberId: { in: ['456'] },
+      },
+      select: { memberId: true, memberHandle: true },
+    });
+    expect(memberPrismaMock.member.findMany).toHaveBeenNthCalledWith(2, {
+      where: { userId: { in: [BigInt(456)] } },
+      select: {
+        userId: true,
+        handle: true,
+        maxRating: { select: { rating: true } },
+      },
+    });
+  });
+
+  it('includes submitter metadata for completed or cancelled challenges when requester is admin', async () => {
+    const now = new Date();
+    const reviewRecord = {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      submissionId: baseSubmission.id,
+      phaseId: 'phase-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: null,
+      reviewItems: [],
+      createdAt: now,
+      createdBy: 'creator',
+      updatedAt: now,
+      updatedBy: 'updater',
+      finalScore: 88,
+      initialScore: 82,
+      submission: {
+        id: baseSubmission.id,
+        memberId: '789',
+        challengeId: 'challenge-1',
+      },
+    };
+
+    prismaMock.review.findMany.mockResolvedValue([reviewRecord]);
+    prismaMock.review.count.mockResolvedValue(1);
+
+    const adminUser: JwtUser = {
+      userId: '999',
+      roles: [UserRole.Admin],
+      isMachine: false,
+    };
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.CANCELLED_FAILED_REVIEW,
+      phases: [],
+    });
+
+    resourcePrismaMock.resource.findMany
+      .mockResolvedValueOnce([{ id: 'resource-1', memberId: '321' }])
+      .mockResolvedValueOnce([
+        { memberId: '789', memberHandle: 'submitterFromResource' },
+      ]);
+
+    memberPrismaMock.member.findMany
+      .mockResolvedValueOnce([
+        {
+          userId: BigInt(321),
+          handle: 'reviewer321',
+          maxRating: { rating: 2100 },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          userId: BigInt(789),
+          handle: 'submitterAdmin',
+          maxRating: { rating: 1890 },
+        },
+      ]);
+
+    const response = await service.getReviews(
+      adminUser,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(
+      resourceApiServiceMock.getMemberResourcesRoles,
+    ).not.toHaveBeenCalled();
+    expect(response.data[0]).toMatchObject({
+      submitterHandle: 'submitterAdmin',
+      submitterMaxRating: 1890,
+    });
+  });
 });
 
 describe('ReviewService.updateReviewItem validations', () => {
@@ -1485,7 +1659,17 @@ describe('ReviewService.createReviewItemComments', () => {
         scorecardQuestionId: 'question-1',
         initialAnswer: 'YES',
       }),
-      include: { reviewItemComments: true },
+      include: {
+        reviewItemComments: {
+          include: {
+            appeal: {
+              include: {
+                appealResponse: true,
+              },
+            },
+          },
+        },
+      },
     });
     expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });

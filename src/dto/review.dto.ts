@@ -438,6 +438,23 @@ export class ReviewResponseDto extends ReviewCommonDto {
     type: Number,
   })
   reviewerMaxRating?: number | null;
+
+  @ApiProperty({
+    description: 'Handle of the submitter associated with this review',
+    example: 'submitter123',
+    required: false,
+    nullable: true,
+  })
+  submitterHandle?: string | null;
+
+  @ApiProperty({
+    description: 'Maximum rating of the submitter sourced from member profile',
+    example: 2450,
+    required: false,
+    nullable: true,
+    type: Number,
+  })
+  submitterMaxRating?: number | null;
 }
 
 type MappedReviewItemComment = {

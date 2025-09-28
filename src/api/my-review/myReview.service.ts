@@ -234,8 +234,8 @@ export class MyReviewService {
           1,
           GREATEST(
             0,
-            rp."completedReviews"::numeric / rp."totalReviews"::numeric,
-          ),
+            rp."completedReviews"::numeric / rp."totalReviews"::numeric
+          )
         )
       END
     `;
