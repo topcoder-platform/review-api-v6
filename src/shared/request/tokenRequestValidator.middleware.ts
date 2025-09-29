@@ -25,7 +25,7 @@ export class TokenValidatorMiddleware implements NestMiddleware {
     if (type !== 'Bearer') {
       return next();
     }
-    
+
     if (!idToken) {
       throw new UnauthorizedException('Invalid or missing JWT!');
     }
