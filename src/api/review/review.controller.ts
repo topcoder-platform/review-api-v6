@@ -86,7 +86,7 @@ export class ReviewController {
   }
 
   @Patch('/:reviewId')
-  @Roles(UserRole.Reviewer, UserRole.Admin)
+  @Roles(UserRole.Reviewer, UserRole.Admin, UserRole.Copilot)
   @Scopes(Scope.UpdateReview)
   @ApiOperation({
     summary: 'Update a review partially',

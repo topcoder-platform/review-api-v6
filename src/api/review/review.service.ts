@@ -1238,6 +1238,17 @@ export class ReviewService {
     const isPrivileged = isAdmin(requester);
     const challengeId = existingReview.submission?.challengeId;
     const isMemberRequester = !requester?.isMachine;
+    const normalizedRoles = Array.isArray(requester.roles)
+      ? requester.roles.map((role) => String(role).trim().toLowerCase())
+      : [];
+    const hasCopilotRole = normalizedRoles.includes(
+      String(UserRole.Copilot).trim().toLowerCase(),
+    );
+    const definedBodyKeys = Object.entries(body as Record<string, unknown>)
+      .filter(([, value]) => value !== undefined)
+      .map(([key]) => key);
+    const isStatusOnlyUpdate =
+      definedBodyKeys.length === 1 && definedBodyKeys[0] === 'status';
 
     if (isMemberRequester && !isPrivileged) {
       const requesterMemberId = String(requester?.userId ?? '');
@@ -1280,18 +1291,81 @@ export class ReviewService {
         (resource) => resource.id === existingReview.resourceId,
       );
 
+      const allowCopilotStatusPatch =
+        hasCopilotRole && isStatusOnlyUpdate && !ownsReview;
+
       if (!ownsReview) {
-        throw new ForbiddenException({
-          message:
-            'Only the reviewer who owns this review or an admin may update it.',
-          code: 'REVIEW_UPDATE_FORBIDDEN_NOT_OWNER',
-          details: {
-            reviewId: id,
-            challengeId,
-            requester: requesterMemberId,
-            reviewResourceId: existingReview.resourceId,
-          },
-        });
+        if (allowCopilotStatusPatch) {
+          if (!challengeId) {
+            throw new ForbiddenException({
+              message:
+                'Unable to determine the challenge associated with this review for copilot authorization checks.',
+              code: 'REVIEW_UPDATE_FORBIDDEN_COPILOT_MISSING_CHALLENGE',
+              details: {
+                reviewId: id,
+                requester: requesterMemberId,
+                reviewResourceId: existingReview.resourceId,
+              },
+            });
+          }
+
+          let copilotResources: ResourceInfo[] = [];
+          try {
+            copilotResources =
+              await this.resourceApiService.getMemberResourcesRoles(
+                challengeId,
+                requesterMemberId,
+              );
+          } catch (error) {
+            this.logger.error(
+              `[updateReview] Failed to verify copilot assignment for member ${requesterMemberId} on challenge ${challengeId} while updating review ${id}`,
+              error,
+            );
+            throw new ForbiddenException({
+              message:
+                'Unable to verify copilot assignment for the authenticated user.',
+              code: 'REVIEW_UPDATE_FORBIDDEN_COPILOT_UNVERIFIED',
+              details: {
+                reviewId: id,
+                challengeId,
+                requester: requesterMemberId,
+              },
+            });
+          }
+
+          const hasCopilotAccess = copilotResources?.some((resource) => {
+            const normalizedRoleName = (resource.roleName || '').toLowerCase();
+            const matchesRole = normalizedRoleName.includes('copilot');
+            const matchesChallenge = resource.challengeId === challengeId;
+            return matchesRole && matchesChallenge;
+          });
+
+          if (!hasCopilotAccess) {
+            throw new ForbiddenException({
+              message:
+                'Only a copilot assigned to this challenge may update the review status.',
+              code: 'REVIEW_UPDATE_FORBIDDEN_NOT_COPILOT',
+              details: {
+                reviewId: id,
+                challengeId,
+                requester: requesterMemberId,
+                reviewResourceId: existingReview.resourceId,
+              },
+            });
+          }
+        } else {
+          throw new ForbiddenException({
+            message:
+              'Only the reviewer who owns this review or an admin may update it.',
+            code: 'REVIEW_UPDATE_FORBIDDEN_NOT_OWNER',
+            details: {
+              reviewId: id,
+              challengeId,
+              requester: requesterMemberId,
+              reviewResourceId: existingReview.resourceId,
+            },
+          });
+        }
       }
     }
 
@@ -1608,6 +1682,14 @@ export class ReviewService {
         phases?: Array<{ name?: string | null; isOpen?: boolean | null }>;
       } | null = null;
       let requesterIsChallengeResource = false;
+      const reviewerResourceIdSet = new Set<string>();
+      const submitterSubmissionIdSet = new Set<string>();
+      let hasCopilotRoleForChallenge = false;
+      let hasSubmitterRoleForChallenge = false;
+      let submitterVisibilityState = {
+        allowAny: false,
+        allowOwn: false,
+      };
 
       // Utility to merge an allowed set of submission IDs into where clause
       const restrictToSubmissionIds = (allowedIds: string[]) => {
@@ -1703,9 +1785,6 @@ export class ReviewService {
 
         // If a challengeId is specified, check role context for that challenge
         if (challengeId) {
-          let reviewerResourceIds: string[] = [];
-          let hasCopilotRole = false;
-          let hasSubmitterRole = false;
           let normalized: ResourceInfo[] = [];
           try {
             const resources =
@@ -1716,15 +1795,15 @@ export class ReviewService {
 
             normalized = resources || [];
             requesterIsChallengeResource = normalized.length > 0;
-            reviewerResourceIds = normalized
+            normalized
               .filter((r) =>
                 (r.roleName || '').toLowerCase().includes('reviewer'),
               )
-              .map((r) => r.id);
-            hasCopilotRole = normalized.some((r) =>
+              .forEach((r) => reviewerResourceIdSet.add(r.id));
+            hasCopilotRoleForChallenge = normalized.some((r) =>
               (r.roleName || '').toLowerCase().includes('copilot'),
             );
-            hasSubmitterRole = normalized.some((r) => {
+            hasSubmitterRoleForChallenge = normalized.some((r) => {
               const roleName = (r.roleName || '').toLowerCase();
               return (
                 r.roleId === CommonConfig.roles.submitterRoleId ||
@@ -1738,10 +1817,10 @@ export class ReviewService {
             );
           }
 
-          if (hasCopilotRole) {
+          if (hasCopilotRoleForChallenge) {
             // Copilots retain full visibility for the challenge
-          } else if (reviewerResourceIds.length) {
-            restrictToResourceIds(reviewerResourceIds);
+          } else if (reviewerResourceIdSet.size) {
+            restrictToResourceIds(Array.from(reviewerResourceIdSet));
           } else {
             // Confirm the user has actually submitted to this challenge
             const mySubs = await this.prisma.submission.findMany({
@@ -1774,6 +1853,9 @@ export class ReviewService {
                 p.isOpen === false,
             );
             const mySubmissionIds = mySubs.map((s) => s.id);
+            mySubmissionIds.forEach((id) => submitterSubmissionIdSet.add(id));
+            submitterVisibilityState =
+              this.getSubmitterVisibilityForChallenge(challenge);
 
             if (!requesterIsChallengeResource && mySubs.length > 0) {
               requesterIsChallengeResource = true;
@@ -1788,7 +1870,7 @@ export class ReviewService {
             } else if (
               challenge.status === ChallengeStatus.ACTIVE &&
               submissionPhaseClosed &&
-              hasSubmitterRole
+              hasSubmitterRoleForChallenge
             ) {
               // Submitters can access their own submissions once submission phase closes
               restrictToSubmissionIds(mySubmissionIds);
@@ -2088,7 +2170,30 @@ export class ReviewService {
         }
       }
 
+      const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+
       const enrichedReviews = reviews.map((review) => {
+        const reviewResourceId = String(review.resourceId ?? '');
+        const reviewSubmissionId = String(review.submissionId ?? '');
+        const isReviewerForReview = reviewerResourceIdSet.has(reviewResourceId);
+        const isOwnSubmission =
+          submitterSubmissionIdSet.has(reviewSubmissionId);
+        const shouldMaskReviewDetails =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          submitterSubmissionIdSet.size > 0 &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          !submitterVisibilityState.allowOwn;
+
+        const sanitizedReview = {
+          ...review,
+          initialScore: shouldMaskReviewDetails ? null : review.initialScore,
+          finalScore: shouldMaskReviewDetails ? null : review.finalScore,
+          reviewItems: shouldMaskReviewDetails ? [] : review.reviewItems,
+        };
+
         const profile = reviewerProfilesByResource.get(
           String(review.resourceId ?? ''),
         ) ?? {
@@ -2102,7 +2207,7 @@ export class ReviewService {
               maxRating: null,
             })
           : undefined;
-        const { submission: _submission, ...reviewData } = review;
+        const { submission: _submission, ...reviewData } = sanitizedReview;
         void _submission;
         const result = {
           ...(reviewData as ReviewResponseDto),
@@ -2241,33 +2346,24 @@ export class ReviewService {
             });
           }
 
-          // Determine visibility by challenge phase/status
-          const phases = challenge.phases || [];
-          const appealsOpen = phases.some(
-            (p) => p.name === 'Appeals' && p.isOpen,
-          );
-          const appealsResponseOpen = phases.some(
-            (p) => p.name === 'Appeals Response' && p.isOpen,
-          );
+          const visibility = this.getSubmitterVisibilityForChallenge(challenge);
+          const isOwnSubmission = !!uid && data.submission?.memberId === uid;
 
-          if (challenge.status === ChallengeStatus.COMPLETED) {
-            // Allowed to view any review on this challenge
-          } else if (appealsOpen || appealsResponseOpen) {
-            const isOwnSubmission = !!uid && data.submission?.memberId === uid;
-            if (!isOwnSubmission) {
-              throw new ForbiddenException({
-                message:
-                  'Only reviews of your own submission are accessible during Appeals or Appeals Response',
-                code: 'FORBIDDEN_REVIEW_ACCESS_OWN_ONLY',
-                details: { challengeId, reviewId },
-              });
-            }
-          } else {
+          if (!visibility.allowOwn) {
             throw new ForbiddenException({
               message:
                 'Reviews are not accessible for this challenge at the current phase',
               code: 'FORBIDDEN_REVIEW_ACCESS_PHASE',
               details: { challengeId, status: challenge.status },
+            });
+          }
+
+          if (!visibility.allowAny && !isOwnSubmission) {
+            throw new ForbiddenException({
+              message:
+                'Only reviews of your own submission are accessible during Appeals or Appeals Response',
+              code: 'FORBIDDEN_REVIEW_ACCESS_OWN_ONLY',
+              details: { challengeId, reviewId },
             });
           }
         }
@@ -2300,6 +2396,48 @@ export class ReviewService {
         details: errorResponse.details,
       });
     }
+  }
+
+  private getSubmitterVisibilityForChallenge(challenge?: {
+    status?: ChallengeStatus;
+    phases?: Array<{ name?: string | null; isOpen?: boolean | null }>;
+  }): { allowAny: boolean; allowOwn: boolean } {
+    if (!challenge) {
+      return { allowAny: false, allowOwn: false };
+    }
+
+    const status = challenge.status;
+    const phases = challenge.phases || [];
+
+    const normalizeName = (phaseName: string | null | undefined) =>
+      String(phaseName ?? '').toLowerCase();
+
+    const appealsOpen = phases.some(
+      (phase) => normalizeName(phase.name) === 'appeals' && phase.isOpen,
+    );
+    const appealsResponseOpen = phases.some(
+      (phase) =>
+        normalizeName(phase.name) === 'appeals response' && phase.isOpen,
+    );
+
+    const hasAppealsPhases = phases.some((phase) => {
+      const name = normalizeName(phase.name);
+      return name === 'appeals' || name === 'appeals response';
+    });
+
+    const iterativeReviewClosed = phases.some((phase) => {
+      const name = normalizeName(phase.name);
+      return name === 'iterative review' && phase.isOpen === false;
+    });
+
+    const allowAny = status === ChallengeStatus.COMPLETED;
+    const allowOwn =
+      allowAny ||
+      appealsOpen ||
+      appealsResponseOpen ||
+      (!hasAppealsPhases && iterativeReviewClosed);
+
+    return { allowAny, allowOwn };
   }
 
   async deleteReview(authUser: JwtUser | undefined, reviewId: string) {
