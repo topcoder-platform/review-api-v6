@@ -45,7 +45,7 @@ export class GiteaWebhookAuthGuard implements CanActivate {
         throw new BadRequestException('Missing authorization header');
       }
 
-      if (authHeader !== `Bearer ${auth}`) {
+      if (authHeader !== `SecretKey ${auth}`) {
         this.logger.error('Invalid authorization header');
         throw new ForbiddenException('Invalid authorization');
       }
