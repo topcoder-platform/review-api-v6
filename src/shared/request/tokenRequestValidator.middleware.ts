@@ -22,7 +22,11 @@ export class TokenValidatorMiddleware implements NestMiddleware {
 
     const [type, idToken] = request.headers.authorization.split(' ') ?? [];
 
-    if (type !== 'Bearer' || !idToken) {
+    if (type !== 'Bearer') {
+      return next();
+    }
+    
+    if (!idToken) {
       throw new UnauthorizedException('Invalid or missing JWT!');
     }
 
