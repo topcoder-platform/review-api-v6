@@ -137,12 +137,19 @@ export class ScorecardController {
   }
 
   @Get()
-  @Roles(UserRole.Admin)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+    UserRole.ProjectManager,
+    UserRole.User,
+  )
   @Scopes(Scope.ReadScorecard)
   @ApiOperation({
     summary: 'Search scorecards',
     description:
-      'Search by challenge track, challenge type, or name. Roles: Admin, Copilot | Scopes: read:scorecard',
+      'Search by challenge track, challenge type, or name. Roles: Admin, Copilot, Reviewer, Submitter, Project Manager, User | Scopes: read:scorecard',
   })
   @ApiQuery({
     name: 'challengeTrack',
