@@ -275,6 +275,279 @@ export class ReviewService {
     }
   }
 
+  private shouldRecordManagerAudit(
+    authUser: JwtUser | undefined,
+    hasCopilotRole: boolean,
+  ): boolean {
+    if (!authUser) {
+      return false;
+    }
+
+    if (authUser.isMachine) {
+      return true;
+    }
+
+    if (isAdmin(authUser)) {
+      return true;
+    }
+
+    return hasCopilotRole;
+  }
+
+  private getAuditActorId(authUser: JwtUser | undefined): string {
+    if (!authUser) {
+      return 'unknown';
+    }
+
+    const candidateId = authUser.userId ?? authUser.handle;
+
+    if (candidateId && String(candidateId).trim().length > 0) {
+      return String(candidateId).trim();
+    }
+
+    if (authUser.isMachine) {
+      return 'System';
+    }
+
+    return 'unknown';
+  }
+
+  private areAuditValuesEqual(a: unknown, b: unknown): boolean {
+    if (a === b) {
+      return true;
+    }
+
+    if (a instanceof Date && b instanceof Date) {
+      return a.toISOString() === b.toISOString();
+    }
+
+    if (
+      (typeof a === 'object' && a !== null) ||
+      (typeof b === 'object' && b !== null)
+    ) {
+      try {
+        return JSON.stringify(a) === JSON.stringify(b);
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  private formatAuditValue(value: unknown): string {
+    if (value === null) {
+      return 'null';
+    }
+    if (value === undefined) {
+      return 'undefined';
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    const valueType = typeof value;
+
+    switch (valueType) {
+      case 'string':
+        return value as string;
+      case 'number':
+        return (value as number).toString();
+      case 'boolean':
+        return (value as boolean).toString();
+      case 'bigint':
+        return (value as bigint).toString();
+      case 'symbol': {
+        const symbolValue = value as symbol;
+        return symbolValue.description !== undefined
+          ? `Symbol(${symbolValue.description})`
+          : symbolValue.toString();
+      }
+      case 'function': {
+        const fn = value as (...args: unknown[]) => unknown;
+        return `[Function ${fn.name || 'anonymous'}]`;
+      }
+      case 'object':
+        try {
+          return JSON.stringify(value);
+        } catch {
+          const constructorName =
+            (value as { constructor?: { name?: string } })?.constructor?.name ??
+            'Object';
+          return `[Unserializable ${constructorName}]`;
+        }
+      default:
+        return '[Unknown]';
+    }
+  }
+
+  private describeAuditChange(
+    field: string,
+    previous: unknown,
+    next: unknown,
+  ): string | null {
+    if (this.areAuditValuesEqual(previous, next)) {
+      return null;
+    }
+    return `${field}: ${this.formatAuditValue(previous)} -> ${this.formatAuditValue(next)}`;
+  }
+
+  private collectReviewItemAuditChanges(
+    beforeItems: Array<{
+      scorecardQuestionId: string;
+      initialAnswer: string;
+      finalAnswer: string | null;
+      managerComment: string | null;
+    }> = [],
+    afterItems: Array<{
+      scorecardQuestionId: string;
+      initialAnswer: string;
+      finalAnswer: string | null;
+      managerComment: string | null;
+    }> = [],
+  ): string[] {
+    const diffs: string[] = [];
+    const beforeMap = new Map(
+      beforeItems.map((item) => [item.scorecardQuestionId, item]),
+    );
+    const afterMap = new Map(
+      afterItems.map((item) => [item.scorecardQuestionId, item]),
+    );
+    const questionIds = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+
+    const trackedFields: Array<
+      'initialAnswer' | 'finalAnswer' | 'managerComment'
+    > = ['initialAnswer', 'finalAnswer', 'managerComment'];
+
+    questionIds.forEach((questionId) => {
+      const before = beforeMap.get(questionId);
+      const after = afterMap.get(questionId);
+
+      trackedFields.forEach((field) => {
+        const previous = before ? before[field] : undefined;
+        const next = after ? after[field] : undefined;
+        const change = this.describeAuditChange(
+          `reviewItem[scorecardQuestionId=${questionId}].${field}`,
+          previous,
+          next,
+        );
+        if (change) {
+          diffs.push(change);
+        }
+      });
+    });
+
+    return diffs;
+  }
+
+  private collectReviewAuditChanges(
+    before: {
+      status?: string | null;
+      committed?: boolean | null;
+      finalScore?: number | null;
+      initialScore?: number | null;
+      reviewDate?: Date | string | null;
+      metadata?: unknown;
+      typeId?: string | null;
+      scorecardId?: string | null;
+      reviewItems?: Array<{
+        scorecardQuestionId: string;
+        initialAnswer: string;
+        finalAnswer: string | null;
+        managerComment: string | null;
+      }>;
+    },
+    after: {
+      status?: string | null;
+      committed?: boolean | null;
+      finalScore?: number | null;
+      initialScore?: number | null;
+      reviewDate?: Date | string | null;
+      metadata?: unknown;
+      typeId?: string | null;
+      scorecardId?: string | null;
+      reviewItems?: Array<{
+        scorecardQuestionId: string;
+        initialAnswer: string;
+        finalAnswer: string | null;
+        managerComment: string | null;
+      }>;
+    },
+  ): string[] {
+    const trackedFields: Array<
+      | 'status'
+      | 'committed'
+      | 'finalScore'
+      | 'initialScore'
+      | 'reviewDate'
+      | 'metadata'
+      | 'typeId'
+      | 'scorecardId'
+    > = [
+      'status',
+      'committed',
+      'finalScore',
+      'initialScore',
+      'reviewDate',
+      'metadata',
+      'typeId',
+      'scorecardId',
+    ];
+
+    const diffs: string[] = [];
+
+    trackedFields.forEach((field) => {
+      const change = this.describeAuditChange(
+        field,
+        before[field],
+        after[field],
+      );
+      if (change) {
+        diffs.push(change);
+      }
+    });
+
+    const itemDiffs = this.collectReviewItemAuditChanges(
+      before.reviewItems ?? [],
+      after.reviewItems ?? [],
+    );
+    diffs.push(...itemDiffs);
+
+    return diffs;
+  }
+
+  private async recordReviewAuditEntry(params: {
+    actorId: string;
+    reviewId: string;
+    submissionId?: string | null;
+    challengeId?: string | null;
+    descriptions: string[];
+  }): Promise<void> {
+    const { actorId, reviewId, submissionId, challengeId, descriptions } =
+      params;
+
+    if (!descriptions.length || !actorId || !reviewId) {
+      return;
+    }
+
+    try {
+      await this.prisma.reviewAudit.create({
+        data: {
+          actorId,
+          reviewId,
+          submissionId: submissionId ?? undefined,
+          challengeId: challengeId ?? undefined,
+          description: descriptions.join('; '),
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `[recordReviewAuditEntry] Failed to persist audit entry for review ${reviewId}`,
+        error,
+      );
+    }
+  }
+
   private async publishReviewCompletedEvent(reviewId: string): Promise<void> {
     try {
       const review = await this.prisma.review.findUnique({
@@ -1223,6 +1496,14 @@ export class ReviewService {
             challengeId: true,
           },
         },
+        reviewItems: {
+          select: {
+            scorecardQuestionId: true,
+            initialAnswer: true,
+            finalAnswer: true,
+            managerComment: true,
+          },
+        },
       },
     });
 
@@ -1244,6 +1525,11 @@ export class ReviewService {
     const hasCopilotRole = normalizedRoles.includes(
       String(UserRole.Copilot).trim().toLowerCase(),
     );
+    const shouldAudit = this.shouldRecordManagerAudit(
+      requester,
+      hasCopilotRole,
+    );
+    const auditActorId = shouldAudit ? this.getAuditActorId(requester) : null;
     const definedBodyKeys = Object.entries(body as Record<string, unknown>)
       .filter(([, value]) => value !== undefined)
       .map(([key]) => key);
@@ -1482,6 +1768,55 @@ export class ReviewService {
         ...data,
         ...(recomputedScores ?? {}),
       } as ReviewResponseDto;
+
+      if (shouldAudit && auditActorId) {
+        const beforeState = {
+          status: existingReview.status ?? null,
+          committed: existingReview.committed ?? null,
+          finalScore: existingReview.finalScore ?? null,
+          initialScore: existingReview.initialScore ?? null,
+          reviewDate: existingReview.reviewDate ?? null,
+          metadata: existingReview.metadata ?? null,
+          typeId: existingReview.typeId ?? null,
+          scorecardId: existingReview.scorecardId ?? null,
+          reviewItems: (existingReview.reviewItems ?? []).map((item) => ({
+            scorecardQuestionId: item.scorecardQuestionId,
+            initialAnswer: item.initialAnswer,
+            finalAnswer: item.finalAnswer ?? null,
+            managerComment: item.managerComment ?? null,
+          })),
+        };
+
+        const afterState = {
+          status: responsePayload.status ?? null,
+          committed: responsePayload.committed ?? null,
+          finalScore: responsePayload.finalScore ?? null,
+          initialScore: responsePayload.initialScore ?? null,
+          reviewDate: responsePayload.reviewDate ?? null,
+          metadata: responsePayload.metadata ?? null,
+          typeId: responsePayload.typeId ?? null,
+          scorecardId: responsePayload.scorecardId ?? null,
+          reviewItems: (responsePayload.reviewItems ?? []).map((item) => ({
+            scorecardQuestionId: item.scorecardQuestionId,
+            initialAnswer: item.initialAnswer,
+            finalAnswer: item.finalAnswer ?? null,
+            managerComment: item.managerComment ?? null,
+          })),
+        };
+
+        const auditDescriptions = this.collectReviewAuditChanges(
+          beforeState,
+          afterState,
+        );
+
+        await this.recordReviewAuditEntry({
+          actorId: auditActorId,
+          reviewId: id,
+          submissionId: existingReview.submissionId ?? null,
+          challengeId: challengeId ?? null,
+          descriptions: auditDescriptions,
+        });
+      }
       this.logger.log(`Review updated successfully: ${id}`);
       return responsePayload;
     } catch (error) {
@@ -1521,6 +1856,7 @@ export class ReviewService {
               id: true,
               resourceId: true,
               scorecardId: true,
+              submissionId: true,
               submission: {
                 select: {
                   challengeId: true,
@@ -1549,6 +1885,19 @@ export class ReviewService {
           details: { itemId },
         });
       }
+
+      const requester = authUser ?? ({ isMachine: false } as JwtUser);
+      const normalizedRoles = Array.isArray(requester.roles)
+        ? requester.roles.map((role) => String(role).trim().toLowerCase())
+        : [];
+      const hasCopilotRole = normalizedRoles.includes(
+        String(UserRole.Copilot).trim().toLowerCase(),
+      );
+      const shouldAudit = this.shouldRecordManagerAudit(
+        requester,
+        hasCopilotRole,
+      );
+      const auditActorId = shouldAudit ? this.getAuditActorId(requester) : null;
 
       if (body.reviewId && body.reviewId !== reviewId) {
         throw new BadRequestException({
@@ -1632,6 +1981,38 @@ export class ReviewService {
 
       if (data?.reviewId) {
         await this.recomputeAndUpdateReviewScores(data.reviewId);
+      }
+
+      if (shouldAudit && auditActorId) {
+        const beforeItems = [
+          {
+            scorecardQuestionId: existingItem.scorecardQuestionId,
+            initialAnswer: existingItem.initialAnswer,
+            finalAnswer: existingItem.finalAnswer ?? null,
+            managerComment: existingItem.managerComment ?? null,
+          },
+        ];
+        const afterItems = [
+          {
+            scorecardQuestionId: data.scorecardQuestionId,
+            initialAnswer: data.initialAnswer,
+            finalAnswer: data.finalAnswer ?? null,
+            managerComment: data.managerComment ?? null,
+          },
+        ];
+
+        const auditDescriptions = this.collectReviewItemAuditChanges(
+          beforeItems,
+          afterItems,
+        );
+
+        await this.recordReviewAuditEntry({
+          actorId: auditActorId,
+          reviewId: reviewId,
+          submissionId: review.submissionId ?? null,
+          challengeId: review.submission?.challengeId ?? null,
+          descriptions: auditDescriptions,
+        });
       }
 
       this.logger.log(`Review item updated successfully: ${itemId}`);

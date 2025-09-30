@@ -175,6 +175,7 @@ model review {
   scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
   submission  submission?  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   reviewItems reviewItem[]
+  auditLogs   reviewAudit[]
 
   @@index([committed]) // Index for filtering by committed status
   @@index([submissionId]) // Index for filtering by submission
@@ -227,6 +228,22 @@ model reviewItemComment {
   @@index([id]) // Index for direct ID lookups
   @@index([resourceId]) // Index for filtering by resource (commenter)
   @@index([type]) // Index for filtering by comment type
+}
+
+model reviewAudit {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  reviewId     String   @db.VarChar(36)
+  submissionId String?  @db.VarChar(14)
+  challengeId  String?
+  actorId      String
+  description  String
+  createdAt    DateTime @default(now())
+
+  review     review     @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  submission submission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+
+  @@index([reviewId])
+  @@index([submissionId])
 }
 
 enum ReviewItemCommentType {
@@ -398,6 +415,7 @@ model submission {
   reviewSummation     reviewSummation[]
   resourceSubmissions resourceSubmission[]
   aiWorkflowRun       aiWorkflowRun[]
+  auditLogs           reviewAudit[]
 
   @@index([memberId])
   @@index([challengeId])

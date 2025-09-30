@@ -26,6 +26,9 @@ describe('ReviewService.createReview authorization checks', () => {
     reviewItem: {
       findMany: jest.fn(),
     },
+    reviewAudit: {
+      create: jest.fn(),
+    },
   } as unknown as any;
 
   const prismaErrorServiceMock = {
@@ -1298,6 +1301,9 @@ describe('ReviewService.updateReviewItem validations', () => {
     scorecardQuestion: {
       findUnique: jest.fn(),
     },
+    reviewAudit: {
+      create: jest.fn(),
+    },
   } as unknown as any;
 
   const prismaErrorServiceMock = {
@@ -1350,10 +1356,15 @@ describe('ReviewService.updateReviewItem validations', () => {
   const baseExistingItem = {
     id: 'item-1',
     reviewId: 'review-1',
+    scorecardQuestionId: 'question-1',
+    initialAnswer: 'Yes',
+    finalAnswer: 'Yes',
+    managerComment: null,
     review: {
       id: 'review-1',
       resourceId: 'resource-1',
       scorecardId: 'scorecard-1',
+      submissionId: 'submission-1',
       submission: {
         challengeId: 'challenge-1',
       },
@@ -1509,6 +1520,47 @@ describe('ReviewService.updateReviewItem validations', () => {
     );
     expect(prismaMock.reviewItem.update).toHaveBeenCalled();
   });
+
+  it('records an audit entry when a copilot updates manager comments on a review item', async () => {
+    const copilotUser: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'copilot-1',
+        roleName: 'Copilot',
+        challengeId: 'challenge-1',
+      },
+    ]);
+
+    prismaMock.reviewItem.update.mockResolvedValueOnce({
+      ...baseExistingItem,
+      managerComment: 'Updated manager note',
+      reviewItemComments: [],
+    });
+    prismaMock.reviewAudit.create.mockClear();
+
+    await service.updateReviewItem(copilotUser, 'item-1', {
+      ...baseRequest,
+      managerComment: 'Updated manager note',
+    });
+
+    expect(prismaMock.reviewAudit.create).toHaveBeenCalledTimes(1);
+    const auditPayload = prismaMock.reviewAudit.create.mock.calls[0][0];
+    expect(auditPayload.data).toMatchObject({
+      actorId: 'copilot-1',
+      reviewId: 'review-1',
+      submissionId: 'submission-1',
+      challengeId: 'challenge-1',
+    });
+    expect(auditPayload.data.description).toContain(
+      'reviewItem[scorecardQuestionId=question-1].managerComment: null -> Updated manager note',
+    );
+  });
 });
 
 describe('ReviewService.updateReview challenge status enforcement', () => {
@@ -1537,6 +1589,9 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       review: {
         findUnique: jest.fn(),
         update: jest.fn(),
+      },
+      reviewAudit: {
+        create: jest.fn(),
       },
     } as any;
 
@@ -1890,6 +1945,95 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       'copilot-1',
     );
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('records an audit entry when an admin updates review status and answers', async () => {
+    const adminUser: JwtUser = {
+      userId: 'admin-1',
+      roles: [UserRole.Admin],
+      isMachine: false,
+    };
+
+    const existingReview = {
+      id: 'review-1',
+      submissionId: 'submission-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.PENDING,
+      committed: false,
+      finalScore: 80,
+      initialScore: 75,
+      reviewDate: new Date('2024-01-01T00:00:00.000Z'),
+      metadata: { version: 1 },
+      reviewItems: [
+        {
+          scorecardQuestionId: 'question-1',
+          initialAnswer: 'Yes',
+          finalAnswer: 'No',
+          managerComment: null,
+        },
+      ],
+      submission: {
+        challengeId: 'challenge-1',
+      },
+    } as any;
+
+    const updatedReview = {
+      id: 'review-1',
+      status: ReviewStatus.COMPLETED,
+      committed: true,
+      finalScore: 90,
+      initialScore: 85,
+      reviewDate: new Date('2024-01-02T00:00:00.000Z'),
+      metadata: { version: 2 },
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      reviewItems: [
+        {
+          scorecardQuestionId: 'question-1',
+          initialAnswer: 'Yes',
+          finalAnswer: 'Yes',
+          managerComment: 'Updated notes',
+          reviewItemComments: [],
+        },
+      ],
+    } as any;
+
+    prismaMock.review.findUnique.mockResolvedValueOnce(existingReview);
+    prismaMock.review.update.mockResolvedValueOnce(updatedReview);
+    prismaMock.reviewAudit.create.mockClear();
+
+    await service.updateReview(adminUser, 'review-1', {
+      status: ReviewStatus.COMPLETED,
+      committed: true,
+      reviewDate: updatedReview.reviewDate.toISOString(),
+      reviewItems: [
+        {
+          scorecardQuestionId: 'question-1',
+          initialAnswer: 'Yes',
+          finalAnswer: 'Yes',
+          managerComment: 'Updated notes',
+        },
+      ],
+    } as any);
+
+    expect(prismaMock.reviewAudit.create).toHaveBeenCalledTimes(1);
+    const auditCall = prismaMock.reviewAudit.create.mock.calls[0][0];
+    expect(auditCall.data).toMatchObject({
+      actorId: 'admin-1',
+      reviewId: 'review-1',
+      submissionId: 'submission-1',
+      challengeId: 'challenge-1',
+    });
+    expect(auditCall.data.description).toContain(
+      'status: PENDING -> COMPLETED',
+    );
+    expect(auditCall.data.description).toContain(
+      'reviewItem[scorecardQuestionId=question-1].finalAnswer: No -> Yes',
+    );
+    expect(auditCall.data.description).toContain(
+      'reviewItem[scorecardQuestionId=question-1].managerComment: null -> Updated notes',
+    );
   });
 
   it('rejects copilots when updating fields beyond the review status', async () => {

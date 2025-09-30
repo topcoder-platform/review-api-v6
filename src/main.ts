@@ -41,10 +41,8 @@ async function bootstrap() {
       : [
           'http://localhost:3000',
           /\.localhost:3000$/,
-          'https://topcoder.com',
-          'https://topcoder-dev.com',
-          /\.topcoder-dev\.com$/,
-          /\.topcoder\.com$/,
+          /^https?:\/\/([a-zA-Z0-9-]+\.)*topcoder-dev\.com(:\d+)?$/,
+          /^https?:\/\/([a-zA-Z0-9-]+\.)*topcoder\.com(:\d+)?$/,
         ],
     methods: 'GET, POST, OPTIONS, PUT, DELETE, PATCH',
   };
