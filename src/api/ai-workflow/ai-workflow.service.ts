@@ -485,6 +485,28 @@ export class AiWorkflowService {
       },
       include: {
         submission: true,
+        workflow: {
+          include: {
+            llm: {
+              include: {
+                provider: true,
+              },
+            },
+            scorecard: {
+              include: {
+                scorecardGroups: {
+                  include: {
+                    sections: {
+                      include: {
+                        questions: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -547,7 +569,7 @@ export class AiWorkflowService {
       }
     }
 
-    return runs.map((r) => ({ ...r, submission: undefined, test: true }));
+    return runs.map((r) => ({ ...r, submission: undefined }));
   }
 
   async updateWorkflowRun(
