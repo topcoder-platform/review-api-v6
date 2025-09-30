@@ -54,6 +54,7 @@ interface ReviewItemAccessResult {
   hasReviewerRole: boolean;
   hasCopilotRole: boolean;
   ownsReview: boolean;
+  requiresManagerComment: boolean;
 }
 
 @Injectable()
@@ -687,6 +688,7 @@ export class ReviewService {
         hasReviewerRole: false,
         hasCopilotRole: false,
         ownsReview: false,
+        requiresManagerComment: false,
       };
     }
 
@@ -696,6 +698,7 @@ export class ReviewService {
         hasReviewerRole: false,
         hasCopilotRole: false,
         ownsReview: false,
+        requiresManagerComment: true,
       };
     }
 
@@ -834,11 +837,14 @@ export class ReviewService {
       mode = ownsReview ? 'reviewer-owner' : 'copilot';
     }
 
+    const requiresManagerComment = mode === 'copilot';
+
     return {
       mode,
       hasReviewerRole,
       hasCopilotRole,
       ownsReview,
+      requiresManagerComment,
     };
   }
   private async ensureReviewDeleteAccess(
@@ -2006,14 +2012,19 @@ export class ReviewService {
         },
       );
 
+      const existingFinalAnswer =
+        existingItem.finalAnswer ?? existingItem.initialAnswer ?? null;
+      const finalAnswerChanged =
+        body.finalAnswer !== undefined &&
+        body.finalAnswer !== existingFinalAnswer;
+      const managerCommentChanged =
+        body.managerComment !== undefined &&
+        body.managerComment !== (existingItem.managerComment ?? null);
+
       if (access.mode === 'copilot') {
         const forbiddenFields: string[] = [];
-        const existingManagerComment = existingItem.managerComment ?? null;
 
-        if (
-          body.managerComment !== undefined &&
-          body.managerComment !== existingManagerComment
-        ) {
+        if (!finalAnswerChanged && managerCommentChanged) {
           forbiddenFields.push('managerComment');
         }
 
@@ -2044,6 +2055,25 @@ export class ReviewService {
               reviewId: review.id,
               itemId,
               forbiddenFields,
+            },
+          });
+        }
+      }
+
+      if (access.requiresManagerComment && finalAnswerChanged) {
+        const managerComment =
+          typeof body.managerComment === 'string'
+            ? body.managerComment.trim()
+            : '';
+
+        if (!managerComment) {
+          throw new BadRequestException({
+            message:
+              'A manager comment is required when updating the score for this review item.',
+            code: 'REVIEW_ITEM_UPDATE_MANAGER_COMMENT_REQUIRED',
+            details: {
+              reviewId: review.id,
+              itemId,
             },
           });
         }
