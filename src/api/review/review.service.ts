@@ -776,6 +776,7 @@ export class ReviewService {
 
     let ownsReview = false;
     let mode: ReviewItemAccessMode | null = null;
+    let hasCopilotAccess = false;
 
     if (hasReviewerRole) {
       const normalizedReviewResourceId = String(review.resourceId ?? '').trim();
@@ -788,7 +789,39 @@ export class ReviewService {
         );
       });
 
-      if (!ownsReview) {
+      if (ownsReview) {
+        mode = 'reviewer-owner';
+      }
+    }
+
+    if (hasCopilotRole) {
+      hasCopilotAccess = requesterResources?.some((resource) => {
+        const normalizedRoleName = (resource.roleName || '').toLowerCase();
+        const matchesRole = normalizedRoleName.includes('copilot');
+        const matchesChallenge = challengeId
+          ? resource.challengeId === challengeId
+          : false;
+        return matchesRole && matchesChallenge;
+      });
+    }
+
+    if (!mode) {
+      if (hasCopilotRole) {
+        if (!hasCopilotAccess) {
+          throw new ForbiddenException({
+            message: `Only a copilot assigned to this challenge may ${actionVerb} its review items.`,
+            code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_NOT_COPILOT`,
+            details: {
+              reviewId: review.id,
+              itemId: context.itemId,
+              challengeId,
+              requester: requesterMemberId,
+            },
+          });
+        }
+
+        mode = 'copilot';
+      } else if (hasReviewerRole && !ownsReview) {
         throw new ForbiddenException({
           message: `Only the reviewer who owns this review may ${actionVerb} its review items.`,
           code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_NOT_OWNER`,
@@ -801,36 +834,6 @@ export class ReviewService {
           },
         });
       }
-
-      if (ownsReview) {
-        mode = 'reviewer-owner';
-      }
-    }
-
-    if (hasCopilotRole && !ownsReview) {
-      const hasCopilotAccess = requesterResources?.some((resource) => {
-        const normalizedRoleName = (resource.roleName || '').toLowerCase();
-        const matchesRole = normalizedRoleName.includes('copilot');
-        const matchesChallenge = challengeId
-          ? resource.challengeId === challengeId
-          : false;
-        return matchesRole && matchesChallenge;
-      });
-
-      if (!hasCopilotAccess) {
-        throw new ForbiddenException({
-          message: `Only a copilot assigned to this challenge may ${actionVerb} its review items.`,
-          code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_NOT_COPILOT`,
-          details: {
-            reviewId: review.id,
-            itemId: context.itemId,
-            challengeId,
-            requester: requesterMemberId,
-          },
-        });
-      }
-
-      mode = 'copilot';
     }
 
     if (!mode) {

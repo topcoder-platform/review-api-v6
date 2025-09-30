@@ -1533,6 +1533,49 @@ describe('ReviewService.updateReviewItem validations', () => {
     expect(prismaMock.reviewItem.update).toHaveBeenCalled();
   });
 
+  it('allows reviewers assigned as copilots on the challenge to update review items with manager comments', async () => {
+    const reviewerCopilotUser: JwtUser = {
+      userId: baseReviewer.userId,
+      roles: [UserRole.Reviewer, UserRole.Copilot],
+      isMachine: false,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValueOnce([
+      {
+        id: 'copilot-resource-1',
+        memberId: baseReviewer.userId,
+        roleName: 'Copilot',
+        challengeId: 'challenge-1',
+      },
+    ]);
+
+    const reviewerCopilotRequest = {
+      ...baseRequest,
+      finalAnswer: 'No',
+      managerComment: 'Manager comment provided by copilot reviewer',
+    };
+
+    prismaMock.reviewItem.update.mockResolvedValueOnce({
+      ...baseExistingItem,
+      ...reviewerCopilotRequest,
+      reviewItemComments: [],
+    });
+
+    await expect(
+      service.updateReviewItem(
+        reviewerCopilotUser,
+        'item-1',
+        reviewerCopilotRequest,
+      ),
+    ).resolves.toMatchObject({ id: 'item-1' });
+
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      baseReviewer.userId,
+    );
+    expect(prismaMock.reviewItem.update).toHaveBeenCalledTimes(1);
+  });
+
   it('requires manager comment when a copilot updates the score', async () => {
     const copilotUser: JwtUser = {
       userId: 'copilot-1',
