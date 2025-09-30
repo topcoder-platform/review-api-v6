@@ -1494,7 +1494,7 @@ describe('ReviewService.updateReviewItem validations', () => {
     expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
   });
 
-  it('allows copilots assigned to the challenge to update review items', async () => {
+  it('allows copilots assigned to the challenge to update review item scores', async () => {
     const copilotUser: JwtUser = {
       userId: 'copilot-1',
       roles: [UserRole.Copilot],
@@ -1510,8 +1510,19 @@ describe('ReviewService.updateReviewItem validations', () => {
       },
     ]);
 
+    const copilotRequest = {
+      ...baseRequest,
+      finalAnswer: 'No',
+    };
+
+    prismaMock.reviewItem.update.mockResolvedValueOnce({
+      ...baseExistingItem,
+      ...copilotRequest,
+      reviewItemComments: [],
+    });
+
     await expect(
-      service.updateReviewItem(copilotUser, 'item-1', baseRequest),
+      service.updateReviewItem(copilotUser, 'item-1', copilotRequest),
     ).resolves.toMatchObject({ id: 'item-1' });
 
     expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
@@ -1521,7 +1532,7 @@ describe('ReviewService.updateReviewItem validations', () => {
     expect(prismaMock.reviewItem.update).toHaveBeenCalled();
   });
 
-  it('records an audit entry when a copilot updates manager comments on a review item', async () => {
+  it('rejects copilots from updating manager comments on a review item', async () => {
     const copilotUser: JwtUser = {
       userId: 'copilot-1',
       roles: [UserRole.Copilot],
@@ -1537,29 +1548,56 @@ describe('ReviewService.updateReviewItem validations', () => {
       },
     ]);
 
-    prismaMock.reviewItem.update.mockResolvedValueOnce({
-      ...baseExistingItem,
-      managerComment: 'Updated manager note',
-      reviewItemComments: [],
-    });
+    prismaMock.reviewItem.update.mockClear();
     prismaMock.reviewAudit.create.mockClear();
 
-    await service.updateReviewItem(copilotUser, 'item-1', {
-      ...baseRequest,
-      managerComment: 'Updated manager note',
+    await expect(
+      service.updateReviewItem(copilotUser, 'item-1', {
+        ...baseRequest,
+        managerComment: 'Updated manager note',
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_COPILOT_SCOPE',
+      }),
+      status: 403,
     });
 
-    expect(prismaMock.reviewAudit.create).toHaveBeenCalledTimes(1);
-    const auditPayload = prismaMock.reviewAudit.create.mock.calls[0][0];
-    expect(auditPayload.data).toMatchObject({
-      actorId: 'copilot-1',
-      reviewId: 'review-1',
-      submissionId: 'submission-1',
-      challengeId: 'challenge-1',
+    expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
+    expect(prismaMock.reviewAudit.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects copilots from changing the initial answer on a review item', async () => {
+    const copilotUser: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-1',
+        memberId: 'copilot-1',
+        roleName: 'Copilot',
+        challengeId: 'challenge-1',
+      },
+    ]);
+
+    prismaMock.reviewItem.update.mockClear();
+
+    await expect(
+      service.updateReviewItem(copilotUser, 'item-1', {
+        ...baseRequest,
+        initialAnswer: 'No',
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_COPILOT_SCOPE',
+      }),
+      status: 403,
     });
-    expect(auditPayload.data.description).toContain(
-      'reviewItem[scorecardQuestionId=question-1].managerComment: null -> Updated manager note',
-    );
+
+    expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
   });
 });
 

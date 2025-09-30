@@ -47,6 +47,15 @@ const REVIEW_ITEM_COMMENTS_INCLUDE = {
   },
 } as const;
 
+type ReviewItemAccessMode = 'machine' | 'admin' | 'reviewer-owner' | 'copilot';
+
+interface ReviewItemAccessResult {
+  mode: ReviewItemAccessMode;
+  hasReviewerRole: boolean;
+  hasCopilotRole: boolean;
+  ownsReview: boolean;
+}
+
 @Injectable()
 export class ReviewService {
   private readonly logger: LoggerService;
@@ -662,23 +671,33 @@ export class ReviewService {
     authUser: JwtUser | undefined,
     review: {
       id: string;
-      resourceId: string;
+      resourceId?: string | null;
       submission?: { challengeId?: string | null } | null;
     },
-    context: { action: 'create' | 'update' | 'delete'; itemId?: string },
-  ) {
+    context: {
+      action: 'create' | 'update' | 'delete';
+      itemId?: string;
+    },
+  ): Promise<ReviewItemAccessResult> {
     const requester = authUser ?? ({ isMachine: false } as JwtUser);
 
-    if (requester.isMachine || isAdmin(requester)) {
-      return;
+    if (requester.isMachine) {
+      return {
+        mode: 'machine',
+        hasReviewerRole: false,
+        hasCopilotRole: false,
+        ownsReview: false,
+      };
     }
 
-    const actionVerbMap = {
-      create: 'create',
-      update: 'update',
-      delete: 'delete',
-    } as const;
-    const actionVerb = actionVerbMap[context.action];
+    if (isAdmin(requester)) {
+      return {
+        mode: 'admin',
+        hasReviewerRole: false,
+        hasCopilotRole: false,
+        ownsReview: false,
+      };
+    }
 
     const normalizedRoles = Array.isArray(requester.roles)
       ? requester.roles.map((role) => String(role).trim().toLowerCase())
@@ -687,13 +706,21 @@ export class ReviewService {
     const hasReviewerRole = normalizedRoles.includes(
       String(UserRole.Reviewer).trim().toLowerCase(),
     );
+
     const hasCopilotRole = normalizedRoles.includes(
       String(UserRole.Copilot).trim().toLowerCase(),
     );
 
+    const actionVerb =
+      context.action === 'create'
+        ? 'create'
+        : context.action === 'delete'
+          ? 'delete'
+          : 'update';
+
     if (!hasReviewerRole && !hasCopilotRole) {
       throw new ForbiddenException({
-        message: `You do not have permission to ${actionVerb} review items.`,
+        message: `You do not have permission to ${actionVerb} this review item.`,
         code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_ROLE`,
         details: {
           reviewId: review.id,
@@ -745,6 +772,7 @@ export class ReviewService {
     }
 
     let ownsReview = false;
+    let mode: ReviewItemAccessMode | null = null;
 
     if (hasReviewerRole) {
       const normalizedReviewResourceId = String(review.resourceId ?? '').trim();
@@ -770,6 +798,10 @@ export class ReviewService {
           },
         });
       }
+
+      if (ownsReview) {
+        mode = 'reviewer-owner';
+      }
     }
 
     if (hasCopilotRole && !ownsReview) {
@@ -794,9 +826,21 @@ export class ReviewService {
           },
         });
       }
-    }
-  }
 
+      mode = 'copilot';
+    }
+
+    if (!mode) {
+      mode = ownsReview ? 'reviewer-owner' : 'copilot';
+    }
+
+    return {
+      mode,
+      hasReviewerRole,
+      hasCopilotRole,
+      ownsReview,
+    };
+  }
   private async ensureReviewDeleteAccess(
     authUser: JwtUser | undefined,
     review: {
@@ -1949,7 +1993,7 @@ export class ReviewService {
         });
       }
 
-      await this.ensureReviewItemChangeAccess(
+      const access = await this.ensureReviewItemChangeAccess(
         authUser,
         {
           id: review.id,
@@ -1961,6 +2005,49 @@ export class ReviewService {
           itemId,
         },
       );
+
+      if (access.mode === 'copilot') {
+        const forbiddenFields: string[] = [];
+        const existingManagerComment = existingItem.managerComment ?? null;
+
+        if (
+          body.managerComment !== undefined &&
+          body.managerComment !== existingManagerComment
+        ) {
+          forbiddenFields.push('managerComment');
+        }
+
+        if (body.reviewItemComments !== undefined) {
+          forbiddenFields.push('reviewItemComments');
+        }
+
+        if (
+          body.initialAnswer !== undefined &&
+          body.initialAnswer !== existingItem.initialAnswer
+        ) {
+          forbiddenFields.push('initialAnswer');
+        }
+
+        if (
+          body.scorecardQuestionId &&
+          body.scorecardQuestionId !== existingItem.scorecardQuestionId
+        ) {
+          forbiddenFields.push('scorecardQuestionId');
+        }
+
+        if (forbiddenFields.length > 0) {
+          throw new ForbiddenException({
+            message:
+              'Copilot permissions allow updating only the score for this review item.',
+            code: 'REVIEW_ITEM_UPDATE_FORBIDDEN_COPILOT_SCOPE',
+            details: {
+              reviewId: review.id,
+              itemId,
+              forbiddenFields,
+            },
+          });
+        }
+      }
 
       const mappedData = mapReviewItemRequestForUpdate(body);
 
