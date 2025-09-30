@@ -104,6 +104,15 @@ export class CreateAiWorkflowRunDto {
   @IsNotEmpty()
   @Transform(trimTransformer)
   status: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  usage?: Record<string, any>;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  error?: string;
 }
 
 export class UpdateAiWorkflowRunDto extends OmitType(
