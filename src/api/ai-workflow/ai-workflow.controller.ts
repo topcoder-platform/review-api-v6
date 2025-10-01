@@ -41,98 +41,6 @@ import { User } from 'src/shared/decorators/user.decorator';
 export class AiWorkflowController {
   constructor(private readonly aiWorkflowService: AiWorkflowService) {}
 
-  @Patch('/:workflowId/runs/:runId/items/:itemId/comments/:commentId')
-  @Roles(
-    UserRole.Submitter,
-    UserRole.Copilot,
-    UserRole.ProjectManager,
-    UserRole.Admin,
-    UserRole.Reviewer,
-    UserRole.User,
-  )
-  @ApiOperation({ summary: 'Update a comment by id' })
-  @ApiParam({ name: 'workflowId', description: 'Workflow ID' })
-  @ApiParam({ name: 'runId', description: 'Run ID' })
-  @ApiParam({ name: 'itemId', description: 'Item ID' })
-  @ApiParam({ name: 'commentId', description: 'Comment ID' })
-  @ApiBody({
-    description: 'Partial comment data to update',
-    schema: {
-      type: 'object',
-      properties: {
-        content: { type: 'string' },
-        upVotes: { type: 'number' },
-        downVotes: { type: 'number' },
-      },
-      additionalProperties: false,
-    },
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Comment updated successfully.',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden. User not comment creator.',
-  })
-  @ApiResponse({ status: 404, description: 'Comment not found.' })
-  async updateRunItemComment(
-    @Param('workflowId') workflowId: string,
-    @Param('runId') runId: string,
-    @Param('itemId') itemId: string,
-    @Param('commentId') commentId: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true }))
-    body: UpdateRunItemCommentDto,
-    @User() user: JwtUser,
-  ) {
-    return this.aiWorkflowService.updateCommentById(
-      user,
-      workflowId,
-      runId,
-      itemId,
-      commentId,
-      body,
-    );
-  }
-
-  @Post('/:workflowId/runs/:runId/items/:itemId/comments')
-  @Roles(
-    UserRole.Submitter,
-    UserRole.Copilot,
-    UserRole.ProjectManager,
-    UserRole.Admin,
-    UserRole.Reviewer,
-    UserRole.User,
-  )
-  @ApiOperation({ summary: 'Create a comment for a specific run item' })
-  @ApiResponse({
-    status: 201,
-    description: 'Comment created successfully.',
-  })
-  @ApiResponse({ status: 400, description: 'Bad Request.' })
-  @ApiResponse({ status: 401, description: 'Unauthorized.' })
-  @ApiResponse({ status: 403, description: 'Forbidden.' })
-  @ApiResponse({
-    status: 404,
-    description: 'Workflow, Run, or Item not found.',
-  })
-  async createRunItemComment(
-    @Param('workflowId') workflowId: string,
-    @Param('runId') runId: string,
-    @Param('itemId') itemId: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true }))
-    body: CreateRunItemCommentDto,
-    @User() user: JwtUser,
-  ) {
-    return this.aiWorkflowService.createRunItemComment(
-      workflowId,
-      runId,
-      itemId,
-      body,
-      user,
-    );
-  }
-
   @Post()
   @Roles(UserRole.Admin)
   @Scopes(Scope.CreateWorkflow)
@@ -393,5 +301,97 @@ export class AiWorkflowController {
     @User() user: JwtUser,
   ) {
     return this.aiWorkflowService.getRunItems(workflowId, runId, user);
+  }
+
+  @Post('/:workflowId/runs/:runId/items/:itemId/comments')
+  @Roles(
+    UserRole.Submitter,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Admin,
+    UserRole.Reviewer,
+    UserRole.User,
+  )
+  @ApiOperation({ summary: 'Create a comment for a specific run item' })
+  @ApiResponse({
+    status: 201,
+    description: 'Comment created successfully.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({
+    status: 404,
+    description: 'Workflow, Run, or Item not found.',
+  })
+  async createRunItemComment(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Param('itemId') itemId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: CreateRunItemCommentDto,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.createRunItemComment(
+      workflowId,
+      runId,
+      itemId,
+      body,
+      user,
+    );
+  }
+
+  @Patch('/:workflowId/runs/:runId/items/:itemId/comments/:commentId')
+  @Roles(
+    UserRole.Submitter,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Admin,
+    UserRole.Reviewer,
+    UserRole.User,
+  )
+  @ApiOperation({ summary: 'Update a comment by id' })
+  @ApiParam({ name: 'workflowId', description: 'Workflow ID' })
+  @ApiParam({ name: 'runId', description: 'Run ID' })
+  @ApiParam({ name: 'itemId', description: 'Item ID' })
+  @ApiParam({ name: 'commentId', description: 'Comment ID' })
+  @ApiBody({
+    description: 'Partial comment data to update',
+    schema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string' },
+        upVotes: { type: 'number' },
+        downVotes: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Comment updated successfully.',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden. User not comment creator.',
+  })
+  @ApiResponse({ status: 404, description: 'Comment not found.' })
+  async updateRunItemComment(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Param('itemId') itemId: string,
+    @Param('commentId') commentId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: UpdateRunItemCommentDto,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.updateCommentById(
+      user,
+      workflowId,
+      runId,
+      itemId,
+      commentId,
+      body,
+    );
   }
 }
