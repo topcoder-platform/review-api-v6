@@ -385,9 +385,12 @@ export class ChallengeApiService {
   }
 
   /**
-   * Check if a specific phase is currently open for a challenge
+   * Check if one of the specified phases is currently open for a challenge
    */
-  async isPhaseOpen(challengeId: string, phaseName: string): Promise<boolean> {
+  async isPhaseOpen(
+    challengeId: string,
+    phaseNames: string | string[],
+  ): Promise<boolean> {
     try {
       const challenge = await this.getChallengeDetail(challengeId);
 
@@ -396,26 +399,36 @@ export class ChallengeApiService {
         return false;
       }
 
-      const phase = challenge.phases.find((p) => p.name === phaseName);
-      if (!phase) {
+      const names = Array.isArray(phaseNames) ? phaseNames : [phaseNames];
+      const matchingPhases = challenge.phases.filter((p) =>
+        names.includes(p.name),
+      );
+
+      if (!matchingPhases.length) {
+        const namesForLog = names.map((name) => `'${name}'`).join(' or ');
         this.logger.warn(
-          `Phase '${phaseName}' not found for challenge ${challengeId}`,
+          `Phase${names.length > 1 ? 's' : ''} ${namesForLog} not found for challenge ${challengeId}`,
         );
         return false;
       }
 
-      if (phase.isOpen) {
-        return true;
+      for (const phase of matchingPhases) {
+        if (phase.isOpen) {
+          return true;
+        }
       }
 
-      const computedOpen = this.isPhaseWindowOpen(phase);
-      if (computedOpen) {
-        this.logger.debug(
-          `Derived '${phaseName}' phase open state from schedule for challenge ${challengeId}`,
-        );
+      for (const phase of matchingPhases) {
+        const computedOpen = this.isPhaseWindowOpen(phase);
+        if (computedOpen) {
+          this.logger.debug(
+            `Derived '${phase.name}' phase open state from schedule for challenge ${challengeId}`,
+          );
+          return true;
+        }
       }
 
-      return computedOpen;
+      return false;
     } catch (error) {
       this.logger.error(
         `Error checking phase status for challenge ${challengeId}:`,
@@ -514,10 +527,10 @@ export class ChallengeApiService {
    * Validate if submissions can be created (Submission phase is open)
    */
   async validateSubmissionCreation(challengeId: string): Promise<void> {
-    const submissionPhaseOpen = await this.isPhaseOpen(
-      challengeId,
+    const submissionPhaseOpen = await this.isPhaseOpen(challengeId, [
       'Submission',
-    );
+      'Topgear Submission',
+    ]);
 
     if (!submissionPhaseOpen) {
       throw new Error(
