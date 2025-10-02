@@ -50,13 +50,13 @@ export class CreateAiWorkflowDto {
   @IsString()
   @Transform(trimTransformer)
   @IsNotEmpty()
-  gitId: string;
+  gitWorkflowId: string;
 
   @ApiProperty()
   @IsString()
   @Transform(trimTransformer)
   @IsNotEmpty()
-  gitOwner: string;
+  gitOwnerRepo: string;
 
   @ApiProperty()
   @IsString()
