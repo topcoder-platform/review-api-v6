@@ -606,8 +606,8 @@ model aiWorkflow {
   llmId       String   @db.VarChar(14)
   description String   @db.Text
   defUrl      String   @db.VarChar
-  gitId       String   @db.VarChar
-  gitOwner    String   @db.VarChar
+  gitWorkflowId String   @db.VarChar
+  gitOwnerRepo  String   @db.VarChar
   scorecardId String   @db.VarChar(14)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
   createdBy   String?  @db.Text
@@ -630,6 +630,8 @@ model aiWorkflowRun {
   status       String    @db.VarChar
   usage        Json?     @db.JsonB
   error        String?   @db.Text
+  completedJobs Int? @default(0)
+  jobsCount     Int? @default(0)
 
   workflow   aiWorkflow          @relation(fields: [workflowId], references: [id])
   submission submission          @relation(fields: [submissionId], references: [id])

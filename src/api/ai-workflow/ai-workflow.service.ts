@@ -200,8 +200,15 @@ export class AiWorkflowService {
   }
 
   async createWithValidation(createAiWorkflowDto: CreateAiWorkflowDto) {
-    const { scorecardId, llmId, name, description, defUrl, gitId, gitOwner } =
-      createAiWorkflowDto;
+    const {
+      scorecardId,
+      llmId,
+      name,
+      description,
+      defUrl,
+      gitWorkflowId,
+      gitOwnerRepo,
+    } = createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
     if (!scorecardExists) {
@@ -226,8 +233,8 @@ export class AiWorkflowService {
         data: {
           defUrl,
           description,
-          gitId,
-          gitOwner,
+          gitWorkflowId,
+          gitOwnerRepo,
           name,
           scorecardId,
           llmId,
