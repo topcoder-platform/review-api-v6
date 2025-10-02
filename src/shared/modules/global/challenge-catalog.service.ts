@@ -178,7 +178,13 @@ export class ChallengeCatalogService implements OnModuleInit {
       { types: Set<string>; tracks: Set<string> }
     > = {
       [SubmissionType.CONTEST_SUBMISSION]: {
-        types: new Set(['task', 'marathon match', 'challenge', 'first2finish']),
+        types: new Set([
+          'task',
+          'marathon match',
+          'challenge',
+          'first2finish',
+          'topgear task',
+        ]),
         tracks: new Set([
           'DEVELOPMENT',
           'DATA_SCIENCE',
