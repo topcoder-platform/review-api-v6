@@ -628,6 +628,8 @@ model aiWorkflowRun {
   gitRunId     String    @db.VarChar
   score        Float?    @db.DoublePrecision
   status       String    @db.VarChar
+  usage        Json?     @db.JsonB
+  error        String?   @db.Text
 
   workflow   aiWorkflow          @relation(fields: [workflowId], references: [id])
   submission submission          @relation(fields: [submissionId], references: [id])
