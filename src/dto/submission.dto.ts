@@ -331,4 +331,18 @@ export class SubmissionResponseDto {
 
   review?: ReviewResponseDto[];
   reviewSummation?: any[];
+
+  @ApiProperty({
+    description: 'Submitter member handle (visible to Admin/Copilot/M2M)',
+    required: false,
+  })
+  submitterHandle?: string;
+
+  @ApiProperty({
+    description: 'Submitter maximum rating (visible to Admin/Copilot/M2M)',
+    required: false,
+    nullable: true,
+    type: Number,
+  })
+  submitterMaxRating?: number | null;
 }

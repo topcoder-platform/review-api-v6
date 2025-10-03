@@ -20,6 +20,7 @@ import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
+import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
@@ -56,6 +57,7 @@ export class SubmissionService {
     private readonly resourceApiService: ResourceApiService,
     private readonly eventBusService: EventBusService,
     private readonly challengeCatalogService: ChallengeCatalogService,
+    private readonly memberPrisma: MemberPrismaService,
   ) {}
 
   /**
@@ -1330,6 +1332,48 @@ export class SubmissionService {
         orderBy,
       });
 
+      // Enrich with submitter handle and max rating for authorized callers
+      const canViewSubmitter = await this.canViewSubmitterIdentity(
+        authUser,
+        queryDto.challengeId,
+      );
+      if (canViewSubmitter && submissions.length) {
+        try {
+          const memberIds = Array.from(
+            new Set(
+              submissions
+                .map((s) => (s.memberId ? String(s.memberId) : undefined))
+                .filter((v): v is string => !!v),
+            ),
+          );
+          if (memberIds.length) {
+            const idsAsBigInt = memberIds.map((id) => BigInt(id));
+            const members = await this.memberPrisma.member.findMany({
+              where: { userId: { in: idsAsBigInt } },
+              include: { maxRating: true },
+            });
+            const map = new Map<string, { handle: string; maxRating: number | null }>();
+            for (const m of members) {
+              const idStr = String(m.userId);
+              const rating = m.maxRating ? m.maxRating.rating : null;
+              map.set(idStr, { handle: m.handle, maxRating: rating });
+            }
+            for (const s of submissions) {
+              const key = s.memberId ? String(s.memberId) : undefined;
+              if (key && map.has(key)) {
+                const info = map.get(key)!;
+                (s as any).submitterHandle = info.handle;
+                (s as any).submitterMaxRating = info.maxRating;
+              }
+            }
+          }
+        } catch (e) {
+          this.logger.warn(
+            `Failed to enrich submissions with submitter info: ${(e as Error)?.message}`,
+          );
+        }
+      }
+
       // Count total entities matching the filter for pagination metadata
       const totalCount = await this.prisma.submission.count({
         where: {
@@ -1361,6 +1405,38 @@ export class SubmissionService {
         details: errorResponse.details,
       });
     }
+  }
+
+  private async canViewSubmitterIdentity(
+    authUser: JwtUser,
+    challengeId?: string,
+  ): Promise<boolean> {
+    // M2M tokens: require read:submission or all:submission scope
+    if (authUser.isMachine) {
+      const scopes = authUser.scopes || [];
+      return (
+        scopes.includes('read:submission') || scopes.includes('all:submission')
+      );
+    }
+    // Admins always allowed
+    if (isAdmin(authUser)) {
+      return true;
+    }
+    // Copilots on the challenge are allowed
+    if (challengeId && authUser.userId) {
+      try {
+        const resources = await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          String(authUser.userId),
+        );
+        return resources.some((r) =>
+          (r.roleName || '').toLowerCase().includes('copilot'),
+        );
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 
   async countSubmissionsForChallenge(challengeId: string): Promise<number> {
