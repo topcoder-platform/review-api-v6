@@ -112,6 +112,11 @@ export class ReviewOpportunityService {
 
       // build result with challenge data
       let responseList = this.buildResponseList(entityList, challengeMap);
+      // only include opportunities whose challenges are ACTIVE
+      responseList = responseList.filter((r) => {
+        const challenge = challengeMap.get(r.challengeId);
+        return !!challenge && challenge.status === ChallengeStatus.ACTIVE;
+      });
       // filter with challenge fields
       if (dto.numSubmissionsFrom) {
         responseList = responseList.filter(
