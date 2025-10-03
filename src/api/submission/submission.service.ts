@@ -1352,7 +1352,10 @@ export class SubmissionService {
               where: { userId: { in: idsAsBigInt } },
               include: { maxRating: true },
             });
-            const map = new Map<string, { handle: string; maxRating: number | null }>();
+            const map = new Map<
+              string,
+              { handle: string; maxRating: number | null }
+            >();
             for (const m of members) {
               const idStr = String(m.userId);
               const rating = m.maxRating ? m.maxRating.rating : null;
