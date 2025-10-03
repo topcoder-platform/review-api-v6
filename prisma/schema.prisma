@@ -629,7 +629,7 @@ model aiWorkflowRun {
   score        Float?    @db.DoublePrecision
   status       String    @db.VarChar
   usage        Json?     @db.JsonB
-  error        String?   @db.Text
+  scheduledJobId String?   @db.Text
   completedJobs Int? @default(0)
   jobsCount     Int? @default(0)
 

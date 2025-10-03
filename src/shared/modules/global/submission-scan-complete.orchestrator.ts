@@ -1,15 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SubmissionBaseService } from './submission-base.service';
 import { ChallengeApiService, ChallengeData } from './challenge.service';
 import { GiteaService } from './gitea.service';
 import { SubmissionResponseDto } from 'src/dto/submission.dto';
+import { PrismaService } from './prisma.service';
+import { QueueSchedulerService } from './queue-scheduler.service';
+import { Job } from 'pg-boss';
 
 /**
  * Orchestrator for handling submission scan completion events.
  * This service coordinates the actions to be taken when a submission scan is complete.
  */
 @Injectable()
-export class SubmissionScanCompleteOrchestrator {
+export class SubmissionScanCompleteOrchestrator implements OnModuleInit {
   private readonly logger: Logger = new Logger(
     SubmissionScanCompleteOrchestrator.name,
   );
@@ -24,10 +27,25 @@ export class SubmissionScanCompleteOrchestrator {
    * @param giteaService - Service to interact with Gitea.
    */
   constructor(
+    private readonly prisma: PrismaService,
+    private readonly scheduler: QueueSchedulerService,
     private readonly submissionBaseService: SubmissionBaseService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly giteaService: GiteaService,
   ) {}
+
+  async onModuleInit() {
+    const queues = (
+      await this.prisma.aiWorkflow.groupBy({
+        by: ['gitWorkflowId'],
+      })
+    ).map((d) => d.gitWorkflowId);
+
+    await this.scheduler.handleWorkForQueues<{ data: any }>(
+      queues,
+      this.handleQueuedWorkflowRun.bind(this),
+    );
+  }
 
   async orchestrateScanComplete(submissionId: string): Promise<void> {
     this.logger.log(
@@ -44,38 +62,16 @@ export class SubmissionScanCompleteOrchestrator {
         );
       this.logger.log(`Challenge details: ${JSON.stringify(challenge)}`);
 
-      await this.giteaService.checkAndCreateRepository(
-        process.env.GITEA_SUBMISSION_REVIEWS_ORG || 'TC-Reviews-Tests',
-        challenge.id,
-      );
-      this.logger.log(`Retrieved or created repository`);
-
-      // iterate available workflows for the challenge
-      if (Array.isArray(challenge?.workflows)) {
-        let allErrors = '';
-        for (const workflow of challenge.workflows) {
-          try {
-            await this.giteaService.runDispatchWorkflow(
-              process.env.GITEA_SUBMISSION_REVIEWS_ORG || 'TC-Reviews-Tests',
-              workflow,
-              challenge.id,
-            );
-          } catch (error) {
-            const errorMessage = `Error processing workflow: ${workflow.workflowId}. Error: ${error.message}.`;
-            this.logger.error(errorMessage, error);
-            // don't rethrow error as we want to continue processing other workflows
-            allErrors += `${errorMessage}. `;
-          }
-        }
-        if (allErrors !== '') {
-          this.logger.error(
-            `Errors occurred while processing workflows: ${allErrors}`,
-          );
-          throw new Error(allErrors);
-        } else {
-          this.logger.log('All workflows processed successfully.');
-        }
+      if (!Array.isArray(challenge?.workflows)) {
+        // no ai workflow defined for challenge, return
+        return;
       }
+
+      await this.queueWorkflowRuns(
+        challenge.workflows,
+        challenge.id,
+        submissionId,
+      );
     } catch (error) {
       this.logger.error(
         `Error orchestrating scan complete for submission ID ${submissionId}`,
@@ -83,5 +79,69 @@ export class SubmissionScanCompleteOrchestrator {
       );
       throw error;
     }
+  }
+
+  async queueWorkflowRuns(
+    aiWorkflows: { id: string }[],
+    challengeId: string,
+    submissionId: string,
+  ) {
+    await this.prisma.$transaction(async (tx) => {
+      const workflowRuns = await tx.aiWorkflowRun.createManyAndReturn({
+        data: aiWorkflows.map((workflow) => ({
+          workflowId: workflow.id,
+          submissionId,
+          status: 'QUEUED',
+          gitRunId: '',
+        })),
+        include: {
+          workflow: { select: { gitWorkflowId: true } },
+        },
+      });
+
+      for (const run of workflowRuns) {
+        await this.scheduler.queueJob(run.workflow.gitWorkflowId, run.id, {
+          workflowId: run.workflowId,
+          params: {
+            challengeId,
+            submissionId,
+            aiWorkflowId: run.workflowId,
+            aiWorkflowRunId: run.id,
+          },
+        });
+      }
+    });
+  }
+
+  async handleQueuedWorkflowRun([job]: [Job]) {
+    this.logger.log(`Processing job ${job.id}`);
+
+    const workflow = await this.prisma.aiWorkflow.findUniqueOrThrow({
+      where: { id: (job.data as { workflowId: string })?.workflowId },
+    });
+    const workflowRun = await this.prisma.aiWorkflowRun.findUniqueOrThrow({
+      where: { id: (job.data as { jobId: string })?.jobId },
+    });
+
+    await this.giteaService.runDispatchWorkflow(
+      workflow,
+      workflowRun,
+      (job.data as { params: any })?.params,
+    );
+
+    await this.prisma.aiWorkflowRun.update({
+      where: { id: workflowRun.id },
+      data: {
+        status: 'DISPATCHED',
+        scheduledJobId: job.id,
+      },
+    });
+
+    // return not-resolved promise,
+    // this will put a pause on the job
+    // until it is marked as completed via webhook call
+    return new Promise<void>((resolve) => {
+      this.scheduler.trackTask(job.id, () => resolve());
+    });
   }
 }

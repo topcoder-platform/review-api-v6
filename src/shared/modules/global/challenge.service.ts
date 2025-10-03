@@ -34,9 +34,13 @@ export class ChallengeData {
 }
 
 export class WorkflowData {
-  workflowId: string;
-  ref: string;
-  params: Record<string, string>;
+  id: string;
+  name: string;
+  description: string;
+  llmId: string;
+  defUrl: string;
+  gitOwnerRepo: string;
+  scorecardId: string;
 }
 
 interface ChallengeRow {
@@ -88,6 +92,7 @@ interface ChallengeAggregate {
   track?: ChallengeTrackRow;
   phases: ChallengePhaseRow[];
   metadata: ChallengeMetadataRow[];
+  workflows: WorkflowData[];
 }
 
 @Injectable()
@@ -169,6 +174,22 @@ export class ChallengeApiService {
         WHERE "challengeId" = ${challengeId}
       `;
 
+      const workflows = await this.challengePrisma.$queryRaw<WorkflowData[]>`
+        SELECT
+          id,
+          name,
+          description,
+          "llmId",
+          "defUrl",
+          "gitOwnerRepo",
+          "scorecardId"
+        FROM reviews."aiWorkflow"
+        WHERE id IN (
+          SELECT "aiWorkflowId" FROM "ChallengeReviewer"
+          WHERE "isMemberReview"=false AND "challengeId" = ${challengeId}
+        )
+      `;
+
       const metadata = await this.challengePrisma.$queryRaw<
         ChallengeMetadataRow[]
       >`
@@ -184,6 +205,7 @@ export class ChallengeApiService {
         track,
         phases,
         metadata,
+        workflows,
       });
     } catch (error) {
       this.logger.error(
@@ -195,7 +217,7 @@ export class ChallengeApiService {
   }
 
   private mapChallenge(aggregate: ChallengeAggregate): ChallengeData {
-    const { challenge, legacy, type, track, phases, metadata } = aggregate;
+    const { challenge, legacy, type, track, phases, workflows } = aggregate;
 
     const mappedPhases = phases?.map((phase) => ({
       id: phase.id,
@@ -214,7 +236,7 @@ export class ChallengeApiService {
         }
       : undefined;
 
-    const workflows = this.extractWorkflows(metadata, challenge.id);
+    // const workflows = this.extractWorkflows(metadata, challenge.id);
 
     const legacyId = challenge.legacyId ?? legacy?.legacySystemId;
 
@@ -244,144 +266,6 @@ export class ChallengeApiService {
       workflows,
       phases: mappedPhases,
     };
-  }
-
-  private extractWorkflows(
-    metadata: ChallengeMetadataRow[],
-    challengeId: string,
-  ): WorkflowData[] | undefined {
-    if (!Array.isArray(metadata) || !metadata.length) {
-      return undefined;
-    }
-
-    const workflowEntry = metadata.find(
-      (meta) => meta.name?.toLowerCase() === 'workflows',
-    );
-
-    if (!workflowEntry?.value) {
-      return undefined;
-    }
-
-    try {
-      const parsed: unknown = JSON.parse(workflowEntry.value);
-      const workflowEntries = this.getWorkflowEntries(parsed);
-
-      if (!workflowEntries?.length) {
-        return undefined;
-      }
-
-      const workflows = this.parseWorkflowEntries(workflowEntries);
-
-      if (!workflows.length) {
-        return undefined;
-      }
-
-      return workflows;
-    } catch (error) {
-      this.logger.warn(
-        `Unable to parse workflows metadata for challenge ${challengeId}: ${error}`,
-      );
-      return undefined;
-    }
-  }
-
-  private getWorkflowEntries(parsed: unknown): unknown[] | undefined {
-    if (Array.isArray(parsed)) {
-      return parsed as unknown[];
-    }
-
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      Array.isArray((parsed as { workflows?: unknown }).workflows)
-    ) {
-      return (parsed as { workflows: unknown[] }).workflows;
-    }
-
-    return undefined;
-  }
-
-  private toWorkflowData(entry: unknown): WorkflowData | undefined {
-    if (!entry || typeof entry !== 'object') {
-      return undefined;
-    }
-
-    const candidate = entry as {
-      workflowId?: unknown;
-      ref?: unknown;
-      params?: unknown;
-    };
-
-    if (candidate.workflowId == null || candidate.ref == null) {
-      return undefined;
-    }
-
-    if (
-      typeof candidate.workflowId !== 'string' &&
-      typeof candidate.workflowId !== 'number'
-    ) {
-      return undefined;
-    }
-
-    if (
-      typeof candidate.ref !== 'string' &&
-      typeof candidate.ref !== 'number'
-    ) {
-      return undefined;
-    }
-
-    return {
-      workflowId: String(candidate.workflowId),
-      ref: String(candidate.ref),
-      params: this.coerceWorkflowParams(candidate.params),
-    };
-  }
-
-  private coerceWorkflowParams(input: unknown): Record<string, string> {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) {
-      return {};
-    }
-
-    const params: Record<string, string> = {};
-    for (const [key, value] of Object.entries(
-      input as Record<string, unknown>,
-    )) {
-      if (value == null) {
-        continue;
-      }
-
-      if (typeof value === 'object') {
-        this.logger.warn(`Skipping workflow parameter for key "${key}"`);
-        continue;
-      }
-
-      if (
-        typeof value !== 'string' &&
-        typeof value !== 'number' &&
-        typeof value !== 'boolean'
-      ) {
-        this.logger.warn(
-          `Skipping workflow parameter for key "${key}" due to unsupported type`,
-        );
-        continue;
-      }
-
-      params[key] = String(value);
-    }
-
-    return params;
-  }
-
-  private parseWorkflowEntries(entries: unknown[]): WorkflowData[] {
-    const workflows: WorkflowData[] = [];
-    for (const entry of entries) {
-      const parsedWorkflow = this.toWorkflowData(entry);
-      if (parsedWorkflow) {
-        workflows.push(parsedWorkflow);
-      }
-    }
-
-    return workflows;
   }
 
   /**

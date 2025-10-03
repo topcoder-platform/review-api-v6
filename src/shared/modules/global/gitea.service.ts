@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Api, Repository } from 'src/shared/clients/gitea/gitea.client';
-import { WorkflowData } from './challenge.service';
+import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
 
 /**
  * GiteaService handles interactions with the Gitea API, specifically for managing repositories.
@@ -86,30 +86,93 @@ export class GiteaService {
    * @param challengeId The ID of the challenge (same as repo).
    */
   async runDispatchWorkflow(
-    owner: string,
-    workflow: WorkflowData,
-    challengeId: string,
+    workflow: aiWorkflow,
+    workflowRun: aiWorkflowRun,
+    dispatchInputs: any,
   ): Promise<void> {
     this.logger.log(
-      `Running workflow: ${workflow.workflowId} with ref: ${workflow.ref}`,
+      `Running workflow ${workflowRun.workflowId} for submission ${workflowRun.submissionId}`,
     );
+    const [owner, repo] = workflow.gitOwnerRepo.split('/');
+    this.logger.log(`Calling dispatch`, {
+      owner,
+      repo,
+      workflowId: workflow.gitWorkflowId,
+      inputs: dispatchInputs,
+    });
+
     try {
       const response = await this.giteaClient.repos.actionsDispatchWorkflow(
         owner,
-        challengeId,
-        workflow.workflowId,
+        repo,
+        workflow.gitWorkflowId,
         {
-          ref: workflow.ref,
-          inputs: workflow.params,
+          ref: 'refs/heads/main',
+          inputs: dispatchInputs,
         },
       );
       // successful execution of workflow dispatch actually just returns "204 No Content". So we only log status.
-      this.logger.log(`Workflow dispatched successfully: ${response.status}`);
+      this.logger.log(
+        `Workflow dispatched successfully: ${response.status} ${response.statusText}`,
+        JSON.stringify(response.data),
+      );
     } catch (error) {
       this.logger.error(
-        `Error dispatching workflow ${workflow.workflowId}: ${error.message}`,
+        `Error dispatching workflow ${workflowRun.workflowId}: ${error.message}`,
+        error,
       );
       throw error;
+    }
+  }
+
+  async getAiWorkflowDataFromLogs(
+    owner: string,
+    repo: string,
+    jobId: number,
+    retry = 0,
+  ): Promise<{ aiWorkflowRunId: string; jobsCount: number } | null> {
+    // 120 re-tryies means ~60seconds (1/500ms)
+    if (retry >= 120) {
+      this.logger.error(
+        `Error retrieving logs for job ${jobId}. retry limit reached!`,
+      );
+      return null;
+    }
+
+    let logs: string;
+    try {
+      logs = (
+        await this.giteaClient.repos.downloadActionsRunJobLogs(
+          owner,
+          repo,
+          jobId,
+        )
+      ).data;
+
+      const match = logs.match(/::AI_WORKFLOW_RUN_ID::\s*([a-z0-9-_]{9,})/i);
+      if (!match?.[1]) {
+        throw new Error('not found aiWorkflowRunId');
+      }
+      const aiWorkflowRunId = match[1];
+
+      const jobCountMatch = logs.match(/::JOB_COUNT::(\d+)/i);
+      const jobsCount = parseInt(jobCountMatch?.[1] ?? '1');
+
+      this.logger.log('Fetched aiWorkflowRun data from logs:', {
+        jobsCount,
+        aiWorkflowRunId,
+      });
+
+      return {
+        aiWorkflowRunId,
+        jobsCount,
+      };
+    } catch {
+      // not handling specific errors because API will throw 500 error before the job is queued
+      // and 404 after it started but no logs are available
+      // so, seems reasonable to treat it the same
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return this.getAiWorkflowDataFromLogs(owner, repo, jobId, retry + 1);
     }
   }
 }
