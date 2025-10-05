@@ -24,6 +24,7 @@ import {
   ReviewOpportunityResponseDto,
   ReviewOpportunitySummaryDto,
   UpdateReviewOpportunityDto,
+  QueryReviewOpportunitySummaryDto,
 } from 'src/dto/reviewOpportunity.dto';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
@@ -189,6 +190,43 @@ export class ReviewOpportunityController {
     description:
       'Roles: Admin | Scopes: read:review_opportunity, all:review_opportunity',
   })
+  @ApiQuery({
+    name: 'page',
+    description: 'pagination page (1-based)',
+    type: 'number',
+    example: 1,
+    required: false,
+    schema: { default: 1 },
+  })
+  @ApiQuery({
+    name: 'perPage',
+    description: 'pagination page size',
+    type: 'number',
+    example: 10,
+    required: false,
+    schema: { default: 10 },
+  })
+  @ApiQuery({
+    name: 'sortBy',
+    description: 'sorting field',
+    enum: [
+      'challengeName',
+      'submissionEndDate',
+      'numberOfPendingApplications',
+      'numberOfApprovedApplications',
+      'numberOfReviewerSpots',
+      'numberOfSubmissions',
+    ],
+    required: false,
+    schema: { default: 'submissionEndDate' },
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    description: 'sorting order',
+    enum: ['asc', 'desc'],
+    required: false,
+    schema: { default: 'desc' },
+  })
   @ApiResponse({
     status: 200,
     description: 'Review opportunity summary list',
@@ -201,8 +239,9 @@ export class ReviewOpportunityController {
   @ApiBearerAuth()
   @Roles(UserRole.Admin)
   @Scopes(Scope.ReadReviewOpportunity, Scope.AllReviewOpportunity)
-  async summary() {
-    return OkResponse(await this.service.getSummary());
+  async summary(@Query() dto: QueryReviewOpportunitySummaryDto) {
+    const { items, metadata } = await this.service.getSummary(dto);
+    return OkResponse(items, 200, metadata);
   }
 
   @ApiOperation({

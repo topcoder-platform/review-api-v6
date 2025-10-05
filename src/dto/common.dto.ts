@@ -17,6 +17,12 @@ export class ResultDto<T> {
     description: 'returned data',
   })
   content: T | null;
+
+  @ApiProperty({
+    description: 'Optional metadata for pagination or other info',
+    required: false,
+  })
+  metadata?: Record<string, any>;
 }
 
 export class ResponseDto<T> {
@@ -35,12 +41,16 @@ export class ResponseDto<T> {
 export const OkResponse = function <T>(
   data: T,
   status?: number,
+  metadata?: Record<string, any>,
 ): ResponseDto<T> {
   const ret = new ResponseDto<T>();
   const result = new ResultDto<T>();
   result.success = true;
   result.status = status ?? 200;
   result.content = data;
+  if (metadata) {
+    result.metadata = metadata;
+  }
   ret.result = result;
   return ret;
 };

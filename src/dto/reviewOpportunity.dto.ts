@@ -239,6 +239,70 @@ export class ReviewOpportunitySummaryDto {
   numberOfApprovedApplications: number;
 }
 
+export class QueryReviewOpportunitySummaryDto {
+  @ApiProperty({
+    description: 'Page number (1-based)',
+    example: 1,
+    required: false,
+    default: 1,
+  })
+  @Transform(({ value }) => parseInt(value, 10))
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  page: number = 1;
+
+  @ApiProperty({
+    description: 'Items per page',
+    example: 10,
+    required: false,
+    default: 10,
+  })
+  @Transform(({ value }) => parseInt(value, 10))
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  perPage: number = 10;
+
+  @ApiProperty({
+    description: 'Sorting field',
+    enum: [
+      'challengeName',
+      'submissionEndDate',
+      'numberOfPendingApplications',
+      'numberOfApprovedApplications',
+      'numberOfReviewerSpots',
+      'numberOfSubmissions',
+    ],
+    example: 'submissionEndDate',
+    required: false,
+    default: 'submissionEndDate',
+  })
+  @IsIn([
+    'challengeName',
+    'submissionEndDate',
+    'numberOfPendingApplications',
+    'numberOfApprovedApplications',
+    'numberOfReviewerSpots',
+    'numberOfSubmissions',
+  ])
+  @IsString()
+  @IsOptional()
+  sortBy: string = 'submissionEndDate';
+
+  @ApiProperty({
+    description: 'Sorting order',
+    enum: ['asc', 'desc'],
+    example: 'desc',
+    required: false,
+    default: 'desc',
+  })
+  @IsIn(['asc', 'desc'])
+  @IsString()
+  @IsOptional()
+  sortOrder: string = 'desc';
+}
+
 export class QueryReviewOpportunityDto {
   @Transform(({ value }) => parseInt(value, 10))
   @IsNumber()

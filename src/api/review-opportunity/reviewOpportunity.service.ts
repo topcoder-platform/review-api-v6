@@ -19,6 +19,7 @@ import {
   ReviewOpportunitySummaryDto,
   UpdateReviewOpportunityDto,
 } from 'src/dto/reviewOpportunity.dto';
+import { QueryReviewOpportunitySummaryDto } from 'src/dto/reviewOpportunity.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
 import {
   ChallengeApiService,
@@ -412,7 +413,15 @@ export class ReviewOpportunityService {
     }
   }
 
-  async getSummary(): Promise<ReviewOpportunitySummaryDto[]> {
+  async getSummary(dto: QueryReviewOpportunitySummaryDto): Promise<{
+    items: ReviewOpportunitySummaryDto[];
+    metadata: {
+      total: number;
+      totalPages: number;
+      page: number;
+      perPage: number;
+    };
+  }> {
     try {
       const opportunities = await this.prisma.reviewOpportunity.findMany({
         include: {
@@ -425,7 +434,15 @@ export class ReviewOpportunityService {
       });
 
       if (!opportunities.length) {
-        return [];
+        return {
+          items: [],
+          metadata: {
+            page: dto.page,
+            perPage: dto.perPage,
+            total: 0,
+            totalPages: 0,
+          },
+        };
       }
 
       const challengeIds = [
@@ -433,7 +450,15 @@ export class ReviewOpportunityService {
       ];
 
       if (challengeIds.length === 0) {
-        return [];
+        return {
+          items: [],
+          metadata: {
+            page: dto.page,
+            perPage: dto.perPage,
+            total: 0,
+            totalPages: 0,
+          },
+        };
       }
 
       const challengeRows = await this.challengePrisma.$queryRaw<
@@ -455,7 +480,15 @@ export class ReviewOpportunityService {
       );
 
       if (!challengeRows.length) {
-        return [];
+        return {
+          items: [],
+          metadata: {
+            page: dto.page,
+            perPage: dto.perPage,
+            total: 0,
+            totalPages: 0,
+          },
+        };
       }
 
       const challengeMap = new Map<string, ChallengeSummaryRow>();
@@ -560,7 +593,59 @@ export class ReviewOpportunityService {
         });
       }
 
-      return summaries;
+      // sort
+      const sortBy = (dto?.sortBy ||
+        'submissionEndDate') as keyof ReviewOpportunitySummaryDto;
+      const sortOrder =
+        (dto?.sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+      const getComparable = (item: ReviewOpportunitySummaryDto): any => {
+        const value = (item as any)[sortBy];
+        if (value === null || value === undefined) return undefined;
+        if (sortBy === 'challengeName') {
+          return String(value).toLowerCase();
+        }
+        if (sortBy === 'submissionEndDate') {
+          try {
+            return value instanceof Date
+              ? value.getTime()
+              : new Date(value).getTime();
+          } catch {
+            return undefined;
+          }
+        }
+        return Number(value);
+      };
+
+      summaries.sort((a, b) => {
+        const av = getComparable(a);
+        const bv = getComparable(b);
+
+        if (av === undefined && bv === undefined) return 0;
+        if (av === undefined) return 1; // undefined last
+        if (bv === undefined) return -1;
+
+        if (typeof av === 'string' && typeof bv === 'string') {
+          const cmp = av.localeCompare(bv);
+          return sortOrder === 'asc' ? cmp : -cmp;
+        }
+
+        const diff = (av as number) - (bv as number);
+        return sortOrder === 'asc' ? diff : -diff;
+      });
+
+      // paginate
+      const perPage = Math.max(1, Number(dto?.perPage || 10));
+      const page = Math.max(1, Number(dto?.page || 1));
+      const total = summaries.length;
+      const totalPages = total > 0 ? Math.ceil(total / perPage) : 0;
+      const offset = (page - 1) * perPage;
+      const items = summaries.slice(offset, offset + perPage);
+
+      return {
+        items,
+        metadata: { page, perPage, total, totalPages },
+      };
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
