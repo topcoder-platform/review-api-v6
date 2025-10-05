@@ -15,7 +15,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger: Logger = new Logger(QueueSchedulerService.name);
   private boss: PgBoss;
 
-  private tasksMap = new Map<string, () => void>();
+  private jobsHandlersMap = new Map<string, () => void>();
 
   constructor() {
     this.logger.log('QueueSchedulerService initialized');
@@ -56,9 +56,9 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   async completeJob(queueName: string, jobId: string, result?: any) {
     await this.boss.complete(queueName, jobId, result);
-    if (this.tasksMap.has(jobId)) {
-      this.tasksMap.get(jobId)?.call(null);
-      this.tasksMap.delete(jobId);
+    if (this.jobsHandlersMap.has(jobId)) {
+      this.jobsHandlersMap.get(jobId)?.call(null);
+      this.jobsHandlersMap.delete(jobId);
     }
     this.logger.log(`Job ${jobId} completed with result:`, result);
   }
@@ -83,7 +83,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  trackTask(jobId: string, handler: () => void) {
-    this.tasksMap.set(jobId, handler);
+  trackJobHandler(jobId: string, handler: () => void) {
+    this.jobsHandlersMap.set(jobId, handler);
   }
 }
