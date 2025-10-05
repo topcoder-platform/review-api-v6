@@ -27,6 +27,7 @@ interface ChallengeSummaryRow {
   totalReviews: bigint | null;
   completedReviews: bigint | null;
   winners: Prisma.JsonValue | null;
+  status: string;
 }
 
 const PAST_CHALLENGE_STATUSES = [
@@ -327,7 +328,8 @@ export class MyReviewService {
         c."endDate" AS "challengeEndDate",
         rp."totalReviews" AS "totalReviews",
         rp."completedReviews" AS "completedReviews",
-        cw.winners AS "winners"
+        cw.winners AS "winners",
+        c.status AS "status"
       FROM challenges."Challenge" c
       ${joinClause}
       WHERE ${whereClause}
@@ -406,6 +408,7 @@ export class MyReviewService {
         resourceRoleName: row.resourceRoleName ?? adminRoleLabel,
         reviewProgress,
         winners,
+        status: row.status,
       };
     });
 

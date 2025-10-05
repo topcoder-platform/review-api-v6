@@ -148,4 +148,10 @@ export class MyReviewSummaryDto {
     type: () => MyReviewWinnerDto,
   })
   winners?: MyReviewWinnerDto[] | null;
+
+  @ApiProperty({
+    description: 'Challenge status',
+    required: false,
+  })
+  status?: string;
 }
