@@ -47,6 +47,9 @@ export class WorkflowQueueHandler implements OnModuleInit {
       });
 
       if (!this.scheduler.isEnabled) {
+        this.logger.log(
+          'Scheduler is disabled, skipping scheduling workflowRuns for now!',
+        );
         return;
       }
 
