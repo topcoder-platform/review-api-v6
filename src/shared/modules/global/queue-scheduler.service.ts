@@ -74,6 +74,10 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     options?: Queue,
   ) {
     if (!this.isEnabled) {
+      this.logger.log('PgBoss is disabled, skipping queueing job!', {
+        queueName,
+        jobId,
+      });
       return;
     }
 
@@ -91,6 +95,13 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   async completeJob(queueName: string, jobId: string, result?: any) {
     if (!this.isEnabled) {
+      this.logger.log(
+        'PgBoss is disabled, skipping marking job as completed!',
+        {
+          queueName,
+          jobId,
+        },
+      );
       return;
     }
 
@@ -107,6 +118,9 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     handlerFn: PgBoss.WorkHandler<T>,
   ) {
     if (!this.isEnabled) {
+      this.logger.log('PgBoss is disabled, cannot register worker!', {
+        queuesNames,
+      });
       return;
     }
 
