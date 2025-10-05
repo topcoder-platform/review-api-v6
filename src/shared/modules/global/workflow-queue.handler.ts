@@ -93,7 +93,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
   }
 
   async handleWorkflowRunEvents(event: {
-    action: 'queued' | 'in_progress' | 'completed';
+    action: 'queued' | 'waiting' | 'in_progress' | 'completed';
     workflow_job: {
       id: number;
       run_id: string;
@@ -102,6 +102,13 @@ export class WorkflowQueueHandler implements OnModuleInit {
     };
     repository: { full_name: string };
   }) {
+    if (!['in_progress', 'completed'].includes(event.action)) {
+      this.logger.log(
+        `Skipping ${event.action} event for git workflow id ${event.workflow_job.id}.`,
+      );
+      return;
+    }
+
     const aiWorkflowRuns = await this.prisma.aiWorkflowRun.findMany({
       where: {
         status: { in: ['DISPATCHED', 'IN_PROGRESS'] },
