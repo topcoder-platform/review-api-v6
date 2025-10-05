@@ -67,7 +67,12 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Created queue with name "${queueName}"`);
   }
 
-  async queueJob(queueName: string, jobId, payload?: any, options?: Queue) {
+  async queueJob(
+    queueName: string,
+    jobId: string,
+    payload?: any,
+    options?: Queue,
+  ) {
     if (!this.isEnabled) {
       return;
     }
@@ -121,7 +126,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  trackJobHandler(jobId: string, handler: () => void) {
+  registerJobHandler(jobId: string, handler: () => void) {
     this.jobsHandlersMap.set(jobId, handler);
   }
 }

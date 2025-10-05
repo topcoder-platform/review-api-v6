@@ -97,7 +97,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
     // this will put a pause on the job
     // until it is marked as completed via webhook call
     return new Promise<void>((resolve) => {
-      this.scheduler.trackJobHandler(job.id, () => resolve());
+      this.scheduler.registerJobHandler(job.id, () => resolve());
     });
   }
 
