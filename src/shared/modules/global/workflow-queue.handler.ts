@@ -38,13 +38,17 @@ export class WorkflowQueueHandler implements OnModuleInit {
         data: aiWorkflows.map((workflow) => ({
           workflowId: workflow.id,
           submissionId,
-          status: 'QUEUED',
+          status: 'INIT',
           gitRunId: '',
         })),
         include: {
           workflow: { select: { gitWorkflowId: true } },
         },
       });
+
+      if (!this.scheduler.isEnabled) {
+        return;
+      }
 
       for (const run of workflowRuns) {
         await this.scheduler.queueJob(run.workflow.gitWorkflowId, run.id, {
@@ -55,6 +59,11 @@ export class WorkflowQueueHandler implements OnModuleInit {
             aiWorkflowId: run.workflowId,
             aiWorkflowRunId: run.id,
           },
+        });
+
+        await tx.aiWorkflowRun.update({
+          where: { id: run.id },
+          data: { status: 'QUEUED' },
         });
       }
     });
@@ -144,6 +153,13 @@ export class WorkflowQueueHandler implements OnModuleInit {
       if (!aiWorkflowRunId) {
         this.logger.error(
           `Failed to find workflow run ID from logs for job with id ${event.workflow_job.id}`,
+        );
+        return;
+      }
+
+      if (!jobsCount) {
+        this.logger.error(
+          `Failed to find jobs count from logs for job with id ${event.workflow_job.id}`,
         );
         return;
       }

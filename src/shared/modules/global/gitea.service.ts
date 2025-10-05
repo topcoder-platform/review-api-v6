@@ -131,7 +131,7 @@ export class GiteaService {
     jobId: number,
     retry = 0,
   ): Promise<{ aiWorkflowRunId: string; jobsCount: number } | null> {
-    // 120 re-tryies means ~60seconds (1/500ms)
+    // 120 re-tries means ~60seconds (1/500ms)
     if (retry >= 120) {
       this.logger.error(
         `Error retrieving logs for job ${jobId}. retry limit reached!`,
@@ -156,7 +156,7 @@ export class GiteaService {
       const aiWorkflowRunId = match[1];
 
       const jobCountMatch = logs.match(/::JOB_COUNT::(\d+)/i);
-      const jobsCount = parseInt(jobCountMatch?.[1] ?? '1');
+      const jobsCount = parseInt(jobCountMatch?.[1] ?? '');
 
       this.logger.log('Fetched aiWorkflowRun data from logs:', {
         jobsCount,

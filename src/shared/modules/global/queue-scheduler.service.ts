@@ -17,21 +17,47 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   private jobsHandlersMap = new Map<string, () => void>();
 
+  get isEnabled() {
+    return String(process.env.DISPATCH_AI_REVIEW_WORKFLOWS) === 'true';
+  }
+
   constructor() {
+    if (!this.isEnabled) {
+      this.logger.log(
+        'env.DISPATCH_AI_REVIEW_WORKFLOWS is not true, pgboss is disabled.',
+      );
+      return;
+    }
+    if (!process.env.PG_BOSS_DB_URL) {
+      throw new Error(
+        `Env var 'PG_BOSS_DB_URL' is missing! Please configure it or set 'DISPATCH_AI_REVIEW_WORKFLOWS' to false.`,
+      );
+    }
     this.logger.log('QueueSchedulerService initialized');
-    this.boss = new PgBoss(process.env.PG_BOSS_DB_URL!);
+    this.boss = new PgBoss(process.env.PG_BOSS_DB_URL);
     this.boss.on('error', (err) => this.logger.error('pg-boss error:', err));
   }
 
   async onModuleInit() {
+    if (!this.isEnabled) {
+      return;
+    }
+
     await this.boss.start();
   }
 
   async onModuleDestroy() {
+    if (!this.isEnabled) {
+      return;
+    }
+
     await this.boss.stop();
   }
 
   async createQueue(queueName: string, options?: Partial<Queue>) {
+    if (!this.isEnabled) {
+      return;
+    }
     await this.boss.createQueue(queueName, {
       name: queueName,
       policy: policies.singleton,
@@ -42,6 +68,10 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async queueJob(queueName: string, jobId, payload?: any, options?: Queue) {
+    if (!this.isEnabled) {
+      return;
+    }
+
     if (!(await this.boss.getQueue(queueName))) {
       await this.createQueue(queueName, options);
     }
@@ -55,6 +85,10 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async completeJob(queueName: string, jobId: string, result?: any) {
+    if (!this.isEnabled) {
+      return;
+    }
+
     await this.boss.complete(queueName, jobId, result);
     if (this.jobsHandlersMap.has(jobId)) {
       this.jobsHandlersMap.get(jobId)?.call(null);
@@ -67,6 +101,10 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     queuesNames: string[],
     handlerFn: PgBoss.WorkHandler<T>,
   ) {
+    if (!this.isEnabled) {
+      return;
+    }
+
     await this.boss.start();
     return Promise.all(
       queuesNames.map(async (queueName) => {
