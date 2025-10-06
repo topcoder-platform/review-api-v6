@@ -115,9 +115,16 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (this.jobsHandlersMap.has(jobId)) {
+      this.logger.log(
+        `Found job handler for ${jobId}. Calling with '${resolution}' resolution.`,
+      );
       this.jobsHandlersMap.get(jobId)?.call(null, resolution);
       this.jobsHandlersMap.delete(jobId);
+      this.logger.log('JobHandlers left:', [...this.jobsHandlersMap.keys()]);
     } else {
+      this.logger.log(
+        `No job handler found for ${jobId}. Calling with boss.'${resolution}' for queue ${queueName}.`,
+      );
       await this.boss[resolution](queueName, jobId);
     }
 
