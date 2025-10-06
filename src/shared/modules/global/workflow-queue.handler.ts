@@ -93,14 +93,20 @@ export class WorkflowQueueHandler implements OnModuleInit {
       data: {
         status: 'DISPATCHED',
         scheduledJobId: job.id,
+        completedJobs: 0,
       },
     });
 
     // return not-resolved promise,
     // this will put a pause on the job
     // until it is marked as completed via webhook call
-    return new Promise<void>((resolve) => {
-      this.scheduler.registerJobHandler(job.id, () => resolve());
+    return new Promise<void>((resolve, reject) => {
+      this.scheduler.registerJobHandler(
+        job.id,
+        (resolution: string = 'complete', result: any) => {
+          (resolution === 'fail' ? reject : resolve)(result);
+        },
+      );
     });
   }
 
@@ -258,15 +264,6 @@ export class WorkflowQueueHandler implements OnModuleInit {
         }
 
         if (conclusion === 'FAILURE') {
-          // reset data for aiWorkflowRun
-          await this.prisma.aiWorkflowRun.update({
-            where: { id: aiWorkflowRun.id },
-            data: {
-              status: 'INIT',
-              completedJobs: 0,
-            },
-          });
-
           await this.scheduler.completeJob(
             (aiWorkflowRun as any).workflow.gitWorkflowId,
             aiWorkflowRun.scheduledJobId as string,
