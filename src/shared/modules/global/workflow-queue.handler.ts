@@ -216,6 +216,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       return;
     }
 
+    const conclusion = event.workflow_job.conclusion?.toUpperCase();
     switch (event.action) {
       case 'in_progress':
         if (aiWorkflowRun.status !== 'DISPATCHED') {
@@ -256,10 +257,37 @@ export class WorkflowQueueHandler implements OnModuleInit {
           break;
         }
 
+        if (conclusion === 'FAILURE') {
+          // reset data for aiWorkflowRun
+          await this.prisma.aiWorkflowRun.update({
+            where: { id: aiWorkflowRun.id },
+            data: {
+              status: 'INIT',
+              completedJobs: 0,
+            },
+          });
+
+          await this.scheduler.completeJob(
+            (aiWorkflowRun as any).workflow.gitWorkflowId,
+            aiWorkflowRun.scheduledJobId as string,
+            'fail',
+          );
+
+          this.logger.log({
+            message: 'Workflow job failed. Calling retry.',
+            aiWorkflowRunId: aiWorkflowRun.id,
+            gitRunId: event.workflow_job.run_id,
+            jobId: event.workflow_job.id,
+            status: conclusion,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+        }
+
         await this.prisma.aiWorkflowRun.update({
           where: { id: aiWorkflowRun.id },
           data: {
-            status: event.workflow_job.conclusion.toUpperCase(),
+            status: conclusion,
             completedAt: new Date(),
             completedJobs: { increment: 1 },
           },
@@ -274,7 +302,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
           aiWorkflowRunId: aiWorkflowRun.id,
           gitRunId: event.workflow_job.run_id,
           jobId: event.workflow_job.id,
-          status: event.workflow_job.conclusion.toUpperCase(),
+          status: conclusion,
           timestamp: new Date().toISOString(),
         });
         break;
