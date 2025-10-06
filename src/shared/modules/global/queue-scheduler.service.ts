@@ -15,7 +15,10 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger: Logger = new Logger(QueueSchedulerService.name);
   private boss: PgBoss;
 
-  private jobsHandlersMap = new Map<string, () => void>();
+  private jobsHandlersMap = new Map<
+    string,
+    (resolution?: 'fail' | 'complete', result?: any) => void
+  >();
 
   get isEnabled() {
     return String(process.env.DISPATCH_AI_REVIEW_WORKFLOWS) === 'true';
@@ -111,11 +114,13 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.boss[resolution](queueName, jobId);
     if (this.jobsHandlersMap.has(jobId)) {
-      this.jobsHandlersMap.get(jobId)?.call(null);
+      this.jobsHandlersMap.get(jobId)?.call(null, resolution);
       this.jobsHandlersMap.delete(jobId);
+    } else {
+      await this.boss[resolution](queueName, jobId);
     }
+
     this.logger.log(`Job ${jobId} ${resolution} called.`);
   }
 
@@ -146,7 +151,10 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  registerJobHandler(jobId: string, handler: () => void) {
+  registerJobHandler(
+    jobId: string,
+    handler: (resolution?: string, result?: any) => void,
+  ) {
     this.jobsHandlersMap.set(jobId, handler);
   }
 }
