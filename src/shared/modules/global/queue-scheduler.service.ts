@@ -28,13 +28,13 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
       );
       return;
     }
-    if (!process.env.PG_BOSS_DB_URL) {
+    if (!process.env.PGBOSS_DATABASE_URL) {
       throw new Error(
-        `Env var 'PG_BOSS_DB_URL' is missing! Please configure it or set 'DISPATCH_AI_REVIEW_WORKFLOWS' to false.`,
+        `Env var 'PGBOSS_DATABASE_URL' is missing! Please configure it or set 'DISPATCH_AI_REVIEW_WORKFLOWS' to false.`,
       );
     }
     this.logger.log('QueueSchedulerService initialized');
-    this.boss = new PgBoss(process.env.PG_BOSS_DB_URL);
+    this.boss = new PgBoss(process.env.PGBOSS_DATABASE_URL);
     this.boss.on('error', (err) => this.logger.error('pg-boss error:', err));
   }
 
