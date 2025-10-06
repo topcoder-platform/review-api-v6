@@ -228,16 +228,28 @@ export class MyReviewService {
     const timeLeftExpression = Prisma.sql`
       GREATEST(EXTRACT(EPOCH FROM (${phaseEndExpression} - NOW())), 0)
     `;
+    // Only consider review progress for known review-related phases.
+    // For non-review phases, treat progress as NULL so they sort after
+    // in-review items (due to NULLS LAST in ORDER BY).
     const reviewProgressExpression = Prisma.sql`
       CASE
-        WHEN rp."totalReviews" IS NULL OR rp."totalReviews" = 0 THEN 0
-        ELSE LEAST(
-          1,
-          GREATEST(
-            0,
-            rp."completedReviews"::numeric / rp."totalReviews"::numeric
+        WHEN LOWER(COALESCE(cp.name, '')) NOT IN (
+          'review',
+          'iterative review',
+          'appeals',
+          'appeals response',
+          'topgear iterative review'
+        ) THEN NULL
+        ELSE CASE
+          WHEN rp."totalReviews" IS NULL OR rp."totalReviews" = 0 THEN 0
+          ELSE LEAST(
+            1,
+            GREATEST(
+              0,
+              rp."completedReviews"::numeric / rp."totalReviews"::numeric
+            )
           )
-        )
+        END
       END
     `;
 
