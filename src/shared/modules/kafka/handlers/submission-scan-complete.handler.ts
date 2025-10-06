@@ -78,7 +78,9 @@ export class SubmissionScanCompleteHandler
 
         if (process.env.DISPATCH_AI_REVIEW_WORKFLOWS === 'true') {
           // delegate to orchestrator for further processing
-          await this.orchestrator.orchestrateScanComplete(message.submissionId);
+          await this.orchestrator.orchestrateScanComplete(
+            message.payload.submissionId,
+          );
         } else {
           this.logger.log(
             'AI Review Workflows are disabled. Skipping orchestration.',
@@ -90,7 +92,7 @@ export class SubmissionScanCompleteHandler
         }
       } else {
         this.logger.log(
-          `Submission ${message.submissionId} is infected, skipping further processing.`,
+          `Submission ${message.payload.submissionId} is infected, skipping further processing.`,
         );
       }
 
