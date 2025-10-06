@@ -203,7 +203,7 @@ git push origin main
 - `Content-Type: application/json`
 - `X-Gitea-Event: {event_type}` - Gitea event type (push, pull_request, etc.)
 - `X-Gitea-Delivery: {delivery_id}` - Unique delivery identifier from Gitea
-- `Authorization: Bearer {GITEA_WEBHOOK_AUTH}` - Token used to verify authorization
+- `Authorization: SecretKey {GITEA_WEBHOOK_AUTH}` - Token used to verify authorization
 
 **Request Body:**
 
