@@ -76,6 +76,7 @@ workflows:
                               - develop
                               - feat/ai-workflows
                               - pm-1955_2
+                              - re-try-failed-jobs
 
 
             - 'build-prod':
