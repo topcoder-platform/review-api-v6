@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SubmissionBaseService } from './submission-base.service';
 import { ChallengeApiService, ChallengeData } from './challenge.service';
-import { GiteaService } from './gitea.service';
 import { SubmissionResponseDto } from 'src/dto/submission.dto';
+import { WorkflowQueueHandler } from './workflow-queue.handler';
 
 /**
  * Orchestrator for handling submission scan completion events.
@@ -26,7 +26,7 @@ export class SubmissionScanCompleteOrchestrator {
   constructor(
     private readonly submissionBaseService: SubmissionBaseService,
     private readonly challengeApiService: ChallengeApiService,
-    private readonly giteaService: GiteaService,
+    private readonly workflowQueueHandler: WorkflowQueueHandler,
   ) {}
 
   async orchestrateScanComplete(submissionId: string): Promise<void> {
@@ -44,38 +44,16 @@ export class SubmissionScanCompleteOrchestrator {
         );
       this.logger.log(`Challenge details: ${JSON.stringify(challenge)}`);
 
-      await this.giteaService.checkAndCreateRepository(
-        process.env.GITEA_SUBMISSION_REVIEWS_ORG || 'TC-Reviews-Tests',
-        challenge.id,
-      );
-      this.logger.log(`Retrieved or created repository`);
-
-      // iterate available workflows for the challenge
-      if (Array.isArray(challenge?.workflows)) {
-        let allErrors = '';
-        for (const workflow of challenge.workflows) {
-          try {
-            await this.giteaService.runDispatchWorkflow(
-              process.env.GITEA_SUBMISSION_REVIEWS_ORG || 'TC-Reviews-Tests',
-              workflow,
-              challenge.id,
-            );
-          } catch (error) {
-            const errorMessage = `Error processing workflow: ${workflow.workflowId}. Error: ${error.message}.`;
-            this.logger.error(errorMessage, error);
-            // don't rethrow error as we want to continue processing other workflows
-            allErrors += `${errorMessage}. `;
-          }
-        }
-        if (allErrors !== '') {
-          this.logger.error(
-            `Errors occurred while processing workflows: ${allErrors}`,
-          );
-          throw new Error(allErrors);
-        } else {
-          this.logger.log('All workflows processed successfully.');
-        }
+      if (!Array.isArray(challenge?.workflows)) {
+        // no ai workflow defined for challenge, return
+        return;
       }
+
+      await this.workflowQueueHandler.queueWorkflowRuns(
+        challenge.workflows,
+        challenge.id,
+        submissionId,
+      );
     } catch (error) {
       this.logger.error(
         `Error orchestrating scan complete for submission ID ${submissionId}`,

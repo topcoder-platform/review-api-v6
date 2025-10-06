@@ -20,6 +20,8 @@ import { ChallengeCatalogService } from './challenge-catalog.service';
 import { SubmissionService } from 'src/api/submission/submission.service';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
+import { QueueSchedulerService } from './queue-scheduler.service';
+import { WorkflowQueueHandler } from './workflow-queue.handler';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -53,6 +55,8 @@ import { MemberPrismaService } from './member-prisma.service';
     GiteaService,
     SubmissionScanCompleteOrchestrator,
     SubmissionService,
+    QueueSchedulerService,
+    WorkflowQueueHandler,
   ],
   exports: [
     PrismaService,
@@ -71,6 +75,8 @@ import { MemberPrismaService } from './member-prisma.service';
     SubmissionBaseService,
     GiteaService,
     SubmissionScanCompleteOrchestrator,
+    QueueSchedulerService,
+    WorkflowQueueHandler,
   ],
 })
 export class GlobalProvidersModule {}

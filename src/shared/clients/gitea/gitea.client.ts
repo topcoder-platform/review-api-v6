@@ -5734,9 +5734,9 @@ export class Api<
       jobId: number,
       params: RequestParams = {},
     ) =>
-      this.request<void, any>({
+      this.request<string, any>({
         path: `/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`,
-        method: "GET",
+        method: 'GET',
         secure: true,
         ...params,
       }),

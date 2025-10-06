@@ -6,6 +6,7 @@ import {
   WebhookEventDto,
   WebhookResponseDto,
 } from '../../dto/webhook-event.dto';
+import { WorkflowQueueHandler } from 'src/shared/modules/global/workflow-queue.handler';
 
 @Injectable()
 export class WebhookService {
@@ -14,6 +15,7 @@ export class WebhookService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
+    private readonly workflowQueueHandler: WorkflowQueueHandler,
   ) {}
 
   async processWebhook(
@@ -45,7 +47,7 @@ export class WebhookService {
       });
 
       // Future extensibility: Add event-specific handlers here
-      this.handleEventSpecificProcessing(
+      await this.handleEventSpecificProcessing(
         webhookEvent.event,
         webhookEvent.eventPayload,
       );
@@ -76,7 +78,10 @@ export class WebhookService {
    * Placeholder for future event-specific processing logic
    * This method can be extended to handle different GitHub events differently
    */
-  private handleEventSpecificProcessing(event: string, payload: any): void {
+  private async handleEventSpecificProcessing(
+    event: string,
+    payload: any,
+  ): Promise<void> {
     this.logger.log({
       message: 'Event-specific processing placeholder',
       event,
@@ -84,19 +89,22 @@ export class WebhookService {
     });
 
     // Future implementation examples:
-    // switch (event) {
-    //   case 'push':
-    //     await this.handlePushEvent(payload);
-    //     break;
-    //   case 'pull_request':
-    //     await this.handlePullRequestEvent(payload);
-    //     break;
-    //   case 'issues':
-    //     await this.handleIssuesEvent(payload);
-    //     break;
-    //   default:
-    //     this.logger.log(`No specific handler for event type: ${event}`);
-    // }
+    switch (event) {
+      case 'workflow_job':
+        await this.workflowQueueHandler.handleWorkflowRunEvents(payload);
+        break;
+      // case 'push':
+      //   await this.handlePushEvent(payload);
+      //   break;
+      // case 'pull_request':
+      //   await this.handlePullRequestEvent(payload);
+      //   break;
+      // case 'issues':
+      //   await this.handleIssuesEvent(payload);
+      //   break;
+      default:
+        this.logger.log(`No specific handler for event type: ${event}`);
+    }
   }
 
   /**
