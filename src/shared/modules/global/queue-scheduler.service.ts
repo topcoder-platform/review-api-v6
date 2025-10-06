@@ -61,6 +61,8 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     await this.boss.createQueue(queueName, {
       name: queueName,
       policy: policies.singleton,
+      retryLimit: 1,
+      expireInSeconds: 3600,
       ...options,
     });
 
@@ -93,7 +95,11 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Started job ${jobId}`);
   }
 
-  async completeJob(queueName: string, jobId: string, result?: any) {
+  async completeJob(
+    queueName: string,
+    jobId: string,
+    resolution: 'complete' | 'fail' = 'complete',
+  ) {
     if (!this.isEnabled) {
       this.logger.log(
         'PgBoss is disabled, skipping marking job as completed!',
@@ -105,12 +111,12 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.boss.complete(queueName, jobId, result);
+    await this.boss[resolution](queueName, jobId);
     if (this.jobsHandlersMap.has(jobId)) {
       this.jobsHandlersMap.get(jobId)?.call(null);
       this.jobsHandlersMap.delete(jobId);
     }
-    this.logger.log(`Job ${jobId} completed with result:`, result);
+    this.logger.log(`Job ${jobId} ${resolution} called.`);
   }
 
   async handleWorkForQueues<T>(
