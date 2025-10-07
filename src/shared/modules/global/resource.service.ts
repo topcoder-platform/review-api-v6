@@ -51,6 +51,29 @@ export class ResourceApiService {
   }
 
   /**
+   * Get a resource role by name (case-sensitive match in API)
+   */
+  async getResourceRoleByName(name: string): Promise<ResourceRole | undefined> {
+    try {
+      const url = `${CommonConfig.apis.resourceApiUrl}resource-roles?name=${encodeURIComponent(
+        name,
+      )}`;
+      const response = await firstValueFrom(
+        this.httpService.get<ResourceRole[]>(url, {}),
+      );
+      const list = Array.isArray(response.data) ? response.data : [];
+      return list[0];
+    } catch (e) {
+      if (e instanceof AxiosError) {
+        this.logger.error(`Http Error: ${e.message}`, e.response?.data);
+        return undefined;
+      }
+      this.logger.error(`Data validation error: ${e}`);
+      return undefined;
+    }
+  }
+
+  /**
    * Fetch list of resource
    *
    * @returns resolves to list of resource info
@@ -109,6 +132,40 @@ export class ResourceApiService {
         ...resource,
         roleName: resourceRoles?.[resource.roleId]?.name ?? '',
       }));
+  }
+
+  /**
+   * Create a resource in Resource API using M2M token
+   */
+  async createResource(body: {
+    challengeId: string;
+    memberId: string;
+    roleId: string;
+    memberHandle?: string;
+  }): Promise<ResourceInfo> {
+    try {
+      const token = await this.m2mService.getM2MToken();
+      const url = `${CommonConfig.apis.resourceApiUrl}resources`;
+      const response = await firstValueFrom(
+        this.httpService.post<ResourceInfo>(url, body, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+      return response.data;
+    } catch (e) {
+      if (e instanceof AxiosError) {
+        this.logger.error(`Http Error: ${e.message}`, e.response?.data);
+        // Surface a friendlier error with original status if present
+        const err: any = new Error(
+          e.response?.data?.message ||
+            'Cannot create resource via Resource API.',
+        );
+        err.statusCode = e.response?.status;
+        throw err;
+      }
+      this.logger.error(`Error creating resource: ${e}`);
+      throw new Error('Cannot create resource via Resource API.');
+    }
   }
 
   /**

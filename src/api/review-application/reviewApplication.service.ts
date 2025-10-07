@@ -9,12 +9,14 @@ import { Prisma } from '@prisma/client';
 import {
   CreateReviewApplicationDto,
   ReviewApplicationResponseDto,
+  ReviewApplicationRole,
   ReviewApplicationRoleOpportunityTypeMap,
   ReviewApplicationStatus,
 } from 'src/dto/reviewApplication.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import {
   EventBusSendEmailPayload,
   EventBusService,
@@ -38,6 +40,7 @@ export class ReviewApplicationService {
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
     private readonly challengePrisma: ChallengePrismaService,
+    private readonly resourceApiService: ResourceApiService,
     private readonly memberService: MemberService,
     private readonly eventBusService: EventBusService,
     private readonly prismaErrorService: PrismaErrorService,
@@ -287,13 +290,48 @@ export class ReviewApplicationService {
     try {
       const entity = await this.checkExists(id);
 
+      // Assign reviewer resource on the challenge before marking approved
+      const challengeId = entity.opportunity.challengeId;
+      const memberId = entity.userId;
+      const handle = entity.handle;
+
+      // Determine the appropriate resource role name for this application
+      const roleName = this.mapApplicationRoleToResourceRoleName(entity.role);
+
+      // Resolve role id from Resource API
+      const role =
+        await this.resourceApiService.getResourceRoleByName(roleName);
+      if (!role || !role.id) {
+        throw new BadRequestException(
+          `Resource role '${roleName}' not found in Resource API`,
+        );
+      }
+
+      // Check if member already has this reviewer role on the challenge
+      const existingRoles =
+        await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          memberId,
+        );
+      const alreadyAssigned = existingRoles?.some((r) => r.roleId === role.id);
+
+      if (!alreadyAssigned) {
+        // Create reviewer resource in Resource API
+        await this.resourceApiService.createResource({
+          challengeId,
+          memberId,
+          memberHandle: handle,
+          roleId: role.id,
+        });
+      }
+
+      // Update application status and send email
       await this.prisma.reviewApplication.update({
         where: { id },
         data: {
           status: ReviewApplicationStatus.APPROVED,
         },
       });
-      // send email
       await this.sendEmails([entity], ReviewApplicationStatus.APPROVED);
     } catch (error) {
       // Re-throw NotFoundException from checkExists as-is
@@ -310,6 +348,35 @@ export class ReviewApplicationService {
         code: errorResponse.code,
         details: errorResponse.details,
       });
+    }
+  }
+
+  /**
+   * Map ReviewApplicationRole to Resource API role name
+   */
+  private mapApplicationRoleToResourceRoleName(
+    role: ReviewApplicationRole,
+  ): string {
+    switch (role) {
+      case ReviewApplicationRole.REVIEWER:
+        return 'Reviewer';
+      case ReviewApplicationRole.ITERATIVE_REVIEWER:
+        return 'Iterative Reviewer';
+      case ReviewApplicationRole.SPECIFICATION_REVIEWER:
+        return 'Specification Reviewer';
+      case ReviewApplicationRole.ACCURACY_REVIEWER:
+        return 'Accuracy Reviewer';
+      case ReviewApplicationRole.STRESS_REVIEWER:
+        return 'Stress Reviewer';
+      case ReviewApplicationRole.FAILURE_REVIEWER:
+      case ReviewApplicationRole.PRIMARY_FAILURE_REVIEWER:
+        return 'Failure Reviewer';
+      case ReviewApplicationRole.PRIMARY_REVIEWER:
+      case ReviewApplicationRole.SECONDARY_REVIEWER:
+        // Default to generic Reviewer role for primary/secondary
+        return 'Reviewer';
+      default:
+        return 'Reviewer';
     }
   }
 
