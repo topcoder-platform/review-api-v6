@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { ReviewApplicationRole as PrismaReviewApplicationRole } from '@prisma/client';
 import {
   CreateReviewApplicationDto,
   ReviewApplicationResponseDto,
@@ -355,9 +356,10 @@ export class ReviewApplicationService {
    * Map ReviewApplicationRole to Resource API role name
    */
   private mapApplicationRoleToResourceRoleName(
-    role: ReviewApplicationRole,
+    role: ReviewApplicationRole | PrismaReviewApplicationRole,
   ): string {
-    switch (role) {
+    const value = String(role) as ReviewApplicationRole;
+    switch (value) {
       case ReviewApplicationRole.REVIEWER:
         return 'Reviewer';
       case ReviewApplicationRole.ITERATIVE_REVIEWER:
