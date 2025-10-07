@@ -72,8 +72,8 @@ importers:
         specifier: ~5.1.2
         version: 5.1.2
       pg-boss:
-        specifier: ^11.0.2
-        version: 11.0.2
+        specifier: ^11.0.5
+        version: 11.0.6
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -2566,9 +2566,9 @@ packages:
   create-require@1.1.1:
     resolution: {integrity: sha512-dcKFX3jn0MpIaXjisoRvexIJVEKzaq7z2rZKxf+MSr9TkdmHmsU4m2lcLojrj/FHl8mk5VxMmYA+ftRkP/3oKQ==}
 
-  cron-parser@4.9.0:
-    resolution: {integrity: sha512-p0SaNjrHOnQeR8/VnfGbmg9te2kfyYSQ7Sc/j/6DtPL3JQvKxmjO9TSjNFpujqV3vEYYBvNNvXSxzyksBWAx1Q==}
-    engines: {node: '>=12.0.0'}
+  cron-parser@5.4.0:
+    resolution: {integrity: sha512-HxYB8vTvnQFx4dLsZpGRa0uHp6X3qIzS3ZJgJ9v6l/5TJMgeWQbLkR5yiJ5hOxGbc9+jCADDnydIe15ReLZnJA==}
+    engines: {node: '>=18'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -4022,8 +4022,8 @@ packages:
   perfect-debounce@1.0.0:
     resolution: {integrity: sha512-xCy9V055GLEqoFaHoC1SoLIaLmWctgCUaBaWxDZ7/Zx4CTyX7cJQLJOok/orfjZAh9kEYpjJa4d0KcJmCbctZA==}
 
-  pg-boss@11.0.2:
-    resolution: {integrity: sha512-33KQtJpBvsF1C0zkMk2fGKZAptssrSxlban8CqSLJkoY5cwhiJwZL8uOv4T4OkZgbmlcy3nDdBdYOnlRFM+Qcw==}
+  pg-boss@11.0.6:
+    resolution: {integrity: sha512-ZjRDDDeGd2UeM8BMY85f0z7r/koP4F2njGN2I6s2m64i/DxGdZW4zIUmE6CQ17CkMP9n8wnqebLFC6ICQTxkDQ==}
     engines: {node: '>=22'}
 
   pg-cloudflare@1.2.7:
@@ -7905,7 +7905,7 @@ snapshots:
 
   create-require@1.1.1: {}
 
-  cron-parser@4.9.0:
+  cron-parser@5.4.0:
     dependencies:
       luxon: 3.7.2
 
@@ -9611,9 +9611,9 @@ snapshots:
 
   perfect-debounce@1.0.0: {}
 
-  pg-boss@11.0.2:
+  pg-boss@11.0.6:
     dependencies:
-      cron-parser: 4.9.0
+      cron-parser: 5.4.0
       pg: 8.16.3
       serialize-error: 8.1.0
     transitivePeerDependencies:
