@@ -100,14 +100,19 @@ export class WorkflowQueueHandler implements OnModuleInit {
     // return not-resolved promise,
     // this will put a pause on the job
     // until it is marked as completed via webhook call
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       this.scheduler.registerJobHandler(
         job.id,
         (resolution: string = 'complete', result: any) => {
+          this.logger.log(
+            `Job handler called with ${resolution} and ${result}`,
+          );
           (resolution === 'fail' ? reject : resolve)(result);
         },
       );
     });
+
+    this.logger.log(`Job ${job.id} promise finished.`);
   }
 
   async handleWorkflowRunEvents(event: {
@@ -263,24 +268,6 @@ export class WorkflowQueueHandler implements OnModuleInit {
           break;
         }
 
-        if (conclusion === 'FAILURE') {
-          await this.scheduler.completeJob(
-            (aiWorkflowRun as any).workflow.gitWorkflowId,
-            aiWorkflowRun.scheduledJobId as string,
-            'fail',
-          );
-
-          this.logger.log({
-            message: 'Workflow job failed. Calling retry.',
-            aiWorkflowRunId: aiWorkflowRun.id,
-            gitRunId: event.workflow_job.run_id,
-            jobId: event.workflow_job.id,
-            status: conclusion,
-            timestamp: new Date().toISOString(),
-          });
-          break;
-        }
-
         await this.prisma.aiWorkflowRun.update({
           where: { id: aiWorkflowRun.id },
           data: {
@@ -289,13 +276,31 @@ export class WorkflowQueueHandler implements OnModuleInit {
             completedJobs: { increment: 1 },
           },
         });
-        await this.scheduler.completeJob(
-          (aiWorkflowRun as any).workflow.gitWorkflowId,
-          aiWorkflowRun.scheduledJobId as string,
-        );
+
+        try {
+          await this.scheduler.completeJob(
+            (aiWorkflowRun as any).workflow.gitWorkflowId,
+            aiWorkflowRun.scheduledJobId as string,
+            conclusion === 'FAILURE' ? 'fail' : 'complete',
+          );
+
+          if (conclusion === 'FAILURE') {
+            this.logger.log({
+              message: `Workflow job ${aiWorkflowRun.id} failed. Retrying!`,
+              aiWorkflowRunId: aiWorkflowRun.id,
+              gitRunId: event.workflow_job.run_id,
+              jobId: event.workflow_job.id,
+              status: conclusion,
+              timestamp: new Date().toISOString(),
+            });
+            return;
+          }
+        } catch (e) {
+          this.logger.log(aiWorkflowRun.id, e.message);
+        }
 
         this.logger.log({
-          message: 'Workflow job completed',
+          message: `Workflow job ${aiWorkflowRun.id} completed with conclusion: ${conclusion}`,
           aiWorkflowRunId: aiWorkflowRun.id,
           gitRunId: event.workflow_job.run_id,
           jobId: event.workflow_job.id,

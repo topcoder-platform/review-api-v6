@@ -14,6 +14,7 @@ import { policies, Queue } from 'pg-boss';
 export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger: Logger = new Logger(QueueSchedulerService.name);
   private boss: PgBoss;
+  private $start;
 
   private jobsHandlersMap = new Map<
     string,
@@ -46,7 +47,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.boss.start();
+    await (this.$start = this.boss.start());
   }
 
   async onModuleDestroy() {
@@ -114,6 +115,16 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    if (resolution === 'fail') {
+      // IMPORTANT!
+      // thes 4 operations will update the cache for the active singletons in the database
+      // and will allow the jobs queue to go next or retry
+      await this.boss.cancel(queueName, jobId);
+      await this.boss.getQueueStats(queueName);
+      await this.boss.supervise(queueName);
+      await this.boss.resume(queueName, jobId);
+    }
+
     if (this.jobsHandlersMap.has(jobId)) {
       this.logger.log(
         `Found job handler for ${jobId}. Calling with '${resolution}' resolution.`,
@@ -122,13 +133,17 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
       this.jobsHandlersMap.delete(jobId);
       this.logger.log('JobHandlers left:', [...this.jobsHandlersMap.keys()]);
     } else {
-      this.logger.log(
-        `No job handler found for ${jobId}. Calling with boss.'${resolution}' for queue ${queueName}.`,
-      );
       await this.boss[resolution](queueName, jobId);
     }
 
     this.logger.log(`Job ${jobId} ${resolution} called.`);
+
+    if (resolution === 'fail') {
+      const bossJob = await this.boss.getJobById(queueName, jobId);
+      if (bossJob && bossJob.retryCount >= bossJob.retryLimit) {
+        throw new Error('Job failed! Retry limit reached!');
+      }
+    }
   }
 
   async handleWorkForQueues<T>(
@@ -142,7 +157,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.boss.start();
+    await this.$start;
     return Promise.all(
       queuesNames.map(async (queueName) => {
         const queue = await this.boss.getQueue(queueName);
@@ -162,6 +177,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     jobId: string,
     handler: (resolution?: string, result?: any) => void,
   ) {
+    this.logger.log(`Registering job handler for job ${jobId}.`);
     this.jobsHandlersMap.set(jobId, handler);
   }
 }
