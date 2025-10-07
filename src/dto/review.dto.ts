@@ -399,6 +399,14 @@ export class ReviewResponseDto extends ReviewCommonDto {
   reviewItems?: ReviewItemResponseDto[];
 
   @ApiProperty({
+    description:
+      'Flattened list of all appeals across this review (aggregated from review item comments). Includes appeal responses when present.',
+    type: [AppealResponseDto],
+    required: false,
+  })
+  appeals?: AppealResponseDto[];
+
+  @ApiProperty({
     description: 'The creation timestamp',
     example: '2023-10-01T00:00:00Z',
   })

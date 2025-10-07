@@ -121,7 +121,7 @@ export class FinancePrismaService implements OnModuleInit, OnModuleDestroy {
     }> = await this.client.$queryRaw(
       Prisma.sql`SELECT p.payment_id, p.winnings_id, p.net_amount, p.gross_amount, p.total_amount, p.installment_number, p.payment_status as status, p.currency, p.date_paid, p.release_date
                  FROM payment p
-                 WHERE p.winnings_id IN (${idsList})`,
+                 WHERE p.winnings_id = ANY(ARRAY[${idsList}]::uuid[])`,
     );
 
     const detailMap = new Map<string, WinningDetail[]>();

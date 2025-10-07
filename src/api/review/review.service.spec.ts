@@ -1869,7 +1869,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       updatePayload,
     );
 
-    expect(result).toEqual({ id: 'review-1' });
+    expect(result).toEqual({ id: 'review-1', appeals: [] });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
     expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
@@ -1889,7 +1889,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       updatePayload,
     );
 
-    expect(result).toEqual({ id: 'review-1' });
+    expect(result).toEqual({ id: 'review-1', appeals: [] });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
     expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
@@ -1926,7 +1926,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       updatePayload,
     );
 
-    expect(result).toEqual({ id: 'review-1' });
+    expect(result).toEqual({ id: 'review-1', appeals: [] });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
     expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
       challengeId: 'challenge-1',
@@ -2096,7 +2096,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       status: ReviewStatus.IN_PROGRESS,
     } as any);
 
-    expect(result).toEqual({ id: 'review-1' });
+    expect(result).toEqual({ id: 'review-1', appeals: [] });
     expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
       challengeId: 'challenge-1',
       memberId: 'copilot-1',
