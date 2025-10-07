@@ -52,6 +52,14 @@ export class MyReviewFilterDto {
   challengeTypeId?: string;
 
   @ApiProperty({
+    description: 'Filter results to a specific challenge track ID',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  challengeTrackId?: string;
+
+  @ApiProperty({
     description: 'Filter results to a specific challenge type name',
     required: false,
   })

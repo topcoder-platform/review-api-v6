@@ -52,6 +52,11 @@ export class MyReviewController {
     description: 'Filter by exact challenge type name (case-insensitive)',
   })
   @ApiQuery({
+    name: 'challengeTrackId',
+    required: false,
+    description: 'Filter by challenge track identifier',
+  })
+  @ApiQuery({
     name: 'past',
     required: false,
     description:

@@ -1335,10 +1335,23 @@ export class ReviewService {
       if (reviewToReturn.status === ReviewStatus.COMPLETED) {
         await this.publishReviewCompletedEvent(reviewToReturn.id);
       }
+      const flattenedAppeals: any[] = [];
+      try {
+        for (const item of reviewToReturn.reviewItems ?? []) {
+          for (const comment of item.reviewItemComments ?? []) {
+            if (comment?.appeal) {
+              flattenedAppeals.push(comment.appeal);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
       return {
         ...reviewToReturn,
         initialScore: scores.initialScore,
         finalScore: scores.finalScore,
+        appeals: flattenedAppeals,
       } as unknown as ReviewResponseDto;
     } catch (error) {
       if (error instanceof HttpException) {
@@ -1821,6 +1834,21 @@ export class ReviewService {
         ...data,
         ...(recomputedScores ?? {}),
       } as ReviewResponseDto;
+
+      // Attach flattened appeals to response
+      const flattenedAppeals: any[] = [];
+      try {
+        for (const item of responsePayload.reviewItems ?? []) {
+          for (const comment of item.reviewItemComments ?? []) {
+            if (comment?.appeal) {
+              flattenedAppeals.push(comment.appeal);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+      (responsePayload as any).appeals = flattenedAppeals;
 
       if (shouldAudit && auditActorId) {
         const beforeState = {
@@ -2718,6 +2746,20 @@ export class ReviewService {
           submitterHandle?: string | null;
           submitterMaxRating?: number | null;
         };
+        // Flatten appeals across all review item comments for convenience
+        const flattenedAppeals: any[] = [];
+        try {
+          for (const item of sanitizedReview.reviewItems ?? []) {
+            for (const comment of item.reviewItemComments ?? []) {
+              if (comment?.appeal) {
+                flattenedAppeals.push(comment.appeal);
+              }
+            }
+          }
+        } catch {
+          // Non-fatal; leave appeals empty on any unexpected structure
+        }
+        (result as any).appeals = flattenedAppeals;
         if (shouldIncludeSubmitterMetadata) {
           result.submitterHandle = submitterProfile?.handle ?? null;
           result.submitterMaxRating = submitterProfile?.maxRating ?? null;
@@ -2871,8 +2913,22 @@ export class ReviewService {
       }
 
       this.logger.log(`Review found: ${reviewId}`);
-      const result = data as any;
+      const result = { ...(data as any) };
       delete result.submission;
+      // Flatten appeals across all review item comments for convenience
+      const flattenedAppeals: any[] = [];
+      try {
+        for (const item of result.reviewItems ?? []) {
+          for (const comment of item.reviewItemComments ?? []) {
+            if (comment?.appeal) {
+              flattenedAppeals.push(comment.appeal);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+      result.appeals = flattenedAppeals;
       return result as ReviewResponseDto;
     } catch (error) {
       if (error instanceof ForbiddenException) {

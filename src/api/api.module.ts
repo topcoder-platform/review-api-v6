@@ -35,6 +35,7 @@ import { ProjectResultService } from './project-result/projectResult.service';
 import { ProjectResultController } from './project-result/projectResult.controller';
 import { MyReviewController } from './my-review/myReview.controller';
 import { MyReviewService } from './my-review/myReview.service';
+import { PaymentsController } from './payments/payments.controller';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { MyReviewService } from './my-review/myReview.service';
     WebhookController,
     AiWorkflowController,
     ProjectResultController,
+    PaymentsController,
   ],
   providers: [
     ReviewService,

@@ -87,6 +87,7 @@ export class MyReviewService {
     );
 
     const challengeTypeId = filters.challengeTypeId?.trim();
+    const challengeTrackId = filters.challengeTrackId?.trim();
     const challengeTypeName = filters.challengeTypeName?.trim();
 
     const shouldFetchPastChallenges =
@@ -211,6 +212,10 @@ export class MyReviewService {
 
     if (challengeTypeId) {
       whereFragments.push(Prisma.sql`c."typeId" = ${challengeTypeId}`);
+    }
+
+    if (challengeTrackId) {
+      whereFragments.push(Prisma.sql`c."trackId" = ${challengeTrackId}`);
     }
 
     if (challengeTypeName) {
