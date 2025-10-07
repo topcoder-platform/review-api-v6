@@ -43,7 +43,7 @@
     "lodash": "^4.17.21",
     "multer": "^2.0.1",
     "nanoid": "~5.1.2",
-    "pg-boss": "^11.0.2",
+    "pg-boss": "^11.0.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "tc-core-library-js": "appirio-tech/tc-core-library-js.git#v3.0.1"
