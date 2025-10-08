@@ -326,6 +326,11 @@ export class ChallengeApiService {
     phase: PhaseData,
     referenceDate = new Date(),
   ): boolean {
+    // Prefer actual timestamps when available. If the phase has an
+    // actual start but no actual end yet, treat it as open regardless
+    // of the scheduled end (phases can start late and outlive the
+    // scheduled window until an actual end is recorded).
+    const hasActualStart = !!phase.actualStartTime;
     const start = this.parsePhaseDate(
       phase.actualStartTime ?? phase.scheduledStartTime,
     );
@@ -337,11 +342,18 @@ export class ChallengeApiService {
       return false;
     }
 
-    const end = this.parsePhaseDate(
-      phase.actualEndTime ?? phase.scheduledEndTime,
-    );
-    if (end && referenceDate > end) {
-      return false;
+    // If we have an actual end, respect it. Otherwise, only fall back to
+    // the scheduled end when there is no actual start (purely schedule-based).
+    const actualEnd = this.parsePhaseDate(phase.actualEndTime);
+    if (actualEnd) {
+      if (referenceDate > actualEnd) {
+        return false;
+      }
+    } else if (!hasActualStart) {
+      const scheduledEnd = this.parsePhaseDate(phase.scheduledEndTime);
+      if (scheduledEnd && referenceDate > scheduledEnd) {
+        return false;
+      }
     }
 
     return true;
