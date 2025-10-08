@@ -1,4 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  HttpExceptionOptions,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { Api, Repository } from 'src/shared/clients/gitea/gitea.client';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
 
@@ -173,6 +178,63 @@ export class GiteaService {
       // so, seems reasonable to treat it the same
       await new Promise((resolve) => setTimeout(resolve, 500));
       return this.getAiWorkflowDataFromLogs(owner, repo, jobId, retry + 1);
+    }
+  }
+
+  async getWorkflowRunArtifacts(owner: string, repo: string, gitJobId: number) {
+    try {
+      const response = await this.giteaClient.repos.getArtifactsOfRun(
+        owner,
+        repo,
+        gitJobId,
+      );
+
+      if (response.status > 299) {
+        throw new InternalServerErrorException(`${response.statusText}`, {
+          description: (response.data as any)?.message,
+        } as HttpExceptionOptions);
+      }
+
+      return response.data;
+    } catch (e) {
+      this.logger.error(
+        'Failed to fetch Artifacts for git action run',
+        e?.message ?? e,
+        {
+          owner,
+          repo,
+          gitJobId,
+        },
+      );
+      throw e;
+    }
+  }
+
+  async downloadWorkflowRunArtifact(
+    owner: string,
+    repo: string,
+    artifactId: string,
+  ) {
+    try {
+      return await this.giteaClient.repos.downloadArtifact(
+        owner,
+        repo,
+        artifactId,
+        {
+          format: 'stream',
+        },
+      );
+    } catch (e) {
+      this.logger.error(
+        'Failed to download Artifact for git action run',
+        e?.message ?? e,
+        {
+          owner,
+          repo,
+          artifactId,
+        },
+      );
+      throw e;
     }
   }
 }
