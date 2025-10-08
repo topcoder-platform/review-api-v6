@@ -49,6 +49,7 @@ import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
 import { SubmissionService } from './submission.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
 
 @ApiTags('Submissions')
 @ApiBearerAuth()
@@ -283,6 +284,30 @@ export class SubmissionController {
       type: contentType || 'application/zip',
       disposition: `attachment; filename="${fileName}"`,
     });
+  }
+
+  @Get('/:submissionId/access-audit')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.ReadSubmission)
+  @ApiOperation({
+    summary: 'List access audit records for a submission',
+    description: 'Roles: Admin | Scopes: read:submission (M2M allowed)',
+  })
+  @ApiParam({
+    name: 'submissionId',
+    description: 'The ID of the submission',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of audit records',
+    type: [SubmissionAccessAuditResponseDto],
+  })
+  async listSubmissionAccessAudit(
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
+  ): Promise<SubmissionAccessAuditResponseDto[]> {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.listSubmissionAccessAudit(authUser, submissionId);
   }
 
   @Post('/:submissionId/artifacts')

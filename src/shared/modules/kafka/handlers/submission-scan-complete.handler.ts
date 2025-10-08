@@ -130,6 +130,7 @@ export class SubmissionScanCompleteHandler
         where: { id: submissionId },
         data: {
           url,
+          virusScan: true,
           updatedBy: 'SubmissionScanCompleteHandler',
         },
         select: {

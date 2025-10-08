@@ -306,6 +306,12 @@ export class SubmissionResponseDto {
   prizeId?: number | null;
 
   @ApiProperty({
+    description: 'Virus scan status (true when scan passed)',
+    example: false,
+  })
+  virusScan?: boolean;
+
+  @ApiProperty({
     description: 'The creation timestamp',
     example: '2023-10-01T00:00:00Z',
   })

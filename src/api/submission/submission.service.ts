@@ -38,6 +38,7 @@ import {
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable, PassThrough } from 'stream';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
+import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
 
 type SubmissionMinimal = {
   id: string;
@@ -543,6 +544,14 @@ export class SubmissionService {
       } else {
         throw new Error('Unsupported S3 Body stream type');
       }
+      // Record access audit (best-effort; do not block download on failure)
+      try {
+        await this.recordSubmissionDownload(submission.id, authUser);
+      } catch (e) {
+        this.logger.warn(
+          `Failed to record submission access audit for ${submission.id}: ${(e as Error)?.message}`,
+        );
+      }
       const fileName = `submission-${submission.id}.zip`;
       return { stream, contentType, fileName };
     } catch (err) {
@@ -754,6 +763,15 @@ export class SubmissionService {
           }
 
           archive.append(bodyStream, { name: entryName, store: true });
+
+          // Record access audit for each submission included (best-effort)
+          try {
+            await this.recordSubmissionDownload(sub.id, authUser);
+          } catch (e) {
+            this.logger.warn(
+              `Failed to record submission access audit for ${sub.id}: ${(e as Error)?.message}`,
+            );
+          }
         } catch (err) {
           this.logger.warn(
             `Failed to append submission ${sub.id} to archive: ${(err as Error)?.message}`,
@@ -772,6 +790,69 @@ export class SubmissionService {
       contentType: 'application/zip',
       fileName: `challenge-${challengeId}-submissions.zip`,
     };
+  }
+
+  /**
+   * Create an audit record for a submission download
+   */
+  private async recordSubmissionDownload(
+    submissionId: string,
+    authUser: JwtUser,
+  ): Promise<void> {
+    const handle = this.deriveAuditHandle(authUser);
+    await this.prisma.submissionAccessAudit.create({
+      data: {
+        submissionId,
+        handle,
+      },
+    });
+  }
+
+  private deriveAuditHandle(authUser: JwtUser): string {
+    if (authUser?.isMachine) {
+      const clientId = authUser.userId || 'unknown-client';
+      return `M2M - ${clientId}`;
+    }
+    return authUser?.handle || `user-${authUser?.userId || 'unknown'}`;
+  }
+
+  /**
+   * Return access audit entries for the given submission
+   */
+  async listSubmissionAccessAudit(
+    authUser: JwtUser,
+    submissionId: string,
+  ): Promise<SubmissionAccessAuditResponseDto[]> {
+    // Only admins (user tokens) or M2M tokens with read submission scope
+    if (!authUser.isMachine && !isAdmin(authUser)) {
+      throw new ForbiddenException({
+        message: 'Only admins can view submission access audit',
+        code: 'FORBIDDEN_SUBMISSION_AUDIT_READ',
+      });
+    }
+    if (authUser.isMachine) {
+      const scopes = authUser.scopes || [];
+      const hasScope =
+        scopes.includes('read:submission') || scopes.includes('all:submission');
+      if (!hasScope) {
+        throw new ForbiddenException({
+          message: 'M2M token missing required scope to read submission audit',
+          code: 'FORBIDDEN_M2M_SCOPE',
+        });
+      }
+    }
+
+    const rows = await this.prisma.submissionAccessAudit.findMany({
+      where: { submissionId },
+      orderBy: { downloadedAt: 'desc' },
+      select: {
+        submissionId: true,
+        downloadedAt: true,
+        handle: true,
+      },
+    });
+
+    return rows;
   }
 
   /**
@@ -1208,6 +1289,7 @@ export class SubmissionService {
           viewCount: 0,
           status: SubmissionStatus.ACTIVE,
           type: body.type as SubmissionType,
+          virusScan: false,
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);

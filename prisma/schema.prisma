@@ -390,6 +390,7 @@ model submission {
   viewCount          Int?
   systemFileName     String?
   thurgoodJobId      String?
+  virusScan          Boolean          @default(false)
 
   // ES data
   url               String?
@@ -416,6 +417,7 @@ model submission {
   resourceSubmissions resourceSubmission[]
   aiWorkflowRun       aiWorkflowRun[]
   auditLogs           reviewAudit[]
+  accessAudits        submissionAccessAudit[]
 
   @@index([memberId])
   @@index([challengeId])
@@ -575,6 +577,19 @@ model gitWebhookLog {
   @@index([eventId])
   @@index([event])
   @@index([createdAt])
+}
+
+model submissionAccessAudit {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  submissionId String   @db.VarChar(14)
+  downloadedAt DateTime @default(now())
+  handle       String
+
+  submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@index([downloadedAt])
+  @@index([submissionId, downloadedAt])
 }
 
 model llmProvider {
