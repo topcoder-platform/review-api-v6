@@ -120,6 +120,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
     workflow_job: {
       id: number;
       run_id: string;
+      html_url: string;
       name: string;
       conclusion: string;
     };
@@ -198,6 +199,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
         where: { id: aiWorkflowRunId },
         data: {
           gitRunId: `${event.workflow_job.run_id}`,
+          gitRunUrl: `${event.workflow_job.html_url}`,
           jobsCount,
           completedJobs: { increment: 1 },
         },

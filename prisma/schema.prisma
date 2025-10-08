@@ -626,6 +626,7 @@ model aiWorkflowRun {
   startedAt    DateTime? @db.Timestamp(3)
   completedAt  DateTime? @db.Timestamp(3)
   gitRunId     String    @db.VarChar
+  gitRunUrl    String?    @db.Text
   score        Float?    @db.DoublePrecision
   status       String    @db.VarChar
   usage        Json?     @db.JsonB
