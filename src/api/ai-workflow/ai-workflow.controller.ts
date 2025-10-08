@@ -35,12 +35,16 @@ import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { User } from 'src/shared/decorators/user.decorator';
+import { SubmissionScanCompleteOrchestrator } from 'src/shared/modules/global/submission-scan-complete.orchestrator';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()
 @Controller('/workflows')
 export class AiWorkflowController {
-  constructor(private readonly aiWorkflowService: AiWorkflowService) {}
+  constructor(
+    private readonly aiWorkflowService: AiWorkflowService,
+    private readonly orchestrator: SubmissionScanCompleteOrchestrator,
+  ) {}
 
   @Post()
   @Roles(UserRole.Admin)
@@ -254,7 +258,7 @@ export class AiWorkflowController {
   )
   @Scopes(Scope.ReadWorkflowRun)
   @ApiOperation({
-    summary: 'Downloard an attachment archive linked to the specific run',
+    summary: 'Download an attachment archive linked to the specific run',
   })
   @ApiParam({
     name: 'attachmentId',
@@ -469,5 +473,10 @@ export class AiWorkflowController {
       commentId,
       body,
     );
+  }
+
+  @Get('/submission/:submissionId')
+  triggerOrchestration(@Param('submissionId') submissionId: string) {
+    return this.orchestrator.orchestrateScanComplete(submissionId);
   }
 }
