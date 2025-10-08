@@ -35,16 +35,12 @@ import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { User } from 'src/shared/decorators/user.decorator';
-import { SubmissionScanCompleteOrchestrator } from 'src/shared/modules/global/submission-scan-complete.orchestrator';
 
 @ApiTags('ai_workflow')
 @ApiBearerAuth()
 @Controller('/workflows')
 export class AiWorkflowController {
-  constructor(
-    private readonly aiWorkflowService: AiWorkflowService,
-    private readonly orchestrator: SubmissionScanCompleteOrchestrator,
-  ) {}
+  constructor(private readonly aiWorkflowService: AiWorkflowService) {}
 
   @Post()
   @Roles(UserRole.Admin)
@@ -473,10 +469,5 @@ export class AiWorkflowController {
       commentId,
       body,
     );
-  }
-
-  @Get('/submission/:submissionId')
-  triggerOrchestration(@Param('submissionId') submissionId: string) {
-    return this.orchestrator.orchestrateScanComplete(submissionId);
   }
 }
