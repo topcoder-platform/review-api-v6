@@ -15,7 +15,7 @@ CREATE INDEX "submissionAccessAudit_submissionId_idx" ON "submissionAccessAudit"
 CREATE INDEX "submissionAccessAudit_downloadedAt_idx" ON "submissionAccessAudit"("downloadedAt");
 
 -- CreateIndex for efficient ordering within a submission
-CREATE INDEX "submissionAccessAudit_submissionId_downloadedAt_idx" ON "submissionAccessAudit"("submissionId", "downloadedAt" DESC);
+CREATE INDEX "submissionAccessAudit_submissionId_downloadedAt_idx" ON "submissionAccessAudit"("submissionId", "downloadedAt");
 
 -- AddForeignKey
 ALTER TABLE "submissionAccessAudit"
