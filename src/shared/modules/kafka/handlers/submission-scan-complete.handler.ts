@@ -346,12 +346,12 @@ export class SubmissionScanCompleteHandler
     };
 
     await this.eventBusService.publish(
-      'marathon-match.submission.received',
+      'marathonmatch.submission.received',
       payload,
     );
 
     this.logger.log(
-      `Published marathon-match.submission.received event for submission ${submission.id}.`,
+      `Published marathonmatch.submission.received event for submission ${submission.id}.`,
     );
   }
 

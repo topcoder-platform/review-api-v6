@@ -66,7 +66,8 @@ export class EventBusService {
       const responseStatus: HttpStatus = response.status as HttpStatus;
       if (
         responseStatus !== HttpStatus.OK &&
-        responseStatus !== HttpStatus.NO_CONTENT
+        responseStatus !== HttpStatus.NO_CONTENT &&
+        responseStatus !== HttpStatus.ACCEPTED
       ) {
         throw new Error(`Event bus status code: ${response.status}`);
       }
