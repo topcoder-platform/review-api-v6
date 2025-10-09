@@ -871,6 +871,22 @@ export class AppealService {
           updatedAt: appeal.updatedAt,
           updatedBy: appeal.updatedBy,
           legacyId: appeal.legacyId,
+          // Include appealResponse so clients can tell whether an appeal
+          // has been responded to. This field was previously omitted,
+          // which caused Remaining counts to be incorrect in Platform UI.
+          appealResponse: appeal.appealResponse
+            ? {
+                id: appeal.appealResponse.id,
+                appealId: appeal.appealResponse.appealId,
+                resourceId: appeal.appealResponse.resourceId,
+                content: appeal.appealResponse.content,
+                success: appeal.appealResponse.success,
+                createdAt: appeal.appealResponse.createdAt,
+                createdBy: appeal.appealResponse.createdBy,
+                updatedAt: appeal.appealResponse.updatedAt,
+                updatedBy: appeal.appealResponse.updatedBy,
+              }
+            : undefined,
         })) as AppealResponseDto[],
         meta: {
           page,
