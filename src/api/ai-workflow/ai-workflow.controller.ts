@@ -7,6 +7,7 @@ import {
   ValidationPipe,
   Query,
   Param,
+  StreamableFile,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -205,6 +206,81 @@ export class AiWorkflowController {
     body: UpdateAiWorkflowRunDto,
   ) {
     return this.aiWorkflowService.updateWorkflowRun(workflowId, runId, body);
+  }
+
+  @Get('/:workflowId/runs/:runId/attachments')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+    UserRole.User,
+  )
+  @Scopes(Scope.ReadWorkflowRun)
+  @ApiOperation({
+    summary: 'List all attachments linked to the specific run',
+  })
+  @ApiParam({
+    name: 'runId',
+    description: 'The ID of the run to fetch the attachments for',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The AI workflow run attachments.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  async getRunAttachments(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @User() user: JwtUser,
+  ) {
+    return await this.aiWorkflowService.getWorkflowRunAttachments(
+      workflowId,
+      runId,
+      user,
+    );
+  }
+
+  @Get('/:workflowId/runs/:runId/attachments/:attachmentId/zip')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+    UserRole.User,
+  )
+  @Scopes(Scope.ReadWorkflowRun)
+  @ApiOperation({
+    summary: 'Download an attachment archive linked to the specific run',
+  })
+  @ApiParam({
+    name: 'attachmentId',
+    description: 'The ID of the workflow run attachment to download',
+    required: true,
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the blob to download',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  async downloadRunAttachment(
+    @Param('workflowId') workflowId: string,
+    @Param('runId') runId: string,
+    @Param('attachmentId') attachmentId: string,
+    @User() user: JwtUser,
+  ) {
+    const zipResponse =
+      await this.aiWorkflowService.downloadWorkflowRunAttachment(
+        workflowId,
+        runId,
+        attachmentId,
+        user,
+      );
+
+    return new StreamableFile(zipResponse.data);
   }
 
   @Post('/:workflowId/runs/:runId/items')

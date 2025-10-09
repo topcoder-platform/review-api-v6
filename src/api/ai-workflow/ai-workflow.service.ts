@@ -26,6 +26,7 @@ import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { GiteaService } from 'src/shared/modules/global/gitea.service';
 
 @Injectable()
 export class AiWorkflowService {
@@ -35,6 +36,7 @@ export class AiWorkflowService {
     private readonly prisma: PrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly giteaService: GiteaService,
   ) {
     this.logger = LoggerService.forRoot('AiWorkflowService');
   }
@@ -617,7 +619,19 @@ export class AiWorkflowService {
     }
   }
 
-  async getRunItems(workflowId: string, runId: string, user: JwtUser) {
+  /**
+   * Fetches the workflow & run data for the specified workflowId and runId
+   * It also makes sure the specified user has the right permissions to access the run
+   * @param user
+   * @param workflowId
+   * @param runId
+   * @returns
+   */
+  private async getWorkflowRunWithGuards(
+    user: JwtUser,
+    workflowId: string,
+    runId: string,
+  ) {
     const workflow = await this.prisma.aiWorkflow.findUnique({
       where: { id: workflowId },
     });
@@ -702,6 +716,52 @@ export class AiWorkflowService {
         throw new ForbiddenException('Insufficient permissions');
       }
     }
+
+    return { workflow, run };
+  }
+
+  async getWorkflowRunAttachments(
+    workflowId: string,
+    runId: string,
+    user: JwtUser,
+  ) {
+    const { workflow, run } = await this.getWorkflowRunWithGuards(
+      user,
+      workflowId,
+      runId,
+    );
+
+    const [owner, repo] = workflow.gitOwnerRepo.split('/');
+    const artifacts = await this.giteaService.getWorkflowRunArtifacts(
+      owner,
+      repo,
+      +run.gitRunId,
+    );
+    return artifacts;
+  }
+
+  async downloadWorkflowRunAttachment(
+    workflowId: string,
+    runId: string,
+    attachmentId: string,
+    user: JwtUser,
+  ) {
+    const { workflow } = await this.getWorkflowRunWithGuards(
+      user,
+      workflowId,
+      runId,
+    );
+
+    const [owner, repo] = workflow.gitOwnerRepo.split('/');
+    return this.giteaService.downloadWorkflowRunArtifact(
+      owner,
+      repo,
+      attachmentId,
+    );
+  }
+
+  async getRunItems(workflowId: string, runId: string, user: JwtUser) {
+    await this.getWorkflowRunWithGuards(user, workflowId, runId);
 
     const items = await this.prisma.aiWorkflowRunItem.findMany({
       where: { workflowRunId: runId },
