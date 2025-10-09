@@ -3,7 +3,9 @@ import { GiteaService } from './gitea.service';
 import { PrismaService } from './prisma.service';
 import { QueueSchedulerService } from './queue-scheduler.service';
 import { Job } from 'pg-boss';
-import { aiWorkflowRun } from '@prisma/client';
+import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
+import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
+import { CommonConfig } from 'src/shared/config/common.config';
 
 @Injectable()
 export class WorkflowQueueHandler implements OnModuleInit {
@@ -13,6 +15,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly scheduler: QueueSchedulerService,
     private readonly giteaService: GiteaService,
+    private readonly eventBusService: EventBusService,
   ) {}
 
   async onModuleInit() {
@@ -150,7 +153,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       return;
     }
 
-    let [aiWorkflowRun]: (aiWorkflowRun | null)[] = aiWorkflowRuns;
+    let [aiWorkflowRun]: ((typeof aiWorkflowRuns)[0] | null)[] = aiWorkflowRuns;
 
     if (
       !aiWorkflowRun &&
@@ -299,6 +302,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
           }
         } catch (e) {
           this.logger.log(aiWorkflowRun.id, e.message);
+          return;
         }
 
         this.logger.log({
@@ -309,9 +313,87 @@ export class WorkflowQueueHandler implements OnModuleInit {
           status: conclusion,
           timestamp: new Date().toISOString(),
         });
+
+        try {
+          await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
+        } catch (e) {
+          this.logger.log(
+            `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${e.message ?? e}!`,
+          );
+        }
         break;
       default:
         break;
     }
+  }
+
+  async sendWorkflowRunCompletedNotification(
+    aiWorkflowRun: aiWorkflowRun & { workflow: aiWorkflow },
+  ) {
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: aiWorkflowRun.submissionId },
+    });
+
+    if (!submission) {
+      this.logger.log(
+        `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. Submission ${aiWorkflowRun.submissionId} is missing!`,
+      );
+      return;
+    }
+
+    const [challenge] = await this.prisma.$queryRaw<{ name: string }[]>`
+      SELECT
+        id,
+        name
+      FROM challenges."Challenge" c
+      WHERE c.id=${submission.challengeId}
+    `;
+
+    if (!challenge) {
+      this.logger.log(
+        `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. Challenge ${submission.challengeId} couldn't be fetched!`,
+      );
+      return;
+    }
+
+    const [user] = await this.prisma.$queryRaw<
+      {
+        handle: string;
+        email: string;
+        firstName?: string;
+        lastName?: string;
+      }[]
+    >`
+      SELECT
+        handle,
+        email,
+        "firstName",
+        "lastName"
+      FROM members.member u
+      WHERE u."userId"::text=${submission.memberId}
+    `;
+
+    if (!user) {
+      this.logger.log(
+        `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. User ${submission.memberId} couldn't be fetched!`,
+      );
+      return;
+    }
+
+    await this.eventBusService.sendEmail({
+      ...new EventBusSendEmailPayload(),
+      sendgrid_template_id:
+        CommonConfig.sendgridConfig.aiWorkflowRunCompletedEmailTemplate,
+      recipients: [user.email],
+      data: {
+        userName:
+          [user.firstName, user.lastName].filter(Boolean).join(' ') ??
+          user.handle,
+        aiWorkflowName: aiWorkflowRun.workflow.name,
+        reviewLink: '',
+        submissionId: submission.id,
+        challengeName: challenge.name,
+      },
+    });
   }
 }
