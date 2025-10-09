@@ -90,6 +90,7 @@ export class SubmissionScanCompleteHandler
         if (submission) {
           await this.publishFirst2FinishEvent(submission);
           await this.publishTopgearTaskEvent(submission);
+          await this.publishMarathonMatchEvent(submission);
         }
       } else {
         this.logger.log(
@@ -287,6 +288,75 @@ export class SubmissionScanCompleteHandler
 
   private isTopgearTaskChallenge(typeName?: string): boolean {
     return (typeName ?? '').trim().toLowerCase() === 'topgear task';
+  }
+
+  private async publishMarathonMatchEvent(
+    submission: SubmissionRecord,
+  ): Promise<void> {
+    if (!submission.challengeId) {
+      this.logger.warn(
+        `Submission ${submission.id} missing challengeId. Skipping Marathon Match event publish.`,
+      );
+      return;
+    }
+
+    const challenge = await this.challengeApiService.getChallengeDetail(
+      submission.challengeId,
+    );
+
+    if (!this.isMarathonMatchChallenge(challenge?.type)) {
+      this.logger.log(
+        `Challenge ${submission.challengeId} is not Marathon Match. Skipping event publish for submission ${submission.id}.`,
+      );
+      return;
+    }
+
+    if (!submission.url) {
+      throw new Error(
+        `Updated submission ${submission.id} does not contain a URL required for Marathon Match event payload.`,
+      );
+    }
+
+    if (!submission.memberId) {
+      throw new Error(
+        `Submission ${submission.id} missing memberId. Cannot publish Marathon Match event.`,
+      );
+    }
+
+    const memberHandle = await this.lookupMemberHandle(
+      submission.challengeId,
+      submission.memberId,
+    );
+
+    if (!memberHandle) {
+      throw new Error(
+        `Unable to locate member handle for member ${submission.memberId} on challenge ${submission.challengeId}.`,
+      );
+    }
+
+    const submittedDate = submission.createdAt.toISOString();
+
+    const payload: First2FinishSubmissionEventPayload = {
+      submissionId: submission.id,
+      challengeId: submission.challengeId,
+      submissionUrl: submission.url,
+      memberHandle,
+      memberId: submission.memberId,
+      submittedDate,
+    };
+
+    await this.eventBusService.publish(
+      'marathon-match.submission.received',
+      payload,
+    );
+
+    this.logger.log(
+      `Published marathon-match.submission.received event for submission ${submission.id}.`,
+    );
+  }
+
+  private isMarathonMatchChallenge(typeName?: string): boolean {
+    return (typeName ?? '').trim().toLowerCase() === 'marathon match';
   }
 
   private async lookupMemberHandle(
