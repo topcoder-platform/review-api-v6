@@ -23,7 +23,45 @@ model Resource {
   createdBy    String
   updatedAt    DateTime? @updatedAt
   updatedBy    String?
+  phaseChangeNotifications Boolean? @default(true)
+
+  resourceRole ResourceRole @relation(fields: [roleId], references: [id])
 
   @@index([challengeId, memberId], map: "resource-challengeIdMemberId-index")
   @@index([memberId, roleId], map: "resource-memberIdRoleId-index")
+}
+
+model ResourceRole {
+  id              String   @id @default(uuid())
+  name            String
+  nameLower       String
+  fullReadAccess  Boolean
+  fullWriteAccess Boolean
+  isActive        Boolean
+  selfObtainable  Boolean
+  legacyId        Int?
+  createdAt       DateTime @default(now())
+  createdBy       String
+  updatedAt       DateTime? @updatedAt
+  updatedBy       String?
+
+  resources                     Resource[]
+  resourceRolePhaseDependencies ResourceRolePhaseDependency[]
+
+  @@index([nameLower], map: "resourcerole-nameLower-index")
+}
+
+model ResourceRolePhaseDependency {
+  id             String       @id @default(uuid())
+  phaseId        String
+  resourceRoleId String
+  phaseState     Boolean
+  createdAt      DateTime     @default(now())
+  createdBy      String
+  updatedAt      DateTime?    @updatedAt
+  updatedBy      String?
+
+  resourceRole ResourceRole @relation(fields: [resourceRoleId], references: [id])
+
+  @@unique([phaseId, resourceRoleId], map: "resourcerolephase-phaseId-resourceRoleId-unique")
 }

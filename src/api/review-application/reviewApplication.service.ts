@@ -5,8 +5,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import type { ReviewApplicationRole as PrismaReviewApplicationRole } from '@prisma/client';
+import { Prisma, ReviewOpportunityType } from '@prisma/client';
 import {
   CreateReviewApplicationDto,
   ReviewApplicationResponseDto,
@@ -17,7 +16,7 @@ import {
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import {
   EventBusSendEmailPayload,
   EventBusService,
@@ -41,7 +40,7 @@ export class ReviewApplicationService {
     private readonly prisma: PrismaService,
     private readonly challengeService: ChallengeApiService,
     private readonly challengePrisma: ChallengePrismaService,
-    private readonly resourceApiService: ResourceApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
     private readonly memberService: MemberService,
     private readonly eventBusService: EventBusService,
     private readonly prismaErrorService: PrismaErrorService,
@@ -293,36 +292,44 @@ export class ReviewApplicationService {
 
       // Assign reviewer resource on the challenge before marking approved
       const challengeId = entity.opportunity.challengeId;
-      const memberId = entity.userId;
-      const handle = entity.handle;
+      const memberId = String(entity.userId);
+      const handle = entity.handle ?? '';
 
-      // Determine the appropriate resource role name for this application
-      const roleName = this.mapApplicationRoleToResourceRoleName(entity.role);
+      // Determine the appropriate resource role name using opportunity type with fallback to application role mapping
+      const roleName = this.getResourceRoleName(
+        entity.opportunity.type,
+        entity.role as ReviewApplicationRole,
+      );
 
-      // Resolve role id from Resource API
-      const role =
-        await this.resourceApiService.getResourceRoleByName(roleName);
-      if (!role || !role.id) {
+      // Resolve role id directly from the Resource DB
+      const role = await this.resourcePrisma.resourceRole.findFirst({
+        where: { name: roleName },
+      });
+      if (!role) {
         throw new BadRequestException(
-          `Resource role '${roleName}' not found in Resource API`,
+          `Resource role '${roleName}' not found in resource database`,
         );
       }
 
       // Check if member already has this reviewer role on the challenge
-      const existingRoles =
-        await this.resourceApiService.getMemberResourcesRoles(
+      const existingRole = await this.resourcePrisma.resource.findFirst({
+        where: {
           challengeId,
           memberId,
-        );
-      const alreadyAssigned = existingRoles?.some((r) => r.roleId === role.id);
-
-      if (!alreadyAssigned) {
-        // Create reviewer resource in Resource API
-        await this.resourceApiService.createResource({
-          challengeId,
-          memberId,
-          memberHandle: handle,
           roleId: role.id,
+        },
+      });
+
+      if (!existingRole) {
+        // Create reviewer resource directly in Resource DB
+        await this.resourcePrisma.resource.create({
+          data: {
+            challengeId,
+            memberId,
+            memberHandle: handle,
+            roleId: role.id,
+            createdBy: 'review-api',
+          },
         });
       }
 
@@ -353,13 +360,29 @@ export class ReviewApplicationService {
   }
 
   /**
-   * Map ReviewApplicationRole to Resource API role name
+   * Determine the resource role name based on opportunity type with fallback on specific application role.
+   */
+  private getResourceRoleName(
+    opportunityType: ReviewOpportunityType,
+    applicationRole: ReviewApplicationRole,
+  ): string {
+    switch (opportunityType) {
+      case ReviewOpportunityType.REGULAR_REVIEW:
+        return 'Reviewer';
+      case ReviewOpportunityType.ITERATIVE_REVIEW:
+        return 'Iterative Reviewer';
+      default:
+        return this.mapApplicationRoleToResourceRoleName(applicationRole);
+    }
+  }
+
+  /**
+   * Map ReviewApplicationRole to corresponding resource role name.
    */
   private mapApplicationRoleToResourceRoleName(
-    role: ReviewApplicationRole | PrismaReviewApplicationRole,
+    role: ReviewApplicationRole,
   ): string {
-    const value = String(role) as ReviewApplicationRole;
-    switch (value) {
+    switch (role) {
       case ReviewApplicationRole.REVIEWER:
         return 'Reviewer';
       case ReviewApplicationRole.ITERATIVE_REVIEWER:
