@@ -23,6 +23,7 @@ import {
   ApiBody,
   ApiBearerAuth,
   ApiConsumes,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -341,13 +342,20 @@ export class SubmissionController {
     description: 'Submission created successfully.',
     type: ArtifactsCreateResponseDto,
   })
+  @ApiQuery({
+    name: 'filename',
+    required: false,
+    description:
+      'Optional file name (without extension) to use when storing the artifact',
+  })
   async createArtifact(
     @Req() req: Request,
     @Param('submissionId') submissionId: string,
     @UploadedFile() file: Express.Multer.File,
+    @Query('filename') filename?: string,
   ): Promise<ArtifactsCreateResponseDto> {
     const authUser: JwtUser = req['user'] as JwtUser;
-    return this.service.createArtifact(authUser, submissionId, file);
+    return this.service.createArtifact(authUser, submissionId, file, filename);
   }
 
   @Get('/:submissionId/artifacts')

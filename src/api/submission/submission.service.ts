@@ -28,6 +28,7 @@ import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-cat
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
 import { randomUUID } from 'crypto';
+import { basename } from 'path';
 import {
   S3Client,
   ListObjectsV2Command,
@@ -70,6 +71,7 @@ export class SubmissionService {
     authUser: JwtUser,
     submissionId: string,
     file: Express.Multer.File,
+    requestedFilename?: string,
   ): Promise<ArtifactsCreateResponseDto> {
     // Ensure the submission exists (keeps behavior predictable)
     const submission = await this.checkSubmission(submissionId);
@@ -101,7 +103,8 @@ export class SubmissionService {
 
     const s3 = this.getS3Client();
 
-    const artifactId = randomUUID();
+    const overrideName = this.sanitizeArtifactFileName(requestedFilename);
+    const artifactId = overrideName ?? randomUUID();
     const originalName = file.originalname || file.filename || 'artifact';
 
     // Derive file extension from mime-type or filename (fallback to 'bin')
@@ -1012,6 +1015,20 @@ export class SubmissionService {
     // Rely on ECS task role / instance role and default provider chain
     // for credentials and region resolution.
     return new S3Client({});
+  }
+
+  private sanitizeArtifactFileName(name?: string): string | undefined {
+    if (!name) return undefined;
+    const trimmed = name.trim();
+    if (!trimmed) return undefined;
+    const base = basename(trimmed);
+    const sanitized = base
+      .replace(/[^A-Za-z0-9_.-]/g, '_')
+      .replace(/\.+$/g, '');
+    if (!sanitized || sanitized === '.' || sanitized === '..') {
+      return undefined;
+    }
+    return sanitized;
   }
 
   private guessExtFromMime(mime?: string): string | undefined {
