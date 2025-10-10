@@ -341,7 +341,9 @@ export class WorkflowQueueHandler implements OnModuleInit {
       return;
     }
 
-    const [challenge] = await this.prisma.$queryRaw<{ name: string }[]>`
+    const [challenge] = await this.prisma.$queryRaw<
+      { id: string; name: string }[]
+    >`
       SELECT
         id,
         name
@@ -390,7 +392,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
           [user.firstName, user.lastName].filter(Boolean).join(' ') ??
           user.handle,
         aiWorkflowName: aiWorkflowRun.workflow.name,
-        reviewLink: '',
+        reviewLink: `${CommonConfig.ui.reviewUIUrl}/review/active-challenges/${challenge.id}/scorecard-details/${submission.id}#aiWorkflowRunId=${aiWorkflowRun.id}`,
         submissionId: submission.id,
         challengeName: challenge.name,
       },
