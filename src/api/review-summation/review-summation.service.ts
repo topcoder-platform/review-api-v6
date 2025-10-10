@@ -21,6 +21,7 @@ import {
   ChallengeApiService,
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
+import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 
 @Injectable()
 export class ReviewSummationService {
@@ -30,6 +31,7 @@ export class ReviewSummationService {
     private readonly prisma: PrismaService,
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly memberPrisma: MemberPrismaService,
   ) {}
 
   private readonly systemActor = 'ReviewSummationService';
@@ -549,25 +551,126 @@ export class ReviewSummationService {
           : {}),
       };
 
-      // find entities by filters
-      const reviewSummations = await this.prisma.reviewSummation.findMany({
+      const shouldEnrichSubmitterMetadata = Boolean(queryDto.challengeId);
+
+      const summations = await this.prisma.reviewSummation.findMany({
         where: whereClause,
         skip,
         take: perPage,
         orderBy,
+        ...(shouldEnrichSubmitterMetadata
+          ? {
+              include: {
+                submission: {
+                  select: {
+                    memberId: true,
+                  },
+                },
+              },
+            }
+          : {}),
       });
+
+      const submitterInfoByMemberId = new Map<
+        string,
+        { handle: string | null; maxRating: number | null }
+      >();
+
+      if (shouldEnrichSubmitterMetadata && summations.length) {
+        try {
+          const memberIds = Array.from(
+            new Set(
+              summations
+                .map((summation) => {
+                  const submission = (
+                    summation as typeof summation & {
+                      submission?: { memberId: string | null };
+                    }
+                  ).submission;
+                  return typeof submission?.memberId === 'string'
+                    ? submission.memberId.trim()
+                    : null;
+                })
+                .filter((memberId): memberId is string => Boolean(memberId)),
+            ),
+          );
+
+          if (memberIds.length) {
+            const memberIdsAsBigInt: bigint[] = [];
+            for (const memberId of memberIds) {
+              try {
+                memberIdsAsBigInt.push(BigInt(memberId));
+              } catch (conversionError) {
+                this.logger.debug(
+                  `[searchSummation] Skipping submitter memberId ${memberId}: unable to convert to BigInt. ${conversionError}`,
+                );
+              }
+            }
+
+            if (memberIdsAsBigInt.length) {
+              const members = await this.memberPrisma.member.findMany({
+                where: { userId: { in: memberIdsAsBigInt } },
+                select: {
+                  userId: true,
+                  handle: true,
+                  maxRating: { select: { rating: true } },
+                },
+              });
+
+              members.forEach((member) => {
+                submitterInfoByMemberId.set(member.userId.toString(), {
+                  handle: member.handle ?? null,
+                  maxRating: member.maxRating?.rating ?? null,
+                });
+              });
+            }
+          }
+        } catch (enrichmentError) {
+          const message =
+            enrichmentError instanceof Error
+              ? enrichmentError.message
+              : String(enrichmentError);
+          this.logger.warn(
+            `[searchSummation] Failed to enrich submitter metadata: ${message}`,
+          );
+        }
+      }
 
       // Count total entities matching the filter for pagination metadata
       const totalCount = await this.prisma.reviewSummation.count({
         where: whereClause,
       });
 
+      const data: ReviewSummationResponseDto[] = summations.map((summation) => {
+        const { submission, ...rest } = summation as typeof summation & {
+          submission?: { memberId: string | null };
+        };
+
+        let submitterHandle: string | null = null;
+        let submitterMaxRating: number | null = null;
+
+        if (submission && typeof submission.memberId === 'string') {
+          const memberId = submission.memberId.trim();
+          if (memberId.length) {
+            const profile = submitterInfoByMemberId.get(memberId);
+            submitterHandle = profile?.handle ?? null;
+            submitterMaxRating = profile?.maxRating ?? null;
+          }
+        }
+
+        return {
+          ...rest,
+          submitterHandle,
+          submitterMaxRating,
+        } as ReviewSummationResponseDto;
+      });
+
       this.logger.log(
-        `Found ${reviewSummations.length} review summations (page ${page} of ${Math.ceil(totalCount / perPage)})`,
+        `Found ${data.length} review summations (page ${page} of ${Math.ceil(totalCount / perPage)})`,
       );
 
       return {
-        data: reviewSummations as ReviewSummationResponseDto[],
+        data,
         meta: {
           page,
           perPage,

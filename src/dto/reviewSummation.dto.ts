@@ -293,6 +293,24 @@ export class ReviewSummationResponseDto {
     example: 'user456',
   })
   updatedBy: string | null;
+
+  @ApiProperty({
+    description:
+      'Handle of the submitter associated with this review summation',
+    example: 'submitter123',
+    required: false,
+    nullable: true,
+  })
+  submitterHandle?: string | null;
+
+  @ApiProperty({
+    description: 'Maximum rating of the submitter sourced from member profile',
+    example: 2450,
+    required: false,
+    nullable: true,
+    type: Number,
+  })
+  submitterMaxRating?: number | null;
 }
 
 export class ReviewSummationBatchResponseDto {
