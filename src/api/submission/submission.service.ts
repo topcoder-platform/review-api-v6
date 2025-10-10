@@ -1348,6 +1348,8 @@ export class SubmissionService {
           );
         }
       }
+      await this.populateLatestSubmissionFlags([data]);
+      await this.populateLatestSubmissionFlags([data]);
       return this.buildResponse(data);
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
@@ -1494,6 +1496,8 @@ export class SubmissionService {
         },
       });
 
+      await this.populateLatestSubmissionFlags(submissions);
+
       this.logger.log(
         `Found ${submissions.length} submissions (page ${page} of ${Math.ceil(totalCount / perPage)})`,
       );
@@ -1578,6 +1582,7 @@ export class SubmissionService {
 
   async getSubmission(submissionId: string): Promise<SubmissionResponseDto> {
     const data = await this.checkSubmission(submissionId);
+    await this.populateLatestSubmissionFlags([data]);
     return this.buildResponse(data);
   }
 
@@ -1844,6 +1849,78 @@ export class SubmissionService {
     return data;
   }
 
+  private async populateLatestSubmissionFlags(
+    submissions: Array<{
+      id: string;
+      challengeId?: string | null;
+      memberId?: string | null;
+    }>,
+  ): Promise<void> {
+    if (!submissions.length) {
+      return;
+    }
+
+    const uniquePairs = new Map<
+      string,
+      { challengeId: string; memberId: string }
+    >();
+
+    for (const submission of submissions) {
+      (submission as any).isLatest = false;
+      const challengeId =
+        submission.challengeId !== undefined && submission.challengeId !== null
+          ? String(submission.challengeId)
+          : null;
+      const memberId =
+        submission.memberId !== undefined && submission.memberId !== null
+          ? String(submission.memberId)
+          : null;
+
+      if (!challengeId || !memberId) {
+        continue;
+      }
+
+      const key = `${challengeId}::${memberId}`;
+      if (!uniquePairs.has(key)) {
+        uniquePairs.set(key, { challengeId, memberId });
+      }
+    }
+
+    if (!uniquePairs.size) {
+      return;
+    }
+
+    const latestIds = new Set<string>();
+    await Promise.all(
+      Array.from(uniquePairs.values()).map(
+        async ({ challengeId, memberId }) => {
+          const latest = await this.prisma.submission.findFirst({
+            where: {
+              challengeId,
+              memberId,
+            },
+            orderBy: [
+              { submittedDate: 'desc' },
+              { createdAt: 'desc' },
+              { updatedAt: 'desc' },
+            ],
+            select: { id: true },
+          });
+
+          if (latest?.id) {
+            latestIds.add(latest.id);
+          }
+        },
+      ),
+    );
+
+    for (const submission of submissions) {
+      if (latestIds.has(submission.id)) {
+        (submission as any).isLatest = true;
+      }
+    }
+  }
+
   private buildResponse(data: any): SubmissionResponseDto {
     const dto: SubmissionResponseDto = {
       ...data,
@@ -1856,6 +1933,7 @@ export class SubmissionService {
     if (data.reviewSummation) {
       dto.reviewSummation = data.reviewSummation;
     }
+    dto.isLatest = Boolean(data.isLatest);
     return dto;
   }
 }

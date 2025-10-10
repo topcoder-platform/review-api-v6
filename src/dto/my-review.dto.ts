@@ -149,6 +149,20 @@ export class MyReviewSummaryDto {
   reviewProgress: number;
 
   @ApiProperty({
+    description:
+      'Indicates whether the user has outstanding review deliverables for this challenge',
+  })
+  deliverableDue: boolean;
+
+  @ApiProperty({
+    description:
+      'Name of the phase associated with the outstanding deliverable when deliverableDue is true',
+    required: false,
+    nullable: true,
+  })
+  deliverableDuePhaseName?: string | null;
+
+  @ApiProperty({
     description: 'Challenge winners when available',
     required: false,
     nullable: true,

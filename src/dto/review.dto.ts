@@ -382,6 +382,17 @@ export class ReviewResponseDto extends ReviewCommonDto {
   })
   phaseId: string;
 
+  @ApiProperty({
+    description:
+      'Human-readable name of the challenge phase associated with this review',
+    example: 'Review',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  phaseName?: string | null;
+
   @ApiProperty({ description: 'Final score of the review', example: 85.5 })
   finalScore: number | null;
 

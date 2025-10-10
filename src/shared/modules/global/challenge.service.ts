@@ -31,6 +31,7 @@ export class ChallengeData {
   tags?: string[] | undefined;
   workflows?: WorkflowData[] | undefined;
   phases?: PhaseData[] | undefined;
+  metadata?: Record<string, string | null> | undefined;
 }
 
 export class WorkflowData {
@@ -217,7 +218,8 @@ export class ChallengeApiService {
   }
 
   private mapChallenge(aggregate: ChallengeAggregate): ChallengeData {
-    const { challenge, legacy, type, track, phases, workflows } = aggregate;
+    const { challenge, legacy, type, track, phases, workflows, metadata } =
+      aggregate;
 
     const mappedPhases = phases?.map((phase) => ({
       id: phase.id,
@@ -246,6 +248,16 @@ export class ChallengeApiService {
       );
     }
 
+    const metadataRecord: Record<string, string | null> | undefined =
+      metadata && metadata.length
+        ? metadata.reduce<Record<string, string | null>>((acc, entry) => {
+            if (entry?.name) {
+              acc[entry.name] = entry.value ?? null;
+            }
+            return acc;
+          }, {})
+        : undefined;
+
     return {
       id: challenge.id,
       name: challenge.name,
@@ -265,6 +277,7 @@ export class ChallengeApiService {
       tags: challenge.tags ?? undefined,
       workflows,
       phases: mappedPhases,
+      metadata: metadataRecord,
     };
   }
 

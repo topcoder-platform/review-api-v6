@@ -28,6 +28,11 @@ interface ChallengeSummaryRow {
   completedReviews: bigint | null;
   winners: Prisma.JsonValue | null;
   status: string;
+  hasIncompleteReviews: boolean | null;
+  incompletePhaseName: string | null;
+  hasPendingAppealResponses: boolean | null;
+  isAppealsResponsePhaseOpen: boolean | null;
+  appealsResponsePhaseName: string | null;
 }
 
 const PAST_CHALLENGE_STATUSES = [
@@ -208,6 +213,67 @@ export class MyReviewService {
           WHERE w."challengeId" = c.id
         ) cw ON TRUE
       `,
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            EXISTS (
+              SELECT 1
+              FROM reviews.review rv_incomplete
+              WHERE rv_incomplete."resourceId" = r.id
+                AND (rv_incomplete.status IS NULL OR rv_incomplete.status <> 'COMPLETED')
+            ) AS "hasIncompleteReviews",
+            (
+              SELECT cp_incomplete.name
+              FROM reviews.review rv_incomplete2
+              JOIN challenges."ChallengePhase" cp_incomplete
+                ON cp_incomplete.id = rv_incomplete2."phaseId"
+              WHERE rv_incomplete2."resourceId" = r.id
+                AND (rv_incomplete2.status IS NULL OR rv_incomplete2.status <> 'COMPLETED')
+              ORDER BY
+                CASE WHEN cp_incomplete."isOpen" IS TRUE THEN 0 ELSE 1 END,
+                cp_incomplete."scheduledEndDate" NULLS LAST,
+                cp_incomplete."actualEndDate" NULLS LAST,
+                cp_incomplete.name ASC
+              LIMIT 1
+            ) AS "incompletePhaseName"
+        ) deliverable_reviews ON TRUE
+      `,
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            EXISTS (
+              SELECT 1
+              FROM reviews.review rv_pending
+              JOIN reviews."reviewItem" ri
+                ON ri."reviewId" = rv_pending.id
+              JOIN reviews."reviewItemComment" ric
+                ON ric."reviewItemId" = ri.id
+              JOIN reviews.appeal ap
+                ON ap."reviewItemCommentId" = ric.id
+              LEFT JOIN reviews."appealResponse" apr
+                ON apr."appealId" = ap.id
+               AND apr."resourceId" = r.id
+              WHERE rv_pending."resourceId" = r.id
+                AND apr.id IS NULL
+            ) AS "hasPendingAppealResponses"
+        ) pending_appeals ON TRUE
+      `,
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            TRUE AS "isAppealsResponsePhaseOpen",
+            p.name AS "appealsResponsePhaseName"
+          FROM challenges."ChallengePhase" p
+          WHERE p."challengeId" = c.id
+            AND LOWER(p.name) IN ('appeals response', 'iterative appeals response')
+            AND p."isOpen" IS TRUE
+          ORDER BY
+            p."scheduledEndDate" DESC NULLS LAST,
+            p."actualEndDate" DESC NULLS LAST,
+            p.name ASC
+          LIMIT 1
+        ) appeals_response_phase ON TRUE
+      `,
     );
 
     if (challengeTypeId) {
@@ -346,6 +412,11 @@ export class MyReviewService {
         rp."totalReviews" AS "totalReviews",
         rp."completedReviews" AS "completedReviews",
         cw.winners AS "winners",
+        deliverable_reviews."hasIncompleteReviews" AS "hasIncompleteReviews",
+        deliverable_reviews."incompletePhaseName" AS "incompletePhaseName",
+        pending_appeals."hasPendingAppealResponses" AS "hasPendingAppealResponses",
+        appeals_response_phase."isAppealsResponsePhaseOpen" AS "isAppealsResponsePhaseOpen",
+        appeals_response_phase."appealsResponsePhaseName" AS "appealsResponsePhaseName",
         c.status AS "status"
       FROM challenges."Challenge" c
       ${joinClause}
@@ -401,6 +472,29 @@ export class MyReviewService {
         : 0;
       let winners: MyReviewWinnerDto[] | null = null;
 
+      const isActiveChallenge = row.status === 'ACTIVE';
+      const hasIncompleteReviews =
+        isActiveChallenge && row.hasIncompleteReviews === true;
+      const hasPendingAppealResponses =
+        isActiveChallenge &&
+        row.hasPendingAppealResponses === true &&
+        row.isAppealsResponsePhaseOpen === true;
+
+      let deliverableDue = false;
+      let deliverableDuePhaseName: string | null = null;
+
+      if (hasIncompleteReviews) {
+        deliverableDue = true;
+        deliverableDuePhaseName =
+          row.incompletePhaseName ?? row.currentPhaseName ?? null;
+      } else if (hasPendingAppealResponses) {
+        deliverableDue = true;
+        deliverableDuePhaseName =
+          row.appealsResponsePhaseName ??
+          row.currentPhaseName ??
+          'Appeals Response';
+      }
+
       if (Array.isArray(row.winners)) {
         const parsed = row.winners
           .map((winner) => this.toWinnerDto(winner))
@@ -425,6 +519,8 @@ export class MyReviewService {
         resourceRoleName: row.resourceRoleName ?? adminRoleLabel,
         reviewProgress,
         winners,
+        deliverableDue,
+        deliverableDuePhaseName,
         status: row.status,
       };
     });

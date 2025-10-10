@@ -17,6 +17,10 @@ describe('ReviewService.createReview authorization checks', () => {
     },
     submission: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    reviewType: {
+      findUnique: jest.fn(),
     },
     review: {
       findUnique: jest.fn(),
@@ -134,6 +138,13 @@ describe('ReviewService.createReview authorization checks', () => {
       id: 'submission-1',
       challengeId: 'challenge-1',
     });
+    prismaMock.submission.findFirst.mockResolvedValue({
+      id: 'submission-1',
+    });
+    prismaMock.reviewType.findUnique.mockResolvedValue({
+      id: 'type-1',
+      name: 'Review',
+    });
 
     challengeApiServiceMock.validateReviewSubmission.mockResolvedValue(null);
     challengeApiServiceMock.getChallengeDetail.mockResolvedValue(
@@ -163,6 +174,24 @@ describe('ReviewService.createReview authorization checks', () => {
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'RESOURCE_MEMBER_MISMATCH' }),
       status: 403,
+    });
+  });
+
+  it('rejects reviews for non-latest submissions when challenge has no limit', async () => {
+    prismaMock.submission.findUnique.mockResolvedValue({
+      id: 'submission-older',
+      challengeId: 'challenge-1',
+      memberId: 'member-1',
+    });
+    prismaMock.submission.findFirst.mockResolvedValue({
+      id: 'submission-latest',
+    });
+
+    await expect(
+      service.createReview(baseAuthUser, buildReviewRequest()),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'SUBMISSION_NOT_LATEST' }),
+      status: 400,
     });
   });
 
@@ -327,7 +356,10 @@ describe('ReviewService.createReview authorization checks', () => {
 
     await expect(
       service.createReview(baseAuthUser, request),
-    ).resolves.toMatchObject({ phaseId: 'phase-review' });
+    ).resolves.toMatchObject({
+      phaseId: 'phase-review',
+      phaseName: 'Review',
+    });
 
     expect(prismaMock.review.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -391,7 +423,10 @@ describe('ReviewService.createReview authorization checks', () => {
 
     await expect(
       service.createReview(baseAuthUser, request),
-    ).resolves.toMatchObject({ phaseId: 'phase-iterative' });
+    ).resolves.toMatchObject({
+      phaseId: 'phase-iterative',
+      phaseName: 'Iterative Review',
+    });
 
     expect(prismaMock.review.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -741,6 +776,8 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       challengeApiServiceMock,
       eventBusServiceMock,
     );
+
+    challengeApiServiceMock.getChallenges.mockResolvedValue([]);
   });
 
   it('filters reviews by the reviewer resource id when the requester is a reviewer', async () => {
@@ -1869,7 +1906,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       updatePayload,
     );
 
-    expect(result).toEqual({ id: 'review-1', appeals: [] });
+    expect(result).toEqual({ id: 'review-1', appeals: [], phaseName: null });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
     expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
@@ -1889,7 +1926,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       updatePayload,
     );
 
-    expect(result).toEqual({ id: 'review-1', appeals: [] });
+    expect(result).toEqual({ id: 'review-1', appeals: [], phaseName: null });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
     expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
@@ -1926,7 +1963,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       updatePayload,
     );
 
-    expect(result).toEqual({ id: 'review-1', appeals: [] });
+    expect(result).toEqual({ id: 'review-1', appeals: [], phaseName: null });
     expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
     expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
       challengeId: 'challenge-1',
@@ -2096,7 +2133,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       status: ReviewStatus.IN_PROGRESS,
     } as any);
 
-    expect(result).toEqual({ id: 'review-1', appeals: [] });
+    expect(result).toEqual({ id: 'review-1', appeals: [], phaseName: null });
     expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
       challengeId: 'challenge-1',
       memberId: 'copilot-1',

@@ -25,7 +25,10 @@ import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import {
+  ChallengeApiService,
+  ChallengeData,
+} from 'src/shared/modules/global/challenge.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
@@ -975,7 +978,7 @@ export class ReviewService {
 
       const submission = await this.prisma.submission.findUnique({
         where: { id: body.submissionId },
-        select: { challengeId: true },
+        select: { challengeId: true, memberId: true },
       });
 
       if (!submission) {
@@ -994,6 +997,22 @@ export class ReviewService {
       }
 
       const challengeId = submission.challengeId;
+      const submissionMemberId = submission.memberId
+        ? String(submission.memberId)
+        : null;
+
+      const reviewType = await this.prisma.reviewType.findUnique({
+        where: { id: body.typeId },
+        select: { name: true },
+      });
+
+      if (!reviewType) {
+        throw new NotFoundException({
+          message: `Review type with ID ${body.typeId} was not found. Please verify the typeId and try again.`,
+          code: 'REVIEW_TYPE_NOT_FOUND',
+          details: { typeId: body.typeId },
+        });
+      }
 
       await this.challengeApiService.validateReviewSubmission(challengeId);
 
@@ -1113,6 +1132,42 @@ export class ReviewService {
       const challenge =
         await this.challengeApiService.getChallengeDetail(challengeId);
 
+      if (
+        this.shouldEnforceLatestSubmissionForReview(
+          reviewType.name,
+          challenge,
+        ) &&
+        submissionMemberId
+      ) {
+        const latest = await this.prisma.submission.findFirst({
+          where: {
+            challengeId,
+            memberId: submissionMemberId,
+          },
+          orderBy: [
+            { submittedDate: 'desc' },
+            { createdAt: 'desc' },
+            { updatedAt: 'desc' },
+          ],
+          select: { id: true },
+        });
+
+        if (latest?.id && latest.id !== body.submissionId) {
+          throw new BadRequestException({
+            message:
+              'Only the most recent submission for this member can be reviewed when the challenge does not enforce a submission limit.',
+            code: 'SUBMISSION_NOT_LATEST',
+            details: {
+              submissionId: body.submissionId,
+              latestSubmissionId: latest.id,
+              challengeId,
+              memberId: submissionMemberId,
+              reviewType: reviewType.name,
+            },
+          });
+        }
+      }
+
       const challengePhases = challenge?.phases ?? [];
       const resolvePhaseId = (phase: (typeof challengePhases)[number]) =>
         String((phase as any)?.id ?? (phase as any)?.phaseId ?? '');
@@ -1125,6 +1180,7 @@ export class ReviewService {
 
       const reviewPhase =
         matchPhaseByName('review') ?? matchPhaseByName('iterative review');
+      const reviewPhaseName = reviewPhase?.name ?? null;
 
       if (!reviewPhase) {
         throw new BadRequestException({
@@ -1352,6 +1408,7 @@ export class ReviewService {
         initialScore: scores.initialScore,
         finalScore: scores.finalScore,
         appeals: flattenedAppeals,
+        phaseName: reviewPhaseName,
       } as unknown as ReviewResponseDto;
     } catch (error) {
       if (error instanceof HttpException) {
@@ -1584,6 +1641,7 @@ export class ReviewService {
     const requester = authUser ?? ({ isMachine: false } as JwtUser);
     const isPrivileged = isAdmin(requester);
     const challengeId = existingReview.submission?.challengeId;
+    const challengeCache = new Map<string, ChallengeData | null>();
     const isMemberRequester = !requester?.isMachine;
     const normalizedRoles = Array.isArray(requester.roles)
       ? requester.roles.map((role) => String(role).trim().toLowerCase())
@@ -1722,10 +1780,11 @@ export class ReviewService {
     }
 
     if (!isPrivileged && challengeId) {
-      let challenge;
+      let challengeDetailForPhase: ChallengeData;
       try {
-        challenge =
+        challengeDetailForPhase =
           await this.challengeApiService.getChallengeDetail(challengeId);
+        challengeCache.set(challengeId, challengeDetailForPhase);
       } catch (error) {
         this.logger.error(
           `[updateReview] Unable to fetch challenge ${challengeId} for review ${id}`,
@@ -1738,7 +1797,7 @@ export class ReviewService {
         });
       }
 
-      if (challenge.status === ChallengeStatus.COMPLETED) {
+      if (challengeDetailForPhase.status === ChallengeStatus.COMPLETED) {
         throw new ForbiddenException({
           message:
             'Reviews for challenges in COMPLETED status cannot be updated.  Only an admin can update a review once the challenge is complete.',
@@ -1849,6 +1908,12 @@ export class ReviewService {
         // ignore
       }
       (responsePayload as any).appeals = flattenedAppeals;
+      (responsePayload as any).phaseName =
+        await this.resolvePhaseNameFromChallenge({
+          challengeId,
+          phaseId: responsePayload.phaseId ?? null,
+          challengeCache,
+        });
 
       if (shouldAudit && auditActorId) {
         const beforeState = {
@@ -2206,10 +2271,7 @@ export class ReviewService {
 
     try {
       const reviewWhereClause: any = {};
-      let challengeDetail: {
-        status?: ChallengeStatus;
-        phases?: Array<{ name?: string | null; isOpen?: boolean | null }>;
-      } | null = null;
+      let challengeDetail: ChallengeData | null = null;
       let requesterIsChallengeResource = false;
       const reviewerResourceIdSet = new Set<string>();
       const submitterSubmissionIdSet = new Set<string>();
@@ -2499,7 +2561,7 @@ export class ReviewService {
         [
           ChallengeStatus.COMPLETED,
           ChallengeStatus.CANCELLED_FAILED_REVIEW,
-        ].includes(challengeDetail.status as ChallengeStatus) &&
+        ].includes(challengeDetail.status) &&
         (isAdmin(authUser) || requesterIsChallengeResource);
 
       this.logger.debug(`Fetching reviews with where clause:`);
@@ -2518,6 +2580,60 @@ export class ReviewService {
           },
         },
       });
+
+      const challengeCache = new Map<string, ChallengeData | null>();
+      if (challengeId && challengeDetail?.id) {
+        challengeCache.set(challengeId, challengeDetail);
+      }
+
+      const challengeIdsToFetch = new Set<string>();
+      for (const review of reviews) {
+        const reviewChallengeId = review.submission?.challengeId;
+        if (
+          typeof reviewChallengeId === 'string' &&
+          reviewChallengeId.trim().length > 0 &&
+          !challengeCache.has(reviewChallengeId)
+        ) {
+          challengeIdsToFetch.add(reviewChallengeId);
+        }
+      }
+
+      if (challengeIdsToFetch.size) {
+        try {
+          const challengeDetails = await this.challengeApiService.getChallenges(
+            Array.from(challengeIdsToFetch),
+          );
+          challengeDetails.forEach((detail) => {
+            if (detail?.id) {
+              challengeCache.set(detail.id, detail);
+            }
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `[getReviews] Failed to prefetch challenge phase data: ${message}`,
+          );
+        }
+      }
+
+      const phaseNameCache = new Map<string, string | null>();
+      for (const review of reviews) {
+        const phaseIdValue = review.phaseId
+          ? String(review.phaseId).trim()
+          : '';
+        if (!phaseIdValue || phaseNameCache.has(phaseIdValue)) {
+          continue;
+        }
+        const reviewChallengeId =
+          review.submission?.challengeId ?? challengeId ?? null;
+        const resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
+          challengeId: reviewChallengeId,
+          phaseId: phaseIdValue,
+          challengeCache,
+        });
+        phaseNameCache.set(phaseIdValue, resolvedPhaseName);
+      }
 
       const reviewerProfilesByResource = new Map<
         string,
@@ -2716,6 +2832,11 @@ export class ReviewService {
           isOwnSubmission &&
           !submitterVisibilityState.allowOwn;
 
+        const reviewPhaseId = review.phaseId ? String(review.phaseId) : '';
+        const phaseName = reviewPhaseId
+          ? (phaseNameCache.get(reviewPhaseId) ?? null)
+          : null;
+
         const sanitizedReview = {
           ...review,
           initialScore: shouldMaskReviewDetails ? null : review.initialScore,
@@ -2746,6 +2867,7 @@ export class ReviewService {
           submitterHandle?: string | null;
           submitterMaxRating?: number | null;
         };
+        result.phaseName = phaseName;
         // Flatten appeals across all review item comments for convenience
         const flattenedAppeals: any[] = [];
         try {
@@ -2818,6 +2940,8 @@ export class ReviewService {
         },
       });
 
+      const challengeCache = new Map<string, ChallengeData | null>();
+
       // Authorization for non-M2M, non-admin users
       if (!authUser?.isMachine && !isAdmin(authUser)) {
         const uid = String(authUser?.userId ?? '');
@@ -2834,6 +2958,7 @@ export class ReviewService {
 
         const challenge =
           await this.challengeApiService.getChallengeDetail(challengeId);
+        challengeCache.set(challengeId, challenge);
 
         let reviewerResources: ResourceInfo[] = [];
         let hasCopilotRole = false;
@@ -2929,6 +3054,11 @@ export class ReviewService {
         // ignore
       }
       result.appeals = flattenedAppeals;
+      result.phaseName = await this.resolvePhaseNameFromChallenge({
+        challengeId: data.submission?.challengeId ?? null,
+        phaseId: data.phaseId ?? null,
+        challengeCache,
+      });
       return result as ReviewResponseDto;
     } catch (error) {
       if (error instanceof ForbiddenException) {
@@ -2953,6 +3083,62 @@ export class ReviewService {
         details: errorResponse.details,
       });
     }
+  }
+
+  private async resolvePhaseNameFromChallenge(params: {
+    challengeId?: string | null;
+    phaseId?: string | null;
+    challengeCache?: Map<string, ChallengeData | null>;
+  }): Promise<string | null> {
+    const { challengeId, phaseId, challengeCache } = params;
+    if (!phaseId) {
+      return null;
+    }
+
+    const normalizedPhaseId = String(phaseId);
+    const cache = challengeCache ?? new Map<string, ChallengeData | null>();
+
+    if (!challengeId) {
+      return null;
+    }
+
+    const challengeKey = String(challengeId);
+    let challengeDetail: ChallengeData | null | undefined;
+
+    if (cache.has(challengeKey)) {
+      challengeDetail = cache.get(challengeKey) ?? null;
+    } else {
+      try {
+        challengeDetail =
+          await this.challengeApiService.getChallengeDetail(challengeKey);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.debug(
+          `[resolvePhaseNameFromChallenge] Failed to fetch challenge ${challengeKey}: ${message}`,
+        );
+        challengeDetail = null;
+      }
+      cache.set(challengeKey, challengeDetail);
+    }
+
+    if (!challengeDetail) {
+      return null;
+    }
+
+    const phases = challengeDetail.phases ?? [];
+    const matchedPhase = phases.find((phase) => {
+      if (!phase) {
+        return false;
+      }
+      const candidateIds = [
+        String((phase as any).id ?? ''),
+        String((phase as any).phaseId ?? ''),
+      ].filter((candidate) => candidate.length > 0);
+
+      return candidateIds.includes(normalizedPhaseId);
+    });
+
+    return matchedPhase?.name ?? null;
   }
 
   private getSubmitterVisibilityForChallenge(challenge?: {
@@ -2995,6 +3181,153 @@ export class ReviewService {
       (!hasAppealsPhases && iterativeReviewClosed);
 
     return { allowAny, allowOwn };
+  }
+
+  private shouldEnforceLatestSubmissionForReview(
+    reviewTypeName: string | null | undefined,
+    challenge: ChallengeData | null | undefined,
+  ): boolean {
+    if (!this.isScreeningOrReviewType(reviewTypeName)) {
+      return false;
+    }
+    return !this.challengeHasSubmissionLimit(challenge);
+  }
+
+  private isScreeningOrReviewType(
+    reviewTypeName: string | null | undefined,
+  ): boolean {
+    if (!reviewTypeName) {
+      return false;
+    }
+
+    const normalized = reviewTypeName.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    const enforceableNames = new Set([
+      'review',
+      'iterative review',
+      'screening',
+      'checkpoint screening',
+    ]);
+
+    if (enforceableNames.has(normalized)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private challengeHasSubmissionLimit(
+    challenge: ChallengeData | null | undefined,
+  ): boolean {
+    if (!challenge?.metadata) {
+      return false;
+    }
+
+    const rawValue = challenge.metadata['submissionLimit'];
+    if (rawValue == null) {
+      return false;
+    }
+
+    let parsed: unknown = rawValue;
+
+    if (typeof rawValue === 'string') {
+      const trimmed = rawValue.trim();
+      if (!trimmed) {
+        return false;
+      }
+
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        const numeric = Number(trimmed);
+        if (Number.isFinite(numeric) && numeric > 0) {
+          return true;
+        }
+        const normalized = trimmed.toLowerCase();
+        if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
+          return false;
+        }
+        return false;
+      }
+    }
+
+    if (typeof parsed === 'number') {
+      return Number.isFinite(parsed) && parsed > 0;
+    }
+
+    if (typeof parsed === 'string') {
+      const numeric = Number(parsed);
+      if (Number.isFinite(numeric) && numeric > 0) {
+        return true;
+      }
+      const normalized = parsed.trim().toLowerCase();
+      if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
+        return false;
+      }
+      return false;
+    }
+
+    if (parsed && typeof parsed === 'object') {
+      const unlimited = this.parseBooleanFlag((parsed as any).unlimited);
+      if (unlimited === true) {
+        return false;
+      }
+
+      const candidates = [
+        (parsed as any).count,
+        (parsed as any).max,
+        (parsed as any).maximum,
+        (parsed as any).limitCount,
+        (parsed as any).value,
+      ];
+
+      for (const candidate of candidates) {
+        if (candidate === undefined || candidate === null) {
+          continue;
+        }
+        const numeric = Number(candidate);
+        if (Number.isFinite(numeric) && numeric > 0) {
+          return true;
+        }
+      }
+
+      const limitFlag = this.parseBooleanFlag((parsed as any).limit);
+      if (limitFlag === true) {
+        return true;
+      }
+      return false;
+    }
+
+    return false;
+  }
+
+  private parseBooleanFlag(value: unknown): boolean | null {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', 'yes', '1'].includes(normalized)) {
+        return true;
+      }
+      if (['false', 'no', '0'].includes(normalized)) {
+        return false;
+      }
+      return null;
+    }
+    if (typeof value === 'number') {
+      if (value === 1) {
+        return true;
+      }
+      if (value === 0) {
+        return false;
+      }
+      return null;
+    }
+    return null;
   }
 
   async deleteReview(authUser: JwtUser | undefined, reviewId: string) {

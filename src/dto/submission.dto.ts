@@ -351,4 +351,11 @@ export class SubmissionResponseDto {
     type: Number,
   })
   submitterMaxRating?: number | null;
+
+  @ApiProperty({
+    description:
+      'Indicates whether this is the most recent submission for the member on this challenge',
+    example: true,
+  })
+  isLatest: boolean;
 }
