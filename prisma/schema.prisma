@@ -361,6 +361,8 @@ model reviewSummation {
   scorecardLegacyId  String?
   isPassing          Boolean
   isFinal            Boolean?
+  isProvisional      Boolean?
+  isExample          Boolean?
   reviewedDate       DateTime?
   createdAt          DateTime  @default(now())
   createdBy          String?

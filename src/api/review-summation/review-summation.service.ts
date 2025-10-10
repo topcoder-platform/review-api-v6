@@ -528,6 +528,14 @@ export class ReviewSummationService {
         reviewSummationWhereClause.isFinal =
           queryDto.isFinal.toLowerCase() === 'true';
       }
+      if (queryDto.isProvisional !== undefined) {
+        reviewSummationWhereClause.isProvisional =
+          queryDto.isProvisional.toLowerCase() === 'true';
+      }
+      if (queryDto.isExample !== undefined) {
+        reviewSummationWhereClause.isExample =
+          queryDto.isExample.toLowerCase() === 'true';
+      }
 
       const submissionWhereClause: Record<string, unknown> = {};
       if (queryDto.challengeId) {

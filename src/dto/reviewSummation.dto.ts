@@ -54,6 +54,22 @@ export class ReviewSummationQueryDto {
   isFinal?: string;
 
   @ApiProperty({
+    description: 'The isProvisional flag for review summation (MMs)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBooleanString()
+  isProvisional?: string;
+
+  @ApiProperty({
+    description: 'The isExample flag for review summation (MMs)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBooleanString()
+  isExample?: string;
+
+  @ApiProperty({
     description: 'The challenge id tied to the submission',
     required: false,
   })
@@ -100,6 +116,22 @@ export class ReviewSummationBaseRequestDto {
   @IsOptional()
   @IsBoolean()
   isFinal?: boolean;
+
+  @ApiProperty({
+    description: 'The isProvisional flag for review summation',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isProvisional?: boolean | null;
+
+  @ApiProperty({
+    description: 'The isExample flag for review summation',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isExample?: boolean | null;
 
   @ApiProperty({
     description: 'The reviewed date',
@@ -161,6 +193,22 @@ export class ReviewSummationUpdateRequestDto {
   isFinal?: boolean;
 
   @ApiProperty({
+    description: 'The isProvisional flag for review summation',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isProvisional?: boolean | null;
+
+  @ApiProperty({
+    description: 'The isExample flag for review summation',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isExample?: boolean | null;
+
+  @ApiProperty({
     description: 'The reviewed date',
     required: false,
   })
@@ -203,6 +251,18 @@ export class ReviewSummationResponseDto {
     description: 'The isFinal flag for review summation',
   })
   isFinal: boolean | null;
+
+  @ApiProperty({
+    description: 'The isProvisional flag for review summation',
+    required: false,
+  })
+  isProvisional: boolean | null;
+
+  @ApiProperty({
+    description: 'The isExample flag for review summation',
+    required: false,
+  })
+  isExample: boolean | null;
 
   @ApiProperty({
     description: 'The reviewed date',
