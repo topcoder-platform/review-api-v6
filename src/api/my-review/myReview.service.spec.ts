@@ -200,6 +200,44 @@ describe('MyReviewService', () => {
     expect(queryDetails.values).toEqual(expect.arrayContaining(pastStatuses));
   });
 
+  it('reports negative time left when a phase is overdue and uses signed ordering', async () => {
+    const now = Date.now();
+    const past = new Date(now - 10_000);
+
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-3',
+          challengeName: 'Overdue Challenge',
+          challengeTypeId: 'type-2',
+          challengeTypeName: 'QA',
+          currentPhaseName: 'Review',
+          currentPhaseScheduledEnd: null,
+          currentPhaseActualEnd: past,
+          resourceRoleName: null,
+          challengeEndDate: new Date(now + 86_400_000),
+          totalReviews: BigInt(2),
+          completedReviews: BigInt(1),
+          winners: null,
+        },
+      ]);
+
+    const result = await service.getMyReviews(
+      { isMachine: true },
+      { sortBy: 'timeLeft' },
+    );
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].timeLeftInCurrentPhase).toBeLessThan(0);
+
+    const rowQuery = challengePrismaMock.$queryRaw.mock.calls[1][0];
+    const normalizedSql = rowQuery.inspect().sql.replace(/\s+/g, ' ');
+
+    expect(normalizedSql).toContain('EXTRACT(EPOCH FROM ( COALESCE');
+    expect(normalizedSql).not.toContain('GREATEST');
+  });
+
   it('applies requested sorting for active challenges', async () => {
     const future = new Date(Date.now() + 60_000);
 
@@ -297,7 +335,7 @@ describe('MyReviewService', () => {
     const activeQuery = challengePrismaMock.$queryRaw.mock.calls[1][0];
     const activeSql = activeQuery.inspect().sql.replace(/\s+/g, ' ');
     expect(activeSql).toMatch(
-      /GREATEST\(EXTRACT\(EPOCH FROM \( ?COALESCE\(cp\."actualEndDate", cp\."scheduledEndDate"\) - NOW\(\)\)\), 0\) ASC NULLS LAST/,
+      /EXTRACT\(EPOCH FROM \( COALESCE\(cp\."actualEndDate", cp\."scheduledEndDate"\) - NOW\(\)\)\) ASC NULLS LAST/,
     );
   });
 });

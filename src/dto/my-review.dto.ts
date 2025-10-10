@@ -133,7 +133,7 @@ export class MyReviewSummaryDto {
 
   @ApiProperty({
     description:
-      'Seconds remaining until the current phase ends. Zero when the phase has ended or the end date is unavailable.',
+      'Seconds remaining until the current phase ends. Negative values indicate the phase is past due. Returns 0 when the end date is unavailable.',
   })
   timeLeftInCurrentPhase: number;
 

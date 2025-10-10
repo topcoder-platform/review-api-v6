@@ -104,7 +104,15 @@ export class SubmissionService {
     const s3 = this.getS3Client();
 
     const overrideName = this.sanitizeArtifactFileName(requestedFilename);
+    if (requestedFilename) {
+      this.logger.log(
+        `Artifact upload override request: submission=${submissionId} raw="${requestedFilename}" sanitized="${overrideName ?? '<rejected>'}"`,
+      );
+    }
     const artifactId = overrideName ?? randomUUID();
+    this.logger.log(
+      `Artifact upload resolved ID: submission=${submissionId} artifactId=${artifactId} overrideApplied=${overrideName ? 'true' : 'false'}`,
+    );
     const originalName = file.originalname || file.filename || 'artifact';
 
     // Derive file extension from mime-type or filename (fallback to 'bin')
@@ -119,6 +127,9 @@ export class SubmissionService {
 
     // Legacy-compatible S3 key format: `${submissionId}/${artifactId}.${uFileType}`
     const key = `${submissionId}/${artifactId}.${uFileType}`;
+    this.logger.log(
+      `Artifact upload S3 key computed: submission=${submissionId} key=${key} originalFile=${originalName} mimeType=${file.mimetype}`,
+    );
 
     try {
       // Prefer in-memory buffer (memoryStorage). Fallbacks for other cases.

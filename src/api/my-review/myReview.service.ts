@@ -231,7 +231,7 @@ export class MyReviewService {
       COALESCE(cp."actualEndDate", cp."scheduledEndDate")
     `;
     const timeLeftExpression = Prisma.sql`
-      GREATEST(EXTRACT(EPOCH FROM (${phaseEndExpression} - NOW())), 0)
+      EXTRACT(EPOCH FROM (${phaseEndExpression} - NOW()))
     `;
     // Only consider review progress for known review-related phases.
     // For non-review phases, treat progress as NULL so they sort after
@@ -387,7 +387,7 @@ export class MyReviewService {
       let timeLeftSeconds = 0;
       if (phaseEnd) {
         const diff = phaseEnd.getTime() - now;
-        timeLeftSeconds = diff > 0 ? Math.round(diff / 1000) : 0;
+        timeLeftSeconds = Math.round(diff / 1000);
       }
 
       const totalReviews =
