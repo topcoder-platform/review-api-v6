@@ -529,11 +529,21 @@ export class ReviewSummationService {
           queryDto.isFinal.toLowerCase() === 'true';
       }
 
+      const submissionWhereClause: Record<string, unknown> = {};
+      if (queryDto.challengeId) {
+        submissionWhereClause.challengeId = queryDto.challengeId;
+      }
+
+      const whereClause = {
+        ...reviewSummationWhereClause,
+        ...(Object.keys(submissionWhereClause).length
+          ? { submission: { is: submissionWhereClause } }
+          : {}),
+      };
+
       // find entities by filters
       const reviewSummations = await this.prisma.reviewSummation.findMany({
-        where: {
-          ...reviewSummationWhereClause,
-        },
+        where: whereClause,
         skip,
         take: perPage,
         orderBy,
@@ -541,9 +551,7 @@ export class ReviewSummationService {
 
       // Count total entities matching the filter for pagination metadata
       const totalCount = await this.prisma.reviewSummation.count({
-        where: {
-          ...reviewSummationWhereClause,
-        },
+        where: whereClause,
       });
 
       this.logger.log(
@@ -562,7 +570,7 @@ export class ReviewSummationService {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `searching review summations with filters - submissionId: ${queryDto.submissionId}, scorecardId: ${queryDto.scorecardId}`,
+        `searching review summations with filters - submissionId: ${queryDto.submissionId}, scorecardId: ${queryDto.scorecardId}, challengeId: ${queryDto.challengeId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,

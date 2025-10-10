@@ -52,6 +52,15 @@ export class ReviewSummationQueryDto {
   @IsOptional()
   @IsBooleanString()
   isFinal?: string;
+
+  @ApiProperty({
+    description: 'The challenge id tied to the submission',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  challengeId?: string;
 }
 
 export class ReviewSummationBaseRequestDto {
