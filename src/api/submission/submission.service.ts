@@ -195,11 +195,14 @@ export class SubmissionService {
   ): Promise<{ artifacts: string[] }> {
     const submission = await this.checkSubmission(submissionId);
 
-    if (!authUser.isMachine && !isAdmin(authUser)) {
-      const uid = authUser.userId ? String(authUser.userId) : '';
-      const isOwner = !!uid && submission.memberId === uid;
-      let isReviewer = false;
-      let isCopilot = false;
+    const isMachineToken = !!authUser.isMachine;
+    const isAdminUser = isAdmin(authUser);
+    const uid = authUser.userId ? String(authUser.userId) : '';
+    let isOwner = false;
+    let isCopilot = false;
+
+    if (!isMachineToken && !isAdminUser) {
+      isOwner = !!uid && submission.memberId === uid;
 
       if (!isOwner && submission.challengeId && uid) {
         try {
@@ -208,22 +211,18 @@ export class SubmissionService {
               submission.challengeId,
               uid,
             );
-          for (const resource of resources) {
-            const rn = (resource.roleName || '').toLowerCase();
-            if (rn.includes('reviewer')) isReviewer = true;
-            if (rn.includes('copilot')) isCopilot = true;
-            if (isReviewer || isCopilot) break;
-          }
+          isCopilot = resources.some((resource) =>
+            (resource.roleName || '').toLowerCase().includes('copilot'),
+          );
         } catch {
-          isReviewer = false;
           isCopilot = false;
         }
       }
 
-      if (!isOwner && !isReviewer && !isCopilot) {
+      if (!isOwner && !isCopilot) {
         throw new ForbiddenException({
           message:
-            'Only the submission owner, a challenge reviewer/copilot, or an admin can list submission artifacts',
+            'Only the submission owner, a challenge copilot, or an admin can list submission artifacts',
           code: 'FORBIDDEN_ARTIFACT_LIST',
           details: {
             submissionId,
@@ -233,6 +232,7 @@ export class SubmissionService {
         });
       }
     }
+    const allowInternalArtifacts = isMachineToken || isAdminUser || isCopilot;
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
@@ -282,7 +282,14 @@ export class SubmissionService {
       });
     }
 
-    return { artifacts: Array.from(artifactIds) };
+    const allArtifacts = Array.from(artifactIds);
+    const artifacts = allowInternalArtifacts
+      ? allArtifacts
+      : allArtifacts.filter(
+          (artifactId) => !artifactId.toLowerCase().includes('internal'),
+        );
+
+    return { artifacts };
   }
 
   async getArtifactStream(
@@ -292,32 +299,34 @@ export class SubmissionService {
   ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
     const submission = await this.checkSubmission(submissionId);
 
-    // For member tokens (non-admin), validate they are either the owner
-    // of the submission or a reviewer on the challenge
-    if (!isAdmin(authUser)) {
-      const uid = String(authUser.userId ?? '');
-      const isOwner = !!uid && submission.memberId === uid;
-      let isReviewer = false;
-      if (!isOwner && submission.challengeId) {
+    const isMachineToken = !!authUser.isMachine;
+    const isAdminUser = isAdmin(authUser);
+    const uid = authUser.userId ? String(authUser.userId) : '';
+    let isOwner = false;
+    let isCopilot = false;
+
+    if (!isMachineToken && !isAdminUser) {
+      isOwner = !!uid && submission.memberId === uid;
+
+      if (!isOwner && submission.challengeId && uid) {
         try {
           const resources =
             await this.resourceApiService.getMemberResourcesRoles(
               submission.challengeId,
               uid,
             );
-          isReviewer = resources.some((r) =>
-            (r.roleName || '').toLowerCase().includes('reviewer'),
+          isCopilot = resources.some((resource) =>
+            (resource.roleName || '').toLowerCase().includes('copilot'),
           );
         } catch {
-          // If we cannot confirm reviewer status, deny access
-          isReviewer = false;
+          isCopilot = false;
         }
       }
 
-      if (!isOwner && !isReviewer) {
+      if (!isOwner && !isCopilot) {
         throw new ForbiddenException({
           message:
-            'Only the submission owner or a challenge reviewer can download artifacts',
+            'Only the submission owner, a challenge copilot, or an admin can download artifacts',
           code: 'FORBIDDEN_ARTIFACT_DOWNLOAD',
           details: {
             submissionId,
@@ -326,6 +335,22 @@ export class SubmissionService {
           },
         });
       }
+    }
+
+    const allowInternalArtifacts = isMachineToken || isAdminUser || isCopilot;
+    if (
+      !allowInternalArtifacts &&
+      artifactId.toLowerCase().includes('internal')
+    ) {
+      throw new ForbiddenException({
+        message: 'Submission owners cannot download internal artifacts',
+        code: 'FORBIDDEN_INTERNAL_ARTIFACT_DOWNLOAD',
+        details: {
+          submissionId,
+          artifactId,
+          requester: uid,
+        },
+      });
     }
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
