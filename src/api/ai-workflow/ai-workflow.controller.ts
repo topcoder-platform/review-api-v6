@@ -262,8 +262,8 @@ export class AiWorkflowController {
     required: true,
   })
   @ApiResponse({
-    status: 302,
-    description: 'Redirect to the blob to download',
+    status: 200,
+    description: 'Download the workflow run attachment',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async downloadRunAttachment(
@@ -280,7 +280,9 @@ export class AiWorkflowController {
         user,
       );
 
-    return new StreamableFile(zipResponse.data);
+    return new StreamableFile(zipResponse.data, {
+      disposition: `attachment; filename="${runId}-${attachmentId}.zip"`,
+    });
   }
 
   @Post('/:workflowId/runs/:runId/items')
