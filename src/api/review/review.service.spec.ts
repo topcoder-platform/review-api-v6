@@ -798,6 +798,28 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(callArgs.where.submissionId).toEqual({ in: [baseSubmission.id] });
   });
 
+  it('filters reviews by the resource id when the requester is a checkpoint screener', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Checkpoint Screener'),
+    ]);
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
+  });
+
+  it('filters reviews by the resource id when the requester is a checkpoint reviewer', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Checkpoint Reviewer'),
+    ]);
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
+  });
+
   it('does not restrict resource visibility for copilots', async () => {
     resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
       buildResource('Copilot'),

@@ -50,6 +50,10 @@ const REVIEW_ITEM_COMMENTS_INCLUDE = {
   },
 } as const;
 
+// Roles containing any of these keywords are treated as review-capable resources.
+// This includes standard reviewers plus checkpoint screeners/reviewers.
+const REVIEW_ACCESS_ROLE_KEYWORDS = ['reviewer', 'screener'];
+
 type ReviewItemAccessMode = 'machine' | 'admin' | 'reviewer-owner' | 'copilot';
 
 interface ReviewItemAccessResult {
@@ -2388,11 +2392,16 @@ export class ReviewService {
 
             normalized = resources || [];
             requesterIsChallengeResource = normalized.length > 0;
-            normalized
-              .filter((r) =>
-                (r.roleName || '').toLowerCase().includes('reviewer'),
-              )
-              .forEach((r) => reviewerResourceIdSet.add(r.id));
+            normalized.forEach((r) => {
+              const roleName = (r.roleName || '').toLowerCase();
+              if (
+                REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
+                  roleName.includes(keyword),
+                )
+              ) {
+                reviewerResourceIdSet.add(r.id);
+              }
+            });
             hasCopilotRoleForChallenge = normalized.some((r) =>
               (r.roleName || '').toLowerCase().includes('copilot'),
             );
