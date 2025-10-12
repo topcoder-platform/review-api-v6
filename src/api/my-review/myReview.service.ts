@@ -94,6 +94,7 @@ export class MyReviewService {
     const challengeTypeId = filters.challengeTypeId?.trim();
     const challengeTrackId = filters.challengeTrackId?.trim();
     const challengeTypeName = filters.challengeTypeName?.trim();
+    const challengeName = filters.challengeName?.trim();
 
     const shouldFetchPastChallenges =
       typeof filters.past === 'string'
@@ -287,6 +288,12 @@ export class MyReviewService {
     if (challengeTypeName) {
       whereFragments.push(
         Prisma.sql`LOWER(ct.name) = LOWER(${challengeTypeName})`,
+      );
+    }
+
+    if (challengeName) {
+      whereFragments.push(
+        Prisma.sql`LOWER(c.name) LIKE LOWER(${`%${challengeName}%`})`,
       );
     }
 

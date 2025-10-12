@@ -69,6 +69,15 @@ export class MyReviewFilterDto {
 
   @ApiProperty({
     description:
+      'Filter results by challenge name (case-insensitive partial match)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  challengeName?: string;
+
+  @ApiProperty({
+    description:
       'Whether or not to include current challenges or past challenges',
     required: false,
   })
