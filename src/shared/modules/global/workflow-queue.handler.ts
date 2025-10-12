@@ -318,7 +318,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
           await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
         } catch (e) {
           this.logger.log(
-            `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${e.message ?? e}!`,
+            `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${e.message ?? e}!`,
           );
         }
         break;
@@ -336,7 +336,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
 
     if (!submission) {
       this.logger.log(
-        `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. Submission ${aiWorkflowRun.submissionId} is missing!`,
+        `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Submission ${aiWorkflowRun.submissionId} is missing!`,
       );
       return;
     }
@@ -353,7 +353,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
 
     if (!challenge) {
       this.logger.log(
-        `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. Challenge ${submission.challengeId} couldn't be fetched!`,
+        `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Challenge ${submission.challengeId} couldn't be fetched!`,
       );
       return;
     }
@@ -377,7 +377,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
 
     if (!user) {
       this.logger.log(
-        `Failed to send workflowRun compelted notification for aiWorkflowRun ${aiWorkflowRun.id}. User ${submission.memberId} couldn't be fetched!`,
+        `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. User ${submission.memberId} couldn't be fetched!`,
       );
       return;
     }
@@ -389,7 +389,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       recipients: [user.email],
       data: {
         userName:
-          [user.firstName, user.lastName].filter(Boolean).join(' ') ??
+          [user.firstName, user.lastName].filter(Boolean).join(' ') ||
           user.handle,
         aiWorkflowName: aiWorkflowRun.workflow.name,
         reviewLink: `${CommonConfig.ui.reviewUIUrl}/review/active-challenges/${challenge.id}/scorecard-details/${submission.id}#aiWorkflowRunId=${aiWorkflowRun.id}`,
