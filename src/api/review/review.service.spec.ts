@@ -1002,6 +1002,56 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.data[0].reviewItems).toHaveLength(1);
   });
 
+  it('omits nested review details when thin flag is set', async () => {
+    const now = new Date();
+    const machineUser: JwtUser = {
+      userId: 'machine-1',
+      roles: [],
+      isMachine: true,
+    };
+
+    const reviewRecord = {
+      id: 'review-1',
+      resourceId: 'resource-reviewer',
+      submissionId: baseSubmission.id,
+      phaseId: 'phase-1',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: null,
+      createdAt: now,
+      createdBy: 'creator',
+      updatedAt: now,
+      updatedBy: 'updater',
+      finalScore: 95.4,
+      initialScore: 90.2,
+      submission: {
+        id: baseSubmission.id,
+        memberId: baseAuthUser.userId,
+        challengeId: 'challenge-1',
+      },
+    };
+
+    prismaMock.review.findMany.mockResolvedValue([reviewRecord]);
+    prismaMock.review.count.mockResolvedValue(1);
+
+    const response = await service.getReviews(
+      machineUser,
+      undefined,
+      'challenge-1',
+      undefined,
+      undefined,
+      true,
+    );
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.include.reviewItems).toBeUndefined();
+    expect(response.data[0].reviewItems).toBeUndefined();
+    expect((response.data[0] as any).appeals).toBeUndefined();
+  });
+
   it('returns scores for submitters when iterative review is closed and no appeals phases exist', async () => {
     const now = new Date();
     const submitterResource = {

@@ -1,14 +1,16 @@
 import {
-  Controller,
-  Post,
-  Patch,
-  Put,
-  Get,
-  Delete,
   Body,
+  Controller,
+  Delete,
+  Get,
   Param,
+  Patch,
+  Post,
+  Put,
   Query,
   Req,
+  DefaultValuePipe,
+  ParseBoolPipe,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -200,11 +202,20 @@ export class ReviewController {
     description: 'List of reviews.',
     type: [ReviewResponseDto],
   })
+  @ApiQuery({
+    name: 'thin',
+    description:
+      'When true, returns only the top-level review objects without review items, comments, appeals, or appeal responses.',
+    required: false,
+    type: Boolean,
+  })
   async getReviews(
     @Req() req: Request,
     @Query('status') status?: ReviewStatus,
     @Query('challengeId') challengeId?: string,
     @Query('submissionId') submissionId?: string,
+    @Query('thin', new DefaultValuePipe(false), ParseBoolPipe)
+    thin?: boolean,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<ReviewResponseDto>> {
     const authUser = req['user'];
@@ -214,6 +225,7 @@ export class ReviewController {
       challengeId,
       submissionId,
       paginationDto,
+      thin,
     );
   }
 

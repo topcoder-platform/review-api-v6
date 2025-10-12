@@ -2261,9 +2261,11 @@ export class ReviewService {
     challengeId?: string,
     submissionId?: string,
     paginationDto?: PaginationDto,
+    thin?: boolean,
   ): Promise<PaginatedResponse<ReviewResponseDto>> {
+    const isThin = Boolean(thin);
     this.logger.log(
-      `Getting reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}`,
+      `Getting reviews with filters - status: ${status}, challengeId: ${challengeId}, submissionId: ${submissionId}, thin: ${isThin}`,
     );
 
     const { page = 1, perPage = 10 } = paginationDto || {};
@@ -2567,18 +2569,23 @@ export class ReviewService {
       this.logger.debug(`Fetching reviews with where clause:`);
       this.logger.debug(reviewWhereClause);
 
+      const reviewInclude: Prisma.reviewInclude = {
+        submission: {
+          select: { id: true, memberId: true, challengeId: true },
+        },
+      };
+
+      if (!isThin) {
+        reviewInclude.reviewItems = {
+          include: REVIEW_ITEM_COMMENTS_INCLUDE,
+        };
+      }
+
       const reviews = await this.prisma.review.findMany({
         where: reviewWhereClause,
         skip,
         take: perPage,
-        include: {
-          reviewItems: {
-            include: REVIEW_ITEM_COMMENTS_INCLUDE,
-          },
-          submission: {
-            select: { id: true, memberId: true, challengeId: true },
-          },
-        },
+        include: reviewInclude,
       });
 
       const challengeCache = new Map<string, ChallengeData | null>();
@@ -2837,12 +2844,21 @@ export class ReviewService {
           ? (phaseNameCache.get(reviewPhaseId) ?? null)
           : null;
 
-        const sanitizedReview = {
+        const sanitizedReview: typeof review & {
+          reviewItems?: typeof review.reviewItems;
+        } = {
           ...review,
           initialScore: shouldMaskReviewDetails ? null : review.initialScore,
           finalScore: shouldMaskReviewDetails ? null : review.finalScore,
-          reviewItems: shouldMaskReviewDetails ? [] : review.reviewItems,
         };
+
+        if (!isThin) {
+          sanitizedReview.reviewItems = shouldMaskReviewDetails
+            ? []
+            : (review.reviewItems ?? []);
+        } else {
+          delete (sanitizedReview as any).reviewItems;
+        }
 
         const profile = reviewerProfilesByResource.get(
           String(review.resourceId ?? ''),
@@ -2868,20 +2884,28 @@ export class ReviewService {
           submitterMaxRating?: number | null;
         };
         result.phaseName = phaseName;
-        // Flatten appeals across all review item comments for convenience
-        const flattenedAppeals: any[] = [];
-        try {
-          for (const item of sanitizedReview.reviewItems ?? []) {
-            for (const comment of item.reviewItemComments ?? []) {
-              if (comment?.appeal) {
-                flattenedAppeals.push(comment.appeal);
+        if (!isThin) {
+          // Flatten appeals across all review item comments for convenience
+          const flattenedAppeals: any[] = [];
+          try {
+            const itemsWithComments = (sanitizedReview.reviewItems ??
+              []) as Array<{
+              reviewItemComments?: Array<{ appeal?: unknown }>;
+            }>;
+            for (const item of itemsWithComments) {
+              for (const comment of item.reviewItemComments ?? []) {
+                if (comment?.appeal) {
+                  flattenedAppeals.push(comment.appeal);
+                }
               }
             }
+          } catch {
+            // Non-fatal; leave appeals empty on any unexpected structure
           }
-        } catch {
-          // Non-fatal; leave appeals empty on any unexpected structure
+          (result as any).appeals = flattenedAppeals;
+        } else {
+          delete (result as any).appeals;
         }
-        (result as any).appeals = flattenedAppeals;
         if (shouldIncludeSubmitterMetadata) {
           result.submitterHandle = submitterProfile?.handle ?? null;
           result.submitterMaxRating = submitterProfile?.maxRating ?? null;
