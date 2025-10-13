@@ -6,6 +6,8 @@ import { Job } from 'pg-boss';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { ChallengePrismaService } from './challenge-prisma.service';
+import { MemberPrismaService } from './member-prisma.service';
 
 @Injectable()
 export class WorkflowQueueHandler implements OnModuleInit {
@@ -13,6 +15,8 @@ export class WorkflowQueueHandler implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly challengesPrisma: ChallengePrismaService,
+    private readonly membersPrisma: MemberPrismaService,
     private readonly scheduler: QueueSchedulerService,
     private readonly giteaService: GiteaService,
     private readonly eventBusService: EventBusService,
@@ -341,7 +345,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       return;
     }
 
-    const [challenge] = await this.prisma.$queryRaw<
+    const [challenge] = await this.challengesPrisma.$queryRaw<
       { id: string; name: string }[]
     >`
       SELECT
@@ -358,7 +362,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       return;
     }
 
-    const [user] = await this.prisma.$queryRaw<
+    const [user] = await this.membersPrisma.$queryRaw<
       {
         handle: string;
         email: string;
