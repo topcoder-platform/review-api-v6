@@ -1,0 +1,691 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model scorecard {
+  id             String          @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId       String?
+  status         ScorecardStatus
+  type           ScorecardType
+  challengeTrack ChallengeTrack
+  challengeType  String
+  name           String
+  version        String
+  minScore       Float
+  minimumPassingScore Float @default(0)
+  maxScore       Float
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @updatedAt
+  updatedBy      String?
+
+  scorecardGroups scorecardGroup[]
+  reviews         review[]
+  aiWorkflow      aiWorkflow[]
+
+  // Indexes for faster searches
+  @@index([challengeTrack])
+  @@index([challengeType])
+  @@index([name])
+  @@index([id]) // Index for direct ID lookups
+  @@index([type]) // Index for filtering by scorecard type
+  @@index([status]) // Index for filtering by status (e.g. ACTIVE scorecards)
+}
+
+enum ScorecardStatus {
+  ACTIVE
+  INACTIVE
+  DELETED
+}
+
+enum ScorecardType {
+  SCREENING
+  REVIEW
+  APPROVAL
+  POST_MORTEM
+  SPECIFICATION_REVIEW
+  CHECKPOINT_SCREENING
+  CHECKPOINT_REVIEW
+  ITERATIVE_REVIEW
+}
+
+enum ChallengeTrack {
+  DEVELOPMENT
+  DATA_SCIENCE
+  DESIGN
+  QUALITY_ASSURANCE
+}
+
+model scorecardGroup {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId    String?
+  scorecardId String
+  name        String
+  weight      Float
+  sortOrder   Int
+  createdAt   DateTime @default(now())
+  createdBy   String?
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+
+  scorecard scorecard          @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+  sections  scorecardSection[]
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardId]) // Index for joining with scorecard table
+  @@index([sortOrder]) // Index for ordering groups
+}
+
+model scorecardSection {
+  id               String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId         String?
+  scorecardGroupId String
+  name             String
+  weight           Float
+  sortOrder        Int
+  createdAt        DateTime @default(now())
+  createdBy        String?
+  updatedAt        DateTime @updatedAt
+  updatedBy        String?
+
+  group     scorecardGroup      @relation(fields: [scorecardGroupId], references: [id], onDelete: Cascade)
+  questions scorecardQuestion[]
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardGroupId]) // Index for joining with scorecardGroup table
+  @@index([sortOrder]) // Index for ordering sections
+}
+
+enum QuestionType {
+  SCALE
+  YES_NO
+  TEST_CASE
+  // Add other types as needed
+}
+
+model scorecardQuestion {
+  id                 String       @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId           String?
+  scorecardSectionId String
+  type               QuestionType
+  description        String
+  guidelines         String
+  weight             Float
+  requiresUpload     Boolean
+  sortOrder          Int
+  createdAt          DateTime     @default(now())
+  createdBy          String?
+  updatedAt          DateTime     @updatedAt
+  updatedBy          String?
+
+  scaleMin Int? // Minimum value for scale (used when type is SCALE)
+  scaleMax Int? // Maximum value for scale (used when type is SCALE)
+
+  section           scorecardSection    @relation(fields: [scorecardSectionId], references: [id], onDelete: Cascade)
+  aiWorkflowRunItem aiWorkflowRunItem[]
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardSectionId]) // Index for joining with scorecardSection table
+  @@index([type]) // Index for filtering questions by type
+  @@index([sortOrder]) // Index for ordering questions
+}
+
+enum ReviewStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model review {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  legacyId           String?
+  resourceId         String
+  phaseId            String
+  submissionId       String?       @db.VarChar(14) // Associated submission
+  legacySubmissionId String?
+  scorecardId        String // Associated scorecard
+  committed          Boolean       @default(false)
+  finalScore         Float?
+  initialScore       Float?
+  typeId             String?
+  metadata           Json?
+  status             ReviewStatus?
+  reviewDate         DateTime?
+  createdAt          DateTime      @default(now())
+  createdBy          String?
+  updatedAt          DateTime      @updatedAt
+  updatedBy          String?
+
+  scorecard   scorecard    @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+  submission  submission?  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  reviewItems reviewItem[]
+  auditLogs   reviewAudit[]
+
+  @@index([committed]) // Index for filtering by committed status
+  @@index([submissionId]) // Index for filtering by submission
+  @@index([resourceId]) // Index for filtering by resource (reviewer)
+  @@index([phaseId]) // Index for filtering by phase
+  @@index([scorecardId]) // Index for joining with scorecard table
+  @@index([status]) // Index for filtering by review status
+  @@unique([resourceId, submissionId, scorecardId])
+}
+
+model reviewItem {
+  id                  String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId            String?
+  reviewId            String
+  scorecardQuestionId String
+  uploadId            String?
+  initialAnswer       String
+  finalAnswer         String?
+  managerComment      String?
+  createdAt           DateTime @default(now())
+  createdBy           String?
+  updatedAt           DateTime @updatedAt
+  updatedBy           String?
+
+  review             review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewItemComments reviewItemComment[]
+
+  @@index([reviewId]) // Index for joining with review table
+  @@index([id]) // Index for direct ID lookups
+  @@index([scorecardQuestionId]) // Index for joining with scorecardQuestion table
+}
+
+model reviewItemComment {
+  id           String                @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId     String?
+  resourceId   String
+  reviewItemId String
+  content      String
+  type         ReviewItemCommentType
+  sortOrder    Int                   @default(0)
+  createdAt    DateTime              @default(now())
+  createdBy    String?
+  updatedAt    DateTime              @updatedAt
+  updatedBy    String?
+
+  reviewItem reviewItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
+  appeal     appeal?
+
+  @@index([reviewItemId]) // Index for joining with reviewItem table
+  @@index([id]) // Index for direct ID lookups
+  @@index([resourceId]) // Index for filtering by resource (commenter)
+  @@index([type]) // Index for filtering by comment type
+}
+
+model reviewAudit {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  reviewId     String   @db.VarChar(36)
+  submissionId String?  @db.VarChar(14)
+  challengeId  String?
+  actorId      String
+  description  String
+  createdAt    DateTime @default(now())
+
+  review     review     @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  submission submission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+
+  @@index([reviewId])
+  @@index([submissionId])
+}
+
+enum ReviewItemCommentType {
+  COMMENT
+  REQUIRED
+  RECOMMENDED
+  AGGREGATION_COMMENT
+  AGGREGATION_REVIEW_COMMENT
+  SUBMITTER_COMMENT
+  FINAL_FIX_COMMENT
+  FINAL_REVIEW_COMMENT
+  MANAGER_COMMENT
+  APPROVAL_REVIEW_COMMENT
+  APPROVAL_REVIEW_COMMENT_OTHER_FIXES
+  SPECIFICATION_REVIEW_COMMENT
+}
+
+model appeal {
+  id                  String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId            String?
+  resourceId          String
+  reviewItemCommentId String   @unique // Ensure one-to-one relationship
+  content             String
+  createdAt           DateTime @default(now())
+  createdBy           String?
+  updatedAt           DateTime @updatedAt
+  updatedBy           String?
+
+  reviewItemComment reviewItemComment @relation(fields: [reviewItemCommentId], references: [id], onDelete: Cascade) // Define fields and references here
+  appealResponse    appealResponse?
+
+  @@index([resourceId]) // Index for resource ID
+  @@index([id]) // Index for direct ID lookups
+  @@index([reviewItemCommentId]) // Index for joining with reviewItemComment table
+}
+
+model appealResponse {
+  id         String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId   String?
+  appealId   String   @unique
+  resourceId String
+  content    String
+  success    Boolean
+  createdAt  DateTime @default(now())
+  createdBy  String?
+  updatedAt  DateTime @updatedAt
+  updatedBy  String?
+
+  appeal appeal @relation(fields: [appealId], references: [id], onDelete: Cascade)
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([appealId]) // Index for joining with appeal table
+  @@index([resourceId]) // Index for filtering by resource (responder)
+}
+
+model challengeResult {
+  challengeId     String
+  userId          String
+  paymentId       String?
+  submissionId    String
+  oldRating       Int?
+  newRating       Int?
+  initialScore    Float
+  finalScore      Float
+  placement       Int
+  rated           Boolean
+  passedReview    Boolean
+  validSubmission Boolean
+  pointAdjustment Float?
+  ratingOrder     Int?
+
+  createdAt DateTime @default(now())
+  createdBy String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@id([challengeId, userId])
+  @@index([challengeId]) // Index for filtering by challenge
+  @@index([userId]) // Index for filtering by user
+  @@index([submissionId]) // Index for filtering by submission
+}
+
+model contactRequest {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  resourceId  String
+  challengeId String // Associated challenge
+  message     String // Markdown content
+  createdAt   DateTime @default(now())
+  createdBy   String?
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+
+  @@index([id]) // Index for direct ID lookups
+  @@index([resourceId]) // Index for filtering by resource (requester)
+  @@index([challengeId]) // Index for filtering by challenge
+}
+
+model reviewType {
+  id       String  @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  name     String
+  isActive Boolean
+
+  @@index([id]) // Index for direct ID lookups
+  // Indexes for faster searches
+  @@index([name])
+  @@index([isActive])
+}
+
+model reviewSummation {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  submissionId       String    @db.VarChar(14) // Associated submission
+  legacySubmissionId String?
+  aggregateScore     Float
+  scorecardId        String?
+  scorecardLegacyId  String?
+  isPassing          Boolean
+  isFinal            Boolean?
+  isProvisional      Boolean?
+  isExample          Boolean?
+  reviewedDate       DateTime?
+  createdAt          DateTime  @default(now())
+  createdBy          String?
+  updatedAt          DateTime  @updatedAt
+  updatedBy          String?
+
+  submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId]) // Index for joining with submission table
+  @@index([scorecardId]) // Index for joining with scorecard table
+}
+
+model submission {
+  id                 String           @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  // informix data
+  legacySubmissionId String?
+  type               SubmissionType
+  status             SubmissionStatus
+  screeningScore     Decimal?
+  initialScore       Decimal?
+  finalScore         Decimal?
+  placement          Int?
+  userRank           Int?
+  markForPurchase    Boolean?
+  prizeId            BigInt?
+  fileSize           Int?
+  viewCount          Int?
+  systemFileName     String?
+  thurgoodJobId      String?
+  virusScan          Boolean          @default(false)
+
+  // ES data
+  url               String?
+  memberId          String?
+  challengeId       String?
+  legacyChallengeId BigInt?
+  submissionPhaseId String?
+  fileType          String?
+  esId              String?   @db.Uuid
+  submittedDate     DateTime?
+
+  createdAt DateTime  @default(now())
+  createdBy String?
+  updatedAt DateTime? @updatedAt
+  updatedBy String?
+
+  // relation
+  legacyUploadId String?
+  uploadId       String? @db.VarChar(14)
+  upload         upload? @relation(fields: [uploadId], references: [id])
+
+  review              review[]
+  reviewSummation     reviewSummation[]
+  resourceSubmissions resourceSubmission[]
+  aiWorkflowRun       aiWorkflowRun[]
+  auditLogs           reviewAudit[]
+  accessAudits        submissionAccessAudit[]
+
+  @@index([memberId])
+  @@index([challengeId])
+  @@index([legacySubmissionId])
+}
+
+enum ReviewOpportunityStatus {
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum ReviewApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ReviewOpportunityType {
+  REGULAR_REVIEW
+  COMPONENT_DEV_REVIEW
+  SPEC_REVIEW
+  ITERATIVE_REVIEW
+  SCENARIOS_REVIEW
+}
+
+enum ReviewApplicationRole {
+  PRIMARY_REVIEWER
+  SECONDARY_REVIEWER
+  PRIMARY_FAILURE_REVIEWER
+  ACCURACY_REVIEWER
+  STRESS_REVIEWER
+  FAILURE_REVIEWER
+  SPECIFICATION_REVIEWER
+  ITERATIVE_REVIEWER
+  REVIEWER
+}
+
+model reviewOpportunity {
+  id                 String                  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  challengeId        String
+  status             ReviewOpportunityStatus
+  type               ReviewOpportunityType
+  openPositions      Int
+  startDate          DateTime
+  duration           Int
+  basePayment        Float
+  incrementalPayment Float
+
+  applications reviewApplication[]
+
+  createdAt DateTime @default(now())
+  createdBy String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@unique([challengeId, type])
+  @@index([id]) // Index for direct ID lookups
+  @@index([challengeId]) // Index for filtering by challenge
+}
+
+model reviewApplication {
+  id            String                  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  userId        String
+  handle        String
+  opportunityId String
+  role          ReviewApplicationRole
+  status        ReviewApplicationStatus
+
+  opportunity reviewOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  createdBy String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@unique([opportunityId, userId, role])
+  @@index([id]) // Index for direct ID lookups
+  @@index([userId])
+  @@index([opportunityId])
+}
+
+enum UploadType {
+  SUBMISSION
+  TEST_CASE
+  FINAL_FIX
+  REVIEW_DOCUMENT
+}
+
+enum UploadStatus {
+  ACTIVE
+  DELETED
+}
+
+enum SubmissionType {
+  CONTEST_SUBMISSION
+  SPECIFICATION_SUBMISSION
+  CHECKPOINT_SUBMISSION
+  STUDIO_FINAL_FIX_SUBMISSION
+}
+
+enum SubmissionStatus {
+  ACTIVE
+  FAILED_SCREENING
+  FAILED_REVIEW
+  COMPLETED_WITHOUT_WIN
+  DELETED
+  FAILED_CHECKPOINT_SCREENING
+  FAILED_CHECKPOINT_REVIEW
+}
+
+model upload {
+  id             String       @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  legacyId       String?
+  projectId      String
+  resourceId     String
+  type           UploadType
+  status         UploadStatus
+  parameter      String?
+  url            String?
+  desc           String?
+  projectPhaseId String?
+
+  createdAt DateTime  @default(now())
+  createdBy String?
+  updatedAt DateTime? @updatedAt
+  updatedBy String?
+
+  submissions submission[]
+
+  @@index([projectId])
+  @@index([legacyId])
+}
+
+model resourceSubmission {
+  id                 String  @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  resourceId         String
+  submissionId       String?
+  legacySubmissionId String?
+
+  createdAt DateTime  @default(now())
+  createdBy String?
+  updatedAt DateTime? @updatedAt
+  updatedBy String?
+
+  submissions submission? @relation(fields: [submissionId], references: [id])
+}
+
+model gitWebhookLog {
+  id           String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  eventId      String // X-GitHub-Delivery header
+  event        String // X-GitHub-Event header
+  eventPayload Json // Complete webhook payload
+  createdAt    DateTime @default(now())
+
+  @@index([eventId])
+  @@index([event])
+  @@index([createdAt])
+}
+
+model submissionAccessAudit {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar(36)
+  submissionId String   @db.VarChar(14)
+  downloadedAt DateTime @default(now())
+  handle       String
+
+  submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@index([downloadedAt])
+  @@index([submissionId, downloadedAt])
+}
+
+model llmProvider {
+  id        String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  name      String   @unique @db.VarChar
+  createdAt DateTime @db.Timestamp(3)
+  createdBy String?  @db.Text
+
+  models llmModel[]
+}
+
+model llmModel {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  providerId  String   @db.VarChar(14)
+  name        String   @unique @db.VarChar
+  description String   @db.Text
+  icon        String?  @db.VarChar
+  url         String?  @db.VarChar
+  createdAt   DateTime @default(now()) @db.Timestamp(3)
+  createdBy   String?  @db.Text
+
+  provider  llmProvider  @relation(fields: [providerId], references: [id])
+  workflows aiWorkflow[]
+}
+
+model aiWorkflow {
+  id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  name        String   @unique @db.VarChar
+  llmId       String   @db.VarChar(14)
+  description String   @db.Text
+  defUrl      String   @db.VarChar
+  gitWorkflowId String   @db.VarChar
+  gitOwnerRepo  String   @db.VarChar
+  scorecardId String   @db.VarChar(14)
+  createdAt   DateTime @default(now()) @db.Timestamp(3)
+  createdBy   String?  @db.Text
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?  @db.Text
+
+  llm       llmModel        @relation(fields: [llmId], references: [id])
+  scorecard scorecard       @relation(fields: [scorecardId], references: [id])
+  runs      aiWorkflowRun[]
+}
+
+model aiWorkflowRun {
+  id           String    @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  workflowId   String    @db.VarChar(14)
+  submissionId String    @db.VarChar(14)
+  startedAt    DateTime? @db.Timestamp(3)
+  completedAt  DateTime? @db.Timestamp(3)
+  gitRunId     String    @db.VarChar
+  gitRunUrl    String?    @db.Text
+  score        Float?    @db.DoublePrecision
+  status       String    @db.VarChar
+  usage        Json?     @db.JsonB
+  scheduledJobId String?   @db.Text
+  completedJobs Int? @default(0)
+  jobsCount     Int? @default(0)
+
+  workflow   aiWorkflow          @relation(fields: [workflowId], references: [id])
+  submission submission          @relation(fields: [submissionId], references: [id])
+  items      aiWorkflowRunItem[]
+}
+
+model aiWorkflowRunItem {
+  id                  String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  workflowRunId       String   @db.VarChar(14)
+  scorecardQuestionId String   @db.VarChar(14)
+  content             String   @db.Text
+  upVotes             Int      @default(0)
+  downVotes           Int      @default(0)
+  questionScore       Float?   @db.DoublePrecision
+  createdAt           DateTime @db.Timestamp(3)
+  createdBy           String?  @db.Text
+
+  run      aiWorkflowRun              @relation(fields: [workflowRunId], references: [id])
+  question scorecardQuestion          @relation(fields: [scorecardQuestionId], references: [id])
+  comments aiWorkflowRunItemComment[]
+}
+
+model aiWorkflowRunItemComment {
+  id                String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  workflowRunItemId String   @db.VarChar(14)
+  userId            String   @db.Text
+  content           String   @db.Text
+  upVotes           Int      @default(0)
+  downVotes         Int      @default(0)
+  parentId          String?  @db.VarChar(14)
+  createdAt         DateTime @default(now()) @db.Timestamp(3)
+  createdBy         String?  @db.Text
+  updatedAt         DateTime @updatedAt
+  updatedBy         String?  @db.Text
+
+  item    aiWorkflowRunItem          @relation(fields: [workflowRunItemId], references: [id])
+  parent  aiWorkflowRunItemComment?  @relation("CommentHierarchy", fields: [parentId], references: [id])
+  replies aiWorkflowRunItemComment[] @relation("CommentHierarchy")
+}

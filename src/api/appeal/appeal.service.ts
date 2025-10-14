@@ -1,0 +1,1166 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Resource } from '@prisma/client-resource';
+import {
+  AppealRequestDto,
+  AppealResponseDto,
+  AppealResponseRequestDto,
+  AppealResponseResponseDto,
+  mapAppealResponseRequestToDto,
+} from 'src/dto/appeal.dto';
+import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
+import { PrismaService } from 'src/shared/modules/global/prisma.service';
+import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { CommonConfig } from 'src/shared/config/common.config';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { EventBusService } from 'src/shared/modules/global/eventBus.service';
+
+@Injectable()
+export class AppealService {
+  private readonly logger = LoggerService.forRoot('AppealService');
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly prismaErrorService: PrismaErrorService,
+    private readonly challengeApiService: ChallengeApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
+    private readonly eventBusService: EventBusService,
+  ) {}
+
+  async createAppeal(
+    authUser: JwtUser,
+    body: AppealRequestDto,
+  ): Promise<AppealResponseDto> {
+    this.logger.log('Creating appeal');
+    try {
+      const trimmedContent = body.content?.trim();
+      if (!trimmedContent) {
+        throw new BadRequestException({
+          message: 'Appeal content must not be empty.',
+          code: 'EMPTY_APPEAL_CONTENT',
+        });
+      }
+
+      const reviewItemComment =
+        await this.prisma.reviewItemComment.findUniqueOrThrow({
+          where: { id: body.reviewItemCommentId },
+          include: {
+            reviewItem: {
+              include: {
+                review: {
+                  include: {
+                    submission: {
+                      select: { challengeId: true, memberId: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        });
+
+      const submission = reviewItemComment.reviewItem.review.submission;
+      const submissionMemberId = submission?.memberId
+        ? String(submission.memberId)
+        : '';
+      const requesterMemberId = authUser?.userId ? String(authUser.userId) : '';
+      const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+      const challengeId = submission?.challengeId;
+
+      if (!challengeId) {
+        throw new BadRequestException({
+          message: `No challengeId found for reviewItemComment ${body.reviewItemCommentId}`,
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      if (!submissionMemberId) {
+        throw new BadRequestException({
+          message: `No submission owner found for reviewItemComment ${body.reviewItemCommentId}`,
+          code: 'MISSING_SUBMISSION_OWNER',
+        });
+      }
+
+      let resourceId = body.resourceId ? String(body.resourceId) : undefined;
+
+      if (!isPrivilegedRequester) {
+        if (!requesterMemberId) {
+          throw new ForbiddenException({
+            message:
+              'Only authenticated submitters may create appeals for review item comments.',
+            code: 'APPEAL_CREATE_FORBIDDEN',
+          });
+        }
+
+        if (submissionMemberId !== requesterMemberId) {
+          this.logger.debug(
+            `Requester memberId: ${requesterMemberId} does not match submission owner memberId: ${submissionMemberId}`,
+          );
+          throw new ForbiddenException({
+            message:
+              'Only the submission owner can create an appeal for this review item comment.',
+            code: 'APPEAL_CREATE_FORBIDDEN',
+            details: {
+              requesterMemberId,
+              submissionMemberId,
+              reviewItemCommentId: body.reviewItemCommentId,
+            },
+          });
+        }
+
+        const submitterResource = await this.findSubmitterResource(
+          challengeId,
+          requesterMemberId,
+        );
+
+        if (!submitterResource) {
+          throw new ForbiddenException({
+            message:
+              'You must be registered on this challenge as a submitter to create an appeal.',
+            code: 'APPEAL_CREATE_FORBIDDEN',
+            details: {
+              challengeId,
+              requesterMemberId,
+            },
+          });
+        }
+
+        if (resourceId && resourceId !== submitterResource.id) {
+          throw new BadRequestException({
+            message:
+              'Submitters cannot override the resourceId when creating an appeal.',
+            code: 'RESOURCE_ID_MISMATCH',
+            details: {
+              requestedResourceId: resourceId,
+              expectedResourceId: submitterResource.id,
+            },
+          });
+        }
+
+        resourceId = submitterResource.id
+          ? String(submitterResource.id)
+          : undefined;
+      } else {
+        if (!resourceId && submissionMemberId) {
+          const submitterResource = await this.findSubmitterResource(
+            challengeId,
+            submissionMemberId,
+          );
+          resourceId = submitterResource?.id
+            ? String(submitterResource.id)
+            : resourceId;
+        }
+
+        if (!resourceId) {
+          resourceId = submissionMemberId || resourceId;
+        }
+      }
+
+      if (!resourceId) {
+        throw new BadRequestException({
+          message:
+            'Unable to determine the resourceId for this appeal. Please provide a valid resourceId.',
+          code: 'MISSING_RESOURCE_ID',
+          details: {
+            challengeId,
+            submissionMemberId,
+            requestedResourceId: body.resourceId,
+          },
+        });
+      }
+
+      this.ensureAppealPermission(
+        authUser,
+        submission?.memberId,
+        'create',
+        'APPEAL_CREATE_FORBIDDEN',
+      );
+
+      await this.challengeApiService.validateAppealSubmission(challengeId);
+
+      const data = await this.prisma.appeal.create({
+        data: {
+          ...body,
+          resourceId,
+          content: trimmedContent,
+        },
+      });
+
+      this.logger.log(`Appeal created with ID: ${data.id}`);
+      return data as AppealResponseDto;
+    } catch (error) {
+      if (
+        error.message &&
+        typeof error.message === 'string' &&
+        error.message.includes('Appeals cannot be submitted')
+      ) {
+        throw new BadRequestException({
+          message: error.message,
+          code: 'PHASE_VALIDATION_ERROR',
+        });
+      }
+
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `creating appeal for review item comment: ${body.reviewItemCommentId}`,
+        body,
+      );
+
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  async updateAppeal(
+    authUser: JwtUser,
+    appealId: string,
+    body: AppealRequestDto,
+  ): Promise<AppealResponseDto> {
+    this.logger.log(`Updating appeal with ID: ${appealId}`);
+    try {
+      const existingAppeal = await this.getAppealContext(appealId);
+
+      if (!existingAppeal) {
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found. Please verify the appeal ID is correct.`,
+          code: 'RECORD_NOT_FOUND',
+        });
+      }
+
+      this.ensureAppealPermission(
+        authUser,
+        existingAppeal.reviewItemComment.reviewItem.review.submission?.memberId,
+        'update',
+        'APPEAL_UPDATE_FORBIDDEN',
+      );
+
+      const challengeId =
+        existingAppeal.reviewItemComment.reviewItem.review.submission
+          ?.challengeId;
+      const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      if (!isPrivileged) {
+        await this.ensureAppealResourceOwnership(
+          authUser,
+          existingAppeal.resourceId,
+          appealId,
+        );
+      }
+
+      if (!isPrivileged) {
+        await this.ensureChallengeAllowsAppealChange(challengeId, {
+          logContext: 'updateAppeal',
+          appealId,
+          errorCode: 'APPEAL_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+          errorMessage:
+            'Appeals for challenges in COMPLETED status cannot be updated. Only an admin can update an appeal once the challenge is complete.',
+        });
+      }
+
+      if (
+        !authUser?.isMachine &&
+        !isAdmin(authUser) &&
+        body.resourceId !== undefined &&
+        body.resourceId !== existingAppeal.resourceId
+      ) {
+        throw new ForbiddenException({
+          message: 'Submitters cannot change the resourceId for an appeal.',
+          code: 'APPEAL_RESOURCE_UPDATE_FORBIDDEN',
+          details: {
+            appealId,
+            requestedResourceId: body.resourceId,
+            existingResourceId: existingAppeal.resourceId,
+          },
+        });
+      }
+
+      if (
+        body.reviewItemCommentId !== existingAppeal.reviewItemCommentId &&
+        !authUser?.isMachine &&
+        !isAdmin(authUser)
+      ) {
+        const newComment = await this.getReviewItemCommentContext(
+          body.reviewItemCommentId,
+        );
+
+        if (!newComment) {
+          throw new NotFoundException({
+            message: `Review item comment with ID ${body.reviewItemCommentId} was not found.`,
+            code: 'REVIEW_ITEM_COMMENT_NOT_FOUND',
+          });
+        }
+
+        this.ensureAppealPermission(
+          authUser,
+          newComment.reviewItem.review.submission?.memberId,
+          'update',
+          'APPEAL_UPDATE_FORBIDDEN',
+        );
+      }
+
+      const data = await this.prisma.appeal.update({
+        where: { id: appealId },
+        data: { ...body },
+      });
+
+      this.logger.log(`Appeal updated successfully: ${appealId}`);
+      return data as AppealResponseDto;
+    } catch (error) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `updating appeal ${appealId}`,
+      );
+
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found. Please verify the appeal ID is correct.`,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  async deleteAppeal(
+    authUser: JwtUser,
+    appealId: string,
+  ): Promise<{ message: string }> {
+    this.logger.log(`Deleting appeal with ID: ${appealId}`);
+    try {
+      const existingAppeal = await this.getAppealContext(appealId);
+
+      if (!existingAppeal) {
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found. Cannot delete a non-existent appeal.`,
+          code: 'RECORD_NOT_FOUND',
+        });
+      }
+
+      this.ensureAppealPermission(
+        authUser,
+        existingAppeal.reviewItemComment.reviewItem.review.submission?.memberId,
+        'delete',
+        'APPEAL_DELETE_FORBIDDEN',
+      );
+
+      const challengeId =
+        existingAppeal.reviewItemComment.reviewItem.review.submission
+          ?.challengeId;
+      const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      if (!isPrivileged) {
+        await this.ensureAppealResourceOwnership(
+          authUser,
+          existingAppeal.resourceId,
+          appealId,
+        );
+      }
+
+      if (!isPrivileged) {
+        await this.ensureChallengeAllowsAppealChange(challengeId, {
+          logContext: 'deleteAppeal',
+          appealId,
+          errorCode: 'APPEAL_DELETE_FORBIDDEN_CHALLENGE_COMPLETED',
+          errorMessage:
+            'Appeals for challenges in COMPLETED status cannot be deleted. Only an admin can delete an appeal once the challenge is complete.',
+        });
+      }
+
+      await this.prisma.appeal.delete({
+        where: { id: appealId },
+      });
+
+      this.logger.log(`Appeal deleted successfully: ${appealId}`);
+      return { message: `Appeal ${appealId} deleted successfully.` };
+    } catch (error) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `deleting appeal ${appealId}`,
+      );
+
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found. Cannot delete a non-existent appeal.`,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  async createAppealResponse(
+    authUser: JwtUser,
+    appealId: string,
+    body: AppealResponseRequestDto,
+  ): Promise<AppealResponseResponseDto> {
+    this.logger.log(`Creating response for appeal ID: ${appealId}`);
+    try {
+      const appeal = await this.prisma.appeal.findUniqueOrThrow({
+        where: { id: appealId },
+        include: {
+          appealResponse: true,
+          reviewItemComment: {
+            include: {
+              reviewItem: {
+                include: {
+                  review: {
+                    select: {
+                      id: true,
+                      resourceId: true,
+                      submissionId: true,
+                      scorecardId: true,
+                      submission: {
+                        select: {
+                          id: true,
+                          challengeId: true,
+                          memberId: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (appeal.appealResponse) {
+        throw new BadRequestException({
+          message: `Appeal with ID ${appealId} already has a response.`,
+          code: 'APPEAL_ALREADY_RESPONDED',
+          details: { appealResponseId: appeal.appealResponse.id },
+        });
+      }
+
+      if (!authUser) {
+        throw new ForbiddenException({
+          message:
+            'Only the reviewer assigned to this review or an admin may respond to the appeal.',
+          code: 'APPEAL_RESPONSE_FORBIDDEN',
+        });
+      }
+
+      const review = appeal.reviewItemComment.reviewItem.review;
+
+      if (!review?.id) {
+        throw new BadRequestException({
+          message: `No review found for appeal ${appealId}.`,
+          code: 'MISSING_REVIEW',
+          details: { appealId },
+        });
+      }
+
+      const reviewerResourceId = review.resourceId
+        ? String(review.resourceId)
+        : '';
+
+      if (!reviewerResourceId) {
+        throw new BadRequestException({
+          message: `No reviewer resource found for appeal ${appealId}.`,
+          code: 'MISSING_REVIEWER_RESOURCE',
+        });
+      }
+
+      const { reviewerResource } =
+        await this.ensureReviewerAccessToAppealResponse(
+          authUser,
+          reviewerResourceId,
+          appealId,
+        );
+
+      const challengeId = review?.submission?.challengeId;
+      if (!challengeId) {
+        throw new BadRequestException({
+          message: `No challengeId found for appeal ${appealId}`,
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      await this.challengeApiService.validateAppealResponseSubmission(
+        challengeId,
+      );
+
+      const data = await this.prisma.appeal.update({
+        where: { id: appealId },
+        data: {
+          appealResponse: {
+            create: {
+              ...mapAppealResponseRequestToDto(body),
+              resourceId: reviewerResourceId,
+            },
+          },
+        },
+        include: {
+          appealResponse: true,
+        },
+      });
+
+      this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
+      await this.publishAppealRespondedEvent({
+        appealId,
+        appealResponseId: data.appealResponse?.id ?? null,
+        reviewId: review.id,
+        reviewerResource,
+      });
+      return data.appealResponse as AppealResponseResponseDto;
+    } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      if (
+        error.message &&
+        typeof error.message === 'string' &&
+        error.message.includes('Appeal responses cannot be submitted')
+      ) {
+        throw new BadRequestException({
+          message: error.message,
+          code: 'PHASE_VALIDATION_ERROR',
+        });
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `creating response for appeal ${appealId}`,
+      );
+
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({
+          message: `Appeal with ID ${appealId} was not found. Cannot create response for a non-existent appeal.`,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      if (errorResponse.code === 'UNIQUE_CONSTRAINT_FAILED') {
+        throw new BadRequestException({
+          message: `Appeal with ID ${appealId} already has a response.`,
+          code: 'APPEAL_ALREADY_RESPONDED',
+          details: errorResponse.details,
+        });
+      }
+
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  private async publishAppealRespondedEvent(params: {
+    appealId: string;
+    appealResponseId: string | null;
+    reviewId: string;
+    reviewerResource: Resource;
+  }): Promise<void> {
+    const { appealId, appealResponseId, reviewId, reviewerResource } = params;
+
+    try {
+      const review = await this.prisma.review.findUnique({
+        where: { id: reviewId },
+        select: {
+          id: true,
+          scorecardId: true,
+          resourceId: true,
+          submissionId: true,
+          finalScore: true,
+          reviewDate: true,
+          updatedAt: true,
+          submission: {
+            select: {
+              id: true,
+              challengeId: true,
+              memberId: true,
+            },
+          },
+        },
+      });
+
+      if (!review) {
+        this.logger.warn(
+          `[publishAppealRespondedEvent] Review ${reviewId} not found; skipping event.`,
+        );
+        return;
+      }
+
+      const challengeId = review.submission?.challengeId ?? null;
+      const submissionId = review.submissionId ?? review.submission?.id ?? null;
+      const submitterMemberId = review.submission?.memberId
+        ? String(review.submission.memberId)
+        : null;
+
+      let submitterHandle: string | null = null;
+      if (challengeId && submitterMemberId) {
+        const submitterResource = await this.findSubmitterResource(
+          challengeId,
+          submitterMemberId,
+        );
+        submitterHandle = submitterResource?.memberHandle ?? null;
+      }
+
+      const reviewerHandle = reviewerResource.memberHandle ?? null;
+      const reviewerMemberId = reviewerResource.memberId
+        ? String(reviewerResource.memberId)
+        : null;
+
+      const completionDate = review.reviewDate ?? review.updatedAt ?? null;
+      const reviewCompletedAt = completionDate
+        ? completionDate.toISOString()
+        : null;
+
+      const payload = {
+        challengeId,
+        submissionId,
+        reviewId: review.id,
+        scorecardId: review.scorecardId,
+        appealId,
+        appealResponseId,
+        reviewerResourceId: review.resourceId,
+        reviewerHandle,
+        reviewerMemberId,
+        submitterHandle,
+        submitterMemberId,
+        reviewCompletedAt,
+        finalScore: review.finalScore ?? null,
+      };
+
+      await this.eventBusService.publish(
+        'review.action.appeal.responded',
+        payload,
+      );
+      this.logger.log(
+        `[publishAppealRespondedEvent] Published appeal responded event for appeal ${appealId} and review ${review.id}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `[publishAppealRespondedEvent] Failed to publish appeal responded event for appeal ${appealId}`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async updateAppealResponse(
+    authUser: JwtUser,
+    appealResponseId: string,
+    body: AppealResponseRequestDto,
+  ): Promise<AppealResponseRequestDto> {
+    this.logger.log(`Updating appeal response with ID: ${appealResponseId}`);
+    try {
+      const appealResponse = await this.prisma.appealResponse.findUnique({
+        where: { id: appealResponseId },
+        include: {
+          appeal: {
+            include: {
+              reviewItemComment: {
+                include: {
+                  reviewItem: {
+                    include: {
+                      review: {
+                        select: {
+                          resourceId: true,
+                          submission: {
+                            select: { challengeId: true },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!appealResponse) {
+        throw new NotFoundException({
+          message: `Appeal response with ID ${appealResponseId} was not found. Please verify the appeal response ID is correct.`,
+          code: 'APPEAL_RESPONSE_NOT_FOUND',
+        });
+      }
+
+      const appealId = appealResponse.appealId;
+      const review =
+        appealResponse.appeal?.reviewItemComment?.reviewItem?.review;
+      const reviewerResourceId = review?.resourceId
+        ? String(review.resourceId)
+        : '';
+
+      if (!reviewerResourceId) {
+        throw new BadRequestException({
+          message: `No reviewer resource found for appeal ${appealId}.`,
+          code: 'MISSING_REVIEWER_RESOURCE',
+        });
+      }
+
+      await this.ensureReviewerAccessToAppealResponse(
+        authUser,
+        reviewerResourceId,
+        appealId,
+      );
+
+      const challengeId = review?.submission?.challengeId;
+      const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      if (!challengeId) {
+        if (!isPrivileged) {
+          throw new BadRequestException({
+            message: `No challengeId found for appeal ${appealId}.`,
+            code: 'MISSING_CHALLENGE_ID',
+          });
+        }
+      } else if (!isPrivileged) {
+        await this.ensureChallengeAllowsAppealChange(challengeId, {
+          logContext: 'updateAppealResponse',
+          appealId,
+          appealResponseId,
+          errorCode: 'APPEAL_RESPONSE_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+          errorMessage:
+            'Appeal responses for challenges in COMPLETED status cannot be updated. Only an admin or M2M token can update an appeal response once the challenge is complete.',
+        });
+      }
+
+      const data = await this.prisma.appealResponse.update({
+        where: { id: appealResponseId },
+        data: mapAppealResponseRequestToDto(body),
+      });
+
+      this.logger.log(
+        `Appeal response updated successfully: ${appealResponseId}`,
+      );
+      return data as AppealResponseRequestDto;
+    } catch (error) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `updating appeal response ${appealResponseId}`,
+      );
+
+      if (errorResponse.code === 'RECORD_NOT_FOUND') {
+        throw new NotFoundException({
+          message: `Appeal response with ID ${appealResponseId} was not found. Please verify the appeal response ID is correct.`,
+          code: errorResponse.code,
+          details: errorResponse.details,
+        });
+      }
+
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  async getAppeals(
+    resourceId?: string,
+    reviewId?: string,
+    paginationDto?: PaginationDto,
+  ): Promise<PaginatedResponse<AppealResponseDto>> {
+    this.logger.log(
+      `Getting appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,
+    );
+
+    const { page = 1, perPage = 10 } = paginationDto || {};
+    const skip = (page - 1) * perPage;
+
+    try {
+      const whereClause: any = {};
+      if (resourceId) whereClause.resourceId = resourceId;
+      if (reviewId) {
+        whereClause.reviewItemComment = {
+          reviewItem: {
+            reviewId: reviewId,
+          },
+        };
+      }
+
+      const [appeals, totalCount] = await Promise.all([
+        this.prisma.appeal.findMany({
+          where: whereClause,
+          skip,
+          take: perPage,
+          include: {
+            reviewItemComment: {
+              include: {
+                reviewItem: true,
+              },
+            },
+            appealResponse: true,
+          },
+        }),
+        this.prisma.appeal.count({
+          where: whereClause,
+        }),
+      ]);
+
+      this.logger.log(
+        `Found ${appeals.length} appeals (page ${page} of ${Math.ceil(totalCount / perPage)})`,
+      );
+
+      return {
+        data: appeals.map((appeal) => ({
+          id: appeal.id,
+          resourceId: appeal.resourceId,
+          reviewItemCommentId: appeal.reviewItemCommentId,
+          content: appeal.content,
+          createdAt: appeal.createdAt,
+          createdBy: appeal.createdBy,
+          updatedAt: appeal.updatedAt,
+          updatedBy: appeal.updatedBy,
+          legacyId: appeal.legacyId,
+          // Include appealResponse so clients can tell whether an appeal
+          // has been responded to. This field was previously omitted,
+          // which caused Remaining counts to be incorrect in Platform UI.
+          appealResponse: appeal.appealResponse
+            ? {
+                id: appeal.appealResponse.id,
+                appealId: appeal.appealResponse.appealId,
+                resourceId: appeal.appealResponse.resourceId,
+                content: appeal.appealResponse.content,
+                success: appeal.appealResponse.success,
+                createdAt: appeal.appealResponse.createdAt,
+                createdBy: appeal.appealResponse.createdBy,
+                updatedAt: appeal.appealResponse.updatedAt,
+                updatedBy: appeal.appealResponse.updatedBy,
+              }
+            : undefined,
+        })) as AppealResponseDto[],
+        meta: {
+          page,
+          perPage,
+          totalCount,
+          totalPages: Math.ceil(totalCount / perPage),
+        },
+      };
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `fetching appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,
+      );
+
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  private async ensureReviewerAccessToAppealResponse(
+    authUser: JwtUser,
+    reviewerResourceId: string,
+    appealId: string,
+  ): Promise<{ reviewerMemberId: string; reviewerResource: Resource }> {
+    if (!authUser) {
+      throw new ForbiddenException({
+        message:
+          'Only the reviewer assigned to this review or an admin may respond to the appeal.',
+        code: 'APPEAL_RESPONSE_FORBIDDEN',
+      });
+    }
+
+    const reviewerResource = await this.resourcePrisma.resource.findUnique({
+      where: { id: reviewerResourceId },
+    });
+
+    if (!reviewerResource) {
+      throw new NotFoundException({
+        message: `Reviewer resource ${reviewerResourceId} not found for appeal ${appealId}.`,
+        code: 'REVIEWER_RESOURCE_NOT_FOUND',
+        details: { appealId, reviewerResourceId },
+      });
+    }
+
+    const reviewerMemberId = reviewerResource.memberId
+      ? String(reviewerResource.memberId)
+      : '';
+
+    if (!reviewerMemberId) {
+      throw new BadRequestException({
+        message: `Reviewer resource ${reviewerResourceId} does not have a memberId.`,
+        code: 'MISSING_REVIEWER_MEMBER_ID',
+        details: { appealId, reviewerResourceId },
+      });
+    }
+
+    const hasAdminPrivileges = Boolean(authUser.isMachine || isAdmin(authUser));
+
+    if (!hasAdminPrivileges) {
+      const requesterMemberId = authUser.userId ? String(authUser.userId) : '';
+
+      if (!requesterMemberId || requesterMemberId !== reviewerMemberId) {
+        throw new ForbiddenException({
+          message:
+            'Only the reviewer assigned to this review or an admin may respond to the appeal.',
+          code: 'APPEAL_RESPONSE_FORBIDDEN',
+        });
+      }
+    }
+
+    return { reviewerMemberId, reviewerResource };
+  }
+
+  private async findSubmitterResource(challengeId: string, memberId: string) {
+    if (!challengeId || !memberId) {
+      return null;
+    }
+
+    const resources = await this.resourcePrisma.resource.findMany({
+      where: {
+        challengeId,
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return resources.find(
+      (resource) => String(resource.memberId) === String(memberId),
+    );
+  }
+
+  private async ensureAppealResourceOwnership(
+    authUser: JwtUser,
+    resourceId: string | null | undefined,
+    appealId: string,
+  ): Promise<void> {
+    const requesterMemberId = authUser?.userId ? String(authUser.userId) : '';
+
+    if (!requesterMemberId) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner of the resource associated with this appeal may modify it.',
+        code: 'APPEAL_RESOURCE_OWNER_FORBIDDEN',
+        details: { appealId, resourceId, requesterMemberId },
+      });
+    }
+
+    if (!resourceId) {
+      throw new BadRequestException({
+        message: `Appeal ${appealId} does not have an associated resourceId.`,
+        code: 'APPEAL_MISSING_RESOURCE_ID',
+        details: { appealId },
+      });
+    }
+
+    const resource = await this.resourcePrisma.resource.findUnique({
+      where: { id: resourceId },
+    });
+
+    if (!resource) {
+      throw new NotFoundException({
+        message: `Resource ${resourceId} associated with appeal ${appealId} was not found.`,
+        code: 'APPEAL_RESOURCE_NOT_FOUND',
+        details: { appealId, resourceId },
+      });
+    }
+
+    const resourceMemberId = resource.memberId ? String(resource.memberId) : '';
+
+    if (!resourceMemberId) {
+      throw new BadRequestException({
+        message: `Resource ${resourceId} associated with appeal ${appealId} does not have a memberId.`,
+        code: 'APPEAL_RESOURCE_MISSING_MEMBER_ID',
+        details: { appealId, resourceId },
+      });
+    }
+
+    if (resourceMemberId !== requesterMemberId) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner of the resource associated with this appeal may modify it.',
+        code: 'APPEAL_RESOURCE_OWNER_FORBIDDEN',
+        details: {
+          appealId,
+          resourceId,
+          resourceMemberId,
+          requesterMemberId,
+        },
+      });
+    }
+  }
+
+  private async ensureChallengeAllowsAppealChange(
+    challengeId: string | null | undefined,
+    context: {
+      logContext: string;
+      appealId?: string;
+      appealResponseId?: string;
+      errorCode: string;
+      errorMessage: string;
+    },
+  ): Promise<void> {
+    if (!challengeId) {
+      return;
+    }
+
+    let challenge;
+    try {
+      challenge =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+    } catch (error) {
+      this.logger.error(
+        `[${context.logContext}] Unable to fetch challenge ${challengeId}`,
+        error,
+      );
+      throw new InternalServerErrorException({
+        message: `Unable to verify the challenge status for challenge ${challengeId}. Please try again later.`,
+        code: 'CHALLENGE_STATUS_UNAVAILABLE',
+        details: {
+          challengeId,
+          appealId: context.appealId,
+          appealResponseId: context.appealResponseId,
+        },
+      });
+    }
+
+    if (challenge.status === ChallengeStatus.COMPLETED) {
+      throw new ForbiddenException({
+        message: context.errorMessage,
+        code: context.errorCode,
+        details: {
+          challengeId,
+          appealId: context.appealId,
+          appealResponseId: context.appealResponseId,
+        },
+      });
+    }
+  }
+
+  private ensureAppealPermission(
+    authUser: JwtUser,
+    submissionMemberId: string | null | undefined,
+    action: 'create' | 'update' | 'delete',
+    errorCode: string,
+  ): void {
+    if (!authUser) {
+      throw new ForbiddenException({
+        message: `Only the submission owner or an admin can ${action} this appeal.`,
+        code: errorCode,
+      });
+    }
+
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return;
+    }
+
+    const requesterId = authUser.userId ? String(authUser.userId) : '';
+    const ownerId = submissionMemberId ? String(submissionMemberId) : '';
+
+    if (!requesterId || !ownerId || requesterId !== ownerId) {
+      throw new ForbiddenException({
+        message: `Only the submission owner or an admin can ${action} this appeal.`,
+        code: errorCode,
+        details: {
+          action,
+          requesterId,
+          submissionMemberId,
+        },
+      });
+    }
+  }
+
+  private getAppealContext(appealId: string) {
+    return this.prisma.appeal.findUnique({
+      where: { id: appealId },
+      include: {
+        reviewItemComment: {
+          include: {
+            reviewItem: {
+              include: {
+                review: {
+                  include: {
+                    submission: {
+                      select: { id: true, memberId: true, challengeId: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  private getReviewItemCommentContext(reviewItemCommentId: string) {
+    return this.prisma.reviewItemComment.findUnique({
+      where: { id: reviewItemCommentId },
+      include: {
+        reviewItem: {
+          include: {
+            review: {
+              include: {
+                submission: {
+                  select: { id: true, memberId: true, challengeId: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+}
