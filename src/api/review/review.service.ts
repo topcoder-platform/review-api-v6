@@ -980,10 +980,49 @@ export class ReviewService {
         });
       }
 
-      const submission = await this.prisma.submission.findUnique({
-        where: { id: body.submissionId },
-        select: { challengeId: true, memberId: true },
-      });
+      const submissions = await this.prisma.$queryRaw<
+        Array<{
+          id: string;
+          challengeId: string | null;
+          memberId: string | null;
+          isLatest: boolean | null;
+        }>
+      >(Prisma.sql`
+          WITH target AS (
+            SELECT s."challengeId"
+            FROM "submission" s
+            WHERE s."id" = ${body.submissionId}
+          )
+          SELECT
+            ranked."id",
+            ranked."challengeId",
+            ranked."memberId",
+            ranked."isLatest"
+          FROM (
+            SELECT
+              s."id",
+              s."challengeId",
+              s."memberId",
+              CASE
+                WHEN ROW_NUMBER() OVER (
+                  PARTITION BY COALESCE(s."memberId", s."id")
+                  ORDER BY
+                    s."submittedDate" DESC NULLS LAST,
+                    s."createdAt" DESC NULLS LAST,
+                    s."updatedAt" DESC NULLS LAST,
+                    s."id" DESC
+                ) = 1 THEN TRUE
+                ELSE FALSE
+              END AS "isLatest"
+            FROM "submission" s
+            WHERE s."challengeId" IS NOT DISTINCT FROM (
+              SELECT target."challengeId" FROM target
+            )
+          ) ranked
+          WHERE ranked."id" = ${body.submissionId}
+        `);
+
+      const submission = submissions[0] ?? null;
 
       if (!submission) {
         throw new NotFoundException({
@@ -1004,6 +1043,7 @@ export class ReviewService {
       const submissionMemberId = submission.memberId
         ? String(submission.memberId)
         : null;
+      const submissionIsLatest = Boolean(submission.isLatest);
 
       const reviewType = await this.prisma.reviewType.findUnique({
         where: { id: body.typeId },
@@ -1141,35 +1181,21 @@ export class ReviewService {
           reviewType.name,
           challenge,
         ) &&
-        submissionMemberId
+        submissionMemberId &&
+        !submissionIsLatest
       ) {
-        const latest = await this.prisma.submission.findFirst({
-          where: {
+        throw new BadRequestException({
+          message:
+            'Reviews can only be created for the most recent submission per member when the challenge does not allow unlimited submissions.',
+          code: 'SUBMISSION_NOT_LATEST',
+          details: {
+            submissionId: body.submissionId,
             challengeId,
             memberId: submissionMemberId,
+            reviewType: reviewType.name,
+            isLatest: submissionIsLatest,
           },
-          orderBy: [
-            { submittedDate: 'desc' },
-            { createdAt: 'desc' },
-            { updatedAt: 'desc' },
-          ],
-          select: { id: true },
         });
-
-        if (latest?.id && latest.id !== body.submissionId) {
-          throw new BadRequestException({
-            message:
-              'Only the most recent submission for this member can be reviewed when the challenge does not enforce a submission limit.',
-            code: 'SUBMISSION_NOT_LATEST',
-            details: {
-              submissionId: body.submissionId,
-              latestSubmissionId: latest.id,
-              challengeId,
-              memberId: submissionMemberId,
-              reviewType: reviewType.name,
-            },
-          });
-        }
       }
 
       const challengePhases = challenge?.phases ?? [];
@@ -3223,7 +3249,21 @@ export class ReviewService {
     if (!this.isScreeningOrReviewType(reviewTypeName)) {
       return false;
     }
-    return !this.challengeHasSubmissionLimit(challenge);
+
+    if (!challenge) {
+      return true;
+    }
+
+    const submissionLimit = (
+      challenge.metadata as Record<string, unknown> | undefined
+    )?.['submissionLimit'];
+
+    const unlimited = this.extractSubmissionLimitUnlimited(submissionLimit);
+    if (unlimited === true) {
+      return false;
+    }
+
+    return this.challengeHasSubmissionLimit(challenge);
   }
 
   private isScreeningOrReviewType(
@@ -3335,6 +3375,86 @@ export class ReviewService {
     }
 
     return false;
+  }
+
+  private extractSubmissionLimitUnlimited(value: unknown): boolean | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return this.coerceLooseBoolean(
+            (parsed as Record<string, unknown>).unlimited,
+          );
+        }
+        return this.coerceLooseBoolean(parsed);
+      } catch {
+        return this.coerceLooseBoolean(trimmed);
+      }
+    }
+
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return this.coerceLooseBoolean(
+        (value as Record<string, unknown>).unlimited,
+      );
+    }
+
+    return this.coerceLooseBoolean(value);
+  }
+
+  private coerceLooseBoolean(value: unknown): boolean | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (value === true || value === false) {
+      return value;
+    }
+
+    if (value instanceof Boolean) {
+      return value.valueOf();
+    }
+
+    if (value instanceof Number) {
+      return this.coerceLooseBoolean(value.valueOf());
+    }
+
+    let candidate: string;
+
+    if (typeof value === 'string') {
+      candidate = value;
+    } else if (value instanceof String) {
+      candidate = value.valueOf();
+    } else if (typeof value === 'number') {
+      if (!Number.isFinite(value)) {
+        return null;
+      }
+      candidate = value.toString();
+    } else if (typeof value === 'bigint') {
+      candidate = value.toString();
+    } else {
+      return null;
+    }
+
+    const normalized = candidate.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (normalized === 'true') {
+      return true;
+    }
+    if (normalized === 'false') {
+      return false;
+    }
+    return null;
   }
 
   private parseBooleanFlag(value: unknown): boolean | null {

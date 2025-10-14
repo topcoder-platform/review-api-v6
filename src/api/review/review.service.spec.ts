@@ -12,12 +12,12 @@ import { CommonConfig } from 'src/shared/config/common.config';
 
 describe('ReviewService.createReview authorization checks', () => {
   const prismaMock = {
+    $queryRaw: jest.fn(),
     scorecard: {
       findUnique: jest.fn(),
     },
     submission: {
-      findUnique: jest.fn(),
-      findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     reviewType: {
       findUnique: jest.fn(),
@@ -98,6 +98,22 @@ describe('ReviewService.createReview authorization checks', () => {
       ...overrides,
     }) as ReviewRequestDto;
 
+  const buildReviewModel = (request: ReviewRequestDto): any => ({
+    id: request.id,
+    resourceId: baseResource.id,
+    phaseId: 'phase-review',
+    submissionId: request.submissionId,
+    scorecardId: request.scorecardId,
+    typeId: request.typeId,
+    metadata: request.metadata,
+    status: request.status,
+    reviewDate: new Date(request.reviewDate),
+    committed: request.committed,
+    initialScore: null,
+    finalScore: null,
+    reviewItems: [],
+  });
+
   const baseChallengeDetail = {
     id: 'challenge-1',
     name: 'Challenge',
@@ -134,13 +150,14 @@ describe('ReviewService.createReview authorization checks', () => {
       minimumPassingScore: 0,
       maxScore: 100,
     });
-    prismaMock.submission.findUnique.mockResolvedValue({
-      id: 'submission-1',
-      challengeId: 'challenge-1',
-    });
-    prismaMock.submission.findFirst.mockResolvedValue({
-      id: 'submission-1',
-    });
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: 'submission-1',
+        challengeId: 'challenge-1',
+        memberId: null,
+        isLatest: true,
+      },
+    ]);
     prismaMock.reviewType.findUnique.mockResolvedValue({
       id: 'type-1',
       name: 'Review',
@@ -178,14 +195,14 @@ describe('ReviewService.createReview authorization checks', () => {
   });
 
   it('rejects reviews for non-latest submissions when challenge has no limit', async () => {
-    prismaMock.submission.findUnique.mockResolvedValue({
-      id: 'submission-older',
-      challengeId: 'challenge-1',
-      memberId: 'member-1',
-    });
-    prismaMock.submission.findFirst.mockResolvedValue({
-      id: 'submission-latest',
-    });
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: 'submission-older',
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        isLatest: false,
+      },
+    ]);
 
     await expect(
       service.createReview(baseAuthUser, buildReviewRequest()),
@@ -193,6 +210,152 @@ describe('ReviewService.createReview authorization checks', () => {
       response: expect.objectContaining({ code: 'SUBMISSION_NOT_LATEST' }),
       status: 400,
     });
+  });
+
+  it('allows reviews for latest submissions when challenge has no limit', async () => {
+    const submissionId = 'submission-latest';
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: submissionId,
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        isLatest: true,
+      },
+    ]);
+
+    const request = buildReviewRequest({ submissionId });
+    const reviewCreateResult = buildReviewModel(request);
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue(reviewCreateResult);
+
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await expect(
+        service.createReview(baseAuthUser, request),
+      ).resolves.toMatchObject({
+        submissionId,
+        resourceId: baseResource.id,
+      });
+    } finally {
+      computeSpy.mockRestore();
+    }
+  });
+
+  it('allows reviews for non-latest submissions when submissionLimit.unlimited is the string "true"', async () => {
+    const submissionId = 'submission-older';
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: submissionId,
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        isLatest: false,
+      },
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      metadata: {
+        submissionLimit: { unlimited: 'TRUE' },
+      },
+    });
+
+    const request = buildReviewRequest({ submissionId });
+    const reviewCreateResult = buildReviewModel(request);
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue(reviewCreateResult);
+
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await expect(
+        service.createReview(baseAuthUser, request),
+      ).resolves.toMatchObject({
+        submissionId,
+        resourceId: baseResource.id,
+      });
+    } finally {
+      computeSpy.mockRestore();
+    }
+  });
+
+  it('allows reviews for non-latest submissions when submissionLimit.unlimited is boolean true', async () => {
+    const submissionId = 'submission-older';
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: submissionId,
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        isLatest: false,
+      },
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      metadata: {
+        submissionLimit: { unlimited: true },
+      },
+    });
+
+    const request = buildReviewRequest({ submissionId });
+    const reviewCreateResult = buildReviewModel(request);
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue(reviewCreateResult);
+
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await expect(
+        service.createReview(baseAuthUser, request),
+      ).resolves.toMatchObject({
+        submissionId,
+        resourceId: baseResource.id,
+      });
+    } finally {
+      computeSpy.mockRestore();
+    }
+  });
+
+  it('allows reviews for submissions without memberId regardless of isLatest', async () => {
+    const submissionId = 'submission-legacy';
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: submissionId,
+        challengeId: 'challenge-1',
+        memberId: null,
+        isLatest: false,
+      },
+    ]);
+
+    const request = buildReviewRequest({ submissionId });
+    const reviewCreateResult = buildReviewModel(request);
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue(reviewCreateResult);
+
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await expect(
+        service.createReview(baseAuthUser, request),
+      ).resolves.toMatchObject({
+        submissionId,
+        resourceId: baseResource.id,
+      });
+    } finally {
+      computeSpy.mockRestore();
+    }
   });
 
   it('throws when challenge does not have a Review phase', async () => {
