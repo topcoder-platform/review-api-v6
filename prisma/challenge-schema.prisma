@@ -589,8 +589,9 @@ model ChallengeReviewer {
   isMemberReview      Boolean
   memberReviewerCount Int?
   phaseId             String
-  basePayment         Float?
-  incrementalPayment  Float?
+  fixedAmount           Float? @default(0)
+  baseCoefficient           Float?
+  incrementalCoefficient    Float?
   type                ReviewOpportunityTypeEnum?
   aiWorkflowId        String?                    @db.VarChar(14)
 
@@ -622,8 +623,9 @@ model DefaultChallengeReviewer {
   isMemberReview      Boolean
   memberReviewerCount Int?
   phaseName           String
-  basePayment         Float?
-  incrementalPayment  Float?
+  fixedAmount           Float? @default(0)
+  baseCoefficient           Float?
+  incrementalCoefficient    Float?
   opportunityType     ReviewOpportunityTypeEnum?
   isAIReviewer        Boolean
 
