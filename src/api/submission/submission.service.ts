@@ -40,6 +40,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { Readable, PassThrough } from 'stream';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
+import { Prisma } from '@prisma/client';
 
 type SubmissionMinimal = {
   id: string;
@@ -1374,7 +1375,7 @@ export class SubmissionService {
         }
       }
       await this.populateLatestSubmissionFlags([data]);
-      await this.populateLatestSubmissionFlags([data]);
+      await this.stripIsLatestForUnlimitedChallenges([data]);
       return this.buildResponse(data);
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
@@ -1399,12 +1400,30 @@ export class SubmissionService {
     try {
       const { page = 1, perPage = 10 } = paginationDto || {};
       const skip = (page - 1) * perPage;
-      let orderBy;
+      type OrderByClause = Record<string, 'asc' | 'desc'>;
+
+      const defaultOrderBy: OrderByClause[] = [
+        { submittedDate: 'desc' as const },
+        { createdAt: 'desc' as const },
+        { updatedAt: 'desc' as const },
+        { id: 'desc' as const },
+      ];
+
+      let orderBy: OrderByClause[] = [...defaultOrderBy];
 
       if (sortDto && sortDto.orderBy && sortDto.sortBy) {
-        orderBy = {
-          [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
+        const direction =
+          sortDto.orderBy.toLowerCase() === 'asc' ? 'asc' : 'desc';
+        const primaryOrder: OrderByClause = {
+          [sortDto.sortBy]: direction,
         };
+
+        const fallbackOrder = defaultOrderBy.filter((entry) => {
+          const [key] = Object.keys(entry);
+          return key !== sortDto.sortBy;
+        });
+
+        orderBy = [primaryOrder, ...fallbackOrder];
       }
 
       const requestedMemberId = queryDto.memberId
@@ -1522,6 +1541,7 @@ export class SubmissionService {
       });
 
       await this.populateLatestSubmissionFlags(submissions);
+      await this.stripIsLatestForUnlimitedChallenges(submissions);
 
       this.logger.log(
         `Found ${submissions.length} submissions (page ${page} of ${Math.ceil(totalCount / perPage)})`,
@@ -1608,6 +1628,7 @@ export class SubmissionService {
   async getSubmission(submissionId: string): Promise<SubmissionResponseDto> {
     const data = await this.checkSubmission(submissionId);
     await this.populateLatestSubmissionFlags([data]);
+    await this.stripIsLatestForUnlimitedChallenges([data]);
     return this.buildResponse(data);
   }
 
@@ -1946,6 +1967,139 @@ export class SubmissionService {
     }
   }
 
+  private async stripIsLatestForUnlimitedChallenges(
+    submissions: Array<
+      { challengeId?: string | null } & Record<string, unknown>
+    >,
+  ): Promise<void> {
+    if (!submissions.length) {
+      return;
+    }
+
+    const challengeId = Array.from(
+      new Set(
+        submissions
+          .map((submission) =>
+            submission.challengeId !== undefined &&
+            submission.challengeId !== null
+              ? String(submission.challengeId)
+              : null,
+          )
+          .filter((id): id is string => !!id),
+      ),
+    )[0];
+
+    let metadataEntries: Array<{ value: string }> = [];
+    try {
+      metadataEntries = await this.challengePrisma.$queryRaw(Prisma.sql`
+        SELECT \"value\" from \"ChallengeMetadata\" WHERE \"challengeId\"= ${challengeId} AND name = 'submissionLimit'
+      `);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load submissionLimit metadata for challenge ${challengeId}: ${(error as Error)?.message}`,
+      );
+      return;
+    }
+
+    if (!metadataEntries.length) {
+      return;
+    }
+
+    let challengeSubmissionsAreUnlimited = false;
+    for (const entry of metadataEntries) {
+      const unlimited = this.extractSubmissionLimitUnlimited(entry.value);
+      if (unlimited === true) {
+        challengeSubmissionsAreUnlimited = true;
+      }
+    }
+
+    for (const submission of submissions) {
+      if (challengeSubmissionsAreUnlimited) {
+        delete (submission as any).isLatest;
+      }
+    }
+  }
+
+  private extractSubmissionLimitUnlimited(value: unknown): boolean | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return this.coerceLooseBoolean(
+            (parsed as Record<string, unknown>).unlimited,
+          );
+        }
+        return this.coerceLooseBoolean(parsed);
+      } catch {
+        return this.coerceLooseBoolean(trimmed);
+      }
+    }
+
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return this.coerceLooseBoolean(
+        (value as Record<string, unknown>).unlimited,
+      );
+    }
+
+    return this.coerceLooseBoolean(value);
+  }
+
+  private coerceLooseBoolean(value: unknown): boolean | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (value === true || value === false) {
+      return value;
+    }
+
+    if (value instanceof Boolean) {
+      return value.valueOf();
+    }
+
+    if (value instanceof Number) {
+      return this.coerceLooseBoolean(value.valueOf());
+    }
+
+    let candidate: string;
+
+    if (typeof value === 'string') {
+      candidate = value;
+    } else if (value instanceof String) {
+      candidate = value.valueOf();
+    } else if (typeof value === 'number') {
+      if (!Number.isFinite(value)) {
+        return null;
+      }
+      candidate = value.toString();
+    } else if (typeof value === 'bigint') {
+      candidate = value.toString();
+    } else {
+      return null;
+    }
+
+    const normalized = candidate.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (normalized === 'true') {
+      return true;
+    }
+    if (normalized === 'false') {
+      return false;
+    }
+    return null;
+  }
+
   private buildResponse(data: any): SubmissionResponseDto {
     const dto: SubmissionResponseDto = {
       ...data,
@@ -1958,7 +2112,9 @@ export class SubmissionService {
     if (data.reviewSummation) {
       dto.reviewSummation = data.reviewSummation;
     }
-    dto.isLatest = Boolean(data.isLatest);
+    if (Object.prototype.hasOwnProperty.call(data, 'isLatest')) {
+      dto.isLatest = Boolean(data.isLatest);
+    }
     return dto;
   }
 }

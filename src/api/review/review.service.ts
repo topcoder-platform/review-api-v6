@@ -3028,8 +3028,10 @@ export class ReviewService {
               uid,
             );
           reviewerResources = resources.filter((r) => {
-            const rn = (r.roleName || '').toLowerCase();
-            return rn.includes('reviewer');
+            const roleName = (r.roleName || '').toLowerCase();
+            return REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
+              roleName.includes(keyword),
+            );
           });
           hasCopilotRole = resources.some((r) =>
             (r.roleName || '').toLowerCase().includes('copilot'),
@@ -3278,14 +3280,14 @@ export class ReviewService {
       return false;
     }
 
-    const enforceableNames = new Set([
+    const names = new Set([
       'review',
       'iterative review',
       'screening',
       'checkpoint screening',
     ]);
 
-    if (enforceableNames.has(normalized)) {
+    if (names.has(normalized)) {
       return true;
     }
 
@@ -3296,12 +3298,12 @@ export class ReviewService {
     challenge: ChallengeData | null | undefined,
   ): boolean {
     if (!challenge?.metadata) {
-      return false;
+      return true;
     }
 
     const rawValue = challenge.metadata['submissionLimit'];
     if (rawValue == null) {
-      return false;
+      return true;
     }
 
     let parsed: unknown = rawValue;
@@ -3309,7 +3311,7 @@ export class ReviewService {
     if (typeof rawValue === 'string') {
       const trimmed = rawValue.trim();
       if (!trimmed) {
-        return false;
+        return true;
       }
 
       try {
@@ -3323,7 +3325,7 @@ export class ReviewService {
         if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
           return false;
         }
-        return false;
+        return true;
       }
     }
 
@@ -3340,7 +3342,7 @@ export class ReviewService {
       if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
         return false;
       }
-      return false;
+      return true;
     }
 
     if (parsed && typeof parsed === 'object') {
@@ -3371,10 +3373,13 @@ export class ReviewService {
       if (limitFlag === true) {
         return true;
       }
-      return false;
+      if (limitFlag === false) {
+        return false;
+      }
+      return true;
     }
 
-    return false;
+    return true;
   }
 
   private extractSubmissionLimitUnlimited(value: unknown): boolean | null {

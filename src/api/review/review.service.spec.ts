@@ -757,6 +757,26 @@ describe('ReviewService.getReview authorization checks', () => {
     ).resolves.toMatchObject({ id: 'review-1', resourceId: 'resource-1' });
   });
 
+  it('allows checkpoint screeners to access their own reviews before completion', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        ...baseReviewerResource,
+        roleName: 'Checkpoint Screener',
+      },
+    ]);
+
+    prismaMock.review.findUniqueOrThrow.mockImplementation(() =>
+      Promise.resolve({
+        ...defaultReviewData(),
+        resourceId: 'resource-1',
+      }),
+    );
+
+    await expect(
+      service.getReview(baseAuthUser, 'review-1'),
+    ).resolves.toMatchObject({ id: 'review-1', resourceId: 'resource-1' });
+  });
+
   it('blocks submitters from accessing reviews before appeals or iterative review completion', async () => {
     const submitterUser: JwtUser = {
       userId: 'submitter-1',

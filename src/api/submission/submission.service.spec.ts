@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import { SubmissionStatus, SubmissionType } from '@prisma/client';
 import { Readable } from 'stream';
 import { SubmissionService } from './submission.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -266,6 +267,183 @@ describe('SubmissionService', () => {
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(s3Send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listSubmission', () => {
+    let prismaMock: {
+      submission: {
+        findMany: jest.Mock;
+        count: jest.Mock;
+        findFirst: jest.Mock;
+      };
+    };
+    let prismaErrorServiceMock: { handleError: jest.Mock };
+    let challengePrismaMock: {
+      challengeMetadata: { findMany: jest.Mock };
+    };
+    let listService: SubmissionService;
+
+    beforeEach(() => {
+      prismaMock = {
+        submission: {
+          findMany: jest.fn(),
+          count: jest.fn(),
+          findFirst: jest.fn(),
+        },
+      };
+      prismaErrorServiceMock = {
+        handleError: jest.fn(),
+      };
+      challengePrismaMock = {
+        challengeMetadata: {
+          findMany: jest.fn(),
+        },
+      };
+      challengePrismaMock.challengeMetadata.findMany.mockResolvedValue([]);
+      listService = new SubmissionService(
+        prismaMock as any,
+        prismaErrorServiceMock as any,
+        challengePrismaMock as any,
+        {} as any,
+        {
+          validateSubmitterRegistration: jest.fn(),
+          getMemberResourcesRoles: jest.fn(),
+        } as any,
+        {} as any,
+        {} as any,
+        { member: { findMany: jest.fn() } } as any,
+      );
+    });
+
+    it('applies default ordering and marks the newest submission as latest', async () => {
+      const submissions = [
+        {
+          id: 'submission-old',
+          challengeId: 'challenge-1',
+          memberId: 'member-1',
+          submittedDate: new Date('2024-01-01T10:00:00Z'),
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+          updatedAt: new Date('2024-01-01T10:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+        {
+          id: 'submission-new',
+          challengeId: 'challenge-1',
+          memberId: 'member-1',
+          submittedDate: new Date('2024-01-02T12:00:00Z'),
+          createdAt: new Date('2024-01-02T12:00:00Z'),
+          updatedAt: new Date('2024-01-02T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-new',
+      });
+
+      const result = await listService.listSubmission(
+        { isMachine: false } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [
+            { submittedDate: 'desc' },
+            { createdAt: 'desc' },
+            { updatedAt: 'desc' },
+            { id: 'desc' },
+          ],
+        }),
+      );
+
+      expect(
+        challengePrismaMock.challengeMetadata.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: { in: ['challenge-1'] },
+          }),
+        }),
+      );
+
+      const latestEntries = result.data.filter((entry) => entry.isLatest);
+      expect(latestEntries.map((entry) => entry.id)).toEqual([
+        'submission-new',
+      ]);
+    });
+
+    it('omits isLatest when submission metadata indicates unlimited submissions', async () => {
+      challengePrismaMock.challengeMetadata.findMany.mockResolvedValue([
+        {
+          challengeId: 'challenge-1',
+          value: '{"unlimited":"true","limit":"false","count":""}',
+        },
+      ]);
+
+      const submissions = [
+        {
+          id: 'submission-old',
+          challengeId: 'challenge-1',
+          memberId: 'member-1',
+          submittedDate: new Date('2024-01-01T10:00:00Z'),
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+          updatedAt: new Date('2024-01-01T10:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+        {
+          id: 'submission-new',
+          challengeId: 'challenge-1',
+          memberId: 'member-1',
+          submittedDate: new Date('2024-01-02T12:00:00Z'),
+          createdAt: new Date('2024-01-02T12:00:00Z'),
+          updatedAt: new Date('2024-01-02T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-new',
+      });
+
+      const result = await listService.listSubmission(
+        { isMachine: false } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(result.data[0]).not.toHaveProperty('isLatest');
+      expect(result.data[1]).not.toHaveProperty('isLatest');
     });
   });
 });
