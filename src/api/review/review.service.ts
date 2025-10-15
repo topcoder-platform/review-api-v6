@@ -2469,6 +2469,7 @@ export class ReviewService {
               await this.challengeApiService.getChallengeDetail(challengeId);
             const challenge = challengeDetail;
             const phases = challenge.phases || [];
+            const isFirst2Finish = this.isFirst2FinishChallenge(challenge);
             const appealsOpen = phases.some(
               (p) => p.name === 'Appeals' && p.isOpen,
             );
@@ -2492,6 +2493,9 @@ export class ReviewService {
             if (challenge.status === ChallengeStatus.COMPLETED) {
               // Allowed to see all reviews on this challenge
               // reviewWhereClause already limited to submissions on this challenge
+            } else if (isFirst2Finish) {
+              // First2Finish submitters can view all reviews; details for other submissions
+              // will be trimmed later in the response mapping.
             } else if (appealsOpen || appealsResponseOpen) {
               // Restrict to own reviews (own submissions only)
               restrictToSubmissionIds(mySubmissionIds);
@@ -2887,8 +2891,26 @@ export class ReviewService {
           finalScore: shouldMaskReviewDetails ? null : review.finalScore,
         };
 
+        const reviewChallengeId =
+          review.submission?.challengeId ?? challengeId ?? null;
+        const challengeForReview = reviewChallengeId
+          ? (challengeCache.get(reviewChallengeId) ?? null)
+          : null;
+        const normalizedPhaseName = (phaseName ?? '').trim().toLowerCase();
+        const shouldTrimIterativeReviewForOtherSubmitters =
+          !isPrivilegedRequester &&
+          submitterSubmissionIdSet.size > 0 &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          !isOwnSubmission &&
+          normalizedPhaseName === 'iterative review' &&
+          this.isFirst2FinishChallenge(challengeForReview);
+        const shouldStripReviewItems =
+          shouldMaskReviewDetails ||
+          shouldTrimIterativeReviewForOtherSubmitters;
+
         if (!isThin) {
-          sanitizedReview.reviewItems = shouldMaskReviewDetails
+          sanitizedReview.reviewItems = shouldStripReviewItems
             ? []
             : (review.reviewItems ?? []);
         } else {
@@ -3000,6 +3022,12 @@ export class ReviewService {
       });
 
       const challengeCache = new Map<string, ChallengeData | null>();
+      const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+      let challengeDetail: ChallengeData | null = null;
+      let hasCopilotRole = false;
+      let reviewerResourceIds = new Set<string>();
+      let isReviewerForReview = false;
+      let isSubmitterForChallenge = false;
 
       // Authorization for non-M2M, non-admin users
       if (!authUser?.isMachine && !isAdmin(authUser)) {
@@ -3018,9 +3046,9 @@ export class ReviewService {
         const challenge =
           await this.challengeApiService.getChallengeDetail(challengeId);
         challengeCache.set(challengeId, challenge);
+        challengeDetail = challenge;
 
         let reviewerResources: ResourceInfo[] = [];
-        let hasCopilotRole = false;
         try {
           const resources =
             await this.resourceApiService.getMemberResourcesRoles(
@@ -3043,12 +3071,13 @@ export class ReviewService {
           );
         }
 
-        if (reviewerResources.length > 0) {
-          const reviewerResourceIds = new Set(
-            reviewerResources.map((r) => String(r.id)),
-          );
-          const reviewResourceId = String(data.resourceId ?? '');
+        reviewerResourceIds = new Set(
+          reviewerResources.map((r) => String(r.id)),
+        );
+        const reviewResourceId = String(data.resourceId ?? '');
+        isReviewerForReview = reviewerResourceIds.has(reviewResourceId);
 
+        if (reviewerResources.length > 0) {
           if (
             challenge.status !== ChallengeStatus.COMPLETED &&
             !reviewerResourceIds.has(reviewResourceId)
@@ -3066,7 +3095,8 @@ export class ReviewService {
             where: { challengeId, memberId: uid },
             select: { id: true },
           });
-          if (mySubs.length === 0) {
+          isSubmitterForChallenge = mySubs.length > 0;
+          if (!isSubmitterForChallenge) {
             throw new ForbiddenException({
               message:
                 'You must have submitted to this challenge to access this review',
@@ -3087,7 +3117,8 @@ export class ReviewService {
             });
           }
 
-          if (!visibility.allowAny && !isOwnSubmission) {
+          const isFirst2Finish = this.isFirst2FinishChallenge(challenge);
+          if (!visibility.allowAny && !isOwnSubmission && !isFirst2Finish) {
             throw new ForbiddenException({
               message:
                 'Only reviews of your own submission are accessible during Appeals or Appeals Response',
@@ -3115,11 +3146,37 @@ export class ReviewService {
         // ignore
       }
       result.appeals = flattenedAppeals;
-      result.phaseName = await this.resolvePhaseNameFromChallenge({
+      const resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
         challengeId: data.submission?.challengeId ?? null,
         phaseId: data.phaseId ?? null,
         challengeCache,
       });
+      result.phaseName = resolvedPhaseName;
+
+      const normalizedPhaseName = (resolvedPhaseName ?? '')
+        .trim()
+        .toLowerCase();
+      const requesterId = String(authUser?.userId ?? '');
+      const submissionOwnerId = String(data.submission?.memberId ?? '');
+      const challengeForReview = data.submission?.challengeId
+        ? (challengeCache.get(data.submission.challengeId) ?? challengeDetail)
+        : challengeDetail;
+      const shouldTrimIterativeReviewForOtherSubmitters =
+        !isPrivilegedRequester &&
+        isSubmitterForChallenge &&
+        !hasCopilotRole &&
+        !isReviewerForReview &&
+        submissionOwnerId.length > 0 &&
+        requesterId.length > 0 &&
+        submissionOwnerId !== requesterId &&
+        normalizedPhaseName === 'iterative review' &&
+        this.isFirst2FinishChallenge(challengeForReview);
+
+      if (shouldTrimIterativeReviewForOtherSubmitters) {
+        result.reviewItems = [];
+        result.appeals = [];
+      }
+
       return result as ReviewResponseDto;
     } catch (error) {
       if (error instanceof ForbiddenException) {
@@ -3202,16 +3259,16 @@ export class ReviewService {
     return matchedPhase?.name ?? null;
   }
 
-  private getSubmitterVisibilityForChallenge(challenge?: {
-    status?: ChallengeStatus;
-    phases?: Array<{ name?: string | null; isOpen?: boolean | null }>;
-  }): { allowAny: boolean; allowOwn: boolean } {
+  private getSubmitterVisibilityForChallenge(
+    challenge?: ChallengeData | null,
+  ): { allowAny: boolean; allowOwn: boolean } {
     if (!challenge) {
       return { allowAny: false, allowOwn: false };
     }
 
     const status = challenge.status;
     const phases = challenge.phases || [];
+    const isFirst2Finish = this.isFirst2FinishChallenge(challenge);
 
     const normalizeName = (phaseName: string | null | undefined) =>
       String(phaseName ?? '').toLowerCase();
@@ -3239,9 +3296,35 @@ export class ReviewService {
       allowAny ||
       appealsOpen ||
       appealsResponseOpen ||
-      (!hasAppealsPhases && iterativeReviewClosed);
+      (!hasAppealsPhases && iterativeReviewClosed) ||
+      isFirst2Finish;
 
     return { allowAny, allowOwn };
+  }
+
+  private isFirst2FinishChallenge(challenge?: ChallengeData | null): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (
+      typeName === 'first2finish' ||
+      typeName === 'first 2 finish' ||
+      typeName === 'topgear task'
+    ) {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (legacySubTrack === 'first_2_finish') {
+      return true;
+    }
+
+    return false;
   }
 
   private shouldEnforceLatestSubmissionForReview(
