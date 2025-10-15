@@ -2313,6 +2313,7 @@ export class ReviewService {
         allowAny: false,
         allowOwn: false,
       };
+      let allowLimitedVisibilityForOtherSubmissions = false;
 
       // Utility to merge an allowed set of submission IDs into where clause
       const restrictToSubmissionIds = (allowedIds: string[]) => {
@@ -2497,15 +2498,15 @@ export class ReviewService {
               // First2Finish submitters can view all reviews; details for other submissions
               // will be trimmed later in the response mapping.
             } else if (appealsOpen || appealsResponseOpen) {
-              // Restrict to own reviews (own submissions only)
-              restrictToSubmissionIds(mySubmissionIds);
+              // Allow limited visibility into other submissions; details will be redacted later.
+              allowLimitedVisibilityForOtherSubmissions = true;
             } else if (
               challenge.status === ChallengeStatus.ACTIVE &&
               submissionPhaseClosed &&
               hasSubmitterRoleForChallenge
             ) {
-              // Submitters can access their own submissions once submission phase closes
-              restrictToSubmissionIds(mySubmissionIds);
+              // Allow limited visibility into other submissions once submission phase closes.
+              allowLimitedVisibilityForOtherSubmissions = true;
             } else {
               // No access for non-completed, non-appeals phases
               throw new ForbiddenException({
@@ -2877,18 +2878,29 @@ export class ReviewService {
           !isReviewerForReview &&
           isOwnSubmission &&
           !submitterVisibilityState.allowOwn;
+        const shouldLimitNonOwnerVisibility =
+          allowLimitedVisibilityForOtherSubmissions &&
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          submitterSubmissionIdSet.size > 0 &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          !isOwnSubmission &&
+          !submitterVisibilityState.allowAny;
 
         const reviewPhaseId = review.phaseId ? String(review.phaseId) : '';
         const phaseName = reviewPhaseId
           ? (phaseNameCache.get(reviewPhaseId) ?? null)
           : null;
 
+        const sanitizeScores =
+          shouldMaskReviewDetails || shouldLimitNonOwnerVisibility;
         const sanitizedReview: typeof review & {
           reviewItems?: typeof review.reviewItems;
         } = {
           ...review,
-          initialScore: shouldMaskReviewDetails ? null : review.initialScore,
-          finalScore: shouldMaskReviewDetails ? null : review.finalScore,
+          initialScore: sanitizeScores ? null : review.initialScore,
+          finalScore: sanitizeScores ? null : review.finalScore,
         };
 
         const reviewChallengeId =
@@ -2907,7 +2919,8 @@ export class ReviewService {
           this.isFirst2FinishChallenge(challengeForReview);
         const shouldStripReviewItems =
           shouldMaskReviewDetails ||
-          shouldTrimIterativeReviewForOtherSubmitters;
+          shouldTrimIterativeReviewForOtherSubmitters ||
+          shouldLimitNonOwnerVisibility;
 
         if (!isThin) {
           sanitizedReview.reviewItems = shouldStripReviewItems
@@ -2966,6 +2979,20 @@ export class ReviewService {
         if (shouldIncludeSubmitterMetadata) {
           result.submitterHandle = submitterProfile?.handle ?? null;
           result.submitterMaxRating = submitterProfile?.maxRating ?? null;
+        }
+        if (shouldLimitNonOwnerVisibility) {
+          delete (result as any).finalScore;
+          delete (result as any).initialScore;
+          result.submitterHandle = null;
+          result.submitterMaxRating = null;
+          if (!isThin) {
+            (result as any).appeals = [];
+          } else {
+            delete (result as any).appeals;
+          }
+          delete (result as any).metadata;
+          delete (result as any).typeId;
+          delete (result as any).committed;
         }
         return result;
       });

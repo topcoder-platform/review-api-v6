@@ -175,6 +175,8 @@ describe('ReviewService.createReview authorization checks', () => {
         roleName: 'Reviewer',
       },
     ]);
+    resourcePrismaMock.resource.findMany.mockResolvedValue([]);
+    memberPrismaMock.member.findMany.mockResolvedValue([]);
   });
 
   it('throws when resource does not belong to non-admin user', async () => {
@@ -1133,7 +1135,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(callArgs.where.resourceId).toBeUndefined();
   });
 
-  it('restricts submitters to their own submissions when submission phase is closed on an active challenge', async () => {
+  it('includes non-owned submissions with limited visibility when submission phase is closed on an active challenge', async () => {
     const submitterResource = {
       ...buildResource('Submitter'),
       roleId: CommonConfig.roles.submitterRoleId,
@@ -1163,7 +1165,9 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     await service.getReviews(baseAuthUser, undefined, 'challenge-1');
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.submissionId).toEqual({ in: [baseSubmission.id] });
+    expect(callArgs.where.submissionId).toEqual({
+      in: [baseSubmission.id, 'submission-other'],
+    });
   });
 
   it('masks scores and review items for submitters before appeals open', async () => {
@@ -1324,6 +1328,160 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.data[0].finalScore).toBe(92.3);
     expect(response.data[0].initialScore).toBe(89.7);
     expect(response.data[0].reviewItems).toHaveLength(1);
+  });
+
+  it('returns limited review data for non-owned submissions when appeals are open', async () => {
+    const now = new Date();
+    const submitterResource = {
+      ...buildResource('Submitter'),
+      roleId: CommonConfig.roles.submitterRoleId,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      submitterResource,
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Active Challenge',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        { id: 'phase-sub', name: 'Submission', isOpen: false },
+        { id: 'phase-appeals', name: 'Appeals', isOpen: true },
+      ],
+    });
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([baseSubmission]);
+      }
+      return Promise.resolve([baseSubmission, { id: 'submission-other' }]);
+    });
+
+    const ownReview = {
+      id: 'review-1',
+      resourceId: 'resource-reviewer',
+      submissionId: baseSubmission.id,
+      phaseId: 'phase-appeals',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: { notes: 'own submission' },
+      reviewItems: [
+        {
+          id: 'item-1',
+          scorecardQuestionId: 'question-1',
+          initialAnswer: 'Yes',
+          finalAnswer: 'Yes',
+          managerComment: null,
+          createdAt: now,
+          createdBy: 'reviewer',
+          updatedAt: now,
+          updatedBy: 'reviewer',
+          reviewItemComments: [],
+        },
+      ],
+      createdAt: now,
+      createdBy: 'creator',
+      updatedAt: now,
+      updatedBy: 'updater',
+      finalScore: 95.5,
+      initialScore: 93.2,
+      submission: {
+        id: baseSubmission.id,
+        memberId: baseAuthUser.userId,
+        challengeId: 'challenge-1',
+      },
+    };
+
+    const otherReview = {
+      id: 'review-2',
+      resourceId: 'resource-reviewer-2',
+      submissionId: 'submission-other',
+      phaseId: 'phase-appeals',
+      scorecardId: 'scorecard-2',
+      typeId: 'type-2',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: { notes: 'other submission' },
+      reviewItems: [
+        {
+          id: 'item-2',
+          scorecardQuestionId: 'question-2',
+          initialAnswer: 'No',
+          finalAnswer: 'No',
+          managerComment: 'Needs work',
+          createdAt: now,
+          createdBy: 'reviewer-2',
+          updatedAt: now,
+          updatedBy: 'reviewer-2',
+          reviewItemComments: [],
+        },
+      ],
+      createdAt: now,
+      createdBy: 'creator-2',
+      updatedAt: now,
+      updatedBy: 'updater-2',
+      finalScore: 70.0,
+      initialScore: 68.0,
+      submission: {
+        id: 'submission-other',
+        memberId: 'other-user',
+        challengeId: 'challenge-1',
+      },
+    };
+
+    prismaMock.review.findMany.mockResolvedValue([ownReview, otherReview]);
+    prismaMock.review.count.mockResolvedValue(2);
+
+    const response = await service.getReviews(
+      baseAuthUser,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data).toHaveLength(2);
+    const own = response.data.find(
+      (entry) => entry.submissionId === baseSubmission.id,
+    );
+    const other = response.data.find(
+      (entry) => entry.submissionId === 'submission-other',
+    );
+
+    expect(own).toBeDefined();
+    expect(other).toBeDefined();
+    expect(own?.finalScore).toBe(95.5);
+    expect(own?.initialScore).toBe(93.2);
+    expect(own?.reviewItems).toHaveLength(1);
+
+    const otherResult = other as any;
+    expect(otherResult && 'finalScore' in otherResult).toBe(false);
+    expect(otherResult && 'initialScore' in otherResult).toBe(false);
+    expect(other?.reviewItems).toEqual([]);
+    expect(other?.reviewDate).toEqual(now);
+    expect(other?.phaseName).toBe('Appeals');
+    expect(other).toMatchObject({
+      id: 'review-2',
+      resourceId: 'resource-reviewer-2',
+      submissionId: 'submission-other',
+      scorecardId: 'scorecard-2',
+      status: ReviewStatus.COMPLETED,
+      phaseId: 'phase-appeals',
+      createdAt: now,
+      createdBy: 'creator-2',
+      updatedAt: now,
+      updatedBy: 'updater-2',
+    });
+    expect(other?.reviewerHandle).toBeNull();
+    expect(other?.reviewerMaxRating).toBeNull();
+    expect(other?.submitterHandle).toBeNull();
+    expect(other?.submitterMaxRating).toBeNull();
+    expect(other && 'metadata' in other).toBe(false);
+    expect(other && 'typeId' in other).toBe(false);
+    expect(other && 'committed' in other).toBe(false);
   });
 
   it('omits nested review details when thin flag is set', async () => {
