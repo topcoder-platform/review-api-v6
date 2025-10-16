@@ -831,6 +831,80 @@ describe('ReviewService.getReview authorization checks', () => {
     });
   });
 
+  it('allows submitters to access their own screening review once the screening phase completes', async () => {
+    const submitterUser: JwtUser = {
+      userId: 'submitter-1',
+      roles: [UserRole.Submitter],
+      isMachine: false,
+    };
+
+    const now = new Date();
+
+    prismaMock.review.findUniqueOrThrow.mockResolvedValue({
+      ...defaultReviewData(),
+      phaseId: 'phase-screening',
+      finalScore: 88.2,
+      initialScore: 85.4,
+      reviewItems: [
+        {
+          id: 'item-1',
+          scorecardQuestionId: 'q-1',
+          initialAnswer: 'Yes',
+          finalAnswer: 'No',
+          managerComment: 'detailed',
+          createdAt: now,
+          createdBy: 'reviewer',
+          updatedAt: now,
+          updatedBy: 'reviewer',
+          reviewItemComments: [],
+        },
+      ],
+      submission: {
+        id: 'submission-1',
+        challengeId: 'challenge-1',
+        memberId: submitterUser.userId,
+      },
+    });
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        ...baseReviewerResource,
+        id: 'resource-submit',
+        memberId: submitterUser.userId,
+        roleName: 'Submitter',
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+    ]);
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([{ id: 'submission-1' }]);
+      }
+      return Promise.resolve([{ id: 'submission-1' }]);
+    });
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        {
+          id: 'phase-screening',
+          name: 'Screening',
+          isOpen: false,
+          actualEndTime: now.toISOString(),
+        },
+        { id: 'phase-appeals', name: 'Appeals', isOpen: false },
+      ],
+    });
+
+    const response = await service.getReview(submitterUser, 'review-1');
+
+    expect(response.reviewItems).toHaveLength(1);
+    expect(response.finalScore).toBe(88.2);
+    expect(response.initialScore).toBe(85.4);
+    expect(response.phaseName).toBe('Screening');
+  });
+
   it('allows submitters to access their review once iterative review closes without appeals', async () => {
     const submitterUser: JwtUser = {
       userId: 'submitter-1',
@@ -1248,6 +1322,101 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.data[0].finalScore).toBeNull();
     expect(response.data[0].initialScore).toBeNull();
     expect(response.data[0].reviewItems).toEqual([]);
+  });
+
+  it('returns full screening review details for submitters once the screening phase completes', async () => {
+    const now = new Date();
+    const submitterUser: JwtUser = {
+      userId: 'submitter-1',
+      roles: [],
+      isMachine: false,
+    };
+
+    const submitterResource = {
+      ...buildResource('Submitter', submitterUser.userId),
+      roleId: CommonConfig.roles.submitterRoleId,
+      memberId: submitterUser.userId,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      submitterResource,
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Active Challenge',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        {
+          id: 'phase-screening',
+          name: 'Screening',
+          isOpen: false,
+          actualEndTime: now.toISOString(),
+        },
+        { id: 'phase-appeals', name: 'Appeals', isOpen: false },
+      ],
+    });
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([{ id: baseSubmission.id }]);
+      }
+      return Promise.resolve([{ id: baseSubmission.id }]);
+    });
+
+    const reviewRecord = {
+      id: 'review-1',
+      resourceId: 'resource-reviewer',
+      submissionId: baseSubmission.id,
+      phaseId: 'phase-screening',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: null,
+      reviewItems: [
+        {
+          id: 'item-1',
+          scorecardQuestionId: 'question-1',
+          initialAnswer: 'Yes',
+          finalAnswer: 'No',
+          managerComment: 'detail',
+          createdAt: now,
+          createdBy: 'reviewer',
+          updatedAt: now,
+          updatedBy: 'reviewer',
+          reviewItemComments: [],
+        },
+      ],
+      createdAt: now,
+      createdBy: 'creator',
+      updatedAt: now,
+      updatedBy: 'updater',
+      finalScore: 91.1,
+      initialScore: 89.9,
+      submission: {
+        id: baseSubmission.id,
+        memberId: submitterUser.userId,
+        challengeId: 'challenge-1',
+      },
+    };
+
+    prismaMock.review.findMany.mockResolvedValue([reviewRecord]);
+    prismaMock.review.count.mockResolvedValue(1);
+
+    const response = await service.getReviews(
+      submitterUser,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data).toHaveLength(1);
+    const [review] = response.data;
+    expect(review.finalScore).toBe(91.1);
+    expect(review.initialScore).toBe(89.9);
+    expect(review.reviewItems).toHaveLength(1);
+    expect(review.phaseName).toBe('Screening');
   });
 
   it('returns scores for submitters once appeals are open', async () => {

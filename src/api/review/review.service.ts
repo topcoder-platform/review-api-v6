@@ -2507,6 +2507,12 @@ export class ReviewService {
             ) {
               // Allow limited visibility into other submissions once submission phase closes.
               allowLimitedVisibilityForOtherSubmissions = true;
+            } else if (
+              hasSubmitterRoleForChallenge &&
+              this.hasChallengePhaseCompleted(challenge, ['screening'])
+            ) {
+              // Allow submitters to access their own screening reviews once screening phase completes.
+              restrictToSubmissionIds(mySubmissionIds);
             } else {
               // No access for non-completed, non-appeals phases
               throw new ForbiddenException({
@@ -2870,7 +2876,32 @@ export class ReviewService {
         const isReviewerForReview = reviewerResourceIdSet.has(reviewResourceId);
         const isOwnSubmission =
           submitterSubmissionIdSet.has(reviewSubmissionId);
+
+        const reviewPhaseId = review.phaseId ? String(review.phaseId) : '';
+        const phaseName = reviewPhaseId
+          ? (phaseNameCache.get(reviewPhaseId) ?? null)
+          : null;
+        const normalizedPhaseName = this.normalizePhaseName(phaseName);
+
+        const reviewChallengeId =
+          review.submission?.challengeId ?? challengeId ?? null;
+        const challengeForReview = reviewChallengeId
+          ? (challengeCache.get(reviewChallengeId) ?? null)
+          : null;
+        const screeningPhaseCompleted = this.hasChallengePhaseCompleted(
+          challengeForReview,
+          ['screening'],
+        );
+        const allowOwnScreeningVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          screeningPhaseCompleted &&
+          normalizedPhaseName === 'screening';
         const shouldMaskReviewDetails =
+          !allowOwnScreeningVisibility &&
           !isPrivilegedRequester &&
           hasSubmitterRoleForChallenge &&
           submitterSubmissionIdSet.size > 0 &&
@@ -2888,11 +2919,6 @@ export class ReviewService {
           !isOwnSubmission &&
           !submitterVisibilityState.allowAny;
 
-        const reviewPhaseId = review.phaseId ? String(review.phaseId) : '';
-        const phaseName = reviewPhaseId
-          ? (phaseNameCache.get(reviewPhaseId) ?? null)
-          : null;
-
         const sanitizeScores =
           shouldMaskReviewDetails || shouldLimitNonOwnerVisibility;
         const sanitizedReview: typeof review & {
@@ -2903,12 +2929,6 @@ export class ReviewService {
           finalScore: sanitizeScores ? null : review.finalScore,
         };
 
-        const reviewChallengeId =
-          review.submission?.challengeId ?? challengeId ?? null;
-        const challengeForReview = reviewChallengeId
-          ? (challengeCache.get(reviewChallengeId) ?? null)
-          : null;
-        const normalizedPhaseName = (phaseName ?? '').trim().toLowerCase();
         const shouldTrimIterativeReviewForOtherSubmitters =
           !isPrivilegedRequester &&
           submitterSubmissionIdSet.size > 0 &&
@@ -3050,6 +3070,7 @@ export class ReviewService {
 
       const challengeCache = new Map<string, ChallengeData | null>();
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+      let resolvedPhaseName: string | null = null;
       let challengeDetail: ChallengeData | null = null;
       let hasCopilotRole = false;
       let reviewerResourceIds = new Set<string>();
@@ -3135,7 +3156,19 @@ export class ReviewService {
           const visibility = this.getSubmitterVisibilityForChallenge(challenge);
           const isOwnSubmission = !!uid && data.submission?.memberId === uid;
 
-          if (!visibility.allowOwn) {
+          resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
+            challengeId,
+            phaseId: data.phaseId ?? null,
+            challengeCache,
+          });
+          const normalizedPhaseNameForAccess =
+            this.normalizePhaseName(resolvedPhaseName);
+          const canSeeOwnScreeningReview =
+            isOwnSubmission &&
+            normalizedPhaseNameForAccess === 'screening' &&
+            this.hasChallengePhaseCompleted(challenge, ['screening']);
+
+          if (!visibility.allowOwn && !canSeeOwnScreeningReview) {
             throw new ForbiddenException({
               message:
                 'Reviews are not accessible for this challenge at the current phase',
@@ -3173,16 +3206,16 @@ export class ReviewService {
         // ignore
       }
       result.appeals = flattenedAppeals;
-      const resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
-        challengeId: data.submission?.challengeId ?? null,
-        phaseId: data.phaseId ?? null,
-        challengeCache,
-      });
+      if (!resolvedPhaseName) {
+        resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
+          challengeId: data.submission?.challengeId ?? null,
+          phaseId: data.phaseId ?? null,
+          challengeCache,
+        });
+      }
       result.phaseName = resolvedPhaseName;
 
-      const normalizedPhaseName = (resolvedPhaseName ?? '')
-        .trim()
-        .toLowerCase();
+      const normalizedPhaseName = this.normalizePhaseName(resolvedPhaseName);
       const requesterId = String(authUser?.userId ?? '');
       const submissionOwnerId = String(data.submission?.memberId ?? '');
       const challengeForReview = data.submission?.challengeId
@@ -3286,6 +3319,67 @@ export class ReviewService {
     return matchedPhase?.name ?? null;
   }
 
+  private normalizePhaseName(phaseName: string | null | undefined): string {
+    return String(phaseName ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private hasChallengePhaseCompleted(
+    challenge: ChallengeData | null | undefined,
+    phaseNames: string[],
+  ): boolean {
+    if (!challenge?.phases?.length) {
+      return false;
+    }
+
+    const normalizedTargets = new Set(
+      (phaseNames ?? [])
+        .map((name) => this.normalizePhaseName(name))
+        .filter((name) => name.length > 0),
+    );
+
+    if (!normalizedTargets.size) {
+      return false;
+    }
+
+    return (challenge.phases ?? []).some((phase) => {
+      if (!phase) {
+        return false;
+      }
+
+      const normalizedName = this.normalizePhaseName((phase as any).name);
+      if (!normalizedTargets.has(normalizedName)) {
+        return false;
+      }
+
+      if ((phase as any).isOpen === true) {
+        return false;
+      }
+
+      const actualEnd =
+        (phase as any).actualEndTime ?? (phase as any).actualEndDate ?? null;
+
+      if (actualEnd == null) {
+        return false;
+      }
+
+      if (typeof actualEnd === 'string') {
+        return actualEnd.trim().length > 0;
+      }
+
+      if (actualEnd instanceof Date) {
+        return true;
+      }
+
+      try {
+        return String(actualEnd).trim().length > 0;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   private getSubmitterVisibilityForChallenge(
     challenge?: ChallengeData | null,
   ): { allowAny: boolean; allowOwn: boolean } {
@@ -3297,25 +3391,25 @@ export class ReviewService {
     const phases = challenge.phases || [];
     const isFirst2Finish = this.isFirst2FinishChallenge(challenge);
 
-    const normalizeName = (phaseName: string | null | undefined) =>
-      String(phaseName ?? '').toLowerCase();
-
     const appealsOpen = phases.some(
-      (phase) => normalizeName(phase.name) === 'appeals' && phase.isOpen,
+      (phase) =>
+        this.normalizePhaseName(phase?.name) === 'appeals' &&
+        phase?.isOpen === true,
     );
     const appealsResponseOpen = phases.some(
       (phase) =>
-        normalizeName(phase.name) === 'appeals response' && phase.isOpen,
+        this.normalizePhaseName(phase?.name) === 'appeals response' &&
+        phase?.isOpen === true,
     );
 
     const hasAppealsPhases = phases.some((phase) => {
-      const name = normalizeName(phase.name);
+      const name = this.normalizePhaseName(phase?.name);
       return name === 'appeals' || name === 'appeals response';
     });
 
     const iterativeReviewClosed = phases.some((phase) => {
-      const name = normalizeName(phase.name);
-      return name === 'iterative review' && phase.isOpen === false;
+      const name = this.normalizePhaseName(phase?.name);
+      return name === 'iterative review' && phase?.isOpen === false;
     });
 
     const allowAny = status === ChallengeStatus.COMPLETED;
