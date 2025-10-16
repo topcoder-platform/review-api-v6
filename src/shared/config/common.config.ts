@@ -70,5 +70,12 @@ export const CommonConfig = {
     contactManagersEmailTemplate:
       process.env.SENDGRID_CONTACT_MANAGERS_TEMPLATE ??
       'd-00000000000000000000000000000000',
+    aiWorkflowRunCompletedEmailTemplate:
+      process.env.SENDGRID_AI_WORKFLOW_RUN_COMPLETED_TEMPLATE ??
+      'd-7d14d986ba0a4317b449164b73939910',
+  },
+  ui: {
+    reviewUIUrl:
+      process.env.REVIEW_UI_URL ?? 'https://review-v6.topcoder-dev.com',
   },
 };
