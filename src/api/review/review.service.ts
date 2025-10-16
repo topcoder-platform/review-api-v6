@@ -1672,6 +1672,7 @@ export class ReviewService {
     const isPrivileged = isAdmin(requester);
     const challengeId = existingReview.submission?.challengeId;
     const challengeCache = new Map<string, ChallengeData | null>();
+    let challengeDetailForPhase: ChallengeData | null = null;
     const isMemberRequester = !requester?.isMachine;
     const normalizedRoles = Array.isArray(requester.roles)
       ? requester.roles.map((role) => String(role).trim().toLowerCase())
@@ -1689,6 +1690,33 @@ export class ReviewService {
       .map(([key]) => key);
     const isStatusOnlyUpdate =
       definedBodyKeys.length === 1 && definedBodyKeys[0] === 'status';
+    const requestedStatusValue = (body as ReviewPatchRequestDto).status;
+    const requestedStatus =
+      typeof requestedStatusValue === 'string' &&
+      (Object.values(ReviewStatus) as string[]).includes(requestedStatusValue)
+        ? requestedStatusValue
+        : undefined;
+    const requestedCommittedValue = (body as ReviewPatchRequestDto).committed;
+    const requestedCommitted =
+      typeof requestedCommittedValue === 'boolean'
+        ? requestedCommittedValue
+        : undefined;
+    const reopenStatuses = new Set<ReviewStatus>([
+      ReviewStatus.IN_PROGRESS,
+      ReviewStatus.PENDING,
+    ]);
+    const isReopenStatusRequested =
+      requestedStatus !== undefined && reopenStatuses.has(requestedStatus);
+    const isReopenTransition =
+      existingReview.status === ReviewStatus.COMPLETED &&
+      isReopenStatusRequested;
+    const isCopilotReopenPayload =
+      isReopenTransition &&
+      definedBodyKeys.includes('status') &&
+      definedBodyKeys.every(
+        (field) => field === 'status' || field === 'committed',
+      ) &&
+      (requestedCommitted === undefined || requestedCommitted === false);
 
     if (isMemberRequester && !isPrivileged) {
       const requesterMemberId = String(requester?.userId ?? '');
@@ -1732,7 +1760,9 @@ export class ReviewService {
       );
 
       const allowCopilotStatusPatch =
-        hasCopilotRole && isStatusOnlyUpdate && !ownsReview;
+        hasCopilotRole &&
+        !ownsReview &&
+        (isStatusOnlyUpdate || isCopilotReopenPayload);
 
       if (!ownsReview) {
         if (allowCopilotStatusPatch) {
@@ -1810,7 +1840,6 @@ export class ReviewService {
     }
 
     if (!isPrivileged && challengeId) {
-      let challengeDetailForPhase: ChallengeData;
       try {
         challengeDetailForPhase =
           await this.challengeApiService.getChallengeDetail(challengeId);
@@ -1827,12 +1856,80 @@ export class ReviewService {
         });
       }
 
-      if (challengeDetailForPhase.status === ChallengeStatus.COMPLETED) {
+      if (
+        challengeDetailForPhase &&
+        challengeDetailForPhase.status === ChallengeStatus.COMPLETED
+      ) {
         throw new ForbiddenException({
           message:
             'Reviews for challenges in COMPLETED status cannot be updated.  Only an admin can update a review once the challenge is complete.',
           code: 'REVIEW_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
           details: { reviewId: id, challengeId },
+        });
+      }
+    }
+
+    if (
+      isReopenTransition &&
+      challengeId &&
+      existingReview.phaseId !== undefined &&
+      existingReview.phaseId !== null
+    ) {
+      const normalizedPhaseId = String(existingReview.phaseId);
+
+      if (!challengeDetailForPhase) {
+        if (challengeCache.has(challengeId)) {
+          challengeDetailForPhase = challengeCache.get(challengeId) ?? null;
+        } else {
+          try {
+            challengeDetailForPhase =
+              await this.challengeApiService.getChallengeDetail(challengeId);
+            challengeCache.set(challengeId, challengeDetailForPhase);
+          } catch (error) {
+            this.logger.error(
+              `[updateReview] Unable to verify phase ${normalizedPhaseId} for review ${id} on challenge ${challengeId}`,
+              error,
+            );
+            throw new InternalServerErrorException({
+              message:
+                'Unable to verify the phase status for this review. Please try again later.',
+              code: 'CHALLENGE_PHASE_STATUS_UNAVAILABLE',
+              details: {
+                reviewId: id,
+                challengeId,
+                phaseId: normalizedPhaseId,
+              },
+            });
+          }
+        }
+      }
+
+      const matchingPhase =
+        challengeDetailForPhase?.phases?.find((phase) => {
+          if (!phase) {
+            return false;
+          }
+          const candidateIds = [
+            String((phase as any).id ?? ''),
+            String((phase as any).phaseId ?? ''),
+          ].filter((value) => value.length > 0);
+          return candidateIds.includes(normalizedPhaseId);
+        }) ?? null;
+
+      if (
+        matchingPhase &&
+        matchingPhase.actualEndTime &&
+        matchingPhase.isOpen === false
+      ) {
+        throw new ForbiddenException({
+          message:
+            'Reviews associated with closed challenge phases cannot be reopened to Pending or In Progress.',
+          code: 'REVIEW_UPDATE_FORBIDDEN_PHASE_CLOSED',
+          details: {
+            reviewId: id,
+            challengeId,
+            phaseId: normalizedPhaseId,
+          },
         });
       }
     }
@@ -1900,6 +1997,15 @@ export class ReviewService {
       ...baseUpdateData,
       ...(reviewItemsUpdate ?? {}),
     } as Prisma.reviewUpdateInput;
+
+    if (isReopenTransition) {
+      if (updateData.committed === undefined) {
+        updateData.committed = false;
+      }
+      if (updateData.reviewDate === undefined) {
+        updateData.reviewDate = null;
+      }
+    }
 
     try {
       const data = await this.prisma.review.update({

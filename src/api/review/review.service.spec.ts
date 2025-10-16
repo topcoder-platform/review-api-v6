@@ -2910,6 +2910,99 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     );
   });
 
+  it('rejects reopening a completed review when the associated phase has closed', async () => {
+    prismaMock.review.findUnique.mockResolvedValueOnce({
+      id: 'review-1',
+      resourceId: 'resource-1',
+      status: ReviewStatus.COMPLETED,
+      phaseId: 'phase-review',
+      submission: {
+        challengeId: 'challenge-1',
+      },
+      reviewItems: [],
+    });
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        {
+          id: 'phase-review',
+          name: 'Review',
+          isOpen: false,
+          actualEndTime: '2024-01-31T00:00:00.000Z',
+        },
+      ],
+    });
+
+    await expect(
+      service.updateReview(nonPrivilegedUser, 'review-1', {
+        status: ReviewStatus.PENDING,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_UPDATE_FORBIDDEN_PHASE_CLOSED',
+      }),
+      status: 403,
+    });
+
+    expect(prismaMock.review.update).not.toHaveBeenCalled();
+    expect(recomputeSpy).not.toHaveBeenCalled();
+    expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+      'challenge-1',
+    );
+  });
+
+  it('rejects reopening a completed review for admins when the associated phase has closed', async () => {
+    prismaMock.review.findUnique.mockResolvedValueOnce({
+      id: 'review-1',
+      resourceId: 'resource-1',
+      status: ReviewStatus.COMPLETED,
+      phaseId: 'phase-review',
+      submission: {
+        challengeId: 'challenge-1',
+      },
+      reviewItems: [],
+    });
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        {
+          id: 'phase-review',
+          name: 'Review',
+          isOpen: false,
+          actualEndTime: '2024-01-31T00:00:00.000Z',
+        },
+      ],
+    });
+
+    const adminUser: JwtUser = {
+      userId: 'admin-1',
+      roles: [UserRole.Admin],
+      isMachine: false,
+    };
+
+    await expect(
+      service.updateReview(adminUser, 'review-1', {
+        status: ReviewStatus.IN_PROGRESS,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'REVIEW_UPDATE_FORBIDDEN_PHASE_CLOSED',
+      }),
+      status: 403,
+    });
+
+    expect(prismaMock.review.update).not.toHaveBeenCalled();
+    expect(resourceApiServiceMock.getResources).not.toHaveBeenCalled();
+    expect(recomputeSpy).not.toHaveBeenCalled();
+    expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+      'challenge-1',
+    );
+  });
+
   it('publishes completion event when review status transitions to COMPLETED', async () => {
     const completionDate = new Date('2024-02-01T10:00:00Z');
 
@@ -3015,6 +3108,104 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       isMachine: false,
     };
 
+    const existingReview = {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      status: ReviewStatus.COMPLETED,
+      committed: true,
+      reviewDate: new Date('2024-01-15T10:00:00Z'),
+      submission: {
+        challengeId: 'challenge-1',
+      },
+      reviewItems: [],
+    };
+    prismaMock.review.findUnique.mockResolvedValueOnce(existingReview);
+    prismaMock.review.update.mockResolvedValueOnce({
+      ...existingReview,
+      status: ReviewStatus.PENDING,
+      committed: false,
+      reviewDate: null,
+    });
+
+    resourceApiServiceMock.getResources.mockResolvedValue([
+      {
+        id: 'resource-9',
+        challengeId: 'challenge-1',
+        memberId: 'copilot-1',
+      },
+    ]);
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        id: 'resource-9',
+        challengeId: 'challenge-1',
+        memberId: 'copilot-1',
+        memberHandle: 'copilotHandle',
+        roleId: 'copilot-role',
+        created: new Date().toISOString(),
+        createdBy: 'tc',
+        roleName: 'Copilot',
+      },
+    ]);
+
+    const result = await service.updateReview(copilotUser, 'review-1', {
+      status: ReviewStatus.PENDING,
+      committed: false,
+    } as any);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'review-1',
+        status: ReviewStatus.PENDING,
+        committed: false,
+        reviewDate: null,
+        appeals: [],
+        phaseName: null,
+      }),
+    );
+    expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+    const updateArgs = prismaMock.review.update.mock.calls[0][0];
+    expect(updateArgs.data).toMatchObject({
+      status: ReviewStatus.PENDING,
+      committed: false,
+      reviewDate: null,
+    });
+    expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
+      challengeId: 'challenge-1',
+      memberId: 'copilot-1',
+    });
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'copilot-1',
+    );
+    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+  });
+
+  it('defaults committed to false and clears reviewDate when reopening with only status provided', async () => {
+    const copilotUser: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    const existingReview = {
+      id: 'review-1',
+      resourceId: 'resource-1',
+      status: ReviewStatus.COMPLETED,
+      committed: true,
+      reviewDate: new Date('2024-01-20T12:00:00Z'),
+      submission: {
+        challengeId: 'challenge-1',
+      },
+      reviewItems: [],
+    };
+    prismaMock.review.findUnique.mockResolvedValueOnce(existingReview);
+    prismaMock.review.update.mockResolvedValueOnce({
+      ...existingReview,
+      status: ReviewStatus.IN_PROGRESS,
+      committed: false,
+      reviewDate: null,
+    });
+
     resourceApiServiceMock.getResources.mockResolvedValue([
       {
         id: 'resource-9',
@@ -3039,7 +3230,22 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       status: ReviewStatus.IN_PROGRESS,
     } as any);
 
-    expect(result).toEqual({ id: 'review-1', appeals: [], phaseName: null });
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'review-1',
+        status: ReviewStatus.IN_PROGRESS,
+        committed: false,
+        reviewDate: null,
+        appeals: [],
+        phaseName: null,
+      }),
+    );
+    const updateArgs = prismaMock.review.update.mock.calls[0][0];
+    expect(updateArgs.data).toMatchObject({
+      status: ReviewStatus.IN_PROGRESS,
+      committed: false,
+      reviewDate: null,
+    });
     expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
       challengeId: 'challenge-1',
       memberId: 'copilot-1',
@@ -3048,7 +3254,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       'challenge-1',
       'copilot-1',
     );
-    expect(prismaMock.review.update).toHaveBeenCalledTimes(1);
+    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
   });
 
   it('records an audit entry when an admin updates review status and answers', async () => {
