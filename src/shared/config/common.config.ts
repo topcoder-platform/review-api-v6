@@ -50,7 +50,7 @@ export const CommonConfig = {
     v6ApiUrl: process.env.V6_API_URL ?? 'https://api.topcoder-dev.com/v6',
     memberApiUrl: process.env.MEMBER_API_URL ?? 'http://localhost:4000/members',
     onlineReviewUrlBase:
-      'https://software.topcoder.com/review/actions/ViewProjectDetails?pid=',
+      'https://review.topcoder.com/review/active-challenges/',
   },
   // Resource role configuration
   roles: {
