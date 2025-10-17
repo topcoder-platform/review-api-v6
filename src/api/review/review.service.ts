@@ -3153,6 +3153,10 @@ export class ReviewService {
           challengeForReview,
           ['screening'],
         );
+        const checkpointReviewPhaseCompleted =
+          this.hasChallengePhaseClosedWithActualDates(challengeForReview, [
+            'checkpoint review',
+          ]);
         const allowOwnScreeningVisibility =
           !isPrivilegedRequester &&
           hasSubmitterRoleForChallenge &&
@@ -3161,8 +3165,17 @@ export class ReviewService {
           isOwnSubmission &&
           screeningPhaseCompleted &&
           normalizedPhaseName === 'screening';
+        const allowOwnCheckpointReviewVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          checkpointReviewPhaseCompleted &&
+          normalizedPhaseName === 'checkpoint review';
         const shouldMaskReviewDetails =
           !allowOwnScreeningVisibility &&
+          !allowOwnCheckpointReviewVisibility &&
           !isPrivilegedRequester &&
           hasSubmitterRoleForChallenge &&
           submitterSubmissionIdSet.size > 0 &&
@@ -3432,8 +3445,18 @@ export class ReviewService {
             isOwnSubmission &&
             normalizedPhaseNameForAccess === 'screening' &&
             this.hasChallengePhaseCompleted(challenge, ['screening']);
+          const canSeeOwnCheckpointReview =
+            isOwnSubmission &&
+            normalizedPhaseNameForAccess === 'checkpoint review' &&
+            this.hasChallengePhaseClosedWithActualDates(challenge, [
+              'checkpoint review',
+            ]);
 
-          if (!visibility.allowOwn && !canSeeOwnScreeningReview) {
+          if (
+            !visibility.allowOwn &&
+            !canSeeOwnScreeningReview &&
+            !canSeeOwnCheckpointReview
+          ) {
             throw new ForbiddenException({
               message:
                 'Reviews are not accessible for this challenge at the current phase',
@@ -3590,6 +3613,49 @@ export class ReviewService {
       .toLowerCase();
   }
 
+  private hasTimestampValue(value: unknown): boolean {
+    if (value == null) {
+      return false;
+    }
+    if (value instanceof Date) {
+      return true;
+    }
+    switch (typeof value) {
+      case 'string':
+        return value.trim().length > 0;
+      case 'number':
+        return Number.isFinite(value);
+      case 'bigint':
+      case 'boolean':
+        return true;
+      case 'symbol':
+      case 'function':
+        return false;
+      case 'object': {
+        const valueWithToISOString = value as {
+          toISOString?: (() => string) | undefined;
+          valueOf?: (() => unknown) | undefined;
+        };
+        if (typeof valueWithToISOString.toISOString === 'function') {
+          try {
+            return valueWithToISOString.toISOString().trim().length > 0;
+          } catch {
+            return false;
+          }
+        }
+        if (typeof valueWithToISOString.valueOf === 'function') {
+          const primitiveValue = valueWithToISOString.valueOf();
+          if (primitiveValue !== value) {
+            return this.hasTimestampValue(primitiveValue);
+          }
+        }
+        return false;
+      }
+      default:
+        return false;
+    }
+  }
+
   private hasChallengePhaseCompleted(
     challenge: ChallengeData | null | undefined,
     phaseNames: string[],
@@ -3623,25 +3689,61 @@ export class ReviewService {
       }
 
       const actualEnd =
-        (phase as any).actualEndTime ?? (phase as any).actualEndDate ?? null;
+        (phase as any).actualEndTime ??
+        (phase as any).actualEndDate ??
+        (phase as any).actualEnd ??
+        null;
 
-      if (actualEnd == null) {
+      return this.hasTimestampValue(actualEnd);
+    });
+  }
+
+  private hasChallengePhaseClosedWithActualDates(
+    challenge: ChallengeData | null | undefined,
+    phaseNames: string[],
+  ): boolean {
+    if (!challenge?.phases?.length) {
+      return false;
+    }
+
+    const normalizedTargets = new Set(
+      (phaseNames ?? [])
+        .map((name) => this.normalizePhaseName(name))
+        .filter((name) => name.length > 0),
+    );
+
+    if (!normalizedTargets.size) {
+      return false;
+    }
+
+    return (challenge.phases ?? []).some((phase) => {
+      if (!phase) {
         return false;
       }
 
-      if (typeof actualEnd === 'string') {
-        return actualEnd.trim().length > 0;
-      }
-
-      if (actualEnd instanceof Date) {
-        return true;
-      }
-
-      try {
-        return String(actualEnd).trim().length > 0;
-      } catch {
+      const normalizedName = this.normalizePhaseName((phase as any).name);
+      if (!normalizedTargets.has(normalizedName)) {
         return false;
       }
+
+      if ((phase as any).isOpen === true) {
+        return false;
+      }
+
+      const actualStart =
+        (phase as any).actualStartTime ??
+        (phase as any).actualStartDate ??
+        (phase as any).actualStart ??
+        null;
+      const actualEnd =
+        (phase as any).actualEndTime ??
+        (phase as any).actualEndDate ??
+        (phase as any).actualEnd ??
+        null;
+
+      return (
+        this.hasTimestampValue(actualStart) && this.hasTimestampValue(actualEnd)
+      );
     });
   }
 
