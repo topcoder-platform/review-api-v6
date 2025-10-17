@@ -1244,6 +1244,43 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     });
   });
 
+  it('allows submitters to access reviews when the challenge failed review cancellation', async () => {
+    const submitterResource = {
+      ...buildResource('Submitter'),
+      roleId: CommonConfig.roles.submitterRoleId,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      submitterResource,
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Cancelled Failed Review Challenge',
+      status: ChallengeStatus.CANCELLED_FAILED_REVIEW,
+      phases: [],
+    });
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([baseSubmission]);
+      }
+      return Promise.resolve([baseSubmission, { id: 'submission-other' }]);
+    });
+
+    const result = await service.getReviews(
+      baseAuthUser,
+      undefined,
+      'challenge-1',
+    );
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.submissionId).toEqual({
+      in: [baseSubmission.id, 'submission-other'],
+    });
+    expect(result.data).toEqual([]);
+  });
+
   it('masks scores and review items for submitters before appeals open', async () => {
     const now = new Date();
     const submitterResource = {

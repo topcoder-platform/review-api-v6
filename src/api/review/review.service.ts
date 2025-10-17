@@ -2597,7 +2597,12 @@ export class ReviewService {
               requesterIsChallengeResource = true;
             }
 
-            if (challenge.status === ChallengeStatus.COMPLETED) {
+            if (
+              [
+                ChallengeStatus.COMPLETED,
+                ChallengeStatus.CANCELLED_FAILED_REVIEW,
+              ].includes(challenge.status)
+            ) {
               // Allowed to see all reviews on this challenge
               // reviewWhereClause already limited to submissions on this challenge
             } else if (isFirst2Finish) {
@@ -2660,7 +2665,12 @@ export class ReviewService {
               const challenges =
                 await this.challengeApiService.getChallenges(myChallengeIds);
               const completedIds = challenges
-                .filter((c) => c.status === ChallengeStatus.COMPLETED)
+                .filter((c) =>
+                  [
+                    ChallengeStatus.COMPLETED,
+                    ChallengeStatus.CANCELLED_FAILED_REVIEW,
+                  ].includes(c.status),
+                )
                 .map((c) => c.id);
               const appealsAllowedIds = challenges
                 .filter((c) => {
@@ -3232,8 +3242,12 @@ export class ReviewService {
         isReviewerForReview = reviewerResourceIds.has(reviewResourceId);
 
         if (reviewerResources.length > 0) {
+          const challengeInFinalState = [
+            ChallengeStatus.COMPLETED,
+            ChallengeStatus.CANCELLED_FAILED_REVIEW,
+          ].includes(challenge.status);
           if (
-            challenge.status !== ChallengeStatus.COMPLETED &&
+            !challengeInFinalState &&
             !reviewerResourceIds.has(reviewResourceId)
           ) {
             throw new ForbiddenException({
@@ -3518,7 +3532,10 @@ export class ReviewService {
       return name === 'iterative review' && phase?.isOpen === false;
     });
 
-    const allowAny = status === ChallengeStatus.COMPLETED;
+    const allowAny = [
+      ChallengeStatus.COMPLETED,
+      ChallengeStatus.CANCELLED_FAILED_REVIEW,
+    ].includes(status);
     const allowOwn =
       allowAny ||
       appealsOpen ||
