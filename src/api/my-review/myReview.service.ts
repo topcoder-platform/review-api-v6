@@ -95,6 +95,9 @@ export class MyReviewService {
     const challengeTrackId = filters.challengeTrackId?.trim();
     const challengeTypeName = filters.challengeTypeName?.trim();
     const challengeName = filters.challengeName?.trim();
+    const normalizedChallengeStatus = filters.challengeStatus
+      ? filters.challengeStatus.trim().toUpperCase()
+      : undefined;
 
     const shouldFetchPastChallenges =
       typeof filters.past === 'string'
@@ -124,12 +127,31 @@ export class MyReviewService {
     const whereFragments: Prisma.Sql[] = [];
 
     if (shouldFetchPastChallenges) {
-      const statusFragments = PAST_CHALLENGE_STATUSES.map(
-        (status) => Prisma.sql`${status}::"ChallengeStatusEnum"`,
-      );
-      const statusList = joinSqlFragments(statusFragments, Prisma.sql`, `);
-      whereFragments.push(Prisma.sql`c.status IN (${statusList})`);
+      if (normalizedChallengeStatus) {
+        const pastStatusSet = new Set<string>(PAST_CHALLENGE_STATUSES);
+        if (pastStatusSet.has(normalizedChallengeStatus)) {
+          whereFragments.push(
+            Prisma.sql`c.status = ${normalizedChallengeStatus}::"ChallengeStatusEnum"`,
+          );
+        } else {
+          this.logger.warn(
+            `Challenge status ${normalizedChallengeStatus} is not allowed for past reviews; returning empty result set.`,
+          );
+          whereFragments.push(Prisma.sql`1 = 0`);
+        }
+      } else {
+        const statusFragments = PAST_CHALLENGE_STATUSES.map(
+          (status) => Prisma.sql`${status}::"ChallengeStatusEnum"`,
+        );
+        const statusList = joinSqlFragments(statusFragments, Prisma.sql`, `);
+        whereFragments.push(Prisma.sql`c.status IN (${statusList})`);
+      }
     } else {
+      if (normalizedChallengeStatus && normalizedChallengeStatus !== 'ACTIVE') {
+        this.logger.warn(
+          `Challenge status filter ${normalizedChallengeStatus} is not supported for active reviews and will be ignored.`,
+        );
+      }
       whereFragments.push(Prisma.sql`c.status = 'ACTIVE'`);
     }
 

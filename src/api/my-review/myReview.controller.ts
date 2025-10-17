@@ -18,6 +18,7 @@ import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { Scope } from 'src/shared/enums/scopes.enum';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 @ApiTags('My Reviews')
 @ApiBearerAuth()
@@ -60,6 +61,12 @@ export class MyReviewController {
     name: 'challengeTrackId',
     required: false,
     description: 'Filter by challenge track identifier',
+  })
+  @ApiQuery({
+    name: 'challengeStatus',
+    required: false,
+    description: 'Filter by challenge status',
+    enum: ChallengeStatus,
   })
   @ApiQuery({
     name: 'past',

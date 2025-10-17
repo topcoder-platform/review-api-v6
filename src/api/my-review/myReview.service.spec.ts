@@ -5,6 +5,7 @@ jest.mock('nanoid', () => ({
 
 import { UnauthorizedException } from '@nestjs/common';
 import { MyReviewService } from './myReview.service';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 describe('MyReviewService', () => {
   let service: MyReviewService;
@@ -198,6 +199,22 @@ describe('MyReviewService', () => {
 
     expect(queryDetails.sql).toContain('c.status IN');
     expect(queryDetails.values).toEqual(expect.arrayContaining(pastStatuses));
+  });
+
+  it('filters by specific challenge status when provided for past reviews', async () => {
+    challengePrismaMock.$queryRaw.mockResolvedValueOnce([{ total: 0n }]);
+
+    await service.getMyReviews(
+      { isMachine: false, userId: '123' },
+      { past: 'true', challengeStatus: ChallengeStatus.COMPLETED },
+    );
+
+    const query = challengePrismaMock.$queryRaw.mock.calls[0][0];
+    const queryDetails = query.inspect();
+
+    expect(queryDetails.sql).toMatch(/c\.status = \?::"ChallengeStatusEnum"/);
+    expect(queryDetails.sql).not.toContain('c.status IN');
+    expect(queryDetails.values).toContain(ChallengeStatus.COMPLETED);
   });
 
   it('reports negative time left when a phase is overdue and uses signed ordering', async () => {
