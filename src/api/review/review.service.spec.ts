@@ -47,6 +47,7 @@ describe('ReviewService.createReview authorization checks', () => {
   const resourcePrismaMock = {
     resource: {
       findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn(),
     },
   } as unknown as any;
 
@@ -59,6 +60,7 @@ describe('ReviewService.createReview authorization checks', () => {
   const challengeApiServiceMock = {
     validateReviewSubmission: jest.fn(),
     getChallengeDetail: jest.fn(),
+    isPhaseOpen: jest.fn(),
   } as unknown as any;
 
   const eventBusServiceMock = {
@@ -80,6 +82,12 @@ describe('ReviewService.createReview authorization checks', () => {
     userId: 'user-123',
     roles: [],
     isMachine: false,
+  };
+
+  const machineAuthUser: JwtUser = {
+    userId: 'machine-1',
+    roles: [],
+    isMachine: true,
   };
 
   const buildReviewRequest = (
@@ -167,6 +175,7 @@ describe('ReviewService.createReview authorization checks', () => {
     challengeApiServiceMock.getChallengeDetail.mockResolvedValue(
       baseChallengeDetail,
     );
+    challengeApiServiceMock.isPhaseOpen.mockResolvedValue(true);
 
     resourceApiServiceMock.getResources.mockResolvedValue([baseResource]);
     resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
@@ -176,6 +185,7 @@ describe('ReviewService.createReview authorization checks', () => {
       },
     ]);
     resourcePrismaMock.resource.findMany.mockResolvedValue([]);
+    resourcePrismaMock.resource.findUnique.mockResolvedValue(null);
     memberPrismaMock.member.findMany.mockResolvedValue([]);
   });
 
@@ -245,6 +255,75 @@ describe('ReviewService.createReview authorization checks', () => {
     } finally {
       computeSpy.mockRestore();
     }
+  });
+
+  it('allows Post-Mortem review creation without submission when phase is open', async () => {
+    const postMortemChallenge = {
+      ...baseChallengeDetail,
+      phases: [
+        {
+          id: 'phase-post-mortem',
+          name: 'Post-Mortem',
+          isOpen: true,
+        },
+      ],
+    };
+
+    const request = buildReviewRequest({
+      submissionId: undefined,
+      resourceId: 'resource-1',
+    } as Partial<ReviewRequestDto>);
+
+    prismaMock.$queryRaw.mockReset();
+    prismaMock.reviewType.findUnique.mockResolvedValue({
+      id: 'type-1',
+      name: 'Post-Mortem Review',
+    });
+    challengeApiServiceMock.validateReviewSubmission.mockReset();
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue(
+      postMortemChallenge,
+    );
+    challengeApiServiceMock.isPhaseOpen.mockResolvedValue(true);
+    resourceApiServiceMock.getResources.mockResolvedValue([]);
+
+    const postMortemResourceRecord = {
+      ...baseResource,
+      phaseId: 'phase-post-mortem',
+    };
+    resourcePrismaMock.resource.findUnique.mockResolvedValue(
+      postMortemResourceRecord,
+    );
+
+    const reviewCreateResult = {
+      ...buildReviewModel(request),
+      phaseId: 'phase-post-mortem',
+    };
+
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue(reviewCreateResult);
+
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await expect(
+        service.createReview(machineAuthUser, request),
+      ).resolves.toMatchObject({
+        phaseName: 'Post-Mortem',
+      });
+    } finally {
+      computeSpy.mockRestore();
+    }
+
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+    expect(
+      challengeApiServiceMock.validateReviewSubmission,
+    ).not.toHaveBeenCalled();
+    expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenCalledWith(
+      'challenge-1',
+      'Post-Mortem',
+    );
   });
 
   it('allows reviews for non-latest submissions when submissionLimit.unlimited is the string "true"', async () => {
@@ -1207,6 +1286,57 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
     expect(callArgs.where.resourceId).toBeUndefined();
+  });
+
+  it('returns empty results for submitters when reviews are not yet accessible', async () => {
+    const submitterUser: JwtUser = {
+      userId: 'submitter-1',
+      roles: [],
+      isMachine: false,
+    };
+
+    const submitterResource = {
+      ...buildResource('Submitter', submitterUser.userId),
+      roleId: CommonConfig.roles.submitterRoleId,
+      memberId: submitterUser.userId,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      submitterResource,
+    ]);
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any = {}) => {
+      if (where?.challengeId) {
+        return Promise.resolve([{ id: baseSubmission.id }]);
+      }
+      if (where?.memberId) {
+        return Promise.resolve([{ id: baseSubmission.id }]);
+      }
+      return Promise.resolve([{ id: baseSubmission.id }]);
+    });
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Active Challenge',
+      status: ChallengeStatus.ACTIVE,
+      phases: [{ id: 'phase-sub', name: 'Submission', isOpen: true }],
+    });
+
+    const response = await service.getReviews(
+      submitterUser,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data).toEqual([]);
+    expect(response.meta.totalCount).toBe(0);
+    expect(response.meta.totalPages).toBe(0);
+    expect(prismaMock.review.findMany).toHaveBeenCalledTimes(1);
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.submissionId).toEqual({ in: ['__none__'] });
+    expect(prismaMock.review.count).toHaveBeenCalledWith({
+      where: callArgs.where,
+    });
   });
 
   it('includes non-owned submissions with limited visibility when submission phase is closed on an active challenge', async () => {

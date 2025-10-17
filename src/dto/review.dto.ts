@@ -222,10 +222,13 @@ export class ReviewCommonDto {
   @ApiProperty({
     description: 'Submission ID being reviewed',
     example: 'submission789',
+    required: false,
+    nullable: true,
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  submissionId: string;
+  submissionId?: string;
 
   @ApiProperty({
     description: 'Scorecard ID used for the review',

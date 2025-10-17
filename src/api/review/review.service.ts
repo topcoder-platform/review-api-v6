@@ -965,7 +965,9 @@ export class ReviewService {
     authUser: JwtUser,
     body: ReviewRequestDto,
   ): Promise<ReviewResponseDto> {
-    this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
+    this.logger.log(
+      `Creating review for submissionId: ${body.submissionId ?? 'N/A'}`,
+    );
     try {
       const scorecard = await this.prisma.scorecard.findUnique({
         where: { id: body.scorecardId },
@@ -980,18 +982,34 @@ export class ReviewService {
         });
       }
 
-      const submissions = await this.prisma.$queryRaw<
-        Array<{
-          id: string;
-          challengeId: string | null;
-          memberId: string | null;
-          isLatest: boolean | null;
-        }>
-      >(Prisma.sql`
+      const normalizedSubmissionId = body.submissionId
+        ? String(body.submissionId).trim()
+        : undefined;
+      body.submissionId = normalizedSubmissionId;
+
+      let submission: {
+        id: string;
+        challengeId: string | null;
+        memberId: string | null;
+        isLatest: boolean | null;
+      } | null = null;
+      let challengeId: string | undefined;
+      let submissionMemberId: string | null = null;
+      let submissionIsLatest = false;
+
+      if (normalizedSubmissionId) {
+        const submissions = await this.prisma.$queryRaw<
+          Array<{
+            id: string;
+            challengeId: string | null;
+            memberId: string | null;
+            isLatest: boolean | null;
+          }>
+        >(Prisma.sql`
           WITH target AS (
             SELECT s."challengeId"
             FROM "submission" s
-            WHERE s."id" = ${body.submissionId}
+            WHERE s."id" = ${normalizedSubmissionId}
           )
           SELECT
             ranked."id",
@@ -1019,31 +1037,32 @@ export class ReviewService {
               SELECT target."challengeId" FROM target
             )
           ) ranked
-          WHERE ranked."id" = ${body.submissionId}
+          WHERE ranked."id" = ${normalizedSubmissionId}
         `);
 
-      const submission = submissions[0] ?? null;
+        submission = submissions[0] ?? null;
 
-      if (!submission) {
-        throw new NotFoundException({
-          message: `Submission with ID ${body.submissionId} was not found. Please verify the submissionId and try again.`,
-          code: 'SUBMISSION_NOT_FOUND',
-          details: { submissionId: body.submissionId },
-        });
+        if (!submission) {
+          throw new NotFoundException({
+            message: `Submission with ID ${normalizedSubmissionId} was not found. Please verify the submissionId and try again.`,
+            code: 'SUBMISSION_NOT_FOUND',
+            details: { submissionId: normalizedSubmissionId },
+          });
+        }
+
+        if (!submission.challengeId) {
+          throw new BadRequestException({
+            message: `Submission ${normalizedSubmissionId} does not have an associated challengeId`,
+            code: 'MISSING_CHALLENGE_ID',
+          });
+        }
+
+        challengeId = submission.challengeId;
+        submissionMemberId = submission.memberId
+          ? String(submission.memberId)
+          : null;
+        submissionIsLatest = Boolean(submission.isLatest);
       }
-
-      if (!submission.challengeId) {
-        throw new BadRequestException({
-          message: `Submission ${body.submissionId} does not have an associated challengeId`,
-          code: 'MISSING_CHALLENGE_ID',
-        });
-      }
-
-      const challengeId = submission.challengeId;
-      const submissionMemberId = submission.memberId
-        ? String(submission.memberId)
-        : null;
-      const submissionIsLatest = Boolean(submission.isLatest);
 
       const reviewType = await this.prisma.reviewType.findUnique({
         where: { id: body.typeId },
@@ -1058,15 +1077,89 @@ export class ReviewService {
         });
       }
 
-      await this.challengeApiService.validateReviewSubmission(challengeId);
-
-      const challengeResources = await this.resourceApiService.getResources({
-        challengeId,
-      });
+      const reviewTypeName = (reviewType.name ?? '').trim();
+      const isPostMortemReview =
+        /post[\s-]?mortem/i.test(reviewTypeName) ||
+        reviewTypeName === 'Post Mortem';
 
       const providedResourceId = body.resourceId
         ? String(body.resourceId).trim()
         : undefined;
+
+      let resourceRecord:
+        | (Awaited<
+            ReturnType<typeof this.resourcePrisma.resource.findUnique>
+          > & { roleName?: string | null })
+        | null = null;
+
+      if (!challengeId) {
+        if (!isPostMortemReview) {
+          throw new BadRequestException({
+            message:
+              'submissionId is required unless creating a Post-Mortem review without submissions.',
+            code: 'SUBMISSION_ID_REQUIRED',
+          });
+        }
+
+        if (!providedResourceId) {
+          throw new BadRequestException({
+            message:
+              'resourceId must be provided when creating a Post-Mortem review without a submission.',
+            code: 'RESOURCE_ID_REQUIRED',
+          });
+        }
+
+        resourceRecord = await this.resourcePrisma.resource.findUnique({
+          where: { id: providedResourceId },
+        });
+
+        if (!resourceRecord) {
+          throw new NotFoundException({
+            message: `Resource with ID ${providedResourceId} was not found.`,
+            code: 'RESOURCE_NOT_FOUND',
+            details: { resourceId: providedResourceId },
+          });
+        }
+
+        challengeId = String(resourceRecord.challengeId ?? '').trim();
+
+        if (!challengeId) {
+          throw new BadRequestException({
+            message: `Resource ${providedResourceId} is not associated with a challenge.`,
+            code: 'MISSING_CHALLENGE_ID',
+            details: { resourceId: providedResourceId },
+          });
+        }
+      }
+
+      if (!challengeId) {
+        throw new BadRequestException({
+          message:
+            'Unable to determine the challenge associated with this review request.',
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      if (isPostMortemReview) {
+        const postMortemOpen = await this.challengeApiService.isPhaseOpen(
+          challengeId,
+          'Post-Mortem',
+        );
+
+        if (!postMortemOpen) {
+          throw new BadRequestException({
+            message: `Post-Mortem phase is not currently open for challenge ${challengeId}.`,
+            code: 'POST_MORTEM_PHASE_CLOSED',
+            details: { challengeId },
+          });
+        }
+      } else {
+        await this.challengeApiService.validateReviewSubmission(challengeId);
+      }
+
+      const challengeResources = await this.resourceApiService.getResources({
+        challengeId,
+      });
 
       let resource: ResourceInfo | undefined;
       if (providedResourceId) {
@@ -1075,14 +1168,58 @@ export class ReviewService {
         );
 
         if (!resource) {
-          throw new NotFoundException({
-            message: `Resource with ID ${providedResourceId} was not found for challenge ${challengeId}.`,
-            code: 'RESOURCE_NOT_FOUND',
-            details: {
-              resourceId: providedResourceId,
-              challengeId,
-            },
-          });
+          if (!resourceRecord) {
+            resourceRecord = await this.resourcePrisma.resource.findUnique({
+              where: { id: providedResourceId },
+            });
+          }
+
+          if (!resourceRecord) {
+            throw new NotFoundException({
+              message: `Resource with ID ${providedResourceId} was not found for challenge ${challengeId}.`,
+              code: 'RESOURCE_NOT_FOUND',
+              details: {
+                resourceId: providedResourceId,
+                challengeId,
+              },
+            });
+          }
+
+          const resourceRecordAny = resourceRecord as Record<string, unknown>;
+
+          const phaseIdValue =
+            resourceRecordAny?.phaseId !== undefined
+              ? resourceRecordAny.phaseId
+              : undefined;
+
+          let phaseIdString: string | undefined;
+          if (typeof phaseIdValue === 'string') {
+            phaseIdString = phaseIdValue;
+          } else if (typeof phaseIdValue === 'number') {
+            phaseIdString = phaseIdValue.toString();
+          } else {
+            phaseIdString = undefined;
+          }
+
+          const createdValue = (resourceRecordAny?.created ??
+            (resourceRecord as { createdAt?: Date; created?: Date })
+              .createdAt ??
+            new Date()) as Date | string;
+
+          resource = {
+            id: resourceRecord.id,
+            challengeId: String(resourceRecord.challengeId ?? ''),
+            memberId: String(resourceRecord.memberId ?? ''),
+            memberHandle: String(resourceRecord.memberHandle ?? ''),
+            roleId: String(resourceRecord.roleId ?? ''),
+            phaseId: phaseIdString,
+            createdBy: String(resourceRecord.createdBy ?? ''),
+            created: createdValue,
+            roleName:
+              resourceRecordAny.roleName !== undefined
+                ? (resourceRecordAny.roleName as string | undefined)
+                : undefined,
+          };
         }
       }
 
@@ -1177,6 +1314,7 @@ export class ReviewService {
         await this.challengeApiService.getChallengeDetail(challengeId);
 
       if (
+        submission &&
         this.shouldEnforceLatestSubmissionForReview(
           reviewType.name,
           challenge,
@@ -1202,32 +1340,43 @@ export class ReviewService {
       const resolvePhaseId = (phase: (typeof challengePhases)[number]) =>
         String((phase as any)?.id ?? (phase as any)?.phaseId ?? '');
 
-      const matchPhaseByName = (name: string) =>
-        challengePhases.find((phase) => {
-          const phaseName = (phase?.name ?? '').trim().toLowerCase();
-          return phaseName === name;
-        });
+      const normalized = (value: string | undefined | null) =>
+        (value ?? '').toLowerCase().replace(/[\s_-]+/g, '');
 
-      const reviewPhase =
-        matchPhaseByName('review') ?? matchPhaseByName('iterative review');
-      const reviewPhaseName = reviewPhase?.name ?? null;
+      const targetPhaseKeys = isPostMortemReview
+        ? ['postmortem']
+        : ['review', 'iterativereview'];
 
-      if (!reviewPhase) {
+      const targetPhase = challengePhases.find((phase) =>
+        targetPhaseKeys.some((key) => normalized(phase?.name) === key),
+      );
+
+      const reviewPhaseName = targetPhase?.name ?? null;
+
+      if (!targetPhase) {
         throw new BadRequestException({
-          message: `Challenge ${challengeId} does not have a Review phase.`,
-          code: 'REVIEW_PHASE_NOT_FOUND',
+          message: isPostMortemReview
+            ? `Challenge ${challengeId} does not have a Post-Mortem phase.`
+            : `Challenge ${challengeId} does not have a Review phase.`,
+          code: isPostMortemReview
+            ? 'POST_MORTEM_PHASE_NOT_FOUND'
+            : 'REVIEW_PHASE_NOT_FOUND',
           details: {
             challengeId,
           },
         });
       }
 
-      const reviewPhaseId = resolvePhaseId(reviewPhase);
+      const reviewPhaseId = resolvePhaseId(targetPhase);
 
       if (!reviewPhaseId) {
         throw new BadRequestException({
-          message: `Review phase for challenge ${challengeId} is missing an identifier.`,
-          code: 'REVIEW_PHASE_NOT_FOUND',
+          message: isPostMortemReview
+            ? `Post-Mortem phase for challenge ${challengeId} is missing an identifier.`
+            : `Review phase for challenge ${challengeId} is missing an identifier.`,
+          code: isPostMortemReview
+            ? 'POST_MORTEM_PHASE_NOT_FOUND'
+            : 'REVIEW_PHASE_NOT_FOUND',
           details: {
             challengeId,
           },
@@ -1239,7 +1388,7 @@ export class ReviewService {
         : undefined;
       if (resourcePhaseId && resourcePhaseId !== reviewPhaseId) {
         throw new BadRequestException({
-          message: `Resource ${resource.id} is associated with phase ${resourcePhaseId}, which does not match the Review phase ${reviewPhaseId}.`,
+          message: `Resource ${resource.id} is associated with phase ${resourcePhaseId}, which does not match the ${reviewPhaseName ?? 'target'} phase ${reviewPhaseId}.`,
           code: 'RESOURCE_PHASE_MISMATCH',
           details: {
             resourceId: resource.id,
@@ -1378,6 +1527,7 @@ export class ReviewService {
       const prismaBody = mapReviewRequestToDto(body) as any;
       prismaBody.phaseId = reviewPhaseId;
       prismaBody.resourceId = reviewerResource.id;
+      prismaBody.submissionId = body.submissionId ?? null;
       const createdReview = await this.prisma.review.create({
         data: prismaBody,
         include: {
@@ -1457,7 +1607,7 @@ export class ReviewService {
 
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `creating review for submissionId: ${body.submissionId}`,
+        `creating review for submissionId: ${body.submissionId ?? 'N/A'}`,
         body,
       );
 
@@ -2625,16 +2775,11 @@ export class ReviewService {
               // Allow submitters to access their own screening reviews once screening phase completes.
               restrictToSubmissionIds(mySubmissionIds);
             } else {
-              // No access for non-completed, non-appeals phases
-              throw new ForbiddenException({
-                message:
-                  'Reviews are not accessible for this challenge at the current phase',
-                code: 'FORBIDDEN_REVIEW_ACCESS',
-                details: {
-                  challengeId,
-                  status: challenge.status,
-                },
-              });
+              // Reviews exist but the phase does not allow visibility yet; respond with no results.
+              this.logger.debug(
+                `[getReviews] Challenge ${challengeId} is in status ${challenge.status}. Returning empty review list for requester ${uid}.`,
+              );
+              restrictToSubmissionIds([]);
             }
           }
         } else {

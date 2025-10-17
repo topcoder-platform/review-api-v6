@@ -18,6 +18,7 @@ import {
 } from 'src/dto/submission.dto';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
@@ -480,7 +481,8 @@ export class SubmissionService {
       const isOwner = !!uid && submission.memberId === uid;
       let isReviewer = false;
       let isCopilot = false;
-      if (!isOwner && submission.challengeId) {
+      let isSubmitter = false;
+      if (!isOwner && submission.challengeId && uid) {
         try {
           const resources =
             await this.resourceApiService.getMemberResourcesRoles(
@@ -489,18 +491,57 @@ export class SubmissionService {
             );
           for (const r of resources) {
             const rn = (r.roleName || '').toLowerCase();
-            if (rn.includes('reviewer')) isReviewer = true;
-            if (rn.includes('copilot')) isCopilot = true;
-            if (isReviewer || isCopilot) break;
+            if (rn.includes('reviewer')) {
+              isReviewer = true;
+            }
+            if (rn.includes('copilot')) {
+              isCopilot = true;
+            }
+            if (rn.includes('submitter')) {
+              isSubmitter = true;
+            }
+            if (isReviewer && isCopilot && isSubmitter) {
+              break;
+            }
           }
-        } catch {
-          // If we cannot confirm roles, deny access
-          isReviewer = false;
-          isCopilot = false;
+        } catch (err) {
+          // If we cannot confirm roles, deny access unless other checks succeed
+          this.logger.warn(
+            `Failed to load member roles for challenge ${submission.challengeId} and member ${uid}: ${(err as Error)?.message}`,
+          );
         }
       }
 
-      if (!isOwner && !isReviewer && !isCopilot) {
+      let canDownload = isOwner || isReviewer || isCopilot;
+
+      if (!canDownload && isSubmitter && submission.challengeId && uid) {
+        try {
+          const challenge = await this.challengeApiService.getChallengeDetail(
+            submission.challengeId,
+          );
+          if (challenge.status === ChallengeStatus.COMPLETED) {
+            const passingSubmission = await this.prisma.submission.findFirst({
+              where: {
+                challengeId: submission.challengeId,
+                memberId: uid,
+                reviewSummation: {
+                  some: {
+                    isPassing: true,
+                  },
+                },
+              },
+              select: { id: true },
+            });
+            canDownload = !!passingSubmission;
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Failed to validate submitter download eligibility for challenge ${submission.challengeId} and member ${uid}: ${(err as Error)?.message}`,
+          );
+        }
+      }
+
+      if (!canDownload) {
         throw new ForbiddenException({
           message:
             'Only the submission owner, a challenge reviewer/copilot, or an admin can download the submission',

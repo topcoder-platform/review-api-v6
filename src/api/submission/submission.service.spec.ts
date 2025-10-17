@@ -3,6 +3,7 @@ import { SubmissionStatus, SubmissionType } from '@prisma/client';
 import { Readable } from 'stream';
 import { SubmissionService } from './submission.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 jest.mock('nanoid', () => ({
   __esModule: true,
@@ -23,9 +24,11 @@ describe('SubmissionService', () => {
     { Key: `${submission.id}/internal-notes.txt` },
   ];
   let originalBucket: string | undefined;
+  let originalCleanBucket: string | undefined;
 
   beforeAll(() => {
     originalBucket = process.env.ARTIFACTS_S3_BUCKET;
+    originalCleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
   });
 
   beforeEach(() => {
@@ -56,6 +59,7 @@ describe('SubmissionService', () => {
     });
 
     process.env.ARTIFACTS_S3_BUCKET = 'unit-test-bucket';
+    process.env.SUBMISSION_CLEAN_S3_BUCKET = 'unit-test-clean-bucket';
   });
 
   afterEach(() => {
@@ -67,6 +71,11 @@ describe('SubmissionService', () => {
       delete process.env.ARTIFACTS_S3_BUCKET;
     } else {
       process.env.ARTIFACTS_S3_BUCKET = originalBucket;
+    }
+    if (originalCleanBucket === undefined) {
+      delete process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    } else {
+      process.env.SUBMISSION_CLEAN_S3_BUCKET = originalCleanBucket;
     }
   });
 
@@ -270,6 +279,118 @@ describe('SubmissionService', () => {
     });
   });
 
+  describe('getSubmissionFileStream', () => {
+    let prismaMock: { submission: { findFirst: jest.Mock } };
+    let challengeApiServiceMock: { getChallengeDetail: jest.Mock };
+
+    beforeEach(() => {
+      prismaMock = {
+        submission: {
+          findFirst: jest.fn(),
+        },
+      };
+      challengeApiServiceMock = {
+        getChallengeDetail: jest.fn(),
+      };
+      resourceApiService = {
+        getMemberResourcesRoles: jest.fn(),
+      };
+      service = new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        resourceApiService as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+      jest.spyOn(service as any, 'checkSubmission').mockResolvedValue({
+        id: 'sub-123',
+        memberId: 'owner-user',
+        challengeId: 'challenge-xyz',
+        url: 'https://s3.amazonaws.com/dummy/submission.zip',
+      });
+      jest
+        .spyOn(service as any, 'parseS3Url')
+        .mockReturnValue({ key: 'dummy/submission.zip' });
+      jest
+        .spyOn(service as any, 'recordSubmissionDownload')
+        .mockResolvedValue(undefined);
+      s3Send = jest
+        .fn()
+        .mockResolvedValueOnce({ ContentType: 'application/zip' })
+        .mockResolvedValueOnce({ Body: Readable.from(['payload']) });
+      jest.spyOn(service as any, 'getS3Client').mockReturnValue({
+        send: s3Send,
+      });
+    });
+
+    it('allows submitters with passing reviews to download when challenge is completed', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'passing-sub',
+      });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'submitter-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
+        'challenge-xyz',
+        'submitter-user',
+      );
+      expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+        'challenge-xyz',
+      );
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledWith({
+        where: {
+          challengeId: 'challenge-xyz',
+          memberId: 'submitter-user',
+          reviewSummation: {
+            some: {
+              isPassing: true,
+            },
+          },
+        },
+        select: { id: true },
+      });
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('denies submitters when the challenge is not completed', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.ACTIVE,
+      });
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'submitter-user',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
   describe('listSubmission', () => {
     let prismaMock: {
       submission: {
@@ -280,7 +401,7 @@ describe('SubmissionService', () => {
     };
     let prismaErrorServiceMock: { handleError: jest.Mock };
     let challengePrismaMock: {
-      challengeMetadata: { findMany: jest.Mock };
+      $queryRaw: jest.Mock;
     };
     let listService: SubmissionService;
 
@@ -296,11 +417,8 @@ describe('SubmissionService', () => {
         handleError: jest.fn(),
       };
       challengePrismaMock = {
-        challengeMetadata: {
-          findMany: jest.fn(),
-        },
+        $queryRaw: jest.fn().mockResolvedValue([]),
       };
-      challengePrismaMock.challengeMetadata.findMany.mockResolvedValue([]);
       listService = new SubmissionService(
         prismaMock as any,
         prismaErrorServiceMock as any,
@@ -373,15 +491,7 @@ describe('SubmissionService', () => {
         }),
       );
 
-      expect(
-        challengePrismaMock.challengeMetadata.findMany,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            challengeId: { in: ['challenge-1'] },
-          }),
-        }),
-      );
+      expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(1);
 
       const latestEntries = result.data.filter((entry) => entry.isLatest);
       expect(latestEntries.map((entry) => entry.id)).toEqual([
@@ -390,9 +500,8 @@ describe('SubmissionService', () => {
     });
 
     it('omits isLatest when submission metadata indicates unlimited submissions', async () => {
-      challengePrismaMock.challengeMetadata.findMany.mockResolvedValue([
+      challengePrismaMock.$queryRaw.mockResolvedValue([
         {
-          challengeId: 'challenge-1',
           value: '{"unlimited":"true","limit":"false","count":""}',
         },
       ]);
