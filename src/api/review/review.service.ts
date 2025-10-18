@@ -51,8 +51,13 @@ const REVIEW_ITEM_COMMENTS_INCLUDE = {
 } as const;
 
 // Roles containing any of these keywords are treated as review-capable resources.
-// This includes standard reviewers plus checkpoint screeners/reviewers.
-const REVIEW_ACCESS_ROLE_KEYWORDS = ['reviewer', 'screener'];
+// This includes standard reviewers plus checkpoint screeners/reviewers/approvers.
+const REVIEW_ACCESS_ROLE_KEYWORDS = [
+  'reviewer',
+  'screener',
+  'approver',
+  'approval',
+];
 
 type ReviewItemAccessMode = 'machine' | 'admin' | 'reviewer-owner' | 'copilot';
 
@@ -3157,6 +3162,18 @@ export class ReviewService {
           this.hasChallengePhaseClosedWithActualDates(challengeForReview, [
             'checkpoint review',
           ]);
+        const phaseNamesForCompletionCheck: string[] = [];
+        if (phaseName && phaseName.trim().length > 0) {
+          phaseNamesForCompletionCheck.push(phaseName);
+        } else if (normalizedPhaseName.length > 0) {
+          phaseNamesForCompletionCheck.push(normalizedPhaseName);
+        }
+        const phaseClosedWithActualDates =
+          phaseNamesForCompletionCheck.length > 0 &&
+          this.hasChallengePhaseClosedWithActualDates(
+            challengeForReview,
+            phaseNamesForCompletionCheck,
+          );
         const allowOwnScreeningVisibility =
           !isPrivilegedRequester &&
           hasSubmitterRoleForChallenge &&
@@ -3173,9 +3190,17 @@ export class ReviewService {
           isOwnSubmission &&
           checkpointReviewPhaseCompleted &&
           normalizedPhaseName === 'checkpoint review';
+        const allowOwnClosedPhaseVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          phaseClosedWithActualDates;
         const shouldMaskReviewDetails =
           !allowOwnScreeningVisibility &&
           !allowOwnCheckpointReviewVisibility &&
+          !allowOwnClosedPhaseVisibility &&
           !isPrivilegedRequester &&
           hasSubmitterRoleForChallenge &&
           submitterSubmissionIdSet.size > 0 &&
@@ -3441,6 +3466,12 @@ export class ReviewService {
           });
           const normalizedPhaseNameForAccess =
             this.normalizePhaseName(resolvedPhaseName);
+          const phaseNamesForAccessCheck: string[] = [];
+          if (resolvedPhaseName && resolvedPhaseName.trim().length > 0) {
+            phaseNamesForAccessCheck.push(resolvedPhaseName);
+          } else if (normalizedPhaseNameForAccess.length > 0) {
+            phaseNamesForAccessCheck.push(normalizedPhaseNameForAccess);
+          }
           const canSeeOwnScreeningReview =
             isOwnSubmission &&
             normalizedPhaseNameForAccess === 'screening' &&
@@ -3451,11 +3482,19 @@ export class ReviewService {
             this.hasChallengePhaseClosedWithActualDates(challenge, [
               'checkpoint review',
             ]);
+          const canSeeOwnClosedPhaseReview =
+            isOwnSubmission &&
+            phaseNamesForAccessCheck.length > 0 &&
+            this.hasChallengePhaseClosedWithActualDates(
+              challenge,
+              phaseNamesForAccessCheck,
+            );
 
           if (
             !visibility.allowOwn &&
             !canSeeOwnScreeningReview &&
-            !canSeeOwnCheckpointReview
+            !canSeeOwnCheckpointReview &&
+            !canSeeOwnClosedPhaseReview
           ) {
             throw new ForbiddenException({
               message:

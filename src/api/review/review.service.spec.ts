@@ -910,6 +910,62 @@ describe('ReviewService.getReview authorization checks', () => {
     });
   });
 
+  it('allows submitters to access their review once the associated phase completes with actual dates', async () => {
+    const submitterUser: JwtUser = {
+      userId: 'submitter-1',
+      roles: [UserRole.Submitter],
+      isMachine: false,
+    };
+
+    const now = new Date().toISOString();
+
+    prismaMock.review.findUniqueOrThrow.mockResolvedValue({
+      ...defaultReviewData(),
+      phaseId: 'phase-review',
+      submission: {
+        id: 'submission-1',
+        challengeId: 'challenge-1',
+        memberId: submitterUser.userId,
+      },
+    });
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        ...baseReviewerResource,
+        id: 'resource-submit',
+        memberId: submitterUser.userId,
+        roleName: 'Submitter',
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+    ]);
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([{ id: 'submission-1' }]);
+      }
+      return Promise.resolve([{ id: 'submission-1' }]);
+    });
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        {
+          id: 'phase-review',
+          name: 'Review',
+          isOpen: false,
+          actualStartTime: now,
+          actualEndTime: now,
+        },
+        { id: 'phase-appeals', name: 'Appeals', isOpen: false },
+      ],
+    });
+
+    await expect(
+      service.getReview(submitterUser, 'review-1'),
+    ).resolves.toMatchObject({ id: 'review-1' });
+  });
+
   it('allows submitters to access their own screening review once the screening phase completes', async () => {
     const submitterUser: JwtUser = {
       userId: 'submitter-1',
@@ -1255,6 +1311,17 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(callArgs.where.submissionId).toEqual({ in: [baseSubmission.id] });
   });
 
+  it('filters reviews by the resource id when the requester is an approver', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Approver'),
+    ]);
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
+  });
+
   it('filters reviews by the resource id when the requester is a checkpoint screener', async () => {
     resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
       buildResource('Checkpoint Screener'),
@@ -1489,6 +1556,102 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.data[0].finalScore).toBeNull();
     expect(response.data[0].initialScore).toBeNull();
     expect(response.data[0].reviewItems).toEqual([]);
+  });
+
+  it('returns full review details for submitters once the associated review phase completes with actual dates', async () => {
+    const now = new Date();
+    const submitterUser: JwtUser = {
+      userId: 'submitter-1',
+      roles: [],
+      isMachine: false,
+    };
+
+    const submitterResource = {
+      ...buildResource('Submitter', submitterUser.userId),
+      roleId: CommonConfig.roles.submitterRoleId,
+      memberId: submitterUser.userId,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      submitterResource,
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Active Challenge',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        {
+          id: 'phase-review',
+          name: 'Review',
+          isOpen: false,
+          actualStartTime: now.toISOString(),
+          actualEndTime: now.toISOString(),
+        },
+        { id: 'phase-appeals', name: 'Appeals', isOpen: false },
+      ],
+    });
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([{ id: baseSubmission.id }]);
+      }
+      return Promise.resolve([{ id: baseSubmission.id }]);
+    });
+
+    const reviewRecord = {
+      id: 'review-1',
+      resourceId: 'resource-reviewer',
+      submissionId: baseSubmission.id,
+      phaseId: 'phase-review',
+      scorecardId: 'scorecard-1',
+      typeId: 'type-1',
+      status: ReviewStatus.COMPLETED,
+      reviewDate: now,
+      committed: true,
+      metadata: null,
+      reviewItems: [
+        {
+          id: 'item-1',
+          scorecardQuestionId: 'question-1',
+          initialAnswer: 'Yes',
+          finalAnswer: 'No',
+          managerComment: 'detail',
+          createdAt: now,
+          createdBy: 'reviewer',
+          updatedAt: now,
+          updatedBy: 'reviewer',
+          reviewItemComments: [],
+        },
+      ],
+      createdAt: now,
+      createdBy: 'creator',
+      updatedAt: now,
+      updatedBy: 'updater',
+      finalScore: 88.5,
+      initialScore: 85.0,
+      submission: {
+        id: baseSubmission.id,
+        memberId: submitterUser.userId,
+        challengeId: 'challenge-1',
+      },
+    };
+
+    prismaMock.review.findMany.mockResolvedValue([reviewRecord]);
+    prismaMock.review.count.mockResolvedValue(1);
+
+    const response = await service.getReviews(
+      submitterUser,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data).toHaveLength(1);
+    const [review] = response.data;
+    expect(review.finalScore).toBe(88.5);
+    expect(review.initialScore).toBe(85.0);
+    expect(review.reviewItems).toHaveLength(1);
+    expect(review.phaseName).toBe('Review');
   });
 
   it('returns full screening review details for submitters once the screening phase completes', async () => {
