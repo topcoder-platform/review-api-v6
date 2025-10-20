@@ -19,6 +19,7 @@ interface ChallengeSummaryRow {
   challengeName: string;
   challengeTypeId: string | null;
   challengeTypeName: string | null;
+  hasAsAIReview: boolean;
   currentPhaseName: string | null;
   currentPhaseScheduledEnd: Date | null;
   currentPhaseActualEnd: Date | null;
@@ -297,6 +298,16 @@ export class MyReviewService {
           LIMIT 1
         ) appeals_response_phase ON TRUE
       `,
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            CASE WHEN COUNT(*)::bigint > 0 THEN TRUE else FALSE END AS "hasAsAIReview"
+          FROM challenges."ChallengeReviewer" cr
+          WHERE cr."challengeId" = c.id
+            AND cr."isMemberReview" = false
+          LIMIT 1
+        ) cr ON TRUE
+      `,
     );
 
     if (challengeTypeId) {
@@ -434,6 +445,7 @@ export class MyReviewService {
         c."typeId" AS "challengeTypeId",
         ct.name AS "challengeTypeName",
         cp.name AS "currentPhaseName",
+        cr."hasAsAIReview" as "hasAsAIReview",
         cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
         cp."actualEndDate" AS "currentPhaseActualEnd",
         rr.name AS "resourceRoleName",
@@ -539,6 +551,7 @@ export class MyReviewService {
         challengeName: row.challengeName,
         challengeTypeId: row.challengeTypeId,
         challengeTypeName: row.challengeTypeName,
+        hasAsAIReview: row.hasAsAIReview,
         challengeEndDate: row.challengeEndDate
           ? row.challengeEndDate.toISOString()
           : null,
