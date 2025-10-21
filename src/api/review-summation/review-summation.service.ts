@@ -4,6 +4,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PaginationDto } from 'src/dto/pagination.dto';
 import {
@@ -14,7 +15,7 @@ import {
   ReviewSummationUpdateRequestDto,
 } from 'src/dto/reviewSummation.dto';
 import { SortDto } from 'src/dto/sort.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import {
@@ -22,6 +23,7 @@ import {
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 
 @Injectable()
 export class ReviewSummationService {
@@ -61,6 +63,20 @@ export class ReviewSummationService {
       type === 'first 2 finish' ||
       legacySubTrack === 'first_2_finish'
     );
+  }
+
+  private isMarathonMatchChallenge(challenge: ChallengeData): boolean {
+    const type = (challenge.type ?? '').trim().toLowerCase();
+    if (type === 'marathon match') {
+      return true;
+    }
+
+    const legacyTrack = (challenge.legacy?.subTrack ?? '').trim().toLowerCase();
+    if (legacyTrack.includes('marathon')) {
+      return true;
+    }
+
+    return false;
   }
 
   private roundScore(value: number): number {
@@ -494,6 +510,7 @@ export class ReviewSummationService {
   }
 
   async searchSummation(
+    authUser: JwtUser,
     queryDto: ReviewSummationQueryDto,
     paginationDto?: PaginationDto,
     sortDto?: SortDto,
@@ -507,6 +524,61 @@ export class ReviewSummationService {
         orderBy = {
           [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
         };
+      }
+
+      const normalizedRoles = new Set(
+        (authUser?.roles ?? [])
+          .map((role) =>
+            String(role ?? '')
+              .trim()
+              .toLowerCase(),
+          )
+          .filter((role) => role.length > 0),
+      );
+
+      const hasSubmitterRole = normalizedRoles.has(
+        String(UserRole.Submitter).trim().toLowerCase(),
+      );
+      const hasCopilotRole = normalizedRoles.has(
+        String(UserRole.Copilot).trim().toLowerCase(),
+      );
+      const isPrivileged =
+        (authUser?.isMachine ?? false) || isAdmin(authUser) || hasCopilotRole;
+      const isSubmitterOnly = hasSubmitterRole && !isPrivileged;
+
+      const rawChallengeId = queryDto.challengeId
+        ? String(queryDto.challengeId).trim()
+        : undefined;
+      const challengeIdFilter =
+        rawChallengeId && rawChallengeId.length ? rawChallengeId : undefined;
+
+      if (isSubmitterOnly) {
+        if (!challengeIdFilter) {
+          throw new ForbiddenException({
+            message:
+              'Submitters must specify a challengeId when listing review summations.',
+            code: 'FORBIDDEN_REVIEW_SUMMATION_ACCESS',
+            details: {
+              reason: 'CHALLENGE_ID_REQUIRED',
+            },
+          });
+        }
+
+        const challenge =
+          await this.challengeApiService.getChallengeDetail(challengeIdFilter);
+
+        if (!this.isMarathonMatchChallenge(challenge)) {
+          throw new ForbiddenException({
+            message:
+              'Submitters can only view review summations for Marathon Match challenges.',
+            code: 'FORBIDDEN_REVIEW_SUMMATION_ACCESS',
+            details: {
+              challengeId: challengeIdFilter,
+              challengeType: challenge.type ?? null,
+              legacySubTrack: challenge.legacy?.subTrack ?? null,
+            },
+          });
+        }
       }
 
       // Build the where clause for review summations based on available filter parameters
@@ -540,8 +612,8 @@ export class ReviewSummationService {
       }
 
       const submissionWhereClause: Record<string, unknown> = {};
-      if (queryDto.challengeId) {
-        submissionWhereClause.challengeId = queryDto.challengeId;
+      if (challengeIdFilter) {
+        submissionWhereClause.challengeId = challengeIdFilter;
       }
 
       const whereClause = {
@@ -551,7 +623,7 @@ export class ReviewSummationService {
           : {}),
       };
 
-      const shouldEnrichSubmitterMetadata = Boolean(queryDto.challengeId);
+      const shouldEnrichSubmitterMetadata = Boolean(challengeIdFilter);
 
       const summations = await this.prisma.reviewSummation.findMany({
         where: whereClause,
@@ -679,6 +751,10 @@ export class ReviewSummationService {
         },
       };
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `searching review summations with filters - submissionId: ${queryDto.submissionId}, scorecardId: ${queryDto.scorecardId}, challengeId: ${queryDto.challengeId}`,

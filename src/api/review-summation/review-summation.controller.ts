@@ -138,11 +138,12 @@ export class ReviewSummationController {
   }
 
   @Get()
-  @Roles(UserRole.Copilot, UserRole.Admin)
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.Submitter)
   @Scopes(Scope.ReadReviewSummation)
   @ApiOperation({
     summary: 'Search for review summations',
-    description: 'Roles: Copilot, Admin. | Scopes: read:review_summation',
+    description:
+      'Roles: Copilot, Admin, Submitter. | Scopes: read:review_summation',
   })
   @ApiResponse({
     status: 200,
@@ -150,6 +151,7 @@ export class ReviewSummationController {
     type: [ReviewSummationResponseDto],
   })
   async listReviewSummations(
+    @Req() req: Request,
     @Query() queryDto: ReviewSummationQueryDto,
     @Query() paginationDto?: PaginationDto,
     @Query() sortDto?: SortDto,
@@ -157,7 +159,13 @@ export class ReviewSummationController {
     this.logger.log(
       `Getting review summations with filters - ${JSON.stringify(queryDto)}`,
     );
-    return this.service.searchSummation(queryDto, paginationDto, sortDto);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.searchSummation(
+      authUser,
+      queryDto,
+      paginationDto,
+      sortDto,
+    );
   }
 
   @Get('/:reviewSummationId')
