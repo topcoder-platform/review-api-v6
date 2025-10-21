@@ -23,6 +23,7 @@ import {
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 
 @Injectable()
@@ -34,6 +35,7 @@ export class ReviewSummationService {
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly memberPrisma: MemberPrismaService,
+    private readonly resourceApiService: ResourceApiService,
   ) {}
 
   private readonly systemActor = 'ReviewSummationService';
@@ -542,9 +544,13 @@ export class ReviewSummationService {
       const hasCopilotRole = normalizedRoles.has(
         String(UserRole.Copilot).trim().toLowerCase(),
       );
+      const hasGeneralUserRole = normalizedRoles.has(
+        String(UserRole.User).trim().toLowerCase(),
+      );
       const isPrivileged =
         (authUser?.isMachine ?? false) || isAdmin(authUser) || hasCopilotRole;
-      const isSubmitterOnly = hasSubmitterRole && !isPrivileged;
+      const isSubmitterOnly =
+        !isPrivileged && (hasSubmitterRole || hasGeneralUserRole);
 
       const rawChallengeId = queryDto.challengeId
         ? String(queryDto.challengeId).trim()
@@ -552,14 +558,37 @@ export class ReviewSummationService {
       const challengeIdFilter =
         rawChallengeId && rawChallengeId.length ? rawChallengeId : undefined;
 
+      let enforcedMemberId: string | undefined;
+
       if (isSubmitterOnly) {
+        const userId =
+          authUser?.userId !== undefined && authUser?.userId !== null
+            ? String(authUser.userId)
+            : '';
+        if (!userId) {
+          throw new ForbiddenException({
+            message:
+              'Authenticated user information is required to view review summations.',
+            code: 'SUBMITTER_USER_MISSING',
+            details: {
+              reason: 'USER_ID_MISSING',
+              roles: Array.from(normalizedRoles),
+            },
+          });
+        }
+
         if (!challengeIdFilter) {
           throw new ForbiddenException({
             message:
               'Submitters must specify a challengeId when listing review summations.',
-            code: 'FORBIDDEN_REVIEW_SUMMATION_ACCESS',
+            code: 'SUBMITTER_CHALLENGE_ID_REQUIRED',
             details: {
               reason: 'CHALLENGE_ID_REQUIRED',
+              guidance:
+                'Pass a challengeId query parameter when requesting review summations as a submitter.',
+              submitterUserId: authUser?.userId ?? null,
+              submitterHandle: authUser?.handle ?? null,
+              roles: Array.from(normalizedRoles),
             },
           });
         }
@@ -571,14 +600,43 @@ export class ReviewSummationService {
           throw new ForbiddenException({
             message:
               'Submitters can only view review summations for Marathon Match challenges.',
-            code: 'FORBIDDEN_REVIEW_SUMMATION_ACCESS',
+            code: 'SUBMITTER_NON_MARATHON_FORBIDDEN',
             details: {
               challengeId: challengeIdFilter,
               challengeType: challenge.type ?? null,
+              legacyTrack: challenge.track ?? null,
               legacySubTrack: challenge.legacy?.subTrack ?? null,
+              allowedChallengeTypes: ['Marathon Match'],
+              submitterUserId: authUser?.userId ?? null,
+              submitterHandle: authUser?.handle ?? null,
+              roles: Array.from(normalizedRoles),
             },
           });
         }
+
+        try {
+          await this.resourceApiService.validateSubmitterRegistration(
+            challengeIdFilter,
+            userId,
+          );
+        } catch (validationError) {
+          const details =
+            validationError instanceof Error
+              ? validationError.message
+              : String(validationError);
+          throw new ForbiddenException({
+            message:
+              'Submitter access requires active registration for this challenge.',
+            code: 'SUBMITTER_NOT_REGISTERED',
+            details: {
+              challengeId: challengeIdFilter,
+              memberId: userId,
+              info: details,
+            },
+          });
+        }
+
+        enforcedMemberId = userId;
       }
 
       // Build the where clause for review summations based on available filter parameters
@@ -614,6 +672,9 @@ export class ReviewSummationService {
       const submissionWhereClause: Record<string, unknown> = {};
       if (challengeIdFilter) {
         submissionWhereClause.challengeId = challengeIdFilter;
+      }
+      if (enforcedMemberId) {
+        submissionWhereClause.memberId = enforcedMemberId;
       }
 
       const whereClause = {

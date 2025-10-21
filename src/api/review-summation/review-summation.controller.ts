@@ -138,7 +138,7 @@ export class ReviewSummationController {
   }
 
   @Get()
-  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.Submitter)
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.Submitter, UserRole.User)
   @Scopes(Scope.ReadReviewSummation)
   @ApiOperation({
     summary: 'Search for review summations',
