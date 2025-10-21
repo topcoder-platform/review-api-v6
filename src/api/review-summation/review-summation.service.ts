@@ -779,12 +779,23 @@ export class ReviewSummationService {
           submission?: { memberId: string | null };
         };
 
+        let submitterId: number | null = null;
         let submitterHandle: string | null = null;
         let submitterMaxRating: number | null = null;
 
         if (submission && typeof submission.memberId === 'string') {
           const memberId = submission.memberId.trim();
           if (memberId.length) {
+            const numericMemberId = Number.parseInt(memberId, 10);
+            if (
+              Number.isNaN(numericMemberId) ||
+              !Number.isFinite(numericMemberId) ||
+              !Number.isSafeInteger(numericMemberId)
+            ) {
+              submitterId = null;
+            } else {
+              submitterId = numericMemberId;
+            }
             const profile = submitterInfoByMemberId.get(memberId);
             submitterHandle = profile?.handle ?? null;
             submitterMaxRating = profile?.maxRating ?? null;
@@ -793,6 +804,7 @@ export class ReviewSummationService {
 
         return {
           ...rest,
+          submitterId,
           submitterHandle,
           submitterMaxRating,
         } as ReviewSummationResponseDto;

@@ -296,6 +296,16 @@ export class ReviewSummationResponseDto {
 
   @ApiProperty({
     description:
+      'Numeric member ID of the submitter associated with this review summation',
+    example: 305643,
+    required: false,
+    nullable: true,
+    type: Number,
+  })
+  submitterId?: number | null;
+
+  @ApiProperty({
+    description:
       'Handle of the submitter associated with this review summation',
     example: 'submitter123',
     required: false,
