@@ -3470,6 +3470,40 @@ export class ReviewService {
         },
       });
 
+      const reviewResourceId = String(data.resourceId ?? '').trim();
+      let challengeId: string | null = null;
+
+      if (data.submission?.challengeId) {
+        const normalizedChallengeId = String(
+          data.submission.challengeId,
+        ).trim();
+        challengeId = normalizedChallengeId.length
+          ? normalizedChallengeId
+          : null;
+      }
+
+      if (!challengeId && reviewResourceId.length) {
+        try {
+          const resourceRecord = await this.resourcePrisma.resource.findUnique({
+            where: { id: reviewResourceId },
+            select: { challengeId: true },
+          });
+
+          const resourceChallengeId = String(
+            resourceRecord?.challengeId ?? '',
+          ).trim();
+          if (resourceChallengeId.length) {
+            challengeId = resourceChallengeId;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[getReview] Failed to resolve challengeId via resource ${reviewResourceId}: ${message}`,
+          );
+        }
+      }
+
       const challengeCache = new Map<string, ChallengeData | null>();
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
       let resolvedPhaseName: string | null = null;
@@ -3483,7 +3517,6 @@ export class ReviewService {
       // Authorization for non-M2M, non-admin users
       if (!authUser?.isMachine && !isAdmin(authUser)) {
         const uid = String(authUser?.userId ?? '');
-        const challengeId = data.submission?.challengeId;
 
         if (!challengeId) {
           throw new ForbiddenException({
@@ -3526,9 +3559,10 @@ export class ReviewService {
         }
 
         reviewerResourceIds = new Set(
-          reviewerResources.map((r) => String(r.id)),
+          reviewerResources
+            .map((r) => String(r.id ?? '').trim())
+            .filter((id) => id.length > 0),
         );
-        const reviewResourceId = String(data.resourceId ?? '');
         isReviewerForReview = reviewerResourceIds.has(reviewResourceId);
 
         if (reviewerResources.length > 0) {
@@ -3656,7 +3690,7 @@ export class ReviewService {
       result.appeals = flattenedAppeals;
       if (!resolvedPhaseName) {
         resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
-          challengeId: data.submission?.challengeId ?? null,
+          challengeId,
           phaseId: data.phaseId ?? null,
           challengeCache,
         });
@@ -3666,8 +3700,8 @@ export class ReviewService {
       const normalizedPhaseName = this.normalizePhaseName(resolvedPhaseName);
       const requesterId = String(authUser?.userId ?? '');
       const submissionOwnerId = String(data.submission?.memberId ?? '');
-      const challengeForReview = data.submission?.challengeId
-        ? (challengeCache.get(data.submission.challengeId) ?? challengeDetail)
+      const challengeForReview = challengeId
+        ? (challengeCache.get(challengeId) ?? challengeDetail)
         : challengeDetail;
       const shouldTrimIterativeReviewForOtherSubmitters =
         !isPrivilegedRequester &&
