@@ -25,6 +25,7 @@ import {
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ReviewSummationService {
@@ -39,6 +40,20 @@ export class ReviewSummationService {
   ) {}
 
   private readonly systemActor = 'ReviewSummationService';
+
+  private prepareMetadata(
+    metadata?: Prisma.JsonValue | null,
+  ): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
+    if (metadata === undefined) {
+      return undefined;
+    }
+
+    if (metadata === null) {
+      return Prisma.JsonNull;
+    }
+
+    return metadata as Prisma.InputJsonValue;
+  }
 
   private phaseNameEquals(
     phaseName: string | null | undefined,
@@ -451,10 +466,17 @@ export class ReviewSummationService {
         }
       }
 
+      const { metadata, ...rest } = body;
+      const createData: Prisma.reviewSummationUncheckedCreateInput = {
+        ...rest,
+      };
+      const normalizedMetadata = this.prepareMetadata(metadata);
+      if (normalizedMetadata !== undefined) {
+        createData.metadata = normalizedMetadata;
+      }
+
       const data = await this.prisma.reviewSummation.create({
-        data: {
-          ...body,
-        },
+        data: createData,
       });
       this.logger.log(`Review summation created with ID: ${data.id}`);
       return data as ReviewSummationResponseDto;
@@ -815,7 +837,7 @@ export class ReviewSummationService {
         const { submission, metadata, ...rest } =
           summation as typeof summation & {
             submission?: { memberId: string | null };
-            metadata?: unknown;
+            metadata?: Prisma.JsonValue | null;
           };
 
         let submitterId: number | null = null;
@@ -941,11 +963,18 @@ export class ReviewSummationService {
         }
       }
 
+      const { metadata, ...rest } = body;
+      const updateData: Prisma.reviewSummationUncheckedUpdateInput = {
+        ...rest,
+      };
+      const normalizedMetadata = this.prepareMetadata(metadata);
+      if (normalizedMetadata !== undefined) {
+        updateData.metadata = normalizedMetadata;
+      }
+
       const data = await this.prisma.reviewSummation.update({
         where: { id },
-        data: {
-          ...body,
-        },
+        data: updateData,
       });
       this.logger.log(`Review summation updated successfully: ${id}`);
       return data as ReviewSummationResponseDto;

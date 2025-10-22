@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 import {
   IsString,
   IsNumber,
@@ -158,7 +159,7 @@ export class ReviewSummationBaseRequestDto {
     additionalProperties: true,
   })
   @IsOptional()
-  metadata?: unknown;
+  metadata?: Prisma.JsonValue;
 }
 
 export class ReviewSummationRequestDto extends ReviewSummationBaseRequestDto {}
@@ -243,7 +244,7 @@ export class ReviewSummationUpdateRequestDto {
     additionalProperties: true,
   })
   @IsOptional()
-  metadata?: unknown;
+  metadata?: Prisma.JsonValue;
 }
 
 export class ReviewSummationResponseDto {
@@ -359,7 +360,7 @@ export class ReviewSummationResponseDto {
     type: Object,
     additionalProperties: true,
   })
-  metadata?: Record<string, unknown> | null;
+  metadata?: Prisma.JsonValue | null;
 }
 
 export class ReviewSummationBatchResponseDto {
