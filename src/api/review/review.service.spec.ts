@@ -806,6 +806,30 @@ describe('ReviewService.getReview authorization checks', () => {
     });
   });
 
+  it('allows reviewers to access screening reviews that are not their own before completion', async () => {
+    prismaMock.review.findUniqueOrThrow.mockResolvedValue({
+      ...defaultReviewData(),
+      resourceId: 'resource-other',
+      phaseId: 'phase-screening',
+    });
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        { id: 'phase-screening', name: 'Screening', isOpen: false },
+        { id: 'phase-review', name: 'Review', isOpen: true },
+      ],
+    });
+
+    await expect(
+      service.getReview(baseAuthUser, 'review-1'),
+    ).resolves.toMatchObject({
+      id: 'review-1',
+      resourceId: 'resource-other',
+    });
+  });
+
   it('allows reviewers to access non-owned reviews once the challenge is completed', async () => {
     challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
       id: 'challenge-1',
@@ -1225,6 +1249,48 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
   const baseSubmission = { id: 'submission-1' };
 
+  type PrismaWhereClause = {
+    AND?: PrismaWhereClause | PrismaWhereClause[];
+    OR?: PrismaWhereClause[];
+    [key: string]: unknown;
+  };
+
+  const flattenWhereClauses = (
+    input: PrismaWhereClause | PrismaWhereClause[] | undefined | null,
+  ): PrismaWhereClause[] => {
+    if (!input) {
+      return [];
+    }
+    if (Array.isArray(input)) {
+      return input.flatMap((item) => flattenWhereClauses(item));
+    }
+    if (input.AND) {
+      return flattenWhereClauses(input.AND);
+    }
+    return [input];
+  };
+
+  const findClauseWithKey = (
+    clauses: PrismaWhereClause[],
+    key: string,
+  ): PrismaWhereClause | undefined => {
+    for (const clause of clauses) {
+      if (!clause) {
+        continue;
+      }
+      if (typeof clause[key] !== 'undefined') {
+        return clause;
+      }
+      if (clause.OR?.length) {
+        const nested = findClauseWithKey(clause.OR, key);
+        if (nested) {
+          return nested;
+        }
+      }
+    }
+    return undefined;
+  };
+
   const buildResource = (roleName: string, memberId = baseAuthUser.userId) => ({
     id: 'resource-1',
     challengeId: 'challenge-1',
@@ -1290,6 +1356,15 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       eventBusServiceMock,
     );
 
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Active Challenge',
+      status: ChallengeStatus.ACTIVE,
+      phases: [
+        { id: 'phase-review', name: 'Review', isOpen: false },
+        { id: 'phase-screening', name: 'Screening', isOpen: false },
+      ],
+    });
     challengeApiServiceMock.getChallenges.mockResolvedValue([]);
   });
 
@@ -1307,8 +1382,20 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
     expect(prismaMock.review.findMany).toHaveBeenCalledTimes(1);
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
-    expect(callArgs.where.submissionId).toEqual({ in: [baseSubmission.id] });
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const resourceOrClause = whereClauses.find(
+      (clause) =>
+        clause.OR?.some((entry) => typeof entry.resourceId !== 'undefined') ??
+        false,
+    );
+    expect(resourceOrClause?.OR).toEqual([
+      { resourceId: { in: ['resource-1'] } },
+      { phaseId: { in: ['phase-screening'] } },
+    ]);
+    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+    expect(submissionClause?.submissionId).toEqual({
+      in: [baseSubmission.id],
+    });
   });
 
   it('filters reviews by the resource id when the requester is an approver', async () => {
@@ -1319,7 +1406,11 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     await service.getReviews(baseAuthUser, undefined, 'challenge-1');
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const resourceClause = whereClauses.find(
+      (clause) => typeof clause.resourceId !== 'undefined',
+    );
+    expect(resourceClause?.resourceId).toEqual({ in: ['resource-1'] });
   });
 
   it('filters reviews by the resource id when the requester is a checkpoint screener', async () => {
@@ -1330,7 +1421,11 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     await service.getReviews(baseAuthUser, undefined, 'challenge-1');
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const resourceClause = whereClauses.find(
+      (clause) => typeof clause.resourceId !== 'undefined',
+    );
+    expect(resourceClause?.resourceId).toEqual({ in: ['resource-1'] });
   });
 
   it('filters reviews by the resource id when the requester is a checkpoint reviewer', async () => {
@@ -1341,7 +1436,16 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     await service.getReviews(baseAuthUser, undefined, 'challenge-1');
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.resourceId).toEqual({ in: ['resource-1'] });
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const resourceOrClause = whereClauses.find(
+      (clause) =>
+        clause.OR?.some((entry) => typeof entry.resourceId !== 'undefined') ??
+        false,
+    );
+    expect(resourceOrClause?.OR).toEqual([
+      { resourceId: { in: ['resource-1'] } },
+      { phaseId: { in: ['phase-screening'] } },
+    ]);
   });
 
   it('does not restrict resource visibility for copilots', async () => {
@@ -1400,7 +1504,9 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.meta.totalPages).toBe(0);
     expect(prismaMock.review.findMany).toHaveBeenCalledTimes(1);
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.submissionId).toEqual({ in: ['__none__'] });
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+    expect(submissionClause?.submissionId).toEqual({ in: ['__none__'] });
     expect(prismaMock.review.count).toHaveBeenCalledWith({
       where: callArgs.where,
     });
@@ -1436,7 +1542,9 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     await service.getReviews(baseAuthUser, undefined, 'challenge-1');
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.submissionId).toEqual({
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+    expect(submissionClause?.submissionId).toEqual({
       in: [baseSubmission.id, 'submission-other'],
     });
   });
@@ -1472,7 +1580,9 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     );
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.submissionId).toEqual({
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+    expect(submissionClause?.submissionId).toEqual({
       in: [baseSubmission.id, 'submission-other'],
     });
     expect(result.data).toEqual([]);
@@ -2209,7 +2319,9 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.data[0].reviewItems).toHaveLength(1);
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    expect(callArgs.where.submissionId).toEqual({
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+    expect(submissionClause?.submissionId).toEqual({
       in: ['submission-1', 'submission-2'],
     });
   });
@@ -3443,6 +3555,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       resourceId: 'resource-1',
       status: ReviewStatus.COMPLETED,
       committed: true,
+      initialScore: 95,
+      finalScore: 90,
       reviewDate: new Date('2024-01-15T10:00:00Z'),
       submission: {
         challengeId: 'challenge-1',
@@ -3454,6 +3568,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       ...existingReview,
       status: ReviewStatus.PENDING,
       committed: false,
+      initialScore: null,
+      finalScore: null,
       reviewDate: null,
     });
 
@@ -3487,6 +3603,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
         id: 'review-1',
         status: ReviewStatus.PENDING,
         committed: false,
+        initialScore: null,
+        finalScore: null,
         reviewDate: null,
         appeals: [],
         phaseName: null,
@@ -3497,6 +3615,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(updateArgs.data).toMatchObject({
       status: ReviewStatus.PENDING,
       committed: false,
+      initialScore: null,
+      finalScore: null,
       reviewDate: null,
     });
     expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
@@ -3507,7 +3627,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       'challenge-1',
       'copilot-1',
     );
-    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+    expect(recomputeSpy).not.toHaveBeenCalled();
   });
 
   it('defaults committed to false and clears reviewDate when reopening with only status provided', async () => {
@@ -3522,6 +3642,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       resourceId: 'resource-1',
       status: ReviewStatus.COMPLETED,
       committed: true,
+      initialScore: 90,
+      finalScore: 95,
       reviewDate: new Date('2024-01-20T12:00:00Z'),
       submission: {
         challengeId: 'challenge-1',
@@ -3533,6 +3655,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       ...existingReview,
       status: ReviewStatus.IN_PROGRESS,
       committed: false,
+      initialScore: null,
+      finalScore: null,
       reviewDate: null,
     });
 
@@ -3565,6 +3689,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
         id: 'review-1',
         status: ReviewStatus.IN_PROGRESS,
         committed: false,
+        initialScore: null,
+        finalScore: null,
         reviewDate: null,
         appeals: [],
         phaseName: null,
@@ -3574,6 +3700,8 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     expect(updateArgs.data).toMatchObject({
       status: ReviewStatus.IN_PROGRESS,
       committed: false,
+      initialScore: null,
+      finalScore: null,
       reviewDate: null,
     });
     expect(resourceApiServiceMock.getResources).toHaveBeenCalledWith({
@@ -3584,7 +3712,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       'challenge-1',
       'copilot-1',
     );
-    expect(recomputeSpy).toHaveBeenCalledWith('review-1');
+    expect(recomputeSpy).not.toHaveBeenCalled();
   });
 
   it('records an audit entry when an admin updates review status and answers', async () => {

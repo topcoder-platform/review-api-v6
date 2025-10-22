@@ -282,6 +282,7 @@ describe('SubmissionService', () => {
   describe('getSubmissionFileStream', () => {
     let prismaMock: { submission: { findFirst: jest.Mock } };
     let challengeApiServiceMock: { getChallengeDetail: jest.Mock };
+    let checkSubmissionSpy: jest.SpyInstance;
 
     beforeEach(() => {
       prismaMock = {
@@ -305,12 +306,14 @@ describe('SubmissionService', () => {
         {} as any,
         {} as any,
       );
-      jest.spyOn(service as any, 'checkSubmission').mockResolvedValue({
-        id: 'sub-123',
-        memberId: 'owner-user',
-        challengeId: 'challenge-xyz',
-        url: 'https://s3.amazonaws.com/dummy/submission.zip',
-      });
+      checkSubmissionSpy = jest
+        .spyOn(service as any, 'checkSubmission')
+        .mockResolvedValue({
+          id: 'sub-123',
+          memberId: 'owner-user',
+          challengeId: 'challenge-xyz',
+          url: 'https://s3.amazonaws.com/dummy/submission.zip',
+        });
       jest
         .spyOn(service as any, 'parseS3Url')
         .mockReturnValue({ key: 'dummy/submission.zip' });
@@ -324,6 +327,55 @@ describe('SubmissionService', () => {
       jest.spyOn(service as any, 'getS3Client').mockReturnValue({
         send: s3Send,
       });
+    });
+
+    it('allows screeners to download submissions', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Screener' },
+      ]);
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'screener-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
+        'challenge-xyz',
+        'screener-user',
+      );
+    });
+
+    it('allows checkpoint screeners to download checkpoint submissions', async () => {
+      checkSubmissionSpy.mockResolvedValueOnce({
+        id: 'checkpoint-sub-123',
+        memberId: 'owner-user',
+        challengeId: 'challenge-xyz',
+        url: 'https://s3.amazonaws.com/dummy/checkpoint.zip',
+        type: SubmissionType.CHECKPOINT_SUBMISSION,
+      });
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Checkpoint Screener' },
+      ]);
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'checkpoint-screener-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'checkpoint-sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-checkpoint-sub-123.zip');
+      expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
+        'challenge-xyz',
+        'checkpoint-screener-user',
+      );
     });
 
     it('allows submitters with passing reviews to download when challenge is completed', async () => {

@@ -482,6 +482,8 @@ export class SubmissionService {
       let isReviewer = false;
       let isCopilot = false;
       let isSubmitter = false;
+      const isCheckpointSubmission =
+        submission.type === SubmissionType.CHECKPOINT_SUBMISSION;
       if (!isOwner && submission.challengeId && uid) {
         try {
           const resources =
@@ -493,6 +495,15 @@ export class SubmissionService {
             const rn = (r.roleName || '').toLowerCase();
             if (rn.includes('reviewer')) {
               isReviewer = true;
+            }
+            if (rn.includes('screener')) {
+              const roleIsCheckpoint = rn.includes('checkpoint');
+              if (
+                (isCheckpointSubmission && roleIsCheckpoint) ||
+                (!isCheckpointSubmission && !roleIsCheckpoint)
+              ) {
+                isReviewer = true;
+              }
             }
             if (rn.includes('copilot')) {
               isCopilot = true;
@@ -688,7 +699,9 @@ export class SubmissionService {
         for (const r of resources) {
           const rn = (r.roleName || '').toLowerCase();
           if (rn.includes('copilot')) isAdminOrCopilot = true;
-          if (rn.includes('reviewer')) isReviewer = true;
+          if (rn.includes('reviewer') || rn.includes('screener')) {
+            isReviewer = true;
+          }
         }
       } catch {
         // Fall through; if we can't confirm roles, deny

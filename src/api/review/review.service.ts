@@ -2154,9 +2154,9 @@ export class ReviewService {
     } as Prisma.reviewUpdateInput;
 
     if (isReopenTransition) {
-      if (updateData.committed === undefined) {
-        updateData.committed = false;
-      }
+      updateData.committed = false;
+      updateData.initialScore = null;
+      updateData.finalScore = null;
       if (updateData.reviewDate === undefined) {
         updateData.reviewDate = null;
       }
@@ -2173,7 +2173,9 @@ export class ReviewService {
         },
       });
       // Recalculate scores based on current review items
-      const recomputedScores = await this.recomputeAndUpdateReviewScores(id);
+      const recomputedScores = isReopenTransition
+        ? null
+        : await this.recomputeAndUpdateReviewScores(id);
       if (
         existingReview.status !== ReviewStatus.COMPLETED &&
         data.status === ReviewStatus.COMPLETED
@@ -2565,10 +2567,12 @@ export class ReviewService {
     try {
       const reviewWhereClause: any = {};
       let challengeDetail: ChallengeData | null = null;
+      let challengeScopedFilter: Prisma.reviewWhereInput | null = null;
       let requesterIsChallengeResource = false;
       const reviewerResourceIdSet = new Set<string>();
       const submitterSubmissionIdSet = new Set<string>();
       let hasCopilotRoleForChallenge = false;
+      let hasReviewerRoleForChallenge = false;
       let hasSubmitterRoleForChallenge = false;
       let submitterVisibilityState = {
         allowAny: false,
@@ -2642,16 +2646,57 @@ export class ReviewService {
 
       if (challengeId) {
         this.logger.debug(`Fetching reviews by challengeId: ${challengeId}`);
+
+        const hasDirectSubmissionFilter = Boolean(submissionId);
+
         const submissions = await this.prisma.submission.findMany({
           where: { challengeId },
           select: { id: true },
         });
 
         const submissionIds = submissions.map((s) => s.id);
+        const challengeFilters: Prisma.reviewWhereInput[] = [];
 
-        if (submissionIds.length > 0) {
-          reviewWhereClause.submissionId = { in: submissionIds };
-        } else {
+        if (!hasDirectSubmissionFilter && submissionIds.length > 0) {
+          challengeFilters.push({ submissionId: { in: submissionIds } });
+        }
+
+        if (!challengeDetail) {
+          try {
+            challengeDetail =
+              await this.challengeApiService.getChallengeDetail(challengeId);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            this.logger.debug(
+              `[getReviews] Unable to fetch challenge detail for phase filtering: ${message}`,
+            );
+            challengeDetail = null;
+          }
+        }
+
+        if (challengeDetail?.phases?.length) {
+          const phaseIds = new Set<string>();
+          for (const phase of challengeDetail.phases ?? []) {
+            if (!phase) {
+              continue;
+            }
+            const candidates = [
+              String((phase as any).id ?? '').trim(),
+              String((phase as any).phaseId ?? '').trim(),
+            ].filter((value) => value.length > 0);
+
+            for (const candidate of candidates) {
+              phaseIds.add(candidate);
+            }
+          }
+
+          if (phaseIds.size > 0) {
+            challengeFilters.push({ phaseId: { in: Array.from(phaseIds) } });
+          }
+        }
+
+        if (!hasDirectSubmissionFilter && challengeFilters.length === 0) {
           return {
             data: [],
             meta: {
@@ -2661,6 +2706,12 @@ export class ReviewService {
               totalPages: 0,
             },
           };
+        }
+
+        if (challengeFilters.length === 1) {
+          challengeScopedFilter = challengeFilters[0];
+        } else if (challengeFilters.length > 1) {
+          challengeScopedFilter = { OR: challengeFilters };
         }
       }
 
@@ -2689,6 +2740,9 @@ export class ReviewService {
               ) {
                 reviewerResourceIdSet.add(r.id);
               }
+              if (roleName.includes('reviewer')) {
+                hasReviewerRoleForChallenge = true;
+              }
             });
             hasCopilotRoleForChallenge = normalized.some((r) =>
               (r.roleName || '').toLowerCase().includes('copilot'),
@@ -2710,7 +2764,42 @@ export class ReviewService {
           if (hasCopilotRoleForChallenge) {
             // Copilots retain full visibility for the challenge
           } else if (reviewerResourceIdSet.size) {
-            restrictToResourceIds(Array.from(reviewerResourceIdSet));
+            const reviewerResourceIds = Array.from(reviewerResourceIdSet);
+            if (hasReviewerRoleForChallenge && challengeId) {
+              let screeningPhaseIds: string[] = [];
+              if (!challengeDetail) {
+                try {
+                  challengeDetail =
+                    await this.challengeApiService.getChallengeDetail(
+                      challengeId,
+                    );
+                } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : String(error);
+                  this.logger.debug(
+                    `[getReviews] Unable to fetch challenge ${challengeId} for reviewer screening access: ${message}`,
+                  );
+                }
+              }
+
+              if (challengeDetail) {
+                screeningPhaseIds = this.getPhaseIdsForNames(challengeDetail, [
+                  'screening',
+                  'checkpoint screening',
+                ]);
+              }
+
+              if (screeningPhaseIds.length) {
+                reviewWhereClause.OR = [
+                  { resourceId: { in: reviewerResourceIds } },
+                  { phaseId: { in: screeningPhaseIds } },
+                ];
+              } else {
+                restrictToResourceIds(reviewerResourceIds);
+              }
+            } else {
+              restrictToResourceIds(reviewerResourceIds);
+            }
           } else {
             // Confirm the user has actually submitted to this challenge
             const mySubs = await this.prisma.submission.findMany({
@@ -2878,8 +2967,22 @@ export class ReviewService {
         ].includes(challengeDetail.status) &&
         (isAdmin(authUser) || requesterIsChallengeResource);
 
+      const whereAndClauses: Prisma.reviewWhereInput[] = [];
+      if (Object.keys(reviewWhereClause).length > 0) {
+        whereAndClauses.push(reviewWhereClause);
+      }
+      if (challengeScopedFilter) {
+        whereAndClauses.push(challengeScopedFilter);
+      }
+      const finalWhereClause: Prisma.reviewWhereInput =
+        whereAndClauses.length === 0
+          ? {}
+          : whereAndClauses.length === 1
+            ? whereAndClauses[0]
+            : { AND: whereAndClauses };
+
       this.logger.debug(`Fetching reviews with where clause:`);
-      this.logger.debug(reviewWhereClause);
+      this.logger.debug(finalWhereClause);
 
       const reviewInclude: Prisma.reviewInclude = {
         submission: {
@@ -2894,7 +2997,7 @@ export class ReviewService {
       }
 
       const reviews = await this.prisma.review.findMany({
-        where: reviewWhereClause,
+        where: finalWhereClause,
         skip,
         take: perPage,
         include: reviewInclude,
@@ -3317,7 +3420,7 @@ export class ReviewService {
       });
 
       const totalCount = await this.prisma.review.count({
-        where: reviewWhereClause,
+        where: finalWhereClause,
       });
 
       this.logger.log(
@@ -3372,6 +3475,7 @@ export class ReviewService {
       let resolvedPhaseName: string | null = null;
       let challengeDetail: ChallengeData | null = null;
       let hasCopilotRole = false;
+      let hasReviewerRoleResource = false;
       let reviewerResourceIds = new Set<string>();
       let isReviewerForReview = false;
       let isSubmitterForChallenge = false;
@@ -3408,6 +3512,9 @@ export class ReviewService {
               roleName.includes(keyword),
             );
           });
+          hasReviewerRoleResource = reviewerResources.some((resource) =>
+            (resource.roleName || '').toLowerCase().includes('reviewer'),
+          );
           hasCopilotRole = resources.some((r) =>
             (r.roleName || '').toLowerCase().includes('copilot'),
           );
@@ -3429,9 +3536,23 @@ export class ReviewService {
             ChallengeStatus.COMPLETED,
             ChallengeStatus.CANCELLED_FAILED_REVIEW,
           ].includes(challenge.status);
+          if (!resolvedPhaseName && data.phaseId && challengeId) {
+            resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
+              challengeId,
+              phaseId: data.phaseId,
+              challengeCache,
+            });
+          }
+          const normalizedReviewerPhase =
+            this.normalizePhaseName(resolvedPhaseName);
+          const isScreeningPhaseForReviewer =
+            hasReviewerRoleResource &&
+            (normalizedReviewerPhase === 'screening' ||
+              normalizedReviewerPhase === 'checkpoint screening');
           if (
             !challengeInFinalState &&
-            !reviewerResourceIds.has(reviewResourceId)
+            !reviewerResourceIds.has(reviewResourceId) &&
+            !isScreeningPhaseForReviewer
           ) {
             throw new ForbiddenException({
               message:
@@ -3784,6 +3905,50 @@ export class ReviewService {
         this.hasTimestampValue(actualStart) && this.hasTimestampValue(actualEnd)
       );
     });
+  }
+
+  private getPhaseIdsForNames(
+    challenge: ChallengeData | null | undefined,
+    phaseNames: string[],
+  ): string[] {
+    if (!challenge?.phases?.length) {
+      return [];
+    }
+
+    const normalizedTargets = new Set(
+      (phaseNames ?? [])
+        .map((name) => this.normalizePhaseName(name))
+        .filter((name) => name.length > 0),
+    );
+
+    if (!normalizedTargets.size) {
+      return [];
+    }
+
+    const phaseIds: string[] = [];
+
+    for (const phase of challenge.phases ?? []) {
+      if (!phase) {
+        continue;
+      }
+
+      const normalizedName = this.normalizePhaseName((phase as any).name);
+      if (!normalizedTargets.has(normalizedName)) {
+        continue;
+      }
+
+      const candidateIds = [(phase as any).id, (phase as any).phaseId]
+        .map((value) => String(value ?? '').trim())
+        .filter((value) => value.length > 0);
+
+      for (const candidate of candidateIds) {
+        if (!phaseIds.includes(candidate)) {
+          phaseIds.push(candidate);
+        }
+      }
+    }
+
+    return phaseIds;
   }
 
   private getSubmitterVisibilityForChallenge(
