@@ -614,29 +614,64 @@ export class ReviewSummationService {
           });
         }
 
+        let memberResources: unknown[] = [];
+        let resourceLookupFailed = false;
         try {
-          await this.resourceApiService.validateSubmitterRegistration(
-            challengeIdFilter,
-            userId,
-          );
-        } catch (validationError) {
-          const details =
-            validationError instanceof Error
-              ? validationError.message
-              : String(validationError);
-          throw new ForbiddenException({
-            message:
-              'Submitter access requires active registration for this challenge.',
-            code: 'SUBMITTER_NOT_REGISTERED',
-            details: {
-              challengeId: challengeIdFilter,
-              memberId: userId,
-              info: details,
-            },
+          memberResources = await this.resourceApiService.getResources({
+            challengeId: challengeIdFilter,
+            memberId: userId,
           });
+        } catch (resourceLookupError) {
+          resourceLookupFailed = true;
+          const message =
+            resourceLookupError instanceof Error
+              ? resourceLookupError.message
+              : String(resourceLookupError);
+          this.logger.warn(
+            `[searchSummation] Unable to load member resources for challenge ${challengeIdFilter} and member ${userId}: ${message}`,
+          );
         }
 
-        enforcedMemberId = userId;
+        if (!resourceLookupFailed) {
+          const hasAnyResource =
+            Array.isArray(memberResources) && memberResources.length > 0;
+          if (!hasAnyResource) {
+            throw new ForbiddenException({
+              message:
+                'Submitter access requires active registration for this challenge.',
+              code: 'SUBMITTER_NOT_REGISTERED',
+              details: {
+                challengeId: challengeIdFilter,
+                memberId: userId,
+                info: 'Member does not have any resources on this challenge.',
+              },
+            });
+          }
+        } else {
+          try {
+            await this.resourceApiService.validateSubmitterRegistration(
+              challengeIdFilter,
+              userId,
+            );
+          } catch (validationError) {
+            const details =
+              validationError instanceof Error
+                ? validationError.message
+                : String(validationError);
+            throw new ForbiddenException({
+              message:
+                'Submitter access requires active registration for this challenge.',
+              code: 'SUBMITTER_NOT_REGISTERED',
+              details: {
+                challengeId: challengeIdFilter,
+                memberId: userId,
+                info: details,
+              },
+            });
+          }
+
+          enforcedMemberId = userId;
+        }
       }
 
       // Build the where clause for review summations based on available filter parameters
