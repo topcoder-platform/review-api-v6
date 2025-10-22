@@ -77,6 +77,15 @@ export class ReviewSummationQueryDto {
   @IsString()
   @IsNotEmpty()
   challengeId?: string;
+
+  @ApiProperty({
+    description:
+      'When true, include the metadata payload for each review summation in responses',
+    required: false,
+  })
+  @IsOptional()
+  @IsBooleanString()
+  metadata?: string;
 }
 
 export class ReviewSummationBaseRequestDto {
@@ -140,6 +149,16 @@ export class ReviewSummationBaseRequestDto {
   @IsOptional()
   @IsDateString()
   reviewedDate?: string;
+
+  @ApiProperty({
+    description:
+      'Auxiliary metadata for the review summation (test scores, etc.)',
+    required: false,
+    type: Object,
+    additionalProperties: true,
+  })
+  @IsOptional()
+  metadata?: unknown;
 }
 
 export class ReviewSummationRequestDto extends ReviewSummationBaseRequestDto {}
@@ -215,6 +234,16 @@ export class ReviewSummationUpdateRequestDto {
   @IsOptional()
   @IsDateString()
   reviewedDate?: string;
+
+  @ApiProperty({
+    description:
+      'Auxiliary metadata for the review summation (test scores, etc.)',
+    required: false,
+    type: Object,
+    additionalProperties: true,
+  })
+  @IsOptional()
+  metadata?: unknown;
 }
 
 export class ReviewSummationResponseDto {
@@ -321,6 +350,16 @@ export class ReviewSummationResponseDto {
     type: Number,
   })
   submitterMaxRating?: number | null;
+
+  @ApiProperty({
+    description:
+      'Auxiliary metadata for the review summation (test scores, etc.)',
+    required: false,
+    nullable: true,
+    type: Object,
+    additionalProperties: true,
+  })
+  metadata?: Record<string, unknown> | null;
 }
 
 export class ReviewSummationBatchResponseDto {

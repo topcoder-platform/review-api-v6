@@ -22,7 +22,6 @@ import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 import { QueueSchedulerService } from './queue-scheduler.service';
 import { WorkflowQueueHandler } from './workflow-queue.handler';
-import { FinancePrismaService } from './finance-prisma.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -58,7 +57,6 @@ import { FinancePrismaService } from './finance-prisma.service';
     SubmissionService,
     QueueSchedulerService,
     WorkflowQueueHandler,
-    FinancePrismaService,
   ],
   exports: [
     PrismaService,
@@ -79,7 +77,6 @@ import { FinancePrismaService } from './finance-prisma.service';
     SubmissionScanCompleteOrchestrator,
     QueueSchedulerService,
     WorkflowQueueHandler,
-    FinancePrismaService,
   ],
 })
 export class GlobalProvidersModule {}

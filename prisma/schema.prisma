@@ -368,6 +368,7 @@ model reviewSummation {
   createdBy          String?
   updatedAt          DateTime  @updatedAt
   updatedBy          String?
+  metadata           Json?
 
   submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 

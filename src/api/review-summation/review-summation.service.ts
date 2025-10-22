@@ -557,6 +557,8 @@ export class ReviewSummationService {
         : undefined;
       const challengeIdFilter =
         rawChallengeId && rawChallengeId.length ? rawChallengeId : undefined;
+      const includeMetadata =
+        (queryDto.metadata ?? '').toLowerCase() === 'true';
 
       let enforcedMemberId: string | undefined;
 
@@ -810,9 +812,11 @@ export class ReviewSummationService {
       });
 
       const data: ReviewSummationResponseDto[] = summations.map((summation) => {
-        const { submission, ...rest } = summation as typeof summation & {
-          submission?: { memberId: string | null };
-        };
+        const { submission, metadata, ...rest } =
+          summation as typeof summation & {
+            submission?: { memberId: string | null };
+            metadata?: unknown;
+          };
 
         let submitterId: number | null = null;
         let submitterHandle: string | null = null;
@@ -837,12 +841,18 @@ export class ReviewSummationService {
           }
         }
 
-        return {
+        const base: ReviewSummationResponseDto = {
           ...rest,
           submitterId,
           submitterHandle,
           submitterMaxRating,
         } as ReviewSummationResponseDto;
+
+        if (includeMetadata) {
+          base.metadata = metadata ?? null;
+        }
+
+        return base;
       });
 
       this.logger.log(
