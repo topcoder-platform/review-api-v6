@@ -1597,6 +1597,30 @@ async function processType(type: string, subtype?: string) {
         }
         case 'review_item': {
           console.log(`[${type}][${file}] Processing file`);
+          const logReviewItemConversionError = (err: unknown, rawItem: any) => {
+            const legacyId = rawItem?.review_item_id;
+            const errorMessage =
+              err instanceof Error ? err.message : String(err);
+            console.error(
+              `[${type}][${file}] Failed to convert reviewItem legacyId ${legacyId}: ${errorMessage}`,
+            );
+            if (err instanceof Error && err.stack) {
+              console.error(err);
+            }
+            try {
+              console.error(
+                `[${type}][${file}] Skipping record: ${JSON.stringify(rawItem)}`,
+              );
+            } catch (stringifyErr) {
+              const stringifyMessage =
+                stringifyErr instanceof Error
+                  ? stringifyErr.message
+                  : String(stringifyErr);
+              console.error(
+                `[${type}][${file}] Failed to stringify record for legacyId ${legacyId}: ${stringifyMessage}`,
+              );
+            }
+          };
           const convertReviewItem = (item, recordId: string) => {
             const legacyId = normalizeLegacyKey(item.review_item_id);
             const reviewId = requireMappedId(
@@ -1625,15 +1649,22 @@ async function processType(type: string, subtype?: string) {
             };
           };
           if (!isIncrementalRun) {
-            const processedData = jsonData[key]
-              .filter(
-                (item) => !hasMappedId(reviewItemIdMap, item.review_item_id),
-              )
-              .map((item) => {
-                const id = nanoid(14);
-                setMappedId(reviewItemIdMap, item.review_item_id, id);
-                return convertReviewItem(item, id);
-              });
+            type ReviewItemEntity = ReturnType<typeof convertReviewItem>;
+            const processedData: ReviewItemEntity[] = [];
+            for (const rawItem of jsonData[key]) {
+              if (hasMappedId(reviewItemIdMap, rawItem.review_item_id)) {
+                continue;
+              }
+              const id = nanoid(14);
+              try {
+                const converted = convertReviewItem(rawItem, id);
+                setMappedId(reviewItemIdMap, rawItem.review_item_id, id);
+                processedData.push(converted);
+              } catch (err) {
+                logReviewItemConversionError(err, rawItem);
+                continue;
+              }
+            }
             const totalBatches = Math.ceil(processedData.length / batchSize);
             for (let i = 0; i < processedData.length; i += batchSize) {
               const batchIndex = i / batchSize + 1;
@@ -1673,7 +1704,13 @@ async function processType(type: string, subtype?: string) {
                 item.review_item_id,
               );
               const id = existingId ?? nanoid(14);
-              const data = convertReviewItem(item, id);
+              let data: ReturnType<typeof convertReviewItem>;
+              try {
+                data = convertReviewItem(item, id);
+              } catch (err) {
+                logReviewItemConversionError(err, item);
+                continue;
+              }
               try {
                 const updateData = omitId(data);
                 await prisma.reviewItem.upsert({
