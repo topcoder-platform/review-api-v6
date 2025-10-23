@@ -19,6 +19,7 @@ interface ChallengeSummaryRow {
   challengeName: string;
   challengeTypeId: string | null;
   challengeTypeName: string | null;
+  hasAIReview: boolean;
   currentPhaseName: string | null;
   currentPhaseScheduledEnd: Date | null;
   currentPhaseActualEnd: Date | null;
@@ -297,6 +298,17 @@ export class MyReviewService {
           LIMIT 1
         ) appeals_response_phase ON TRUE
       `,
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            EXISTS (
+              SELECT 1
+              FROM challenges."ChallengeReviewer" cr
+              WHERE cr."challengeId" = c.id
+                AND cr."aiWorkflowId" is not NULL
+            ) AS "hasAIReview"
+        ) cr ON TRUE
+      `,
     );
 
     if (challengeTypeId) {
@@ -434,6 +446,7 @@ export class MyReviewService {
         c."typeId" AS "challengeTypeId",
         ct.name AS "challengeTypeName",
         cp.name AS "currentPhaseName",
+        cr."hasAIReview" as "hasAIReview",
         cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
         cp."actualEndDate" AS "currentPhaseActualEnd",
         rr.name AS "resourceRoleName",
@@ -539,6 +552,7 @@ export class MyReviewService {
         challengeName: row.challengeName,
         challengeTypeId: row.challengeTypeId,
         challengeTypeName: row.challengeTypeName,
+        hasAIReview: row.hasAIReview,
         challengeEndDate: row.challengeEndDate
           ? row.challengeEndDate.toISOString()
           : null,
