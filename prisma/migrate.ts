@@ -135,7 +135,16 @@ function readIdMap(filename: string): Map<string, string> {
   if (fs.existsSync(`.tmp/${filename}.json`)) {
     const entries = Object.entries(
       JSON.parse(fs.readFileSync(`.tmp/${filename}.json`, 'utf-8')),
-    );
+    ).map(([key, value]) => {
+      if (typeof value !== 'string') {
+        throw new Error(
+          `Invalid mapping value for ${filename}: expected string, received "${describeLegacyId(
+            value,
+          )}"`,
+        );
+      }
+      return [key, value] as [string, string];
+    });
     return new Map<string, string>(entries);
   }
   return new Map<string, string>();
