@@ -1512,7 +1512,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     });
   });
 
-  it('includes non-owned submissions with limited visibility when submission phase is closed on an active challenge', async () => {
+  it('restricts submitters to their own submissions when submission phase is closed on an active challenge', async () => {
     const submitterResource = {
       ...buildResource('Submitter'),
       roleId: CommonConfig.roles.submitterRoleId,
@@ -1529,6 +1529,45 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       phases: [
         { id: 'phase-sub', name: 'Submission', isOpen: false },
         { id: 'phase-review', name: 'Review', isOpen: false },
+      ],
+    });
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any) => {
+      if (where?.memberId) {
+        return Promise.resolve([baseSubmission]);
+      }
+      return Promise.resolve([baseSubmission, { id: 'submission-other' }]);
+    });
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+    expect(submissionClause?.submissionId).toEqual({
+      in: [baseSubmission.id],
+    });
+  });
+
+  it('allows limited visibility for marathon matches during appeals', async () => {
+    const submitterResource = {
+      ...buildResource('Submitter'),
+      roleId: CommonConfig.roles.submitterRoleId,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      submitterResource,
+    ]);
+
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Marathon Challenge',
+      status: ChallengeStatus.ACTIVE,
+      type: 'Marathon Match',
+      legacy: { subTrack: 'MARATHON_MATCH' },
+      phases: [
+        { id: 'phase-appeals', name: 'Appeals', isOpen: true },
+        { id: 'phase-sub', name: 'Submission', isOpen: false },
       ],
     });
 
@@ -1939,7 +1978,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.data[0].reviewItems).toHaveLength(1);
   });
 
-  it('returns limited review data for non-owned submissions when appeals are open', async () => {
+  it('returns only owned reviews for submitters when appeals are open on non-marathon challenges', async () => {
     const now = new Date();
     const submitterResource = {
       ...buildResource('Submitter'),
@@ -2043,8 +2082,28 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       },
     };
 
-    prismaMock.review.findMany.mockResolvedValue([ownReview, otherReview]);
-    prismaMock.review.count.mockResolvedValue(2);
+    prismaMock.review.findMany.mockImplementation((args: any) => {
+      const whereClauses = flattenWhereClauses(args.where);
+      const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+      const allowedIds: string[] =
+        (submissionClause?.submissionId as any)?.in ?? [];
+      return Promise.resolve(
+        [ownReview, otherReview].filter((review) =>
+          allowedIds.includes(review.submissionId),
+        ),
+      );
+    });
+    prismaMock.review.count.mockImplementation((args: any) => {
+      const whereClauses = flattenWhereClauses(args.where);
+      const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
+      const allowedIds: string[] =
+        (submissionClause?.submissionId as any)?.in ?? [];
+      return Promise.resolve(
+        [ownReview, otherReview].filter((review) =>
+          allowedIds.includes(review.submissionId),
+        ).length,
+      );
+    });
 
     const response = await service.getReviews(
       baseAuthUser,
@@ -2052,7 +2111,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       'challenge-1',
     );
 
-    expect(response.data).toHaveLength(2);
+    expect(response.data).toHaveLength(1);
     const own = response.data.find(
       (entry) => entry.submissionId === baseSubmission.id,
     );
@@ -2061,36 +2120,10 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     );
 
     expect(own).toBeDefined();
-    expect(other).toBeDefined();
+    expect(other).toBeUndefined();
     expect(own?.finalScore).toBe(95.5);
     expect(own?.initialScore).toBe(93.2);
     expect(own?.reviewItems).toHaveLength(1);
-
-    const otherResult = other as any;
-    expect(otherResult && 'finalScore' in otherResult).toBe(false);
-    expect(otherResult && 'initialScore' in otherResult).toBe(false);
-    expect(other?.reviewItems).toEqual([]);
-    expect(other?.reviewDate).toEqual(now);
-    expect(other?.phaseName).toBe('Appeals');
-    expect(other).toMatchObject({
-      id: 'review-2',
-      resourceId: 'resource-reviewer-2',
-      submissionId: 'submission-other',
-      scorecardId: 'scorecard-2',
-      status: ReviewStatus.COMPLETED,
-      phaseId: 'phase-appeals',
-      createdAt: now,
-      createdBy: 'creator-2',
-      updatedAt: now,
-      updatedBy: 'updater-2',
-    });
-    expect(other?.reviewerHandle).toBeNull();
-    expect(other?.reviewerMaxRating).toBeNull();
-    expect(other?.submitterHandle).toBeNull();
-    expect(other?.submitterMaxRating).toBeNull();
-    expect(other && 'metadata' in other).toBe(false);
-    expect(other && 'typeId' in other).toBe(false);
-    expect(other && 'committed' in other).toBe(false);
   });
 
   it('omits nested review details when thin flag is set', async () => {
@@ -2223,7 +2256,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(response.data[0].reviewItems).toHaveLength(1);
   });
 
-  it('allows First2Finish submitters to view their reviews while iterative review is open', async () => {
+  it('restricts First2Finish submitters to their own reviews while iterative review is open', async () => {
     const now = new Date();
     const submitterUser: JwtUser = {
       userId: 'submitter-1',
@@ -2322,7 +2355,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     const whereClauses = flattenWhereClauses(callArgs.where);
     const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
     expect(submissionClause?.submissionId).toEqual({
-      in: ['submission-1', 'submission-2'],
+      in: ['submission-1'],
     });
   });
 

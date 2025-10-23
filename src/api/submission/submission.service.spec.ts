@@ -4,6 +4,7 @@ import { Readable } from 'stream';
 import { SubmissionService } from './submission.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { CommonConfig } from 'src/shared/config/common.config';
 
 jest.mock('nanoid', () => ({
   __esModule: true,
@@ -497,6 +498,15 @@ describe('SubmissionService', () => {
     let challengePrismaMock: {
       $queryRaw: jest.Mock;
     };
+    let challengeApiServiceMock: {
+      getChallengeDetail: jest.Mock;
+      getChallenges: jest.Mock;
+    };
+    let resourceApiServiceListMock: {
+      validateSubmitterRegistration: jest.Mock;
+      getMemberResourcesRoles: jest.Mock;
+    };
+    let memberPrismaMock: { member: { findMany: jest.Mock } };
     let listService: SubmissionService;
 
     beforeEach(() => {
@@ -513,18 +523,30 @@ describe('SubmissionService', () => {
       challengePrismaMock = {
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
+      challengeApiServiceMock = {
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-1',
+          status: ChallengeStatus.ACTIVE,
+          type: 'Challenge',
+          legacy: {},
+          phases: [],
+        }),
+        getChallenges: jest.fn(),
+      };
+      resourceApiServiceListMock = {
+        validateSubmitterRegistration: jest.fn(),
+        getMemberResourcesRoles: jest.fn().mockResolvedValue([]),
+      };
+      memberPrismaMock = { member: { findMany: jest.fn() } };
       listService = new SubmissionService(
         prismaMock as any,
         prismaErrorServiceMock as any,
         challengePrismaMock as any,
-        {} as any,
-        {
-          validateSubmitterRegistration: jest.fn(),
-          getMemberResourcesRoles: jest.fn(),
-        } as any,
+        challengeApiServiceMock as any,
+        resourceApiServiceListMock as any,
         {} as any,
         {} as any,
-        { member: { findMany: jest.fn() } } as any,
+        memberPrismaMock as any,
       );
     });
 
@@ -647,6 +669,220 @@ describe('SubmissionService', () => {
 
       expect(result.data[0]).not.toHaveProperty('isLatest');
       expect(result.data[1]).not.toHaveProperty('isLatest');
+    });
+
+    it('omits review data for non-owned submissions before completion', async () => {
+      const submissions = [
+        {
+          id: 'submission-own',
+          challengeId: 'challenge-1',
+          memberId: 'user-1',
+          submittedDate: new Date('2025-01-02T12:00:00Z'),
+          createdAt: new Date('2025-01-02T12:00:00Z'),
+          updatedAt: new Date('2025-01-02T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [{ id: 'review-own' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+        {
+          id: 'submission-other',
+          challengeId: 'challenge-1',
+          memberId: 'user-2',
+          submittedDate: new Date('2025-01-01T12:00:00Z'),
+          createdAt: new Date('2025-01-01T12:00:00Z'),
+          updatedAt: new Date('2025-01-01T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [{ id: 'review-other' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-own',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'user-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const own = result.data.find((entry) => entry.id === 'submission-own');
+      const other = result.data.find(
+        (entry) => entry.id === 'submission-other',
+      );
+
+      expect(own?.review).toBeDefined();
+      expect(other).not.toHaveProperty('review');
+      expect(
+        resourceApiServiceListMock.getMemberResourcesRoles,
+      ).toHaveBeenCalledWith('challenge-1', 'user-1');
+      expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+        'challenge-1',
+      );
+    });
+
+    it('retains review data for other submissions once the challenge completes', async () => {
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+        id: 'challenge-1',
+        status: ChallengeStatus.COMPLETED,
+        type: 'Challenge',
+        legacy: {},
+        phases: [],
+      });
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+
+      const submissions = [
+        {
+          id: 'submission-own',
+          challengeId: 'challenge-1',
+          memberId: 'user-1',
+          submittedDate: new Date('2025-01-02T12:00:00Z'),
+          createdAt: new Date('2025-01-02T12:00:00Z'),
+          updatedAt: new Date('2025-01-02T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.COMPLETED_WITHOUT_WIN,
+          review: [{ id: 'review-own' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+        {
+          id: 'submission-other',
+          challengeId: 'challenge-1',
+          memberId: 'user-2',
+          submittedDate: new Date('2025-01-01T12:00:00Z'),
+          createdAt: new Date('2025-01-01T12:00:00Z'),
+          updatedAt: new Date('2025-01-01T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.COMPLETED_WITHOUT_WIN,
+          review: [{ id: 'review-other' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-own',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'user-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const other = result.data.find(
+        (entry) => entry.id === 'submission-other',
+      );
+
+      expect(other?.review).toBeDefined();
+    });
+
+    it('retains review data for marathon match submissions', async () => {
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Marathon Match',
+        legacy: { subTrack: 'MARATHON_MATCH' },
+        phases: [],
+      });
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+
+      const submissions = [
+        {
+          id: 'submission-own',
+          challengeId: 'challenge-1',
+          memberId: 'user-1',
+          submittedDate: new Date('2025-01-02T12:00:00Z'),
+          createdAt: new Date('2025-01-02T12:00:00Z'),
+          updatedAt: new Date('2025-01-02T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [{ id: 'review-own' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+        {
+          id: 'submission-other',
+          challengeId: 'challenge-1',
+          memberId: 'user-2',
+          submittedDate: new Date('2025-01-01T12:00:00Z'),
+          createdAt: new Date('2025-01-01T12:00:00Z'),
+          updatedAt: new Date('2025-01-01T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [{ id: 'review-other' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-own',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'user-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const other = result.data.find(
+        (entry) => entry.id === 'submission-other',
+      );
+
+      expect(other?.review).toBeDefined();
     });
   });
 });

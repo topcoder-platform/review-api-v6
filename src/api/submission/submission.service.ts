@@ -19,6 +19,7 @@ import {
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { CommonConfig } from 'src/shared/config/common.config';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
@@ -33,6 +34,7 @@ import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
 import { randomUUID } from 'crypto';
 import { basename } from 'path';
+import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 import {
   S3Client,
   ListObjectsV2Command,
@@ -51,6 +53,13 @@ type SubmissionMinimal = {
   systemFileName: string | null;
   url: string | null;
 };
+
+const REVIEW_ACCESS_ROLE_KEYWORDS = [
+  'reviewer',
+  'screener',
+  'approver',
+  'approval',
+];
 
 @Injectable()
 export class SubmissionService {
@@ -1626,6 +1635,8 @@ export class SubmissionService {
         }
       }
 
+      await this.applyReviewVisibilityFilters(authUser, submissions);
+
       // Count total entities matching the filter for pagination metadata
       const totalCount = await this.prisma.submission.count({
         where: {
@@ -1988,6 +1999,171 @@ export class SubmissionService {
     return data;
   }
 
+  private async applyReviewVisibilityFilters(
+    authUser: JwtUser,
+    submissions: Array<{
+      challengeId?: string | null;
+      memberId?: string | null;
+      review?: unknown;
+    }>,
+  ): Promise<void> {
+    if (!submissions.length) {
+      return;
+    }
+
+    const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+    if (isPrivilegedRequester) {
+      return;
+    }
+
+    const uid =
+      authUser?.userId !== undefined && authUser?.userId !== null
+        ? String(authUser.userId).trim()
+        : '';
+
+    if (!uid) {
+      return;
+    }
+
+    const challengeIds = Array.from(
+      new Set(
+        submissions
+          .map((submission) => {
+            if (submission.challengeId == null) {
+              return null;
+            }
+            const id = String(submission.challengeId).trim();
+            return id.length ? id : null;
+          })
+          .filter((value): value is string => !!value),
+      ),
+    );
+
+    if (!challengeIds.length) {
+      return;
+    }
+
+    const challengeDetails = new Map<string, ChallengeData | null>();
+
+    await Promise.all(
+      challengeIds.map(async (challengeId) => {
+        try {
+          const detail =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          challengeDetails.set(challengeId, detail);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[applyReviewVisibilityFilters] Failed to load challenge ${challengeId}: ${message}`,
+          );
+          challengeDetails.set(challengeId, null);
+        }
+      }),
+    );
+
+    const roleSummaryByChallenge = new Map<
+      string,
+      { hasCopilot: boolean; hasReviewer: boolean; hasSubmitter: boolean }
+    >();
+
+    await Promise.all(
+      challengeIds.map(async (challengeId) => {
+        let resources: ResourceInfo[] = [];
+        try {
+          resources = await this.resourceApiService.getMemberResourcesRoles(
+            challengeId,
+            uid,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[applyReviewVisibilityFilters] Failed to load resource roles for challenge ${challengeId}, member ${uid}: ${message}`,
+          );
+        }
+
+        let hasCopilot = false;
+        let hasReviewer = false;
+        let hasSubmitter = false;
+
+        for (const resource of resources ?? []) {
+          const roleName = (resource.roleName || '').toLowerCase();
+          if (roleName.includes('copilot')) {
+            hasCopilot = true;
+          }
+          if (
+            REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
+              roleName.includes(keyword),
+            )
+          ) {
+            hasReviewer = true;
+          }
+          if (
+            resource.roleId === CommonConfig.roles.submitterRoleId ||
+            roleName.includes('submitter')
+          ) {
+            hasSubmitter = true;
+          }
+        }
+
+        roleSummaryByChallenge.set(challengeId, {
+          hasCopilot,
+          hasReviewer,
+          hasSubmitter,
+        });
+      }),
+    );
+
+    for (const submission of submissions) {
+      if (!Object.prototype.hasOwnProperty.call(submission, 'review')) {
+        continue;
+      }
+
+      const challengeId =
+        submission.challengeId != null
+          ? String(submission.challengeId).trim()
+          : '';
+      if (!challengeId) {
+        continue;
+      }
+
+      const isOwnSubmission =
+        submission.memberId != null &&
+        String(submission.memberId).trim() === uid;
+      if (isOwnSubmission) {
+        continue;
+      }
+
+      const roleSummary = roleSummaryByChallenge.get(challengeId) ?? {
+        hasCopilot: false,
+        hasReviewer: false,
+        hasSubmitter: false,
+      };
+
+      if (roleSummary.hasCopilot || roleSummary.hasReviewer) {
+        continue;
+      }
+
+      const challenge = challengeDetails.get(challengeId);
+
+      if (this.isCompletedOrCancelledStatus(challenge?.status ?? null)) {
+        continue;
+      }
+
+      if (!roleSummary.hasSubmitter) {
+        delete (submission as any).review;
+        continue;
+      }
+
+      if (this.isMarathonMatchChallenge(challenge ?? null)) {
+        continue;
+      }
+
+      delete (submission as any).review;
+    }
+  }
+
   private async populateLatestSubmissionFlags(
     submissions: Array<{
       id: string;
@@ -2191,6 +2367,44 @@ export class SubmissionService {
       return false;
     }
     return null;
+  }
+
+  private isMarathonMatchChallenge(
+    challenge: ChallengeData | null | undefined,
+  ): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (typeName === 'marathon match') {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+    if (legacySubTrack.includes('marathon')) {
+      return true;
+    }
+
+    const legacyTrack = (challenge.legacy?.track ?? '').trim().toLowerCase();
+    return legacyTrack.includes('marathon');
+  }
+
+  private isCompletedOrCancelledStatus(
+    status: ChallengeStatus | null | undefined,
+  ): boolean {
+    if (!status) {
+      return false;
+    }
+    if (status === ChallengeStatus.COMPLETED) {
+      return true;
+    }
+    if (status === ChallengeStatus.CANCELLED) {
+      return true;
+    }
+    return String(status).startsWith('CANCELLED_');
   }
 
   private buildResponse(data: any): SubmissionResponseDto {

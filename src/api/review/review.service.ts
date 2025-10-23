@@ -2820,7 +2820,6 @@ export class ReviewService {
               await this.challengeApiService.getChallengeDetail(challengeId);
             const challenge = challengeDetail;
             const phases = challenge.phases || [];
-            const isFirst2Finish = this.isFirst2FinishChallenge(challenge);
             const appealsOpen = phases.some(
               (p) => p.name === 'Appeals' && p.isOpen,
             );
@@ -2832,6 +2831,13 @@ export class ReviewService {
                 (p.name || '').toLowerCase() === 'submission' &&
                 p.isOpen === false,
             );
+            const screeningPhaseCompleted = this.hasChallengePhaseCompleted(
+              challenge,
+              ['screening'],
+            );
+            const challengeCompletedOrCancelled =
+              this.isCompletedOrCancelledStatus(challenge.status);
+            const isMarathonMatch = this.isMarathonMatchChallenge(challenge);
             const mySubmissionIds = mySubs.map((s) => s.id);
             mySubmissionIds.forEach((id) => submitterSubmissionIdSet.add(id));
             submitterVisibilityState =
@@ -2841,32 +2847,40 @@ export class ReviewService {
               requesterIsChallengeResource = true;
             }
 
-            if (
-              [
-                ChallengeStatus.COMPLETED,
-                ChallengeStatus.CANCELLED_FAILED_REVIEW,
-              ].includes(challenge.status)
-            ) {
+            if (challengeCompletedOrCancelled) {
               // Allowed to see all reviews on this challenge
               // reviewWhereClause already limited to submissions on this challenge
-            } else if (isFirst2Finish) {
-              // First2Finish submitters can view all reviews; details for other submissions
-              // will be trimmed later in the response mapping.
-            } else if (appealsOpen || appealsResponseOpen) {
-              // Allow limited visibility into other submissions; details will be redacted later.
-              allowLimitedVisibilityForOtherSubmissions = true;
-            } else if (
-              challenge.status === ChallengeStatus.ACTIVE &&
-              submissionPhaseClosed &&
-              hasSubmitterRoleForChallenge
-            ) {
-              // Allow limited visibility into other submissions once submission phase closes.
-              allowLimitedVisibilityForOtherSubmissions = true;
+            } else if (isMarathonMatch) {
+              if (appealsOpen || appealsResponseOpen) {
+                // Marathon matches retain limited visibility for other submissions during appeals phases.
+                allowLimitedVisibilityForOtherSubmissions = true;
+              } else if (
+                challenge.status === ChallengeStatus.ACTIVE &&
+                submissionPhaseClosed &&
+                hasSubmitterRoleForChallenge
+              ) {
+                // Allow limited visibility once marathon match submission phase closes.
+                allowLimitedVisibilityForOtherSubmissions = true;
+              } else if (
+                hasSubmitterRoleForChallenge &&
+                screeningPhaseCompleted
+              ) {
+                // Marathon submitters can still inspect their own reviews once screening completes.
+                restrictToSubmissionIds(mySubmissionIds);
+              } else {
+                this.logger.debug(
+                  `[getReviews] Challenge ${challengeId} is in status ${challenge.status}. Returning empty review list for requester ${uid}.`,
+                );
+                restrictToSubmissionIds([]);
+              }
             } else if (
               hasSubmitterRoleForChallenge &&
-              this.hasChallengePhaseCompleted(challenge, ['screening'])
+              (appealsOpen ||
+                appealsResponseOpen ||
+                submissionPhaseClosed ||
+                screeningPhaseCompleted)
             ) {
-              // Allow submitters to access their own screening reviews once screening phase completes.
+              // Non-marathon submitters can only inspect their own submissions until completion/cancellation.
               restrictToSubmissionIds(mySubmissionIds);
             } else {
               // Reviews exist but the phase does not allow visibility yet; respond with no results.
@@ -4017,10 +4031,7 @@ export class ReviewService {
       return name === 'iterative review' && phase?.isOpen === false;
     });
 
-    const allowAny = [
-      ChallengeStatus.COMPLETED,
-      ChallengeStatus.CANCELLED_FAILED_REVIEW,
-    ].includes(status);
+    const allowAny = this.isCompletedOrCancelledStatus(status);
     const allowOwn =
       allowAny ||
       appealsOpen ||
@@ -4054,6 +4065,42 @@ export class ReviewService {
     }
 
     return false;
+  }
+
+  private isMarathonMatchChallenge(challenge?: ChallengeData | null): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (typeName === 'marathon match') {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+    if (legacySubTrack.includes('marathon')) {
+      return true;
+    }
+
+    const legacyTrack = (challenge.legacy?.track ?? '').trim().toLowerCase();
+    return legacyTrack.includes('marathon');
+  }
+
+  private isCompletedOrCancelledStatus(
+    status?: ChallengeStatus | null,
+  ): boolean {
+    if (!status) {
+      return false;
+    }
+    if (status === ChallengeStatus.COMPLETED) {
+      return true;
+    }
+    if (status === ChallengeStatus.CANCELLED) {
+      return true;
+    }
+    return String(status).startsWith('CANCELLED_');
   }
 
   private shouldEnforceLatestSubmissionForReview(

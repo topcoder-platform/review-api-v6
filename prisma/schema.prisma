@@ -183,6 +183,8 @@ model review {
   @@index([phaseId]) // Index for filtering by phase
   @@index([scorecardId]) // Index for joining with scorecard table
   @@index([status]) // Index for filtering by review status
+  @@index([status, phaseId])
+  @@index([resourceId, status])
   @@unique([resourceId, submissionId, scorecardId])
 }
 
@@ -374,6 +376,7 @@ model reviewSummation {
 
   @@index([submissionId]) // Index for joining with submission table
   @@index([scorecardId]) // Index for joining with scorecard table
+  @@index([submissionId, isPassing])
 }
 
 model submission {
@@ -425,6 +428,8 @@ model submission {
   @@index([memberId])
   @@index([challengeId])
   @@index([legacySubmissionId])
+  @@index([challengeId, memberId, status])
+  @@index([submittedDate])
 }
 
 enum ReviewOpportunityStatus {
@@ -481,6 +486,7 @@ model reviewOpportunity {
   @@unique([challengeId, type])
   @@index([id]) // Index for direct ID lookups
   @@index([challengeId]) // Index for filtering by challenge
+  @@index([status, challengeId, type])
 }
 
 model reviewApplication {
@@ -554,6 +560,7 @@ model upload {
 
   @@index([projectId])
   @@index([legacyId])
+  @@index([projectId, resourceId])
 }
 
 model resourceSubmission {
@@ -655,6 +662,9 @@ model aiWorkflowRun {
   workflow   aiWorkflow          @relation(fields: [workflowId], references: [id])
   submission submission          @relation(fields: [submissionId], references: [id])
   items      aiWorkflowRunItem[]
+
+  @@index([submissionId, status])
+  @@index([workflowId])
 }
 
 model aiWorkflowRunItem {
