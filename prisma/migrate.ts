@@ -29,10 +29,62 @@ const schema = process.env.POSTGRES_SCHEMA || 'public';
 console.log(`Using PostgreSQL schema: ${schema}`);
 
 const prisma = new PrismaClient();
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'Scorecards');
+const DEFAULT_DATA_DIR = '/mnt/export/review_tables';
+const DATA_DIR = process.env.DATA_DIR || DEFAULT_DATA_DIR;
 const batchSize = 1000;
 const logSize = 20000;
-const esFileName = 'dev-submissions-api.data.json';
+const DEFAULT_ES_DATA_FILE = path.join(
+  '/home/ubuntu',
+  'submissions-api.data.json',
+);
+const ES_DATA_FILE = process.env.ES_DATA_FILE || DEFAULT_ES_DATA_FILE;
+
+const incrementalSinceInput =
+  process.env.MIGRATE_SINCE || process.env.INCREMENTAL_SINCE;
+let incrementalSince: Date | null = null;
+if (incrementalSinceInput) {
+  const parsed = new Date(incrementalSinceInput);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(
+      `Invalid MIGRATE_SINCE/INCREMENTAL_SINCE value "${incrementalSinceInput}". Use an ISO-8601 date.`,
+    );
+  }
+  incrementalSince = parsed;
+  console.log(
+    `Running incremental migration for records updated after ${incrementalSince.toISOString()}`,
+  );
+}
+const isIncrementalRun = incrementalSince !== null;
+
+const parseDateInput = (value: string | Date | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const shouldProcessRecord = (
+  created?: string | Date | null,
+  updated?: string | Date | null,
+) => {
+  if (!incrementalSince) {
+    return true;
+  }
+  const createdAt = parseDateInput(created);
+  const updatedAt = parseDateInput(updated);
+  if (!createdAt && !updatedAt) {
+    // If there is no audit information we default to processing.
+    return true;
+  }
+  return (
+    (createdAt && createdAt >= incrementalSince) ||
+    (updatedAt && updatedAt >= incrementalSince)
+  );
+};
 
 const modelMappingKeys = [
   'project_result',
@@ -108,6 +160,7 @@ const submissionIdMap = readIdMap('submissionIdMap');
 const llmProviderIdMap = readIdMap('llmProviderIdMap');
 const llmModelIdMap = readIdMap('llmModelIdMap');
 const aiWorkflowIdMap = readIdMap('aiWorkflowIdMap');
+const resourceSubmissionIdMap = readIdMap('resourceSubmissionIdMap');
 
 // read resourceSubmissionSet
 const rsSetFile = '.tmp/resourceSubmissionSet.json';
@@ -368,7 +421,12 @@ function convertSubmissionES(esData): any {
 
 async function migrateElasticSearch() {
   // migrate elastic search data
-  const filepath = path.join(DATA_DIR, esFileName);
+  const filepath = ES_DATA_FILE;
+  if (!fs.existsSync(filepath)) {
+    throw new Error(
+      `ElasticSearch export file not found at ${filepath}. Set ES_DATA_FILE to override the default.`,
+    );
+  }
   const fileStream = fs.createReadStream(filepath);
   const rl = readline.createInterface({
     input: fileStream,
@@ -401,6 +459,11 @@ let currentSubmissions: any[] = [];
 async function handleElasticSearchSubmission(item) {
   // ignore records without legacySubmissionId field.
   if (item['legacySubmissionId'] == null) {
+    return;
+  }
+  const createdAudit = item.created ?? item.submittedDate ?? null;
+  const updatedAudit = item.updated ?? null;
+  if (!shouldProcessRecord(createdAudit, updatedAudit)) {
     return;
   }
   currentSubmissions.push(item);
@@ -446,6 +509,7 @@ async function importSubmissionES() {
             createdAt: item.created ? new Date(item.created) : new Date(),
           },
         });
+        submissionIdMap.set(submission.legacySubmissionId, newId);
       }
     } catch {
       if (newSubmission) {
@@ -456,9 +520,9 @@ async function importSubmissionES() {
   }
 }
 
-function convertUpload(jsonData) {
+function convertUpload(jsonData, existingId?: string) {
   return {
-    id: nanoid(14),
+    id: existingId ?? nanoid(14),
     legacyId: jsonData['upload_id'],
     projectId: jsonData['project_id'],
     resourceId: jsonData['resource_id'],
@@ -505,9 +569,24 @@ async function doImportUploadData() {
   }
 }
 
-function convertSubmission(jsonData) {
+async function upsertUploadData(uploadData) {
+  const { id, ...updateData } = uploadData;
+  try {
+    await prisma.upload.upsert({
+      where: { id },
+      create: uploadData,
+      update: updateData,
+    });
+  } catch (err) {
+    console.error(`Failed to upsert upload data id: ${uploadData.legacyId}`);
+    console.error(err);
+    throw err;
+  }
+}
+
+function convertSubmission(jsonData, existingId?: string) {
   return {
-    id: nanoid(14),
+    id: existingId ?? nanoid(14),
     legacySubmissionId: jsonData['submission_id'],
     legacyUploadId: jsonData['upload_id'],
     uploadId: uploadIdMap.get(jsonData['upload_id']),
@@ -560,6 +639,23 @@ async function doImportSubmissionData() {
   }
 }
 
+async function upsertSubmissionData(submissionData) {
+  const { id, ...updateData } = submissionData;
+  try {
+    await prisma.submission.upsert({
+      where: { id },
+      create: submissionData,
+      update: updateData,
+    });
+  } catch (err) {
+    console.error(
+      `Failed to upsert submission ${submissionData.legacySubmissionId}`,
+    );
+    console.error(err);
+    throw err;
+  }
+}
+
 /**
  * Read submission data from resource_xxx.json, upload_xxx.json and submission_xxx.json.
  */
@@ -595,11 +691,26 @@ async function initSubmissionMap() {
     let dataCount = 0;
     for (const d of jsonData) {
       dataCount += 1;
-      const uploadData = convertUpload(d);
-      // import upload data if any
-      if (!uploadIdMap.has(uploadData.legacyId)) {
-        uploadIdMap.set(uploadData.legacyId, uploadData.id);
-        await importUploadData(uploadData);
+      const shouldPersist = shouldProcessRecord(
+        d['create_date'],
+        d['modify_date'],
+      );
+      const legacyId = String(d['upload_id']);
+      const existingId = uploadIdMap.get(legacyId);
+      const uploadData = convertUpload(d, existingId);
+      const skipPersistence = !existingId && isIncrementalRun && !shouldPersist;
+      if (!skipPersistence) {
+        // import upload data if any
+        if (!existingId) {
+          uploadIdMap.set(uploadData.legacyId, uploadData.id);
+          if (isIncrementalRun) {
+            await upsertUploadData(uploadData);
+          } else {
+            await importUploadData(uploadData);
+          }
+        } else if (isIncrementalRun && shouldPersist) {
+          await upsertUploadData(uploadData);
+        }
       }
       // collect data to resourceUploadMap
       if (
@@ -629,10 +740,25 @@ async function initSubmissionMap() {
     let dataCount = 0;
     for (const d of jsonData) {
       dataCount += 1;
-      const dbData = convertSubmission(d);
-      if (!submissionIdMap.has(dbData.legacySubmissionId)) {
-        submissionIdMap.set(dbData.legacySubmissionId, dbData.id);
-        await importSubmissionData(dbData);
+      const shouldPersist = shouldProcessRecord(
+        d['create_date'],
+        d['modify_date'],
+      );
+      const legacyId = String(d['submission_id']);
+      const existingId = submissionIdMap.get(legacyId);
+      const dbData = convertSubmission(d, existingId);
+      const skipPersistence = !existingId && isIncrementalRun && !shouldPersist;
+      if (!skipPersistence) {
+        if (!existingId) {
+          submissionIdMap.set(dbData.legacySubmissionId, dbData.id);
+          if (isIncrementalRun) {
+            await upsertSubmissionData(dbData);
+          } else {
+            await importSubmissionData(dbData);
+          }
+        } else if (isIncrementalRun && shouldPersist) {
+          await upsertSubmissionData(dbData);
+        }
       }
       // collect data to uploadSubmissionMap
       if (
@@ -748,85 +874,117 @@ async function processType(type: string, subtype?: string) {
       switch (type) {
         case 'project_result': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter((pr) => !projectIdMap.has(pr.project_id + pr.user_id))
-            .map((pr) => {
-              projectIdMap.set(
-                pr.project_id + pr.user_id,
-                pr.project_id + pr.user_id,
-              );
-              let submissionId = '';
-              if (submissionMap[pr.project_id]) {
-                submissionId = submissionMap[pr.project_id][pr.user_id] || '';
-              }
-              return {
-                challengeId: pr.project_id,
-                userId: pr.user_id,
-                paymentId: pr.payment_id,
-                submissionId,
-                oldRating: parseInt(pr.old_rating),
-                newRating: parseInt(pr.new_rating),
-                initialScore: parseFloat(pr.raw_score || '0.0'),
-                finalScore: parseFloat(pr.final_score || '0.0'),
-                placement: parseInt(pr.placed || '0'),
-                rated: pr.rating_ind === '1',
-                passedReview: pr.passed_review_ind === '1',
-                validSubmission: pr.valid_submission_ind === '1',
-                pointAdjustment: parseFloat(pr.point_adjustment),
-                ratingOrder: parseInt(pr.rating_order),
-                createdAt: new Date(pr.create_date),
-                createdBy: pr.create_user || '',
-                updatedAt: new Date(pr.modify_date),
-                updatedBy: pr.modify_user || '',
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.challengeResult
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
+          const convertProjectResult = (pr) => {
+            let submissionId = '';
+            if (submissionMap[pr.project_id]) {
+              submissionId = submissionMap[pr.project_id][pr.user_id] || '';
+            }
+            return {
+              challengeId: pr.project_id,
+              userId: pr.user_id,
+              paymentId: pr.payment_id,
+              submissionId,
+              oldRating: parseInt(pr.old_rating),
+              newRating: parseInt(pr.new_rating),
+              initialScore: parseFloat(pr.raw_score || '0.0'),
+              finalScore: parseFloat(pr.final_score || '0.0'),
+              placement: parseInt(pr.placed || '0'),
+              rated: pr.rating_ind === '1',
+              passedReview: pr.passed_review_ind === '1',
+              validSubmission: pr.valid_submission_ind === '1',
+              pointAdjustment: parseFloat(pr.point_adjustment),
+              ratingOrder: parseInt(pr.rating_order),
+              createdAt: new Date(pr.create_date),
+              createdBy: pr.create_user || '',
+              updatedAt: new Date(pr.modify_date),
+              updatedBy: pr.modify_user || '',
+            };
+          };
+          if (!isIncrementalRun) {
+            const processedData = jsonData[key]
+              .filter((pr) => !projectIdMap.has(pr.project_id + pr.user_id))
+              .map((pr) => {
+                projectIdMap.set(
+                  pr.project_id + pr.user_id,
+                  pr.project_id + pr.user_id,
                 );
-                for (const item of batch) {
-                  await prisma.challengeResult
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      projectIdMap.delete(item.project_id + item.user_id);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, ChallengeId: ${item.challengeId}, UserId: ${item.userId}`,
-                      );
-                    });
-                }
+                return convertProjectResult(pr);
               });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.challengeResult
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.challengeResult
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        projectIdMap.delete(
+                          `${item.challengeId}${item.userId}`,
+                        );
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, ChallengeId: ${item.challengeId}, UserId: ${item.userId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const pr of jsonData[key]) {
+              if (!shouldProcessRecord(pr.create_date, pr.modify_date)) {
+                continue;
+              }
+              const mapKey = pr.project_id + pr.user_id;
+              const data = convertProjectResult(pr);
+              try {
+                await prisma.challengeResult.upsert({
+                  where: {
+                    challengeId_userId: {
+                      challengeId: data.challengeId,
+                      userId: data.userId,
+                    },
+                  },
+                  create: data,
+                  update: data,
+                });
+                projectIdMap.set(mapKey, mapKey);
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert challengeResult for ChallengeId: ${data.challengeId}, UserId: ${data.userId}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'scorecard': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key].map((sc) => {
-            const id = nanoid(14);
-            scorecardIdMap.set(sc.scorecard_id, id);
+          const convertScorecard = (sc, recordId: string) => {
             const minScore = parseFloat(sc.min_score);
             const passingScoreSource =
               sc.minimum_passing_score ?? sc.passing_score ?? sc.min_score;
             const parsedPassingScore = parseFloat(passingScoreSource);
+            const category = projectCategoryMap[sc.project_category_id];
             return {
-              id: id,
+              id: recordId,
               legacyId: sc.scorecard_id,
               status: scorecardStatusMap[sc.scorecard_status_id],
               type: scorecardTypeMap[sc.scorecard_type_id],
-              challengeTrack: projectCategoryMap[sc.project_category_id].type,
-              challengeType: projectCategoryMap[sc.project_category_id].name,
+              challengeTrack: category.type,
+              challengeType: category.name,
               name: sc.name,
               version: sc.version,
               minScore: minScore,
@@ -839,315 +997,512 @@ async function processType(type: string, subtype?: string) {
               updatedAt: new Date(sc.modify_date),
               updatedBy: sc.modify_user,
             };
-          });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecard
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.scorecard
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
+          };
+          if (!isIncrementalRun) {
+            const processedData = jsonData[key].map((sc) => {
+              const id = nanoid(14);
+              scorecardIdMap.set(sc.scorecard_id, id);
+              return convertScorecard(sc, id);
+            });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecard
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecard
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        scorecardIdMap.delete(item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const sc of jsonData[key]) {
+              if (!shouldProcessRecord(sc.create_date, sc.modify_date)) {
+                continue;
+              }
+              const existingId = scorecardIdMap.get(sc.scorecard_id);
+              const id = existingId ?? nanoid(14);
+              const data = convertScorecard(sc, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.scorecard.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  scorecardIdMap.set(sc.scorecard_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecard legacyId ${sc.scorecard_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'scorecard_group': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter(
-              (group) => !scorecardGroupIdMap.has(group.scorecard_group_id),
-            )
-            .map((group) => {
-              const id = nanoid(14);
-              scorecardGroupIdMap.set(group.scorecard_group_id, id);
-              return {
-                id: id,
-                legacyId: group.scorecard_group_id,
-                scorecardId: scorecardIdMap.get(group.scorecard_id),
-                name: group.name,
-                weight: parseFloat(group.weight),
-                sortOrder: parseInt(group.sort),
-                createdAt: new Date(group.create_date),
-                createdBy: group.create_user,
-                updatedAt: new Date(group.modify_date),
-                updatedBy: group.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecardGroup
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.scorecardGroup
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardGroupIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
-                }
+          const convertGroup = (group, recordId: string) => ({
+            id: recordId,
+            legacyId: group.scorecard_group_id,
+            scorecardId: scorecardIdMap.get(group.scorecard_id),
+            name: group.name,
+            weight: parseFloat(group.weight),
+            sortOrder: parseInt(group.sort),
+            createdAt: new Date(group.create_date),
+            createdBy: group.create_user,
+            updatedAt: new Date(group.modify_date),
+            updatedBy: group.modify_user,
+          });
+          if (!isIncrementalRun) {
+            const processedData = jsonData[key]
+              .filter(
+                (group) => !scorecardGroupIdMap.has(group.scorecard_group_id),
+              )
+              .map((group) => {
+                const id = nanoid(14);
+                scorecardGroupIdMap.set(group.scorecard_group_id, id);
+                return convertGroup(group, id);
               });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecardGroup
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecardGroup
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        scorecardGroupIdMap.delete(item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const group of jsonData[key]) {
+              if (!shouldProcessRecord(group.create_date, group.modify_date)) {
+                continue;
+              }
+              const existingId = scorecardGroupIdMap.get(
+                group.scorecard_group_id,
+              );
+              const id = existingId ?? nanoid(14);
+              const data = convertGroup(group, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.scorecardGroup.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  scorecardGroupIdMap.set(group.scorecard_group_id, id);
+                }
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecardGroup legacyId ${group.scorecard_group_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'scorecard_section': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter(
-              (section) =>
-                !scorecardSectionIdMap.has(section.scorecard_section_id),
-            )
-            .map((section) => {
-              const id = nanoid(14);
-              scorecardSectionIdMap.set(section.scorecard_section_id, id);
-              return {
-                id: id,
-                legacyId: section.scorecard_section_id,
-                scorecardGroupId: scorecardGroupIdMap.get(
-                  section.scorecard_group_id,
-                ),
-                name: section.name,
-                weight: parseFloat(section.weight),
-                sortOrder: parseInt(section.sort),
-                createdAt: new Date(section.create_date),
-                createdBy: section.create_user,
-                updatedAt: new Date(section.modify_date),
-                updatedBy: section.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecardSection
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.scorecardSection
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardSectionIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
-                }
+          const convertSection = (section, recordId: string) => ({
+            id: recordId,
+            legacyId: section.scorecard_section_id,
+            scorecardGroupId: scorecardGroupIdMap.get(
+              section.scorecard_group_id,
+            ),
+            name: section.name,
+            weight: parseFloat(section.weight),
+            sortOrder: parseInt(section.sort),
+            createdAt: new Date(section.create_date),
+            createdBy: section.create_user,
+            updatedAt: new Date(section.modify_date),
+            updatedBy: section.modify_user,
+          });
+          if (!isIncrementalRun) {
+            const processedData = jsonData[key]
+              .filter(
+                (section) =>
+                  !scorecardSectionIdMap.has(section.scorecard_section_id),
+              )
+              .map((section) => {
+                const id = nanoid(14);
+                scorecardSectionIdMap.set(section.scorecard_section_id, id);
+                return convertSection(section, id);
               });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecardSection
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecardSection
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        scorecardSectionIdMap.delete(item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const section of jsonData[key]) {
+              if (
+                !shouldProcessRecord(section.create_date, section.modify_date)
+              ) {
+                continue;
+              }
+              const existingId = scorecardSectionIdMap.get(
+                section.scorecard_section_id,
+              );
+              const id = existingId ?? nanoid(14);
+              const data = convertSection(section, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.scorecardSection.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  scorecardSectionIdMap.set(section.scorecard_section_id, id);
+                }
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecardSection legacyId ${section.scorecard_section_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'scorecard_question': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter(
-              (question) =>
-                !scorecardQuestionIdMap.has(question.scorecard_question_id),
-            )
-            .map((question) => {
-              const id = nanoid(14);
-              scorecardQuestionIdMap.set(question.scorecard_question_id, id);
-              return {
-                id: id,
-                legacyId: question.scorecard_question_id,
-                scorecardSectionId: scorecardSectionIdMap.get(
-                  question.scorecard_section_id,
-                ),
-                type: questionTypeMap[question.scorecard_question_type_id].name,
-                description: question.description,
-                guidelines: question.guideline,
-                weight: parseFloat(question.weight),
-                requiresUpload: question.upload_document === '1',
-                sortOrder: parseInt(question.sort),
-                createdAt: new Date(question.create_date),
-                createdBy: question.create_user,
-                updatedAt: new Date(question.modify_date),
-                updatedBy: question.modify_user,
-                scaleMin:
-                  questionTypeMap[question.scorecard_question_type_id].min,
-                scaleMax:
-                  questionTypeMap[question.scorecard_question_type_id].max,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecardQuestion
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.scorecardQuestion
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardQuestionIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
-                }
+          const convertQuestion = (question, recordId: string) => {
+            const questionType =
+              questionTypeMap[question.scorecard_question_type_id];
+            return {
+              id: recordId,
+              legacyId: question.scorecard_question_id,
+              scorecardSectionId: scorecardSectionIdMap.get(
+                question.scorecard_section_id,
+              ),
+              type: questionType.name,
+              description: question.description,
+              guidelines: question.guideline,
+              weight: parseFloat(question.weight),
+              requiresUpload: question.upload_document === '1',
+              sortOrder: parseInt(question.sort),
+              createdAt: new Date(question.create_date),
+              createdBy: question.create_user,
+              updatedAt: new Date(question.modify_date),
+              updatedBy: question.modify_user,
+              scaleMin: questionType.min,
+              scaleMax: questionType.max,
+            };
+          };
+          if (!isIncrementalRun) {
+            const processedData = jsonData[key]
+              .filter(
+                (question) =>
+                  !scorecardQuestionIdMap.has(question.scorecard_question_id),
+              )
+              .map((question) => {
+                const id = nanoid(14);
+                scorecardQuestionIdMap.set(question.scorecard_question_id, id);
+                return convertQuestion(question, id);
               });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecardQuestion
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecardQuestion
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        scorecardQuestionIdMap.delete(item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const question of jsonData[key]) {
+              if (
+                !shouldProcessRecord(question.create_date, question.modify_date)
+              ) {
+                continue;
+              }
+              const existingId = scorecardQuestionIdMap.get(
+                question.scorecard_question_id,
+              );
+              const id = existingId ?? nanoid(14);
+              const data = convertQuestion(question, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.scorecardQuestion.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  scorecardQuestionIdMap.set(
+                    question.scorecard_question_id,
+                    id,
+                  );
+                }
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecardQuestion legacyId ${question.scorecard_question_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'review': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter((review) => !reviewIdMap.has(review.review_id))
-            .map((review) => {
-              const id = nanoid(14);
-              reviewIdMap.set(review.review_id, id);
-              return {
-                id,
-                legacyId: review.review_id,
-                resourceId: review.resource_id,
-                phaseId: review.project_phase_id,
-                submissionId: submissionIdMap.get(review.submission_id) || null,
-                legacySubmissionId: review.submission_id,
-                scorecardId: scorecardIdMap.get(review.scorecard_id),
-                committed: review.committed === '1',
-                finalScore: review.score ? parseFloat(review.score) : null,
-                initialScore: review.initial_score
-                  ? parseFloat(review.initial_score)
-                  : null,
-                createdAt: new Date(review.create_date),
-                createdBy: review.create_user,
-                updatedAt: new Date(review.modify_date),
-                updatedBy: review.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.review.createMany({ data: batch }).catch(async () => {
-              console.error(
-                `[${type}][${file}] An error occurred, retrying individually`,
+          const convertReview = (review, recordId: string) => ({
+            id: recordId,
+            legacyId: review.review_id,
+            resourceId: review.resource_id,
+            phaseId: review.project_phase_id,
+            submissionId: submissionIdMap.get(review.submission_id) || null,
+            legacySubmissionId: review.submission_id,
+            scorecardId: scorecardIdMap.get(review.scorecard_id),
+            committed: review.committed === '1',
+            finalScore: review.score ? parseFloat(review.score) : null,
+            initialScore: review.initial_score
+              ? parseFloat(review.initial_score)
+              : null,
+            createdAt: new Date(review.create_date),
+            createdBy: review.create_user,
+            updatedAt: new Date(review.modify_date),
+            updatedBy: review.modify_user,
+          });
+          if (!isIncrementalRun) {
+            const processedData = jsonData[key]
+              .filter((review) => !reviewIdMap.has(review.review_id))
+              .map((review) => {
+                const id = nanoid(14);
+                reviewIdMap.set(review.review_id, id);
+                return convertReview(review, id);
+              });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
               );
-              for (const item of batch) {
-                await prisma.review
-                  .create({
-                    data: item,
-                  })
-                  .catch((err) => {
-                    reviewIdMap.delete(item.legacyId);
-                    console.error(
-                      `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                    );
-                  });
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.review
+                .createMany({ data: batch })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.review
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        reviewIdMap.delete(item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const review of jsonData[key]) {
+              if (
+                !shouldProcessRecord(review.create_date, review.modify_date)
+              ) {
+                continue;
               }
-            });
+              const existingId = reviewIdMap.get(review.review_id);
+              const id = existingId ?? nanoid(14);
+              const data = convertReview(review, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.review.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  reviewIdMap.set(review.review_id, id);
+                }
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert review legacyId ${review.review_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'review_item': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter((item) => !reviewItemIdMap.has(item.review_item_id))
-            .map((item) => {
-              const id = nanoid(14);
-              reviewItemIdMap.set(item.review_item_id, id);
-              return {
-                id: id,
-                legacyId: item.review_item_id,
-                reviewId: reviewIdMap.get(item.review_id),
-                scorecardQuestionId: scorecardQuestionIdMap.get(
-                  item.scorecard_question_id,
-                ),
-                uploadId: item.upload_id || null,
-                initialAnswer: item.answer,
-                finalAnswer: item.answer,
-                managerComment: item.answer,
-                createdAt: new Date(item.create_date),
-                createdBy: item.create_user,
-                updatedAt: new Date(item.modify_date),
-                updatedBy: item.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.reviewItem
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.reviewItem
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      reviewItemIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
-                }
+          const convertReviewItem = (item, recordId: string) => ({
+            id: recordId,
+            legacyId: item.review_item_id,
+            reviewId: reviewIdMap.get(item.review_id),
+            scorecardQuestionId: scorecardQuestionIdMap.get(
+              item.scorecard_question_id,
+            ),
+            uploadId: item.upload_id || null,
+            initialAnswer: item.answer,
+            finalAnswer: item.answer,
+            managerComment: item.answer,
+            createdAt: new Date(item.create_date),
+            createdBy: item.create_user,
+            updatedAt: new Date(item.modify_date),
+            updatedBy: item.modify_user,
+          });
+          if (!isIncrementalRun) {
+            const processedData = jsonData[key]
+              .filter((item) => !reviewItemIdMap.has(item.review_item_id))
+              .map((item) => {
+                const id = nanoid(14);
+                reviewItemIdMap.set(item.review_item_id, id);
+                return convertReviewItem(item, id);
               });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.reviewItem
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.reviewItem
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        reviewItemIdMap.delete(item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const item of jsonData[key]) {
+              if (!shouldProcessRecord(item.create_date, item.modify_date)) {
+                continue;
+              }
+              const existingId = reviewItemIdMap.get(item.review_item_id);
+              const id = existingId ?? nanoid(14);
+              const data = convertReviewItem(item, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.reviewItem.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  reviewItemIdMap.set(item.review_item_id, id);
+                }
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert reviewItem legacyId ${item.review_item_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
@@ -1155,198 +1510,306 @@ async function processType(type: string, subtype?: string) {
           switch (subtype) {
             case 'reviewItemComment': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
-              const processedData = jsonData[key]
-                .filter(
-                  (c) =>
-                    reviewItemCommentTypeMap[c.comment_type_id] in
-                    LegacyCommentType,
-                )
-                .filter(
-                  (c) =>
-                    !reviewItemCommentReviewItemCommentIdMap.has(
+              const isSupportedType = (c) =>
+                reviewItemCommentTypeMap[c.comment_type_id] in
+                LegacyCommentType;
+              const convertComment = (c, recordId: string) => ({
+                id: recordId,
+                legacyId: c.review_item_comment_id,
+                resourceId: c.resource_id,
+                reviewItemId: reviewItemIdMap.get(c.review_item_id),
+                content: c.content,
+                type: LegacyCommentType[
+                  reviewItemCommentTypeMap[c.comment_type_id]
+                ],
+                sortOrder: parseInt(c.sort),
+                createdAt: new Date(c.create_date),
+                createdBy: c.create_user,
+                updatedAt: new Date(c.modify_date),
+                updatedBy: c.modify_user,
+              });
+              if (!isIncrementalRun) {
+                const processedData = jsonData[key]
+                  .filter(isSupportedType)
+                  .filter(
+                    (c) =>
+                      !reviewItemCommentReviewItemCommentIdMap.has(
+                        c.review_item_comment_id,
+                      ),
+                  )
+                  .map((c) => {
+                    const id = nanoid(14);
+                    reviewItemCommentReviewItemCommentIdMap.set(
                       c.review_item_comment_id,
-                    ),
-                )
-                .map((c) => {
-                  const id = nanoid(14);
-                  reviewItemCommentReviewItemCommentIdMap.set(
-                    c.review_item_comment_id,
-                    id,
-                  );
-                  return {
-                    id: id,
-                    legacyId: c.review_item_comment_id,
-                    resourceId: c.resource_id,
-                    reviewItemId: reviewItemIdMap.get(c.review_item_id),
-                    content: c.content,
-                    type: LegacyCommentType[
-                      reviewItemCommentTypeMap[c.comment_type_id]
-                    ],
-                    sortOrder: parseInt(c.sort),
-                    createdAt: new Date(c.create_date),
-                    createdBy: c.create_user,
-                    updatedAt: new Date(c.modify_date),
-                    updatedBy: c.modify_user,
-                  };
-                });
-              const totalBatches = Math.ceil(processedData.length / batchSize);
-              for (let i = 0; i < processedData.length; i += batchSize) {
-                const batchIndex = i / batchSize + 1;
-                console.log(
-                  `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-                );
-                const batch = processedData.slice(i, i + batchSize);
-                await prisma.reviewItemComment
-                  .createMany({
-                    data: batch,
-                  })
-                  .catch(async () => {
-                    console.error(
-                      `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      id,
                     );
-                    for (const item of batch) {
-                      await prisma.reviewItemComment
-                        .create({
-                          data: item,
-                        })
-                        .catch((err) => {
-                          reviewItemCommentReviewItemCommentIdMap.delete(
-                            item.legacyId,
-                          );
-                          console.error(
-                            `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                          );
-                        });
-                    }
+                    return convertComment(c, id);
                   });
+                const totalBatches = Math.ceil(
+                  processedData.length / batchSize,
+                );
+                for (let i = 0; i < processedData.length; i += batchSize) {
+                  const batchIndex = i / batchSize + 1;
+                  console.log(
+                    `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+                  );
+                  const batch = processedData.slice(i, i + batchSize);
+                  await prisma.reviewItemComment
+                    .createMany({
+                      data: batch,
+                    })
+                    .catch(async () => {
+                      console.error(
+                        `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      );
+                      for (const item of batch) {
+                        await prisma.reviewItemComment
+                          .create({
+                            data: item,
+                          })
+                          .catch((err) => {
+                            reviewItemCommentReviewItemCommentIdMap.delete(
+                              item.legacyId,
+                            );
+                            console.error(
+                              `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                            );
+                          });
+                      }
+                    });
+                }
+              } else {
+                for (const c of jsonData[key]) {
+                  if (!isSupportedType(c)) {
+                    continue;
+                  }
+                  if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                    continue;
+                  }
+                  const existingId =
+                    reviewItemCommentReviewItemCommentIdMap.get(
+                      c.review_item_comment_id,
+                    );
+                  const id = existingId ?? nanoid(14);
+                  const data = convertComment(c, id);
+                  try {
+                    const updateData = { ...data };
+                    delete updateData.id;
+                    await prisma.reviewItemComment.upsert({
+                      where: { id },
+                      create: data,
+                      update: updateData,
+                    });
+                    if (!existingId) {
+                      reviewItemCommentReviewItemCommentIdMap.set(
+                        c.review_item_comment_id,
+                        id,
+                      );
+                    }
+                  } catch (err) {
+                    console.error(
+                      `[${type}][${subtype}][${file}] Failed to upsert reviewItemComment legacyId ${c.review_item_comment_id}`,
+                    );
+                    console.error(err);
+                  }
+                }
               }
               break;
             }
             case 'appeal': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
-              const processedData = jsonData[key]
-                .filter(
-                  (c) =>
-                    reviewItemCommentTypeMap[c.comment_type_id] === 'Appeal',
-                )
-                .filter(
-                  (c) => !reviewItemCommentAppealIdMap.has(c.review_item_id),
-                )
-                .map((c) => {
-                  const id = nanoid(14);
-                  reviewItemCommentAppealIdMap.set(c.review_item_id, id);
-                  return {
-                    id: id,
-                    legacyId: c.review_item_comment_id,
-                    resourceId: c.resource_id,
-                    reviewItemCommentId:
-                      reviewItemCommentReviewItemCommentIdMap.get(
-                        c.review_item_id,
-                      ),
-                    content: c.content,
-                    createdAt: new Date(c.create_date),
-                    createdBy: c.create_user,
-                    updatedAt: new Date(c.modify_date),
-                    updatedBy: c.modify_user,
-                  };
-                });
-
-              const totalBatches = Math.ceil(processedData.length / batchSize);
-              for (let i = 0; i < processedData.length; i += batchSize) {
-                const batchIndex = i / batchSize + 1;
-                console.log(
-                  `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-                );
-                const batch = processedData.slice(i, i + batchSize);
-                await prisma.appeal
-                  .createMany({
-                    data: batch,
-                  })
-                  .catch(async () => {
-                    console.error(
-                      `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
-                    );
-                    for (const item of batch) {
-                      await prisma.appeal
-                        .create({
-                          data: item,
-                        })
-                        .catch((err) => {
-                          reviewItemCommentAppealIdMap.delete(item.legacyId);
-                          console.error(
-                            `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                          );
-                        });
-                    }
+              const isAppeal = (c) =>
+                reviewItemCommentTypeMap[c.comment_type_id] === 'Appeal';
+              const convertAppeal = (c, recordId: string) => ({
+                id: recordId,
+                legacyId: c.review_item_comment_id,
+                resourceId: c.resource_id,
+                reviewItemCommentId:
+                  reviewItemCommentReviewItemCommentIdMap.get(c.review_item_id),
+                content: c.content,
+                createdAt: new Date(c.create_date),
+                createdBy: c.create_user,
+                updatedAt: new Date(c.modify_date),
+                updatedBy: c.modify_user,
+              });
+              if (!isIncrementalRun) {
+                const processedData = jsonData[key]
+                  .filter(isAppeal)
+                  .filter(
+                    (c) => !reviewItemCommentAppealIdMap.has(c.review_item_id),
+                  )
+                  .map((c) => {
+                    const id = nanoid(14);
+                    reviewItemCommentAppealIdMap.set(c.review_item_id, id);
+                    return convertAppeal(c, id);
                   });
+
+                const totalBatches = Math.ceil(
+                  processedData.length / batchSize,
+                );
+                for (let i = 0; i < processedData.length; i += batchSize) {
+                  const batchIndex = i / batchSize + 1;
+                  console.log(
+                    `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+                  );
+                  const batch = processedData.slice(i, i + batchSize);
+                  await prisma.appeal
+                    .createMany({
+                      data: batch,
+                    })
+                    .catch(async () => {
+                      console.error(
+                        `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      );
+                      for (const item of batch) {
+                        await prisma.appeal
+                          .create({
+                            data: item,
+                          })
+                          .catch((err) => {
+                            reviewItemCommentAppealIdMap.delete(item.legacyId);
+                            console.error(
+                              `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                            );
+                          });
+                      }
+                    });
+                }
+              } else {
+                for (const c of jsonData[key]) {
+                  if (!isAppeal(c)) {
+                    continue;
+                  }
+                  if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                    continue;
+                  }
+                  const existingId = reviewItemCommentAppealIdMap.get(
+                    c.review_item_id,
+                  );
+                  const id = existingId ?? nanoid(14);
+                  const data = convertAppeal(c, id);
+                  try {
+                    const updateData = { ...data };
+                    delete updateData.id;
+                    await prisma.appeal.upsert({
+                      where: { id },
+                      create: data,
+                      update: updateData,
+                    });
+                    if (!existingId) {
+                      reviewItemCommentAppealIdMap.set(c.review_item_id, id);
+                    }
+                  } catch (err) {
+                    console.error(
+                      `[${type}][${subtype}][${file}] Failed to upsert appeal legacyId ${c.review_item_comment_id}`,
+                    );
+                    console.error(err);
+                  }
+                }
               }
               break;
             }
             case 'appealResponse': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
-              const processedData = jsonData[key]
-                .filter(
-                  (c) =>
-                    reviewItemCommentTypeMap[c.comment_type_id] ===
-                    'Appeal Response',
-                )
-                .filter(
-                  (c) =>
-                    !reviewItemCommentAppealResponseIdMap.has(
+              const isAppealResponse = (c) =>
+                reviewItemCommentTypeMap[c.comment_type_id] ===
+                'Appeal Response';
+              const convertAppealResponse = (c, recordId: string) => ({
+                id: recordId,
+                legacyId: c.review_item_comment_id,
+                appealId: reviewItemCommentAppealIdMap.get(c.review_item_id),
+                resourceId: c.resource_id,
+                content: c.content,
+                success: c.extra_info === 'Succeeded',
+                createdAt: new Date(c.create_date),
+                createdBy: c.create_user,
+                updatedAt: new Date(c.modify_date),
+                updatedBy: c.modify_user,
+              });
+              if (!isIncrementalRun) {
+                const processedData = jsonData[key]
+                  .filter(isAppealResponse)
+                  .filter(
+                    (c) =>
+                      !reviewItemCommentAppealResponseIdMap.has(
+                        c.review_item_comment_id,
+                      ),
+                  )
+                  .map((c) => {
+                    const id = nanoid(14);
+                    reviewItemCommentAppealResponseIdMap.set(
                       c.review_item_comment_id,
-                    ),
-                )
-                .map((c) => {
-                  const id = nanoid(14);
-                  reviewItemCommentAppealResponseIdMap.set(
-                    c.review_item_comment_id,
-                    id,
-                  );
-                  return {
-                    id: id,
-                    legacyId: c.review_item_comment_id,
-                    appealId: reviewItemCommentAppealIdMap.get(
-                      c.review_item_id,
-                    ),
-                    resourceId: c.resource_id,
-                    content: c.content,
-                    success: c.extra_info === 'Succeeded',
-                    createdAt: new Date(c.create_date),
-                    createdBy: c.create_user,
-                    updatedAt: new Date(c.modify_date),
-                    updatedBy: c.modify_user,
-                  };
-                });
-              const totalBatches = Math.ceil(processedData.length / batchSize);
-              for (let i = 0; i < processedData.length; i += batchSize) {
-                const batchIndex = i / batchSize + 1;
-                console.log(
-                  `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-                );
-                const batch = processedData.slice(i, i + batchSize);
-                await prisma.appealResponse
-                  .createMany({
-                    data: batch,
-                  })
-                  .catch(async () => {
-                    console.error(
-                      `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      id,
                     );
-                    for (const item of batch) {
-                      await prisma.appealResponse
-                        .create({
-                          data: item,
-                        })
-                        .catch((err) => {
-                          reviewItemCommentAppealResponseIdMap.delete(
-                            item.legacyId,
-                          );
-                          console.error(
-                            `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                          );
-                        });
-                    }
+                    return convertAppealResponse(c, id);
                   });
+                const totalBatches = Math.ceil(
+                  processedData.length / batchSize,
+                );
+                for (let i = 0; i < processedData.length; i += batchSize) {
+                  const batchIndex = i / batchSize + 1;
+                  console.log(
+                    `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+                  );
+                  const batch = processedData.slice(i, i + batchSize);
+                  await prisma.appealResponse
+                    .createMany({
+                      data: batch,
+                    })
+                    .catch(async () => {
+                      console.error(
+                        `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      );
+                      for (const item of batch) {
+                        await prisma.appealResponse
+                          .create({
+                            data: item,
+                          })
+                          .catch((err) => {
+                            reviewItemCommentAppealResponseIdMap.delete(
+                              item.legacyId,
+                            );
+                            console.error(
+                              `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                            );
+                          });
+                      }
+                    });
+                }
+              } else {
+                for (const c of jsonData[key]) {
+                  if (!isAppealResponse(c)) {
+                    continue;
+                  }
+                  if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                    continue;
+                  }
+                  const existingId = reviewItemCommentAppealResponseIdMap.get(
+                    c.review_item_comment_id,
+                  );
+                  const id = existingId ?? nanoid(14);
+                  const data = convertAppealResponse(c, id);
+                  try {
+                    const updateData = { ...data };
+                    delete updateData.id;
+                    await prisma.appealResponse.upsert({
+                      where: { id },
+                      create: data,
+                      update: updateData,
+                    });
+                    if (!existingId) {
+                      reviewItemCommentAppealResponseIdMap.set(
+                        c.review_item_comment_id,
+                        id,
+                      );
+                    }
+                  } catch (err) {
+                    console.error(
+                      `[${type}][${subtype}][${file}] Failed to upsert appealResponse legacyId ${c.review_item_comment_id}`,
+                    );
+                    console.error(err);
+                  }
+                }
               }
               break;
             }
@@ -1355,154 +1818,238 @@ async function processType(type: string, subtype?: string) {
         }
         case 'llm_provider': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const idToLegacyIdMap = {};
-          const processedData = jsonData[key].map((c) => {
-            const id = nanoid(14);
-            llmProviderIdMap.set(c.llm_provider_id, id);
-            idToLegacyIdMap[id] = c.llm_provider_id;
-            return {
-              id: id,
-              name: c.name,
-              createdAt: new Date(c.create_date),
-              createdBy: c.create_user,
-            };
+          const convertProvider = (c, recordId: string) => ({
+            id: recordId,
+            name: c.name,
+            createdAt: new Date(c.create_date),
+            createdBy: c.create_user,
           });
+          if (!isIncrementalRun) {
+            const idToLegacyIdMap = {};
+            const processedData = jsonData[key].map((c) => {
+              const id = nanoid(14);
+              llmProviderIdMap.set(c.llm_provider_id, id);
+              idToLegacyIdMap[id] = c.llm_provider_id;
+              return convertProvider(c, id);
+            });
 
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.llmProvider
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.llmProvider
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      llmProviderIdMap.delete(idToLegacyIdMap[item.id]);
-                      console.error(
-                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
-                      );
-                    });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.llmProvider
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.llmProvider
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        llmProviderIdMap.delete(idToLegacyIdMap[item.id]);
+                        console.error(
+                          `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const c of jsonData[key]) {
+              if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                continue;
+              }
+              const existingId = llmProviderIdMap.get(c.llm_provider_id);
+              const id = existingId ?? nanoid(14);
+              const data = convertProvider(c, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.llmProvider.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  llmProviderIdMap.set(c.llm_provider_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${subtype}][${file}] Failed to upsert llmProvider legacyId ${c.llm_provider_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'llm_model': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const idToLegacyIdMap = {};
-          const processedData = jsonData[key].map((c) => {
-            const id = nanoid(14);
-            llmModelIdMap.set(c.llm_model_id, id);
-            idToLegacyIdMap[id] = c.llm_model_id;
-            console.log(llmProviderIdMap.get(c.provider_id), 'c.provider_id');
-            return {
-              id: id,
-              providerId: llmProviderIdMap.get(c.provider_id),
-              name: c.name,
-              description: c.description,
-              icon: c.icon,
-              url: c.url,
-              createdAt: new Date(c.create_date),
-              createdBy: c.create_user,
-            };
+          const convertModel = (c, recordId: string) => ({
+            id: recordId,
+            providerId: llmProviderIdMap.get(c.provider_id),
+            name: c.name,
+            description: c.description,
+            icon: c.icon,
+            url: c.url,
+            createdAt: new Date(c.create_date),
+            createdBy: c.create_user,
           });
+          if (!isIncrementalRun) {
+            const idToLegacyIdMap = {};
+            const processedData = jsonData[key].map((c) => {
+              const id = nanoid(14);
+              llmModelIdMap.set(c.llm_model_id, id);
+              idToLegacyIdMap[id] = c.llm_model_id;
+              return convertModel(c, id);
+            });
 
-          console.log(llmProviderIdMap, processedData, 'processedData');
-
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.llmModel
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.llmModel
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      llmModelIdMap.delete(idToLegacyIdMap[item.id]);
-                      console.error(
-                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
-                      );
-                    });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.llmModel
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.llmModel
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        llmModelIdMap.delete(idToLegacyIdMap[item.id]);
+                        console.error(
+                          `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const c of jsonData[key]) {
+              if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                continue;
+              }
+              const existingId = llmModelIdMap.get(c.llm_model_id);
+              const id = existingId ?? nanoid(14);
+              const data = convertModel(c, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.llmModel.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  llmModelIdMap.set(c.llm_model_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${subtype}][${file}] Failed to upsert llmModel legacyId ${c.llm_model_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'ai_workflow': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const idToLegacyIdMap = {};
-          const processedData = jsonData[key].map((c) => {
-            const id = nanoid(14);
-            aiWorkflowIdMap.set(c.ai_workflow_id, id);
-            idToLegacyIdMap[id] = c.ai_workflow_id;
-            return {
-              id: id,
-              llmId: llmModelIdMap.get(c.llm_id),
-              name: c.name,
-              description: c.description,
-              defUrl: c.def_url,
-              gitId: c.git_id,
-              gitOwner: c.git_owner,
-              scorecardId: scorecardIdMap.get(c.scorecard_id),
-              createdAt: new Date(c.create_date),
-              createdBy: c.create_user,
-              updatedAt: new Date(c.modify_date),
-              updatedBy: c.modify_user,
-            };
+          const convertWorkflow = (c, recordId: string) => ({
+            id: recordId,
+            llmId: llmModelIdMap.get(c.llm_id),
+            name: c.name,
+            description: c.description,
+            defUrl: c.def_url,
+            gitId: c.git_id,
+            gitOwner: c.git_owner,
+            scorecardId: scorecardIdMap.get(c.scorecard_id),
+            createdAt: new Date(c.create_date),
+            createdBy: c.create_user,
+            updatedAt: new Date(c.modify_date),
+            updatedBy: c.modify_user,
           });
+          if (!isIncrementalRun) {
+            const idToLegacyIdMap = {};
+            const processedData = jsonData[key].map((c) => {
+              const id = nanoid(14);
+              aiWorkflowIdMap.set(c.ai_workflow_id, id);
+              idToLegacyIdMap[id] = c.ai_workflow_id;
+              return convertWorkflow(c, id);
+            });
 
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.aiWorkflow
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.aiWorkflow
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      aiWorkflowIdMap.delete(idToLegacyIdMap[item.id]);
-                      console.error(
-                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
-                      );
-                    });
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.aiWorkflow
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.aiWorkflow
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        aiWorkflowIdMap.delete(idToLegacyIdMap[item.id]);
+                        console.error(
+                          `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const c of jsonData[key]) {
+              if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                continue;
+              }
+              const existingId = aiWorkflowIdMap.get(c.ai_workflow_id);
+              const id = existingId ?? nanoid(14);
+              const data = convertWorkflow(c, id);
+              try {
+                const updateData = { ...data };
+                delete updateData.id;
+                await prisma.aiWorkflow.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  aiWorkflowIdMap.set(c.ai_workflow_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${subtype}][${file}] Failed to upsert aiWorkflow legacyId ${c.ai_workflow_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
@@ -1528,12 +2075,12 @@ async function processAllTypes() {
   }
 }
 
-function convertResourceSubmission(jsonData) {
+function convertResourceSubmission(jsonData, existingId?: string) {
   return {
-    id: nanoid(14),
+    id: existingId ?? nanoid(14),
     resourceId: jsonData['resource_id'],
     legacySubmissionId: jsonData['submission_id'],
-    submissionId: submissionIdMap[jsonData['submission_id']] || null,
+    submissionId: submissionIdMap.get(jsonData['submission_id']) || null,
     createdAt: new Date(jsonData['create_date']),
     createdBy: jsonData['create_user'],
     updatedAt: new Date(jsonData['modify_date']),
@@ -1543,6 +2090,10 @@ function convertResourceSubmission(jsonData) {
 
 let resourceSubmissions: any[] = [];
 async function handleResourceSubmission(data) {
+  if (isIncrementalRun) {
+    await upsertResourceSubmission(data);
+    return;
+  }
   resourceSubmissions.push(data);
   if (resourceSubmissions.length > batchSize) {
     await doImportResourceSubmission();
@@ -1570,6 +2121,23 @@ async function doImportResourceSubmission() {
   }
 }
 
+async function upsertResourceSubmission(data) {
+  const { id, ...updateData } = data;
+  try {
+    await prisma.resourceSubmission.upsert({
+      where: { id },
+      create: data,
+      update: updateData,
+    });
+  } catch (err) {
+    console.error(
+      `Failed to upsert resource_submission ${data.resourceId}_${data.legacySubmissionId}`,
+    );
+    console.error(err);
+    throw err;
+  }
+}
+
 async function migrateResourceSubmissions() {
   const filenameRegex = new RegExp(`^resource_submission_\\d+\\.json`);
   const filenames = fs
@@ -1585,10 +2153,29 @@ async function migrateResourceSubmissions() {
     let dataCount = 0;
     for (const d of jsonData) {
       dataCount += 1;
-      const data = convertResourceSubmission(d);
-      const key = `${data.resourceId}:${data.legacySubmissionId}`;
-      if (!resourceSubmissionSet.has(key)) {
+      const shouldPersist = shouldProcessRecord(
+        d['create_date'],
+        d['modify_date'],
+      );
+      const key = `${d['resource_id']}:${d['submission_id']}`;
+      const existingId = resourceSubmissionIdMap.get(key);
+      const data = convertResourceSubmission(d, existingId);
+      if (isIncrementalRun) {
+        if (!existingId && !shouldPersist) {
+          continue;
+        }
+        if (!resourceSubmissionSet.has(key)) {
+          resourceSubmissionSet.add(key);
+        }
+        if (!existingId) {
+          resourceSubmissionIdMap.set(key, data.id);
+        }
+        if (shouldPersist || !existingId) {
+          await handleResourceSubmission(data);
+        }
+      } else if (!resourceSubmissionSet.has(key)) {
         resourceSubmissionSet.add(key);
+        resourceSubmissionIdMap.set(key, data.id);
         await handleResourceSubmission(data);
       }
       if (dataCount % logSize === 0) {
@@ -1598,9 +2185,19 @@ async function migrateResourceSubmissions() {
     totalCount += dataCount;
   }
   console.log(`resource_submission total count: ${totalCount}`);
+  if (!isIncrementalRun) {
+    await doImportResourceSubmission();
+  }
 }
 
 async function migrate() {
+  if (!fs.existsSync(DATA_DIR)) {
+    throw new Error(
+      `DATA_DIR "${DATA_DIR}" does not exist. Set DATA_DIR to a valid export path.`,
+    );
+  }
+  console.log(`Using data directory: ${DATA_DIR}`);
+  console.log(`Using ElasticSearch export file: ${ES_DATA_FILE}`);
   console.log('Starting lookup import...');
   processLookupFiles();
   console.log('Lookup import completed.');
@@ -1676,6 +2273,7 @@ migrate()
       { key: 'llmProviderIdMap', value: llmProviderIdMap },
       { key: 'llmModelIdMap', value: llmModelIdMap },
       { key: 'aiWorkflowIdMap', value: aiWorkflowIdMap },
+      { key: 'resourceSubmissionIdMap', value: resourceSubmissionIdMap },
     ].forEach((f) => {
       if (!fs.existsSync('.tmp')) {
         fs.mkdirSync('.tmp');
