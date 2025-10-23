@@ -384,6 +384,7 @@ describe('SubmissionService', () => {
       ]);
       challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
         status: ChallengeStatus.COMPLETED,
+        type: 'Something Else',
       });
       prismaMock.submission.findFirst.mockResolvedValue({
         id: 'passing-sub',
@@ -440,6 +441,47 @@ describe('SubmissionService', () => {
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('allows First2Finish submitters to download any submission when challenge is completed', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        type: 'First2Finish',
+        legacy: { subTrack: 'first_2_finish' },
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'own-submission',
+      });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'submitter-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
+        'challenge-xyz',
+        'submitter-user',
+      );
+      expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+        'challenge-xyz',
+      );
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledTimes(1);
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledWith({
+        where: {
+          challengeId: 'challenge-xyz',
+          memberId: 'submitter-user',
+        },
+        select: { id: true },
+      });
+      expect(s3Send).toHaveBeenCalledTimes(2);
     });
   });
 

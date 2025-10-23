@@ -24,7 +24,10 @@ import { ChallengePrismaService } from 'src/shared/modules/global/challenge-pris
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import {
+  ChallengeApiService,
+  ChallengeData,
+} from 'src/shared/modules/global/challenge.service';
 import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
@@ -531,19 +534,30 @@ export class SubmissionService {
             submission.challengeId,
           );
           if (challenge.status === ChallengeStatus.COMPLETED) {
-            const passingSubmission = await this.prisma.submission.findFirst({
-              where: {
-                challengeId: submission.challengeId,
-                memberId: uid,
-                reviewSummation: {
-                  some: {
-                    isPassing: true,
+            if (this.isFirst2FinishChallenge(challenge)) {
+              const memberSubmission = await this.prisma.submission.findFirst({
+                where: {
+                  challengeId: submission.challengeId,
+                  memberId: uid,
+                },
+                select: { id: true },
+              });
+              canDownload = !!memberSubmission;
+            } else {
+              const passingSubmission = await this.prisma.submission.findFirst({
+                where: {
+                  challengeId: submission.challengeId,
+                  memberId: uid,
+                  reviewSummation: {
+                    some: {
+                      isPassing: true,
+                    },
                   },
                 },
-              },
-              select: { id: true },
-            });
-            canDownload = !!passingSubmission;
+                select: { id: true },
+              });
+              canDownload = !!passingSubmission;
+            }
           }
         } catch (err) {
           this.logger.warn(
@@ -656,6 +670,31 @@ export class SubmissionService {
         details: { submissionId },
       });
     }
+  }
+
+  private isFirst2FinishChallenge(challenge?: ChallengeData | null): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (
+      typeName === 'first2finish' ||
+      typeName === 'first 2 finish' ||
+      typeName === 'topgear task'
+    ) {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (legacySubTrack === 'first_2_finish') {
+      return true;
+    }
+
+    return false;
   }
 
   /**
