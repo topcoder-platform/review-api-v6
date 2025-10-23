@@ -131,15 +131,116 @@ const submissionMap: Record<string, Record<string, string>> = {};
 
 // Data lookup maps
 // Initialize maps from files if they exist, otherwise create new maps
-function readIdMap(filename) {
-  return fs.existsSync(`.tmp/${filename}.json`)
-    ? new Map(
-        Object.entries(
-          JSON.parse(fs.readFileSync(`.tmp/${filename}.json`, 'utf-8')),
-        ),
-      )
-    : new Map<string, string>();
+function readIdMap(filename: string): Map<string, string> {
+  if (fs.existsSync(`.tmp/${filename}.json`)) {
+    const entries = Object.entries(
+      JSON.parse(fs.readFileSync(`.tmp/${filename}.json`, 'utf-8')),
+    );
+    return new Map<string, string>(entries);
+  }
+  return new Map<string, string>();
 }
+
+const describeLegacyId = (value: unknown): string => {
+  if (value === null) {
+    return 'null';
+  }
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (typeof value === 'symbol') {
+    return value.toString();
+  }
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'object' || typeof value === 'function') {
+    try {
+      const json = JSON.stringify(value);
+      if (typeof json === 'string') {
+        return json;
+      }
+    } catch {
+      // ignore serialization errors
+    }
+    const fallbackDescription: string = Object.prototype.toString.call(value);
+    return fallbackDescription;
+  }
+  const fallbackDescription: string = Object.prototype.toString.call(value);
+  return fallbackDescription;
+};
+
+const normalizeLegacyKey = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    throw new Error('Missing legacy identifier when normalizing key');
+  }
+  return describeLegacyId(value);
+};
+
+const tryNormalizeLegacyKey = (value: unknown): string | undefined => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  return describeLegacyId(value);
+};
+
+const omitId = <T extends { id: string }>(entity: T): Omit<T, 'id'> => {
+  const { id: ignoredId, ...rest } = entity;
+  void ignoredId;
+  return rest;
+};
+
+const getMappedId = (
+  map: Map<string, string>,
+  legacyId: unknown,
+): string | undefined => {
+  const key = tryNormalizeLegacyKey(legacyId);
+  return key ? map.get(key) : undefined;
+};
+
+const setMappedId = (
+  map: Map<string, string>,
+  legacyId: unknown,
+  value: string,
+) => {
+  map.set(normalizeLegacyKey(legacyId), value);
+};
+
+const deleteMappedId = (map: Map<string, string>, legacyId: unknown) => {
+  const key = tryNormalizeLegacyKey(legacyId);
+  if (key) {
+    map.delete(key);
+  }
+};
+
+const requireMappedId = (
+  map: Map<string, string>,
+  legacyId: unknown,
+  context: string,
+): string => {
+  const id = getMappedId(map, legacyId);
+  if (!id) {
+    throw new Error(
+      `Missing required mapping for ${context} legacy id "${describeLegacyId(
+        legacyId,
+      )}"`,
+    );
+  }
+  return id;
+};
+
+const hasMappedId = (map: Map<string, string>, legacyId: unknown): boolean => {
+  const key = tryNormalizeLegacyKey(legacyId);
+  return key ? map.has(key) : false;
+};
 
 const projectIdMap = readIdMap('projectIdMap');
 const scorecardIdMap = readIdMap('scorecardIdMap');
@@ -403,7 +504,7 @@ function convertSubmissionES(esData): any {
         id: summation.id,
         legacySubmissionId: String(esData.legacySubmissionId),
         aggregateScore: summation.aggregateScore,
-        scorecardId: scorecardIdMap.get(summation.scoreCardId),
+        scorecardId: getMappedId(scorecardIdMap, summation.scoreCardId),
         scorecardLegacyId: String(summation.scoreCardId),
         isPassing: summation.isPassing,
         reviewedDate: summation.reviewedDate
@@ -483,18 +584,22 @@ async function importSubmissionES() {
 
     let newSubmission = false;
     try {
-      if (submissionIdMap.has(submission.legacySubmissionId)) {
+      const existingSubmissionId = getMappedId(
+        submissionIdMap,
+        submission.legacySubmissionId,
+      );
+      if (existingSubmissionId) {
         newSubmission = false;
         await prisma.submission.update({
           data: submission,
           where: {
-            id: submissionIdMap.get(submission.legacySubmissionId) as string,
+            id: existingSubmissionId,
           },
         });
       } else {
         newSubmission = true;
         const newId = nanoid(14);
-        projectIdMap.set(submission.legacySubmissionId, newId);
+        setMappedId(projectIdMap, submission.legacySubmissionId, newId);
         let type = LegacySubmissionType[item.type];
         if (!LegacySubmissionType[item.type]) {
           type = LegacySubmissionType.ContestSubmission;
@@ -509,11 +614,11 @@ async function importSubmissionES() {
             createdAt: item.created ? new Date(item.created) : new Date(),
           },
         });
-        submissionIdMap.set(submission.legacySubmissionId, newId);
+        setMappedId(submissionIdMap, submission.legacySubmissionId, newId);
       }
     } catch {
       if (newSubmission) {
-        projectIdMap.delete(submission.legacySubmissionId);
+        deleteMappedId(projectIdMap, submission.legacySubmissionId);
       }
       console.error(`Failed to import submission from ES: ${submission.esId}`);
     }
@@ -563,7 +668,7 @@ async function doImportUploadData() {
         await prisma.upload.create({ data: u });
       } catch {
         console.error(`Cannot import upload data id: ${u.legacyId}`);
-        uploadIdMap.delete(u.legacyId);
+        deleteMappedId(uploadIdMap, u.legacyId);
       }
     }
   }
@@ -589,7 +694,7 @@ function convertSubmission(jsonData, existingId?: string) {
     id: existingId ?? nanoid(14),
     legacySubmissionId: jsonData['submission_id'],
     legacyUploadId: jsonData['upload_id'],
-    uploadId: uploadIdMap.get(jsonData['upload_id']),
+    uploadId: getMappedId(uploadIdMap, jsonData['upload_id']),
     status: submissionStatusMap[jsonData['submission_status_id']],
     type: submissionTypeMap[jsonData['submission_type_id']],
     screeningScore: jsonData['screening_score'],
@@ -633,7 +738,7 @@ async function doImportSubmissionData() {
         await prisma.submission.create({ data: s });
       } catch {
         console.error(`Failed to import submission ${s.legacySubmissionId}`);
-        submissionIdMap.delete(s.legacySubmissionId);
+        deleteMappedId(submissionIdMap, s.legacySubmissionId);
       }
     }
   }
@@ -696,13 +801,13 @@ async function initSubmissionMap() {
         d['modify_date'],
       );
       const legacyId = String(d['upload_id']);
-      const existingId = uploadIdMap.get(legacyId);
+      const existingId = getMappedId(uploadIdMap, legacyId);
       const uploadData = convertUpload(d, existingId);
       const skipPersistence = !existingId && isIncrementalRun && !shouldPersist;
       if (!skipPersistence) {
         // import upload data if any
         if (!existingId) {
-          uploadIdMap.set(uploadData.legacyId, uploadData.id);
+          setMappedId(uploadIdMap, uploadData.legacyId, uploadData.id);
           if (isIncrementalRun) {
             await upsertUploadData(uploadData);
           } else {
@@ -718,7 +823,10 @@ async function initSubmissionMap() {
         uploadData.status === UploadStatus.ACTIVE &&
         uploadData.resourceId != null
       ) {
-        resourceUploadMap[uploadData.resourceId] = uploadData.legacyId;
+        const resourceIdKey = tryNormalizeLegacyKey(uploadData.resourceId);
+        if (resourceIdKey) {
+          resourceUploadMap[resourceIdKey] = String(uploadData.legacyId);
+        }
       }
       if (dataCount % logSize === 0) {
         console.log(`Imported upload count: ${dataCount}`);
@@ -745,12 +853,12 @@ async function initSubmissionMap() {
         d['modify_date'],
       );
       const legacyId = String(d['submission_id']);
-      const existingId = submissionIdMap.get(legacyId);
+      const existingId = getMappedId(submissionIdMap, legacyId);
       const dbData = convertSubmission(d, existingId);
       const skipPersistence = !existingId && isIncrementalRun && !shouldPersist;
       if (!skipPersistence) {
         if (!existingId) {
-          submissionIdMap.set(dbData.legacySubmissionId, dbData.id);
+          setMappedId(submissionIdMap, dbData.legacySubmissionId, dbData.id);
           if (isIncrementalRun) {
             await upsertSubmissionData(dbData);
           } else {
@@ -772,16 +880,20 @@ async function initSubmissionMap() {
           submissionId: dbData.legacySubmissionId,
         };
         // pick the latest valid submission for each upload
-        if (uploadSubmissionMap[dbData.legacyUploadId]) {
-          const existing = uploadSubmissionMap[dbData.legacyUploadId];
+        const uploadIdKey = tryNormalizeLegacyKey(dbData.legacyUploadId);
+        if (!uploadIdKey) {
+          continue;
+        }
+        if (uploadSubmissionMap[uploadIdKey]) {
+          const existing = uploadSubmissionMap[uploadIdKey];
           if (
             !existing.score ||
             item.created.getTime() > existing.created.getTime()
           ) {
-            uploadSubmissionMap[dbData.legacyUploadId] = item;
+            uploadSubmissionMap[uploadIdKey] = item;
           }
         } else {
-          uploadSubmissionMap[dbData.legacyUploadId] = item;
+          uploadSubmissionMap[uploadIdKey] = item;
         }
       }
       if (dataCount % logSize === 0) {
@@ -902,12 +1014,13 @@ async function processType(type: string, subtype?: string) {
           };
           if (!isIncrementalRun) {
             const processedData = jsonData[key]
-              .filter((pr) => !projectIdMap.has(pr.project_id + pr.user_id))
+              .filter((pr) => {
+                const mapKey = `${pr.project_id}${pr.user_id}`;
+                return !hasMappedId(projectIdMap, mapKey);
+              })
               .map((pr) => {
-                projectIdMap.set(
-                  pr.project_id + pr.user_id,
-                  pr.project_id + pr.user_id,
-                );
+                const mapKey = `${pr.project_id}${pr.user_id}`;
+                setMappedId(projectIdMap, mapKey, mapKey);
                 return convertProjectResult(pr);
               });
             const totalBatches = Math.ceil(processedData.length / batchSize);
@@ -931,7 +1044,8 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        projectIdMap.delete(
+                        deleteMappedId(
+                          projectIdMap,
                           `${item.challengeId}${item.userId}`,
                         );
                         console.error(
@@ -946,7 +1060,7 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(pr.create_date, pr.modify_date)) {
                 continue;
               }
-              const mapKey = pr.project_id + pr.user_id;
+              const mapKey = `${pr.project_id}${pr.user_id}`;
               const data = convertProjectResult(pr);
               try {
                 await prisma.challengeResult.upsert({
@@ -959,7 +1073,7 @@ async function processType(type: string, subtype?: string) {
                   create: data,
                   update: data,
                 });
-                projectIdMap.set(mapKey, mapKey);
+                setMappedId(projectIdMap, mapKey, mapKey);
               } catch (err) {
                 console.error(
                   `[${type}][${file}] Failed to upsert challengeResult for ChallengeId: ${data.challengeId}, UserId: ${data.userId}`,
@@ -1001,7 +1115,7 @@ async function processType(type: string, subtype?: string) {
           if (!isIncrementalRun) {
             const processedData = jsonData[key].map((sc) => {
               const id = nanoid(14);
-              scorecardIdMap.set(sc.scorecard_id, id);
+              setMappedId(scorecardIdMap, sc.scorecard_id, id);
               return convertScorecard(sc, id);
             });
             const totalBatches = Math.ceil(processedData.length / batchSize);
@@ -1025,7 +1139,7 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        scorecardIdMap.delete(item.legacyId);
+                        deleteMappedId(scorecardIdMap, item.legacyId);
                         console.error(
                           `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
                         );
@@ -1038,19 +1152,18 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(sc.create_date, sc.modify_date)) {
                 continue;
               }
-              const existingId = scorecardIdMap.get(sc.scorecard_id);
+              const existingId = getMappedId(scorecardIdMap, sc.scorecard_id);
               const id = existingId ?? nanoid(14);
               const data = convertScorecard(sc, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.scorecard.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  scorecardIdMap.set(sc.scorecard_id, id);
+                  setMappedId(scorecardIdMap, sc.scorecard_id, id);
                 }
               } catch (err) {
                 console.error(
@@ -1064,26 +1177,35 @@ async function processType(type: string, subtype?: string) {
         }
         case 'scorecard_group': {
           console.log(`[${type}][${file}] Processing file`);
-          const convertGroup = (group, recordId: string) => ({
-            id: recordId,
-            legacyId: group.scorecard_group_id,
-            scorecardId: scorecardIdMap.get(group.scorecard_id),
-            name: group.name,
-            weight: parseFloat(group.weight),
-            sortOrder: parseInt(group.sort),
-            createdAt: new Date(group.create_date),
-            createdBy: group.create_user,
-            updatedAt: new Date(group.modify_date),
-            updatedBy: group.modify_user,
-          });
+          const convertGroup = (group, recordId: string) => {
+            const legacyId = normalizeLegacyKey(group.scorecard_group_id);
+            const scorecardId = requireMappedId(
+              scorecardIdMap,
+              group.scorecard_id,
+              'scorecard',
+            );
+            return {
+              id: recordId,
+              legacyId,
+              scorecardId,
+              name: group.name,
+              weight: parseFloat(group.weight),
+              sortOrder: parseInt(group.sort),
+              createdAt: new Date(group.create_date),
+              createdBy: group.create_user,
+              updatedAt: new Date(group.modify_date),
+              updatedBy: group.modify_user,
+            };
+          };
           if (!isIncrementalRun) {
             const processedData = jsonData[key]
               .filter(
-                (group) => !scorecardGroupIdMap.has(group.scorecard_group_id),
+                (group) =>
+                  !hasMappedId(scorecardGroupIdMap, group.scorecard_group_id),
               )
               .map((group) => {
                 const id = nanoid(14);
-                scorecardGroupIdMap.set(group.scorecard_group_id, id);
+                setMappedId(scorecardGroupIdMap, group.scorecard_group_id, id);
                 return convertGroup(group, id);
               });
             const totalBatches = Math.ceil(processedData.length / batchSize);
@@ -1107,7 +1229,7 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        scorecardGroupIdMap.delete(item.legacyId);
+                        deleteMappedId(scorecardGroupIdMap, item.legacyId);
                         console.error(
                           `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
                         );
@@ -1120,21 +1242,25 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(group.create_date, group.modify_date)) {
                 continue;
               }
-              const existingId = scorecardGroupIdMap.get(
+              const existingId = getMappedId(
+                scorecardGroupIdMap,
                 group.scorecard_group_id,
               );
               const id = existingId ?? nanoid(14);
               const data = convertGroup(group, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.scorecardGroup.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  scorecardGroupIdMap.set(group.scorecard_group_id, id);
+                  setMappedId(
+                    scorecardGroupIdMap,
+                    group.scorecard_group_id,
+                    id,
+                  );
                 }
               } catch (err) {
                 console.error(
@@ -1148,29 +1274,42 @@ async function processType(type: string, subtype?: string) {
         }
         case 'scorecard_section': {
           console.log(`[${type}][${file}] Processing file`);
-          const convertSection = (section, recordId: string) => ({
-            id: recordId,
-            legacyId: section.scorecard_section_id,
-            scorecardGroupId: scorecardGroupIdMap.get(
+          const convertSection = (section, recordId: string) => {
+            const legacyId = normalizeLegacyKey(section.scorecard_section_id);
+            const scorecardGroupId = requireMappedId(
+              scorecardGroupIdMap,
               section.scorecard_group_id,
-            ),
-            name: section.name,
-            weight: parseFloat(section.weight),
-            sortOrder: parseInt(section.sort),
-            createdAt: new Date(section.create_date),
-            createdBy: section.create_user,
-            updatedAt: new Date(section.modify_date),
-            updatedBy: section.modify_user,
-          });
+              'scorecard group',
+            );
+            return {
+              id: recordId,
+              legacyId,
+              scorecardGroupId,
+              name: section.name,
+              weight: parseFloat(section.weight),
+              sortOrder: parseInt(section.sort),
+              createdAt: new Date(section.create_date),
+              createdBy: section.create_user,
+              updatedAt: new Date(section.modify_date),
+              updatedBy: section.modify_user,
+            };
+          };
           if (!isIncrementalRun) {
             const processedData = jsonData[key]
               .filter(
                 (section) =>
-                  !scorecardSectionIdMap.has(section.scorecard_section_id),
+                  !hasMappedId(
+                    scorecardSectionIdMap,
+                    section.scorecard_section_id,
+                  ),
               )
               .map((section) => {
                 const id = nanoid(14);
-                scorecardSectionIdMap.set(section.scorecard_section_id, id);
+                setMappedId(
+                  scorecardSectionIdMap,
+                  section.scorecard_section_id,
+                  id,
+                );
                 return convertSection(section, id);
               });
             const totalBatches = Math.ceil(processedData.length / batchSize);
@@ -1194,7 +1333,7 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        scorecardSectionIdMap.delete(item.legacyId);
+                        deleteMappedId(scorecardSectionIdMap, item.legacyId);
                         console.error(
                           `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
                         );
@@ -1209,21 +1348,25 @@ async function processType(type: string, subtype?: string) {
               ) {
                 continue;
               }
-              const existingId = scorecardSectionIdMap.get(
+              const existingId = getMappedId(
+                scorecardSectionIdMap,
                 section.scorecard_section_id,
               );
               const id = existingId ?? nanoid(14);
               const data = convertSection(section, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.scorecardSection.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  scorecardSectionIdMap.set(section.scorecard_section_id, id);
+                  setMappedId(
+                    scorecardSectionIdMap,
+                    section.scorecard_section_id,
+                    id,
+                  );
                 }
               } catch (err) {
                 console.error(
@@ -1240,12 +1383,16 @@ async function processType(type: string, subtype?: string) {
           const convertQuestion = (question, recordId: string) => {
             const questionType =
               questionTypeMap[question.scorecard_question_type_id];
+            const legacyId = normalizeLegacyKey(question.scorecard_question_id);
+            const scorecardSectionId = requireMappedId(
+              scorecardSectionIdMap,
+              question.scorecard_section_id,
+              'scorecard section',
+            );
             return {
               id: recordId,
-              legacyId: question.scorecard_question_id,
-              scorecardSectionId: scorecardSectionIdMap.get(
-                question.scorecard_section_id,
-              ),
+              legacyId,
+              scorecardSectionId,
               type: questionType.name,
               description: question.description,
               guidelines: question.guideline,
@@ -1264,11 +1411,18 @@ async function processType(type: string, subtype?: string) {
             const processedData = jsonData[key]
               .filter(
                 (question) =>
-                  !scorecardQuestionIdMap.has(question.scorecard_question_id),
+                  !hasMappedId(
+                    scorecardQuestionIdMap,
+                    question.scorecard_question_id,
+                  ),
               )
               .map((question) => {
                 const id = nanoid(14);
-                scorecardQuestionIdMap.set(question.scorecard_question_id, id);
+                setMappedId(
+                  scorecardQuestionIdMap,
+                  question.scorecard_question_id,
+                  id,
+                );
                 return convertQuestion(question, id);
               });
             const totalBatches = Math.ceil(processedData.length / batchSize);
@@ -1292,7 +1446,7 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        scorecardQuestionIdMap.delete(item.legacyId);
+                        deleteMappedId(scorecardQuestionIdMap, item.legacyId);
                         console.error(
                           `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
                         );
@@ -1307,21 +1461,22 @@ async function processType(type: string, subtype?: string) {
               ) {
                 continue;
               }
-              const existingId = scorecardQuestionIdMap.get(
+              const existingId = getMappedId(
+                scorecardQuestionIdMap,
                 question.scorecard_question_id,
               );
               const id = existingId ?? nanoid(14);
               const data = convertQuestion(question, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.scorecardQuestion.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  scorecardQuestionIdMap.set(
+                  setMappedId(
+                    scorecardQuestionIdMap,
                     question.scorecard_question_id,
                     id,
                   );
@@ -1338,30 +1493,40 @@ async function processType(type: string, subtype?: string) {
         }
         case 'review': {
           console.log(`[${type}][${file}] Processing file`);
-          const convertReview = (review, recordId: string) => ({
-            id: recordId,
-            legacyId: review.review_id,
-            resourceId: review.resource_id,
-            phaseId: review.project_phase_id,
-            submissionId: submissionIdMap.get(review.submission_id) || null,
-            legacySubmissionId: review.submission_id,
-            scorecardId: scorecardIdMap.get(review.scorecard_id),
-            committed: review.committed === '1',
-            finalScore: review.score ? parseFloat(review.score) : null,
-            initialScore: review.initial_score
-              ? parseFloat(review.initial_score)
-              : null,
-            createdAt: new Date(review.create_date),
-            createdBy: review.create_user,
-            updatedAt: new Date(review.modify_date),
-            updatedBy: review.modify_user,
-          });
+          const convertReview = (review, recordId: string) => {
+            const legacyId = normalizeLegacyKey(review.review_id);
+            const submissionId =
+              getMappedId(submissionIdMap, review.submission_id) ?? null;
+            const scorecardId = requireMappedId(
+              scorecardIdMap,
+              review.scorecard_id,
+              'scorecard',
+            );
+            return {
+              id: recordId,
+              legacyId,
+              resourceId: review.resource_id,
+              phaseId: review.project_phase_id,
+              submissionId,
+              legacySubmissionId: review.submission_id,
+              scorecardId,
+              committed: review.committed === '1',
+              finalScore: review.score ? parseFloat(review.score) : null,
+              initialScore: review.initial_score
+                ? parseFloat(review.initial_score)
+                : null,
+              createdAt: new Date(review.create_date),
+              createdBy: review.create_user,
+              updatedAt: new Date(review.modify_date),
+              updatedBy: review.modify_user,
+            };
+          };
           if (!isIncrementalRun) {
             const processedData = jsonData[key]
-              .filter((review) => !reviewIdMap.has(review.review_id))
+              .filter((review) => !hasMappedId(reviewIdMap, review.review_id))
               .map((review) => {
                 const id = nanoid(14);
-                reviewIdMap.set(review.review_id, id);
+                setMappedId(reviewIdMap, review.review_id, id);
                 return convertReview(review, id);
               });
             const totalBatches = Math.ceil(processedData.length / batchSize);
@@ -1383,7 +1548,7 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        reviewIdMap.delete(item.legacyId);
+                        deleteMappedId(reviewIdMap, item.legacyId);
                         console.error(
                           `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
                         );
@@ -1398,19 +1563,18 @@ async function processType(type: string, subtype?: string) {
               ) {
                 continue;
               }
-              const existingId = reviewIdMap.get(review.review_id);
+              const existingId = getMappedId(reviewIdMap, review.review_id);
               const id = existingId ?? nanoid(14);
               const data = convertReview(review, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.review.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  reviewIdMap.set(review.review_id, id);
+                  setMappedId(reviewIdMap, review.review_id, id);
                 }
               } catch (err) {
                 console.error(
@@ -1424,28 +1588,41 @@ async function processType(type: string, subtype?: string) {
         }
         case 'review_item': {
           console.log(`[${type}][${file}] Processing file`);
-          const convertReviewItem = (item, recordId: string) => ({
-            id: recordId,
-            legacyId: item.review_item_id,
-            reviewId: reviewIdMap.get(item.review_id),
-            scorecardQuestionId: scorecardQuestionIdMap.get(
+          const convertReviewItem = (item, recordId: string) => {
+            const legacyId = normalizeLegacyKey(item.review_item_id);
+            const reviewId = requireMappedId(
+              reviewIdMap,
+              item.review_id,
+              'review',
+            );
+            const scorecardQuestionId = requireMappedId(
+              scorecardQuestionIdMap,
               item.scorecard_question_id,
-            ),
-            uploadId: item.upload_id || null,
-            initialAnswer: item.answer,
-            finalAnswer: item.answer,
-            managerComment: item.answer,
-            createdAt: new Date(item.create_date),
-            createdBy: item.create_user,
-            updatedAt: new Date(item.modify_date),
-            updatedBy: item.modify_user,
-          });
+              'scorecard question',
+            );
+            return {
+              id: recordId,
+              legacyId,
+              reviewId,
+              scorecardQuestionId,
+              uploadId: item.upload_id || null,
+              initialAnswer: item.answer,
+              finalAnswer: item.answer,
+              managerComment: item.answer,
+              createdAt: new Date(item.create_date),
+              createdBy: item.create_user,
+              updatedAt: new Date(item.modify_date),
+              updatedBy: item.modify_user,
+            };
+          };
           if (!isIncrementalRun) {
             const processedData = jsonData[key]
-              .filter((item) => !reviewItemIdMap.has(item.review_item_id))
+              .filter(
+                (item) => !hasMappedId(reviewItemIdMap, item.review_item_id),
+              )
               .map((item) => {
                 const id = nanoid(14);
-                reviewItemIdMap.set(item.review_item_id, id);
+                setMappedId(reviewItemIdMap, item.review_item_id, id);
                 return convertReviewItem(item, id);
               });
             const totalBatches = Math.ceil(processedData.length / batchSize);
@@ -1469,7 +1646,7 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        reviewItemIdMap.delete(item.legacyId);
+                        deleteMappedId(reviewItemIdMap, item.legacyId);
                         console.error(
                           `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
                         );
@@ -1482,19 +1659,21 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(item.create_date, item.modify_date)) {
                 continue;
               }
-              const existingId = reviewItemIdMap.get(item.review_item_id);
+              const existingId = getMappedId(
+                reviewItemIdMap,
+                item.review_item_id,
+              );
               const id = existingId ?? nanoid(14);
               const data = convertReviewItem(item, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.reviewItem.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  reviewItemIdMap.set(item.review_item_id, id);
+                  setMappedId(reviewItemIdMap, item.review_item_id, id);
                 }
               } catch (err) {
                 console.error(
@@ -1513,33 +1692,43 @@ async function processType(type: string, subtype?: string) {
               const isSupportedType = (c) =>
                 reviewItemCommentTypeMap[c.comment_type_id] in
                 LegacyCommentType;
-              const convertComment = (c, recordId: string) => ({
-                id: recordId,
-                legacyId: c.review_item_comment_id,
-                resourceId: c.resource_id,
-                reviewItemId: reviewItemIdMap.get(c.review_item_id),
-                content: c.content,
-                type: LegacyCommentType[
-                  reviewItemCommentTypeMap[c.comment_type_id]
-                ],
-                sortOrder: parseInt(c.sort),
-                createdAt: new Date(c.create_date),
-                createdBy: c.create_user,
-                updatedAt: new Date(c.modify_date),
-                updatedBy: c.modify_user,
-              });
+              const convertComment = (c, recordId: string) => {
+                const legacyId = normalizeLegacyKey(c.review_item_comment_id);
+                const reviewItemId = requireMappedId(
+                  reviewItemIdMap,
+                  c.review_item_id,
+                  'review item',
+                );
+                return {
+                  id: recordId,
+                  legacyId,
+                  resourceId: c.resource_id,
+                  reviewItemId,
+                  content: c.content,
+                  type: LegacyCommentType[
+                    reviewItemCommentTypeMap[c.comment_type_id]
+                  ],
+                  sortOrder: parseInt(c.sort),
+                  createdAt: new Date(c.create_date),
+                  createdBy: c.create_user,
+                  updatedAt: new Date(c.modify_date),
+                  updatedBy: c.modify_user,
+                };
+              };
               if (!isIncrementalRun) {
                 const processedData = jsonData[key]
                   .filter(isSupportedType)
                   .filter(
                     (c) =>
-                      !reviewItemCommentReviewItemCommentIdMap.has(
+                      !hasMappedId(
+                        reviewItemCommentReviewItemCommentIdMap,
                         c.review_item_comment_id,
                       ),
                   )
                   .map((c) => {
                     const id = nanoid(14);
-                    reviewItemCommentReviewItemCommentIdMap.set(
+                    setMappedId(
+                      reviewItemCommentReviewItemCommentIdMap,
                       c.review_item_comment_id,
                       id,
                     );
@@ -1568,7 +1757,8 @@ async function processType(type: string, subtype?: string) {
                             data: item,
                           })
                           .catch((err) => {
-                            reviewItemCommentReviewItemCommentIdMap.delete(
+                            deleteMappedId(
+                              reviewItemCommentReviewItemCommentIdMap,
                               item.legacyId,
                             );
                             console.error(
@@ -1586,22 +1776,22 @@ async function processType(type: string, subtype?: string) {
                   if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                     continue;
                   }
-                  const existingId =
-                    reviewItemCommentReviewItemCommentIdMap.get(
-                      c.review_item_comment_id,
-                    );
+                  const existingId = getMappedId(
+                    reviewItemCommentReviewItemCommentIdMap,
+                    c.review_item_comment_id,
+                  );
                   const id = existingId ?? nanoid(14);
                   const data = convertComment(c, id);
                   try {
-                    const updateData = { ...data };
-                    delete updateData.id;
+                    const updateData = omitId(data);
                     await prisma.reviewItemComment.upsert({
                       where: { id },
                       create: data,
                       update: updateData,
                     });
                     if (!existingId) {
-                      reviewItemCommentReviewItemCommentIdMap.set(
+                      setMappedId(
+                        reviewItemCommentReviewItemCommentIdMap,
                         c.review_item_comment_id,
                         id,
                       );
@@ -1620,27 +1810,42 @@ async function processType(type: string, subtype?: string) {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
               const isAppeal = (c) =>
                 reviewItemCommentTypeMap[c.comment_type_id] === 'Appeal';
-              const convertAppeal = (c, recordId: string) => ({
-                id: recordId,
-                legacyId: c.review_item_comment_id,
-                resourceId: c.resource_id,
-                reviewItemCommentId:
-                  reviewItemCommentReviewItemCommentIdMap.get(c.review_item_id),
-                content: c.content,
-                createdAt: new Date(c.create_date),
-                createdBy: c.create_user,
-                updatedAt: new Date(c.modify_date),
-                updatedBy: c.modify_user,
-              });
+              const convertAppeal = (c, recordId: string) => {
+                const legacyId = normalizeLegacyKey(c.review_item_comment_id);
+                const reviewItemCommentId = requireMappedId(
+                  reviewItemCommentReviewItemCommentIdMap,
+                  c.review_item_id,
+                  'review item comment',
+                );
+                return {
+                  id: recordId,
+                  legacyId,
+                  resourceId: c.resource_id,
+                  reviewItemCommentId,
+                  content: c.content,
+                  createdAt: new Date(c.create_date),
+                  createdBy: c.create_user,
+                  updatedAt: new Date(c.modify_date),
+                  updatedBy: c.modify_user,
+                };
+              };
               if (!isIncrementalRun) {
                 const processedData = jsonData[key]
                   .filter(isAppeal)
                   .filter(
-                    (c) => !reviewItemCommentAppealIdMap.has(c.review_item_id),
+                    (c) =>
+                      !hasMappedId(
+                        reviewItemCommentAppealIdMap,
+                        c.review_item_id,
+                      ),
                   )
                   .map((c) => {
                     const id = nanoid(14);
-                    reviewItemCommentAppealIdMap.set(c.review_item_id, id);
+                    setMappedId(
+                      reviewItemCommentAppealIdMap,
+                      c.review_item_id,
+                      id,
+                    );
                     return convertAppeal(c, id);
                   });
 
@@ -1667,7 +1872,10 @@ async function processType(type: string, subtype?: string) {
                             data: item,
                           })
                           .catch((err) => {
-                            reviewItemCommentAppealIdMap.delete(item.legacyId);
+                            deleteMappedId(
+                              reviewItemCommentAppealIdMap,
+                              item.legacyId,
+                            );
                             console.error(
                               `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
                             );
@@ -1683,21 +1891,25 @@ async function processType(type: string, subtype?: string) {
                   if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                     continue;
                   }
-                  const existingId = reviewItemCommentAppealIdMap.get(
+                  const existingId = getMappedId(
+                    reviewItemCommentAppealIdMap,
                     c.review_item_id,
                   );
                   const id = existingId ?? nanoid(14);
                   const data = convertAppeal(c, id);
                   try {
-                    const updateData = { ...data };
-                    delete updateData.id;
+                    const updateData = omitId(data);
                     await prisma.appeal.upsert({
                       where: { id },
                       create: data,
                       update: updateData,
                     });
                     if (!existingId) {
-                      reviewItemCommentAppealIdMap.set(c.review_item_id, id);
+                      setMappedId(
+                        reviewItemCommentAppealIdMap,
+                        c.review_item_id,
+                        id,
+                      );
                     }
                   } catch (err) {
                     console.error(
@@ -1714,30 +1926,40 @@ async function processType(type: string, subtype?: string) {
               const isAppealResponse = (c) =>
                 reviewItemCommentTypeMap[c.comment_type_id] ===
                 'Appeal Response';
-              const convertAppealResponse = (c, recordId: string) => ({
-                id: recordId,
-                legacyId: c.review_item_comment_id,
-                appealId: reviewItemCommentAppealIdMap.get(c.review_item_id),
-                resourceId: c.resource_id,
-                content: c.content,
-                success: c.extra_info === 'Succeeded',
-                createdAt: new Date(c.create_date),
-                createdBy: c.create_user,
-                updatedAt: new Date(c.modify_date),
-                updatedBy: c.modify_user,
-              });
+              const convertAppealResponse = (c, recordId: string) => {
+                const legacyId = normalizeLegacyKey(c.review_item_comment_id);
+                const appealId = requireMappedId(
+                  reviewItemCommentAppealIdMap,
+                  c.review_item_id,
+                  'appeal',
+                );
+                return {
+                  id: recordId,
+                  legacyId,
+                  appealId,
+                  resourceId: c.resource_id,
+                  content: c.content,
+                  success: c.extra_info === 'Succeeded',
+                  createdAt: new Date(c.create_date),
+                  createdBy: c.create_user,
+                  updatedAt: new Date(c.modify_date),
+                  updatedBy: c.modify_user,
+                };
+              };
               if (!isIncrementalRun) {
                 const processedData = jsonData[key]
                   .filter(isAppealResponse)
                   .filter(
                     (c) =>
-                      !reviewItemCommentAppealResponseIdMap.has(
+                      !hasMappedId(
+                        reviewItemCommentAppealResponseIdMap,
                         c.review_item_comment_id,
                       ),
                   )
                   .map((c) => {
                     const id = nanoid(14);
-                    reviewItemCommentAppealResponseIdMap.set(
+                    setMappedId(
+                      reviewItemCommentAppealResponseIdMap,
                       c.review_item_comment_id,
                       id,
                     );
@@ -1766,7 +1988,8 @@ async function processType(type: string, subtype?: string) {
                             data: item,
                           })
                           .catch((err) => {
-                            reviewItemCommentAppealResponseIdMap.delete(
+                            deleteMappedId(
+                              reviewItemCommentAppealResponseIdMap,
                               item.legacyId,
                             );
                             console.error(
@@ -1784,21 +2007,22 @@ async function processType(type: string, subtype?: string) {
                   if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                     continue;
                   }
-                  const existingId = reviewItemCommentAppealResponseIdMap.get(
+                  const existingId = getMappedId(
+                    reviewItemCommentAppealResponseIdMap,
                     c.review_item_comment_id,
                   );
                   const id = existingId ?? nanoid(14);
                   const data = convertAppealResponse(c, id);
                   try {
-                    const updateData = { ...data };
-                    delete updateData.id;
+                    const updateData = omitId(data);
                     await prisma.appealResponse.upsert({
                       where: { id },
                       create: data,
                       update: updateData,
                     });
                     if (!existingId) {
-                      reviewItemCommentAppealResponseIdMap.set(
+                      setMappedId(
+                        reviewItemCommentAppealResponseIdMap,
                         c.review_item_comment_id,
                         id,
                       );
@@ -1828,7 +2052,7 @@ async function processType(type: string, subtype?: string) {
             const idToLegacyIdMap = {};
             const processedData = jsonData[key].map((c) => {
               const id = nanoid(14);
-              llmProviderIdMap.set(c.llm_provider_id, id);
+              setMappedId(llmProviderIdMap, c.llm_provider_id, id);
               idToLegacyIdMap[id] = c.llm_provider_id;
               return convertProvider(c, id);
             });
@@ -1854,7 +2078,10 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        llmProviderIdMap.delete(idToLegacyIdMap[item.id]);
+                        deleteMappedId(
+                          llmProviderIdMap,
+                          idToLegacyIdMap[item.id],
+                        );
                         console.error(
                           `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
                         );
@@ -1867,19 +2094,21 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                 continue;
               }
-              const existingId = llmProviderIdMap.get(c.llm_provider_id);
+              const existingId = getMappedId(
+                llmProviderIdMap,
+                c.llm_provider_id,
+              );
               const id = existingId ?? nanoid(14);
               const data = convertProvider(c, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.llmProvider.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  llmProviderIdMap.set(c.llm_provider_id, id);
+                  setMappedId(llmProviderIdMap, c.llm_provider_id, id);
                 }
               } catch (err) {
                 console.error(
@@ -1893,21 +2122,28 @@ async function processType(type: string, subtype?: string) {
         }
         case 'llm_model': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const convertModel = (c, recordId: string) => ({
-            id: recordId,
-            providerId: llmProviderIdMap.get(c.provider_id),
-            name: c.name,
-            description: c.description,
-            icon: c.icon,
-            url: c.url,
-            createdAt: new Date(c.create_date),
-            createdBy: c.create_user,
-          });
+          const convertModel = (c, recordId: string) => {
+            const providerId = requireMappedId(
+              llmProviderIdMap,
+              c.provider_id,
+              'llm provider',
+            );
+            return {
+              id: recordId,
+              providerId,
+              name: c.name,
+              description: c.description,
+              icon: c.icon,
+              url: c.url,
+              createdAt: new Date(c.create_date),
+              createdBy: c.create_user,
+            };
+          };
           if (!isIncrementalRun) {
             const idToLegacyIdMap = {};
             const processedData = jsonData[key].map((c) => {
               const id = nanoid(14);
-              llmModelIdMap.set(c.llm_model_id, id);
+              setMappedId(llmModelIdMap, c.llm_model_id, id);
               idToLegacyIdMap[id] = c.llm_model_id;
               return convertModel(c, id);
             });
@@ -1933,7 +2169,7 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        llmModelIdMap.delete(idToLegacyIdMap[item.id]);
+                        deleteMappedId(llmModelIdMap, idToLegacyIdMap[item.id]);
                         console.error(
                           `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
                         );
@@ -1946,19 +2182,18 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                 continue;
               }
-              const existingId = llmModelIdMap.get(c.llm_model_id);
+              const existingId = getMappedId(llmModelIdMap, c.llm_model_id);
               const id = existingId ?? nanoid(14);
               const data = convertModel(c, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.llmModel.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  llmModelIdMap.set(c.llm_model_id, id);
+                  setMappedId(llmModelIdMap, c.llm_model_id, id);
                 }
               } catch (err) {
                 console.error(
@@ -1972,25 +2207,33 @@ async function processType(type: string, subtype?: string) {
         }
         case 'ai_workflow': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const convertWorkflow = (c, recordId: string) => ({
-            id: recordId,
-            llmId: llmModelIdMap.get(c.llm_id),
-            name: c.name,
-            description: c.description,
-            defUrl: c.def_url,
-            gitId: c.git_id,
-            gitOwner: c.git_owner,
-            scorecardId: scorecardIdMap.get(c.scorecard_id),
-            createdAt: new Date(c.create_date),
-            createdBy: c.create_user,
-            updatedAt: new Date(c.modify_date),
-            updatedBy: c.modify_user,
-          });
+          const convertWorkflow = (c, recordId: string) => {
+            const llmId = requireMappedId(llmModelIdMap, c.llm_id, 'llm model');
+            const scorecardId = requireMappedId(
+              scorecardIdMap,
+              c.scorecard_id,
+              'scorecard',
+            );
+            return {
+              id: recordId,
+              llmId,
+              name: c.name,
+              description: c.description,
+              defUrl: c.def_url,
+              gitWorkflowId: c.git_id,
+              gitOwnerRepo: c.git_owner,
+              scorecardId,
+              createdAt: new Date(c.create_date),
+              createdBy: c.create_user,
+              updatedAt: new Date(c.modify_date),
+              updatedBy: c.modify_user,
+            };
+          };
           if (!isIncrementalRun) {
             const idToLegacyIdMap = {};
             const processedData = jsonData[key].map((c) => {
               const id = nanoid(14);
-              aiWorkflowIdMap.set(c.ai_workflow_id, id);
+              setMappedId(aiWorkflowIdMap, c.ai_workflow_id, id);
               idToLegacyIdMap[id] = c.ai_workflow_id;
               return convertWorkflow(c, id);
             });
@@ -2016,7 +2259,10 @@ async function processType(type: string, subtype?: string) {
                         data: item,
                       })
                       .catch((err) => {
-                        aiWorkflowIdMap.delete(idToLegacyIdMap[item.id]);
+                        deleteMappedId(
+                          aiWorkflowIdMap,
+                          idToLegacyIdMap[item.id],
+                        );
                         console.error(
                           `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
                         );
@@ -2029,19 +2275,18 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                 continue;
               }
-              const existingId = aiWorkflowIdMap.get(c.ai_workflow_id);
+              const existingId = getMappedId(aiWorkflowIdMap, c.ai_workflow_id);
               const id = existingId ?? nanoid(14);
               const data = convertWorkflow(c, id);
               try {
-                const updateData = { ...data };
-                delete updateData.id;
+                const updateData = omitId(data);
                 await prisma.aiWorkflow.upsert({
                   where: { id },
                   create: data,
                   update: updateData,
                 });
                 if (!existingId) {
-                  aiWorkflowIdMap.set(c.ai_workflow_id, id);
+                  setMappedId(aiWorkflowIdMap, c.ai_workflow_id, id);
                 }
               } catch (err) {
                 console.error(
@@ -2076,11 +2321,13 @@ async function processAllTypes() {
 }
 
 function convertResourceSubmission(jsonData, existingId?: string) {
+  const legacySubmissionId = normalizeLegacyKey(jsonData['submission_id']);
   return {
     id: existingId ?? nanoid(14),
     resourceId: jsonData['resource_id'],
-    legacySubmissionId: jsonData['submission_id'],
-    submissionId: submissionIdMap.get(jsonData['submission_id']) || null,
+    legacySubmissionId,
+    submissionId:
+      getMappedId(submissionIdMap, jsonData['submission_id']) ?? null,
     createdAt: new Date(jsonData['create_date']),
     createdBy: jsonData['create_user'],
     updatedAt: new Date(jsonData['modify_date']),
@@ -2158,7 +2405,7 @@ async function migrateResourceSubmissions() {
         d['modify_date'],
       );
       const key = `${d['resource_id']}:${d['submission_id']}`;
-      const existingId = resourceSubmissionIdMap.get(key);
+      const existingId = getMappedId(resourceSubmissionIdMap, key);
       const data = convertResourceSubmission(d, existingId);
       if (isIncrementalRun) {
         if (!existingId && !shouldPersist) {
@@ -2168,14 +2415,14 @@ async function migrateResourceSubmissions() {
           resourceSubmissionSet.add(key);
         }
         if (!existingId) {
-          resourceSubmissionIdMap.set(key, data.id);
+          setMappedId(resourceSubmissionIdMap, key, data.id);
         }
         if (shouldPersist || !existingId) {
           await handleResourceSubmission(data);
         }
       } else if (!resourceSubmissionSet.has(key)) {
         resourceSubmissionSet.add(key);
-        resourceSubmissionIdMap.set(key, data.id);
+        setMappedId(resourceSubmissionIdMap, key, data.id);
         await handleResourceSubmission(data);
       }
       if (dataCount % logSize === 0) {
