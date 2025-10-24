@@ -197,6 +197,11 @@ export class PrismaService
     const schema = process.env.POSTGRES_SCHEMA || 'public';
 
     super({
+      transactionOptions: {
+        timeout: process.env.REVIEW_SERVICE_PRISMA_TIMEOUT
+          ? parseInt(process.env.REVIEW_SERVICE_PRISMA_TIMEOUT, 10)
+          : 10000,
+      },
       log: [
         { level: 'query', emit: 'event' },
         { level: 'info', emit: 'event' },
