@@ -3343,8 +3343,18 @@ export class ReviewService {
           !isOwnSubmission &&
           !submitterVisibilityState.allowAny;
 
+        const challengeStatusForReview =
+          challengeForReview?.status ?? challengeDetail?.status ?? null;
+        const shouldMaskOtherReviewerDetails =
+          !isPrivilegedRequester &&
+          reviewerResourceIdSet.size > 0 &&
+          !isReviewerForReview &&
+          !this.isCompletedOrCancelledStatus(challengeStatusForReview);
+
         const sanitizeScores =
-          shouldMaskReviewDetails || shouldLimitNonOwnerVisibility;
+          shouldMaskReviewDetails ||
+          shouldLimitNonOwnerVisibility ||
+          shouldMaskOtherReviewerDetails;
         const sanitizedReview: typeof review & {
           reviewItems?: typeof review.reviewItems;
         } = {
@@ -3364,7 +3374,8 @@ export class ReviewService {
         const shouldStripReviewItems =
           shouldMaskReviewDetails ||
           shouldTrimIterativeReviewForOtherSubmitters ||
-          shouldLimitNonOwnerVisibility;
+          shouldLimitNonOwnerVisibility ||
+          shouldMaskOtherReviewerDetails;
 
         if (!isThin) {
           sanitizedReview.reviewItems = shouldStripReviewItems

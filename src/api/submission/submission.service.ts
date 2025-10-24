@@ -31,6 +31,7 @@ import {
 } from 'src/shared/modules/global/challenge.service';
 import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
 import { randomUUID } from 'crypto';
 import { basename } from 'path';
@@ -61,6 +62,18 @@ const REVIEW_ACCESS_ROLE_KEYWORDS = [
   'approval',
 ];
 
+const REVIEW_ITEM_COMMENTS_INCLUDE = {
+  reviewItemComments: {
+    include: {
+      appeal: {
+        include: {
+          appealResponse: true,
+        },
+      },
+    },
+  },
+} as const;
+
 @Injectable()
 export class SubmissionService {
   private readonly logger = new Logger(SubmissionService.name);
@@ -71,6 +84,7 @@ export class SubmissionService {
     private readonly challengePrisma: ChallengePrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
     private readonly eventBusService: EventBusService,
     private readonly challengeCatalogService: ChallengeCatalogService,
     private readonly memberPrisma: MemberPrismaService,
@@ -1582,7 +1596,13 @@ export class SubmissionService {
           ...submissionWhereClause,
         },
         include: {
-          review: {},
+          review: {
+            include: {
+              reviewItems: {
+                include: REVIEW_ITEM_COMMENTS_INCLUDE,
+              },
+            },
+          },
           reviewSummation: {},
         },
         skip,
@@ -1636,6 +1656,7 @@ export class SubmissionService {
       }
 
       await this.applyReviewVisibilityFilters(authUser, submissions);
+      await this.enrichReviewerMetadata(submissions);
 
       // Count total entities matching the filter for pagination metadata
       const totalCount = await this.prisma.submission.count({
@@ -2064,7 +2085,12 @@ export class SubmissionService {
 
     const roleSummaryByChallenge = new Map<
       string,
-      { hasCopilot: boolean; hasReviewer: boolean; hasSubmitter: boolean }
+      {
+        hasCopilot: boolean;
+        hasReviewer: boolean;
+        hasSubmitter: boolean;
+        reviewerResourceIds: string[];
+      }
     >();
 
     await Promise.all(
@@ -2086,6 +2112,7 @@ export class SubmissionService {
         let hasCopilot = false;
         let hasReviewer = false;
         let hasSubmitter = false;
+        const reviewerResourceIds: string[] = [];
 
         for (const resource of resources ?? []) {
           const roleName = (resource.roleName || '').toLowerCase();
@@ -2098,6 +2125,10 @@ export class SubmissionService {
             )
           ) {
             hasReviewer = true;
+            const resourceId = String(resource.id ?? '').trim();
+            if (resourceId && !reviewerResourceIds.includes(resourceId)) {
+              reviewerResourceIds.push(resourceId);
+            }
           }
           if (
             resource.roleId === CommonConfig.roles.submitterRoleId ||
@@ -2111,6 +2142,7 @@ export class SubmissionService {
           hasCopilot,
           hasReviewer,
           hasSubmitter,
+          reviewerResourceIds,
         });
       }),
     );
@@ -2139,13 +2171,50 @@ export class SubmissionService {
         hasCopilot: false,
         hasReviewer: false,
         hasSubmitter: false,
+        reviewerResourceIds: [],
       };
 
-      if (roleSummary.hasCopilot || roleSummary.hasReviewer) {
+      const challenge = challengeDetails.get(challengeId);
+
+      if (roleSummary.hasCopilot) {
         continue;
       }
 
-      const challenge = challengeDetails.get(challengeId);
+      if (roleSummary.hasReviewer) {
+        const reviews = Array.isArray((submission as any).review)
+          ? ((submission as any).review as Array<Record<string, any>>)
+          : [];
+
+        if (reviews.length) {
+          const challengeCompletedOrCancelled =
+            this.isCompletedOrCancelledStatus(challenge?.status ?? null);
+
+          if (!challengeCompletedOrCancelled) {
+            for (const review of reviews) {
+              if (!review || typeof review !== 'object') {
+                continue;
+              }
+
+              const resourceId = String(review.resourceId ?? '').trim();
+              const ownsReview =
+                resourceId.length > 0 &&
+                roleSummary.reviewerResourceIds.includes(resourceId);
+
+              if (!ownsReview) {
+                review.initialScore = null;
+                review.finalScore = null;
+                if (Array.isArray(review.reviewItems)) {
+                  review.reviewItems = [];
+                } else {
+                  review.reviewItems = [];
+                }
+              }
+            }
+          }
+        }
+
+        continue;
+      }
 
       if (this.isCompletedOrCancelledStatus(challenge?.status ?? null)) {
         continue;
@@ -2161,6 +2230,140 @@ export class SubmissionService {
       }
 
       delete (submission as any).review;
+    }
+  }
+
+  private async enrichReviewerMetadata(
+    submissions: Array<{ review?: unknown }>,
+  ): Promise<void> {
+    const reviews: Array<Record<string, any>> = [];
+
+    for (const submission of submissions) {
+      const reviewList = Array.isArray((submission as any).review)
+        ? ((submission as any).review as Array<Record<string, any>>)
+        : [];
+
+      for (const review of reviewList) {
+        if (review && typeof review === 'object') {
+          reviews.push(review);
+        }
+      }
+    }
+
+    if (!reviews.length) {
+      return;
+    }
+
+    const resourceIds = Array.from(
+      new Set(
+        reviews
+          .map((review) => String(review.resourceId ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+
+    if (!resourceIds.length) {
+      for (const review of reviews) {
+        if (!Object.prototype.hasOwnProperty.call(review, 'reviewerHandle')) {
+          review.reviewerHandle = null;
+        }
+        if (
+          !Object.prototype.hasOwnProperty.call(review, 'reviewerMaxRating')
+        ) {
+          review.reviewerMaxRating = null;
+        }
+      }
+      return;
+    }
+
+    try {
+      const resources = await this.resourcePrisma.resource.findMany({
+        where: { id: { in: resourceIds } },
+        select: { id: true, memberId: true },
+      });
+
+      const memberIds = Array.from(
+        new Set(
+          resources
+            .map((resource) => String(resource.memberId ?? '').trim())
+            .filter((id) => id.length > 0),
+        ),
+      );
+
+      const memberIdsAsBigInt: bigint[] = [];
+      for (const id of memberIds) {
+        try {
+          memberIdsAsBigInt.push(BigInt(id));
+        } catch (error) {
+          this.logger.debug(
+            `[enrichReviewerMetadata] Skipping reviewer memberId ${id}: unable to convert to BigInt. ${error}`,
+          );
+        }
+      }
+
+      const memberInfoById = new Map<
+        string,
+        { handle: string | null; maxRating: number | null }
+      >();
+
+      if (memberIdsAsBigInt.length) {
+        const members = await this.memberPrisma.member.findMany({
+          where: { userId: { in: memberIdsAsBigInt } },
+          select: {
+            userId: true,
+            handle: true,
+            maxRating: { select: { rating: true } },
+          },
+        });
+
+        members.forEach((member) => {
+          memberInfoById.set(member.userId.toString(), {
+            handle: member.handle ?? null,
+            maxRating: member.maxRating?.rating ?? null,
+          });
+        });
+      }
+
+      const profileByResourceId = new Map<
+        string,
+        { handle: string | null; maxRating: number | null }
+      >();
+
+      resources.forEach((resource) => {
+        const resourceId = String(resource.id ?? '').trim();
+        if (!resourceId) {
+          return;
+        }
+        const memberId = String(resource.memberId ?? '').trim();
+        const profile = memberInfoById.get(memberId) ?? {
+          handle: null,
+          maxRating: null,
+        };
+        profileByResourceId.set(resourceId, profile);
+      });
+
+      for (const review of reviews) {
+        const resourceId = String(review.resourceId ?? '').trim();
+        const profile = resourceId ? profileByResourceId.get(resourceId) : null;
+        review.reviewerHandle = profile?.handle ?? null;
+        review.reviewerMaxRating = profile?.maxRating ?? null;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[enrichReviewerMetadata] Failed to enrich reviewer metadata: ${message}`,
+      );
+    } finally {
+      for (const review of reviews) {
+        if (!Object.prototype.hasOwnProperty.call(review, 'reviewerHandle')) {
+          review.reviewerHandle = null;
+        }
+        if (
+          !Object.prototype.hasOwnProperty.call(review, 'reviewerMaxRating')
+        ) {
+          review.reviewerMaxRating = null;
+        }
+      }
     }
   }
 

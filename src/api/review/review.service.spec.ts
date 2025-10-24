@@ -1501,6 +1501,148 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(callArgs.where.resourceId).toBeUndefined();
   });
 
+  it('hides scores and review items for other reviewers on active challenges while keeping reviewer metadata', async () => {
+    const now = new Date();
+    const reviewerUser: JwtUser = {
+      userId: '101',
+      roles: [],
+      isMachine: false,
+    };
+
+    const reviewerResource = {
+      ...buildResource('Reviewer', reviewerUser.userId),
+      id: 'resource-self',
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      reviewerResource,
+    ]);
+
+    const reviewRecords = [
+      {
+        id: 'review-self',
+        resourceId: 'resource-self',
+        submissionId: baseSubmission.id,
+        phaseId: 'phase-review',
+        scorecardId: 'scorecard-1',
+        typeId: 'type-1',
+        status: ReviewStatus.COMPLETED,
+        reviewDate: now,
+        committed: true,
+        metadata: null,
+        reviewItems: [
+          {
+            id: 'item-self',
+            scorecardQuestionId: 'question-1',
+            initialAnswer: 'Yes',
+            finalAnswer: 'Yes',
+            managerComment: null,
+            createdAt: now,
+            createdBy: 'reviewer',
+            updatedAt: now,
+            updatedBy: 'reviewer',
+            reviewItemComments: [],
+          },
+        ],
+        createdAt: now,
+        createdBy: 'creator',
+        updatedAt: now,
+        updatedBy: 'updater',
+        finalScore: 95,
+        initialScore: 90,
+        submission: {
+          id: baseSubmission.id,
+          memberId: '301',
+          challengeId: 'challenge-1',
+        },
+      },
+      {
+        id: 'review-other',
+        resourceId: 'resource-other',
+        submissionId: baseSubmission.id,
+        phaseId: 'phase-review',
+        scorecardId: 'scorecard-1',
+        typeId: 'type-1',
+        status: ReviewStatus.COMPLETED,
+        reviewDate: now,
+        committed: true,
+        metadata: null,
+        reviewItems: [
+          {
+            id: 'item-other',
+            scorecardQuestionId: 'question-2',
+            initialAnswer: 'No',
+            finalAnswer: 'No',
+            managerComment: null,
+            createdAt: now,
+            createdBy: 'other-reviewer',
+            updatedAt: now,
+            updatedBy: 'other-reviewer',
+            reviewItemComments: [],
+          },
+        ],
+        createdAt: now,
+        createdBy: 'creator',
+        updatedAt: now,
+        updatedBy: 'updater',
+        finalScore: 75,
+        initialScore: 70,
+        submission: {
+          id: baseSubmission.id,
+          memberId: '301',
+          challengeId: 'challenge-1',
+        },
+      },
+    ];
+
+    prismaMock.review.findMany.mockResolvedValue(reviewRecords);
+    prismaMock.review.count.mockResolvedValue(reviewRecords.length);
+
+    resourcePrismaMock.resource.findMany.mockResolvedValue([
+      { id: 'resource-self', memberId: '101' },
+      { id: 'resource-other', memberId: '202' },
+    ]);
+
+    memberPrismaMock.member.findMany.mockResolvedValue([
+      {
+        userId: BigInt(101),
+        handle: 'selfHandle',
+        maxRating: { rating: 2400 },
+      },
+      {
+        userId: BigInt(202),
+        handle: 'otherHandle',
+        maxRating: { rating: 1800 },
+      },
+    ]);
+
+    const response = await service.getReviews(
+      reviewerUser,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data).toHaveLength(2);
+    const selfReview = response.data.find(
+      (review) => review.id === 'review-self',
+    );
+    const otherReview = response.data.find(
+      (review) => review.id === 'review-other',
+    );
+
+    expect(selfReview?.finalScore).toBe(95);
+    expect(selfReview?.initialScore).toBe(90);
+    expect(selfReview?.reviewItems).toHaveLength(1);
+    expect(selfReview?.reviewerHandle).toBe('selfHandle');
+    expect(selfReview?.reviewerMaxRating).toBe(2400);
+
+    expect(otherReview?.finalScore).toBeNull();
+    expect(otherReview?.initialScore).toBeNull();
+    expect(otherReview?.reviewItems).toEqual([]);
+    expect(otherReview?.reviewerHandle).toBe('otherHandle');
+    expect(otherReview?.reviewerMaxRating).toBe(1800);
+  });
+
   it('returns empty results for submitters when reviews are not yet accessible', async () => {
     const submitterUser: JwtUser = {
       userId: 'submitter-1',

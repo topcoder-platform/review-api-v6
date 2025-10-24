@@ -14,6 +14,7 @@ jest.mock('nanoid', () => ({
 describe('SubmissionService', () => {
   let service: SubmissionService;
   let resourceApiService: { getMemberResourcesRoles: jest.Mock };
+  let resourcePrisma: { resource: { findMany: jest.Mock } };
   let s3Send: jest.Mock;
   const submission = {
     id: 'submission-123',
@@ -36,12 +37,18 @@ describe('SubmissionService', () => {
     resourceApiService = {
       getMemberResourcesRoles: jest.fn().mockResolvedValue([]),
     };
+    resourcePrisma = {
+      resource: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
     service = new SubmissionService(
       {} as any,
       {} as any,
       {} as any,
       {} as any,
       resourceApiService as any,
+      resourcePrisma as any,
       {} as any,
       {} as any,
       {} as any,
@@ -297,12 +304,18 @@ describe('SubmissionService', () => {
       resourceApiService = {
         getMemberResourcesRoles: jest.fn(),
       };
+      resourcePrisma = {
+        resource: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+      };
       service = new SubmissionService(
         prismaMock as any,
         {} as any,
         {} as any,
         challengeApiServiceMock as any,
         resourceApiService as any,
+        resourcePrisma as any,
         {} as any,
         {} as any,
         {} as any,
@@ -506,6 +519,7 @@ describe('SubmissionService', () => {
       validateSubmitterRegistration: jest.Mock;
       getMemberResourcesRoles: jest.Mock;
     };
+    let resourcePrismaListMock: { resource: { findMany: jest.Mock } };
     let memberPrismaMock: { member: { findMany: jest.Mock } };
     let listService: SubmissionService;
 
@@ -537,13 +551,21 @@ describe('SubmissionService', () => {
         validateSubmitterRegistration: jest.fn(),
         getMemberResourcesRoles: jest.fn().mockResolvedValue([]),
       };
-      memberPrismaMock = { member: { findMany: jest.fn() } };
+      resourcePrismaListMock = {
+        resource: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+      };
+      memberPrismaMock = {
+        member: { findMany: jest.fn().mockResolvedValue([]) },
+      };
       listService = new SubmissionService(
         prismaMock as any,
         prismaErrorServiceMock as any,
         challengePrismaMock as any,
         challengeApiServiceMock as any,
         resourceApiServiceListMock as any,
+        resourcePrismaListMock as any,
         {} as any,
         {} as any,
         memberPrismaMock as any,
@@ -883,6 +905,135 @@ describe('SubmissionService', () => {
       );
 
       expect(other?.review).toBeDefined();
+    });
+
+    it('masks other reviewers scores while preserving reviewer metadata on active challenges', async () => {
+      const now = new Date('2025-01-05T10:00:00Z');
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Reviewer',
+          id: 'resource-self',
+          memberId: '101',
+        },
+      ]);
+
+      const submissions = [
+        {
+          id: 'submission-1',
+          challengeId: 'challenge-1',
+          memberId: 'submitter-1',
+          submittedDate: now,
+          createdAt: now,
+          updatedAt: now,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [
+            {
+              id: 'review-self',
+              resourceId: 'resource-self',
+              submissionId: 'submission-1',
+              finalScore: 95,
+              initialScore: 92,
+              reviewItems: [
+                {
+                  id: 'item-self',
+                  scorecardQuestionId: 'q1',
+                  initialAnswer: 'YES',
+                  finalAnswer: 'YES',
+                  reviewItemComments: [],
+                },
+              ],
+              createdAt: now,
+              createdBy: 'reviewer',
+              updatedAt: now,
+              updatedBy: 'reviewer',
+            },
+            {
+              id: 'review-other',
+              resourceId: 'resource-other',
+              submissionId: 'submission-1',
+              finalScore: 80,
+              initialScore: 78,
+              reviewItems: [
+                {
+                  id: 'item-other',
+                  scorecardQuestionId: 'q2',
+                  initialAnswer: 'NO',
+                  finalAnswer: 'NO',
+                  reviewItemComments: [],
+                },
+              ],
+              createdAt: now,
+              createdBy: 'other-reviewer',
+              updatedAt: now,
+              updatedBy: 'other-reviewer',
+            },
+          ],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-1',
+      });
+
+      resourcePrismaListMock.resource.findMany.mockResolvedValue([
+        { id: 'resource-self', memberId: '101' },
+        { id: 'resource-other', memberId: '202' },
+      ]);
+
+      memberPrismaMock.member.findMany.mockResolvedValue([
+        {
+          userId: BigInt(101),
+          handle: 'selfHandle',
+          maxRating: { rating: 2500 },
+        },
+        {
+          userId: BigInt(202),
+          handle: 'otherHandle',
+          maxRating: { rating: 1800 },
+        },
+      ]);
+
+      const result = await listService.listSubmission(
+        {
+          userId: '101',
+          isMachine: false,
+          roles: [UserRole.Reviewer],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const submissionResult = result.data.find(
+        (entry) => entry.id === 'submission-1',
+      );
+
+      expect(submissionResult).toBeDefined();
+      const selfReview = submissionResult?.review?.find(
+        (review) => review.id === 'review-self',
+      );
+      const otherReview = submissionResult?.review?.find(
+        (review) => review.id === 'review-other',
+      );
+
+      expect(selfReview?.initialScore).toBe(92);
+      expect(selfReview?.finalScore).toBe(95);
+      expect(selfReview?.reviewItems).toHaveLength(1);
+      expect(selfReview?.reviewerHandle).toBe('selfHandle');
+      expect(selfReview?.reviewerMaxRating).toBe(2500);
+
+      expect(otherReview?.initialScore).toBeNull();
+      expect(otherReview?.finalScore).toBeNull();
+      expect(otherReview?.reviewItems).toEqual([]);
+      expect(otherReview?.reviewerHandle).toBe('otherHandle');
+      expect(otherReview?.reviewerMaxRating).toBe(1800);
     });
   });
 });
