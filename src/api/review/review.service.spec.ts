@@ -1398,6 +1398,48 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     });
   });
 
+  it('allows a reviewer to see all reviews when the challenge is completed', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Reviewer'),
+    ]);
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Completed Challenge',
+      status: ChallengeStatus.COMPLETED,
+      phases: [
+        { id: 'phase-review', name: 'Review', isOpen: false },
+        { id: 'phase-screening', name: 'Screening', isOpen: false },
+      ],
+    });
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    expect(findClauseWithKey(whereClauses, 'resourceId')).toBeUndefined();
+  });
+
+  it('allows a reviewer to see all reviews when the challenge is cancelled', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      buildResource('Reviewer'),
+    ]);
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-1',
+      name: 'Cancelled Challenge',
+      status: ChallengeStatus.CANCELLED_FAILED_REVIEW,
+      phases: [
+        { id: 'phase-review', name: 'Review', isOpen: false },
+        { id: 'phase-screening', name: 'Screening', isOpen: false },
+      ],
+    });
+
+    await service.getReviews(baseAuthUser, undefined, 'challenge-1');
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    const whereClauses = flattenWhereClauses(callArgs.where);
+    expect(findClauseWithKey(whereClauses, 'resourceId')).toBeUndefined();
+  });
+
   it('filters reviews by the resource id when the requester is an approver', async () => {
     resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
       buildResource('Approver'),

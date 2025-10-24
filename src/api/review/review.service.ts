@@ -2765,29 +2765,37 @@ export class ReviewService {
             // Copilots retain full visibility for the challenge
           } else if (reviewerResourceIdSet.size) {
             const reviewerResourceIds = Array.from(reviewerResourceIdSet);
-            if (hasReviewerRoleForChallenge && challengeId) {
-              let screeningPhaseIds: string[] = [];
-              if (!challengeDetail) {
-                try {
-                  challengeDetail =
-                    await this.challengeApiService.getChallengeDetail(
-                      challengeId,
-                    );
-                } catch (error) {
-                  const message =
-                    error instanceof Error ? error.message : String(error);
-                  this.logger.debug(
-                    `[getReviews] Unable to fetch challenge ${challengeId} for reviewer screening access: ${message}`,
+            let challengeCompletedOrCancelled = false;
+            if (challengeId && !challengeDetail) {
+              try {
+                challengeDetail =
+                  await this.challengeApiService.getChallengeDetail(
+                    challengeId,
                   );
-                }
+              } catch (error) {
+                const message =
+                  error instanceof Error ? error.message : String(error);
+                this.logger.debug(
+                  `[getReviews] Unable to fetch challenge ${challengeId} for reviewer screening access: ${message}`,
+                );
               }
+            }
 
-              if (challengeDetail) {
-                screeningPhaseIds = this.getPhaseIdsForNames(challengeDetail, [
-                  'screening',
-                  'checkpoint screening',
-                ]);
-              }
+            if (challengeDetail) {
+              challengeCompletedOrCancelled = this.isCompletedOrCancelledStatus(
+                challengeDetail.status,
+              );
+            }
+
+            if (challengeCompletedOrCancelled) {
+              // Completed or cancelled challenges should expose all reviews to reviewers.
+            } else if (hasReviewerRoleForChallenge && challengeId) {
+              const screeningPhaseIds = challengeDetail
+                ? this.getPhaseIdsForNames(challengeDetail, [
+                    'screening',
+                    'checkpoint screening',
+                  ])
+                : [];
 
               if (screeningPhaseIds.length) {
                 reviewWhereClause.OR = [
