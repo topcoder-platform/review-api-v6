@@ -506,6 +506,9 @@ describe('SubmissionService', () => {
         count: jest.Mock;
         findFirst: jest.Mock;
       };
+      reviewType: {
+        findMany: jest.Mock;
+      };
     };
     let prismaErrorServiceMock: { handleError: jest.Mock };
     let challengePrismaMock: {
@@ -530,6 +533,9 @@ describe('SubmissionService', () => {
           count: jest.fn(),
           findFirst: jest.fn(),
         },
+        reviewType: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
       };
       prismaErrorServiceMock = {
         handleError: jest.fn(),
@@ -543,7 +549,13 @@ describe('SubmissionService', () => {
           status: ChallengeStatus.ACTIVE,
           type: 'Challenge',
           legacy: {},
-          phases: [],
+          phases: [
+            {
+              id: 'phase-123',
+              phaseId: 'legacy-phase-123',
+              name: 'Review Phase',
+            },
+          ],
         }),
         getChallenges: jest.fn(),
       };
@@ -635,6 +647,57 @@ describe('SubmissionService', () => {
       expect(latestEntries.map((entry) => entry.id)).toEqual([
         'submission-new',
       ]);
+    });
+
+    it('enriches reviews with review type names when typeId is present', async () => {
+      const submissions = [
+        {
+          id: 'submission-1',
+          challengeId: 'challenge-1',
+          memberId: 'member-1',
+          submittedDate: new Date('2024-01-01T10:00:00Z'),
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+          updatedAt: new Date('2024-01-01T10:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [
+            {
+              id: 'review-1',
+              typeId: 'type-123',
+              resourceId: 'resource-1',
+              phaseId: 'phase-123',
+              reviewItems: [],
+            },
+          ],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-1',
+      });
+      prismaMock.reviewType.findMany.mockResolvedValue([
+        { id: 'type-123', name: 'Iterative Review' },
+      ]);
+
+      const result = await listService.listSubmission(
+        { isMachine: false, roles: [UserRole.Admin] } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 20 } as any,
+      );
+
+      expect(result.data[0].review?.[0]?.reviewType).toBe('Iterative Review');
+      expect(result.data[0].review?.[0]?.phaseName).toBe('Review Phase');
+      expect(prismaMock.reviewType.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['type-123'] } },
+        select: { id: true, name: true },
+      });
     });
 
     it('omits isLatest when submission metadata indicates unlimited submissions', async () => {

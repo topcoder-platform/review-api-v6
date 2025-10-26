@@ -33,6 +33,7 @@ model scorecard {
 
   scorecardGroups scorecardGroup[]
   reviews         review[]
+  reviewSummations reviewSummation[]
   aiWorkflow      aiWorkflow[]
 
   // Indexes for faster searches
@@ -373,6 +374,7 @@ model reviewSummation {
   metadata           Json?
 
   submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  scorecard  scorecard? @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
 
   @@index([submissionId]) // Index for joining with submission table
   @@index([scorecardId]) // Index for joining with scorecard table

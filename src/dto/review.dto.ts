@@ -396,6 +396,16 @@ export class ReviewResponseDto extends ReviewCommonDto {
   @IsString()
   phaseName?: string | null;
 
+  @ApiProperty({
+    description: 'Human-readable name of the review type',
+    example: 'Iterative Review',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  reviewType?: string | null;
+
   @ApiProperty({ description: 'Final score of the review', example: 85.5 })
   finalScore: number | null;
 
