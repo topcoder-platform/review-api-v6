@@ -3,6 +3,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { LoggerService } from './logger.service';
 import { PrismaErrorService } from './prisma-error.service';
 import { getStore } from 'src/shared/request/requestStore';
+import { Utils } from './utils.service';
 
 enum auditField {
   createdBy = 'createdBy',
@@ -197,11 +198,7 @@ export class PrismaService
     const schema = process.env.POSTGRES_SCHEMA || 'public';
 
     super({
-      transactionOptions: {
-        timeout: process.env.REVIEW_SERVICE_PRISMA_TIMEOUT
-          ? parseInt(process.env.REVIEW_SERVICE_PRISMA_TIMEOUT, 10)
-          : 10000,
-      },
+      ...Utils.getPrismaTimeout(),
       log: [
         { level: 'query', emit: 'event' },
         { level: 'info', emit: 'event' },

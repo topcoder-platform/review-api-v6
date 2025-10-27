@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { LoggerService } from './logger.service';
+import { Utils } from './utils.service';
 
 @Injectable()
 export class ChallengePrismaService
@@ -11,11 +12,7 @@ export class ChallengePrismaService
 
   constructor() {
     super({
-      transactionOptions: {
-        timeout: process.env.REVIEW_SERVICE_PRISMA_TIMEOUT
-          ? parseInt(process.env.REVIEW_SERVICE_PRISMA_TIMEOUT, 10)
-          : 10000,
-      },
+      ...Utils.getPrismaTimeout(),
       log: [
         { level: 'query', emit: 'event' },
         { level: 'info', emit: 'event' },
