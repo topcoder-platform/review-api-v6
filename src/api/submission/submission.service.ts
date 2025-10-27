@@ -2381,7 +2381,7 @@ export class SubmissionService {
         }
 
         if (!filteredReviews.length) {
-          delete (submission as any).review;
+          (submission as any).review = reviews;
         } else if (filteredReviews.length !== reviews.length) {
           (submission as any).review = filteredReviews;
         }
@@ -2426,6 +2426,9 @@ export class SubmissionService {
       }
 
       if (this.isCompletedOrCancelledStatus(challenge?.status ?? null)) {
+        if (challenge?.status === ChallengeStatus.COMPLETED) {
+          continue;
+        }
         let hasPassingSubmission = passingSubmissionCache.get(challengeId);
         if (hasPassingSubmission === undefined) {
           hasPassingSubmission =
@@ -3059,13 +3062,10 @@ export class SubmissionService {
 
       const challengeDetail =
         visibilityContext.challengeDetailsById.get(challengeId);
-      const challengeStatus = challengeDetail?.status ?? null;
-      const isActiveChallenge =
-        !this.isCompletedOrCancelledStatus(challengeStatus);
       if (challengeDetail == null) {
         return false;
       }
-      return !isActiveChallenge;
+      return true;
     });
 
     return {
@@ -3116,6 +3116,14 @@ export class SubmissionService {
       const roleSummary =
         visibilityContext.roleSummaryByChallenge.get(challengeId) ??
         EMPTY_ROLE_SUMMARY;
+      const challengeDetail =
+        visibilityContext.challengeDetailsById.get(challengeId) ?? null;
+      const isCompletedChallenge = this.isCompletedOrCancelledStatus(
+        challengeDetail?.status ?? null,
+      );
+      if (isCompletedChallenge) {
+        continue;
+      }
 
       const shouldStrip =
         roleSummary.hasSubmitter &&

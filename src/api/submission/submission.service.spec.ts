@@ -326,6 +326,7 @@ describe('SubmissionService', () => {
           id: 'sub-123',
           memberId: 'owner-user',
           challengeId: 'challenge-xyz',
+          type: SubmissionType.CONTEST_SUBMISSION,
           url: 'https://s3.amazonaws.com/dummy/submission.zip',
         });
       jest
@@ -897,6 +898,7 @@ describe('SubmissionService', () => {
       );
 
       expect(other?.review).toBeDefined();
+      expect(other?.memberId).toBe('user-2');
     });
 
     it('retains review data for marathon match submissions', async () => {

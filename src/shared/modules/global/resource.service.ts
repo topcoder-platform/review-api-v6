@@ -83,21 +83,50 @@ export class ResourceApiService {
     memberId?: string;
   }): Promise<ResourceInfo[]> {
     try {
-      // Send request to resource api
       const params = new URLSearchParams();
       if (query.challengeId) params.append('challengeId', query.challengeId);
       if (query.memberId) params.append('memberId', query.memberId);
 
-      const url = `${CommonConfig.apis.resourceApiUrl}resources?${params.toString()}`;
+      const perPage = 1000;
+      params.set('perPage', String(perPage));
+
       const token = await this.m2mService.getM2MToken();
-      const response = await firstValueFrom(
-        this.httpService.get<ResourceInfo[]>(url, {
-          headers: {
-            Authorization: 'Bearer ' + token,
-          },
-        }),
-      );
-      return response.data;
+      const resources: ResourceInfo[] = [];
+
+      let page = 1;
+      while (true) {
+        params.set('page', String(page));
+
+        const url = `${CommonConfig.apis.resourceApiUrl}resources?${params.toString()}`;
+        const response = await firstValueFrom(
+          this.httpService.get<ResourceInfo[]>(url, {
+            headers: {
+              Authorization: 'Bearer ' + token,
+            },
+          }),
+        );
+
+        const batch = Array.isArray(response.data) ? response.data : [];
+        resources.push(...batch);
+
+        const totalPagesHeader =
+          response.headers?.['x-total-pages'] ??
+          (response.headers?.['X-Total-Pages'] as string | undefined);
+        const totalPages = Number(totalPagesHeader);
+
+        const hasMorePagesByHeader =
+          Number.isFinite(totalPages) && totalPages > 0 && page < totalPages;
+        const hasMorePagesByCount =
+          !Number.isFinite(totalPages) && batch.length === perPage;
+
+        if (!hasMorePagesByHeader && !hasMorePagesByCount) {
+          break;
+        }
+
+        page += 1;
+      }
+
+      return resources;
     } catch (e) {
       if (e instanceof AxiosError) {
         this.logger.error(`Http Error: ${e.message}`, e.response?.data);
