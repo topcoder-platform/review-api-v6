@@ -3434,7 +3434,9 @@ export class ReviewService {
           !isPrivilegedRequester &&
           reviewerResourceIdSet.size > 0 &&
           !isReviewerForReview &&
-          !this.isCompletedOrCancelledStatus(challengeStatusForReview);
+          !this.isCompletedOrCancelledStatus(challengeStatusForReview) &&
+          normalizedPhaseName !== 'screening' &&
+          normalizedPhaseName !== 'checkpoint screening';
 
         const sanitizeScores =
           shouldMaskReviewDetails ||
@@ -3456,11 +3458,16 @@ export class ReviewService {
           !isOwnSubmission &&
           normalizedPhaseName === 'iterative review' &&
           this.isFirst2FinishChallenge(challengeForReview);
+        const shouldStripOtherReviewerContent =
+          shouldMaskOtherReviewerDetails &&
+          !['screening', 'checkpoint screening'].includes(
+            normalizedPhaseName ?? '',
+          );
         const shouldStripReviewItems =
           shouldMaskReviewDetails ||
           shouldTrimIterativeReviewForOtherSubmitters ||
           shouldLimitNonOwnerVisibility ||
-          shouldMaskOtherReviewerDetails;
+          shouldStripOtherReviewerContent;
 
         if (!isThin) {
           sanitizedReview.reviewItems = shouldStripReviewItems

@@ -1686,6 +1686,139 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(otherReview?.reviewerMaxRating).toBe(1800);
   });
 
+  it('exposes screening review items and scores to other reviewers', async () => {
+    const now = new Date();
+    const reviewerUser: JwtUser = {
+      userId: '101',
+      roles: [],
+      isMachine: false,
+    };
+
+    const reviewerResource = {
+      ...buildResource('Reviewer', reviewerUser.userId),
+      id: 'resource-self',
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      reviewerResource,
+    ]);
+
+    const reviewRecords = [
+      {
+        id: 'review-self',
+        resourceId: 'resource-self',
+        submissionId: baseSubmission.id,
+        phaseId: 'phase-review',
+        scorecardId: 'scorecard-1',
+        typeId: 'type-1',
+        status: ReviewStatus.COMPLETED,
+        reviewDate: now,
+        committed: true,
+        metadata: null,
+        reviewItems: [
+          {
+            id: 'item-self',
+            scorecardQuestionId: 'question-1',
+            initialAnswer: 'Yes',
+            finalAnswer: 'Yes',
+            managerComment: null,
+            createdAt: now,
+            createdBy: 'reviewer',
+            updatedAt: now,
+            updatedBy: 'reviewer',
+            reviewItemComments: [],
+          },
+        ],
+        createdAt: now,
+        createdBy: 'creator',
+        updatedAt: now,
+        updatedBy: 'updater',
+        finalScore: 98,
+        initialScore: 96,
+        submission: {
+          id: baseSubmission.id,
+          memberId: '301',
+          challengeId: 'challenge-1',
+        },
+      },
+      {
+        id: 'review-screening',
+        resourceId: 'resource-other',
+        submissionId: baseSubmission.id,
+        phaseId: 'phase-screening',
+        scorecardId: 'scorecard-2',
+        typeId: 'type-2',
+        status: ReviewStatus.COMPLETED,
+        reviewDate: now,
+        committed: true,
+        metadata: null,
+        reviewItems: [
+          {
+            id: 'item-screening',
+            scorecardQuestionId: 'question-3',
+            initialAnswer: 'Yes',
+            finalAnswer: 'Yes',
+            managerComment: null,
+            createdAt: now,
+            createdBy: 'other-reviewer',
+            updatedAt: now,
+            updatedBy: 'other-reviewer',
+            reviewItemComments: [],
+          },
+        ],
+        createdAt: now,
+        createdBy: 'creator',
+        updatedAt: now,
+        updatedBy: 'updater',
+        finalScore: 82,
+        initialScore: 80,
+        submission: {
+          id: baseSubmission.id,
+          memberId: '301',
+          challengeId: 'challenge-1',
+        },
+      },
+    ];
+
+    prismaMock.review.findMany.mockResolvedValue(reviewRecords);
+    prismaMock.review.count.mockResolvedValue(reviewRecords.length);
+
+    resourcePrismaMock.resource.findMany.mockResolvedValue([
+      { id: 'resource-self', memberId: '101' },
+      { id: 'resource-other', memberId: '202' },
+    ]);
+
+    memberPrismaMock.member.findMany.mockResolvedValue([
+      {
+        userId: BigInt(101),
+        handle: 'selfHandle',
+        maxRating: { rating: 2400 },
+      },
+      {
+        userId: BigInt(202),
+        handle: 'screeningHandle',
+        maxRating: { rating: 2100 },
+      },
+    ]);
+
+    const response = await service.getReviews(
+      reviewerUser,
+      undefined,
+      'challenge-1',
+    );
+
+    expect(response.data).toHaveLength(2);
+    const screeningReview = response.data.find(
+      (review) => review.id === 'review-screening',
+    );
+
+    expect(screeningReview?.reviewItems).toHaveLength(1);
+    expect(screeningReview?.finalScore).toBe(82);
+    expect(screeningReview?.initialScore).toBe(80);
+    expect(screeningReview?.reviewerHandle).toBe('screeningHandle');
+    expect(screeningReview?.reviewerMaxRating).toBe(2100);
+  });
+
   it('returns empty results for submitters when reviews are not yet accessible', async () => {
     const submitterUser: JwtUser = {
       userId: 'submitter-1',

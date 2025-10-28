@@ -997,6 +997,7 @@ describe('SubmissionService', () => {
               id: 'review-self',
               resourceId: 'resource-self',
               submissionId: 'submission-1',
+              phaseId: 'phase-123',
               finalScore: 95,
               initialScore: 92,
               reviewItems: [
@@ -1017,6 +1018,7 @@ describe('SubmissionService', () => {
               id: 'review-other',
               resourceId: 'resource-other',
               submissionId: 'submission-1',
+              phaseId: 'phase-123',
               finalScore: 80,
               initialScore: 78,
               reviewItems: [
@@ -1099,6 +1101,145 @@ describe('SubmissionService', () => {
       expect(otherReview?.reviewItems).toEqual([]);
       expect(otherReview?.reviewerHandle).toBe('otherHandle');
       expect(otherReview?.reviewerMaxRating).toBe(1800);
+    });
+
+    it('preserves screening review items and scores for other reviewers', async () => {
+      const now = new Date('2025-01-06T10:00:00Z');
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Challenge',
+        legacy: {},
+        phases: [
+          {
+            id: 'phase-review',
+            phaseId: 'legacy-phase-review',
+            name: 'Review',
+          },
+          {
+            id: 'phase-screening',
+            phaseId: 'legacy-phase-screening',
+            name: 'Screening',
+          },
+        ],
+      });
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Reviewer',
+          id: 'resource-self',
+          memberId: '101',
+        },
+      ]);
+
+      const submissions = [
+        {
+          id: 'submission-2',
+          challengeId: 'challenge-1',
+          memberId: 'submitter-1',
+          submittedDate: now,
+          createdAt: now,
+          updatedAt: now,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [
+            {
+              id: 'review-self',
+              resourceId: 'resource-self',
+              submissionId: 'submission-2',
+              phaseId: 'phase-review',
+              finalScore: 90,
+              initialScore: 88,
+              reviewItems: [
+                {
+                  id: 'item-self',
+                  scorecardQuestionId: 'q1',
+                  initialAnswer: 'YES',
+                  finalAnswer: 'YES',
+                  reviewItemComments: [],
+                },
+              ],
+              createdAt: now,
+              createdBy: 'reviewer',
+              updatedAt: now,
+              updatedBy: 'reviewer',
+            },
+            {
+              id: 'review-screening',
+              resourceId: 'resource-other',
+              submissionId: 'submission-2',
+              phaseId: 'phase-screening',
+              finalScore: 75,
+              initialScore: 70,
+              reviewItems: [
+                {
+                  id: 'item-screening',
+                  scorecardQuestionId: 'q2',
+                  initialAnswer: 'NO',
+                  finalAnswer: 'NO',
+                  reviewItemComments: [],
+                },
+              ],
+              createdAt: now,
+              createdBy: 'screening-reviewer',
+              updatedAt: now,
+              updatedBy: 'screening-reviewer',
+            },
+          ],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-2',
+      });
+
+      resourcePrismaListMock.resource.findMany.mockResolvedValue([
+        { id: 'resource-self', memberId: '101' },
+        { id: 'resource-other', memberId: '202' },
+      ]);
+
+      memberPrismaMock.member.findMany.mockResolvedValue([
+        {
+          userId: BigInt(101),
+          handle: 'selfHandle',
+          maxRating: { rating: 2500 },
+        },
+        {
+          userId: BigInt(202),
+          handle: 'screeningHandle',
+          maxRating: { rating: 2000 },
+        },
+      ]);
+
+      const result = await listService.listSubmission(
+        {
+          userId: '101',
+          isMachine: false,
+          roles: [UserRole.Reviewer],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const submissionResult = result.data.find(
+        (entry) => entry.id === 'submission-2',
+      );
+      const screeningReview = submissionResult?.review?.find(
+        (review) => review.id === 'review-screening',
+      );
+
+      expect(screeningReview).toBeDefined();
+      expect(screeningReview?.initialScore).toBe(70);
+      expect(screeningReview?.finalScore).toBe(75);
+      expect(screeningReview?.reviewItems).toHaveLength(1);
+      expect(screeningReview?.reviewerHandle).toBe('screeningHandle');
+      expect(screeningReview?.reviewerMaxRating).toBe(2000);
     });
   });
 });

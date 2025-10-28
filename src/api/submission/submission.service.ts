@@ -2409,14 +2409,32 @@ export class SubmissionService {
               const ownsReview =
                 resourceId.length > 0 &&
                 roleSummary.reviewerResourceIds.includes(resourceId);
+              const resolvedPhaseName = this.getPhaseNameFromId(
+                challenge,
+                (review as any).phaseId ?? null,
+              );
+              const normalizedPhaseName =
+                this.normalizePhaseName(resolvedPhaseName);
+              const isScreeningPhase =
+                normalizedPhaseName === 'screening' ||
+                normalizedPhaseName === 'checkpoint screening';
 
               if (!ownsReview) {
-                review.initialScore = null;
-                review.finalScore = null;
-                if (Array.isArray(review.reviewItems)) {
-                  review.reviewItems = [];
+                if (!isScreeningPhase) {
+                  review.initialScore = null;
+                  review.finalScore = null;
+                  review.reviewItems = Array.isArray(review.reviewItems)
+                    ? []
+                    : [];
                 } else {
-                  review.reviewItems = [];
+                  review.initialScore =
+                    typeof review.initialScore === 'number'
+                      ? review.initialScore
+                      : (review.initialScore ?? null);
+                  review.finalScore =
+                    typeof review.finalScore === 'number'
+                      ? review.finalScore
+                      : (review.finalScore ?? null);
                 }
               }
             }
