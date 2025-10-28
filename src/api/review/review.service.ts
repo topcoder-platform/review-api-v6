@@ -4158,7 +4158,11 @@ export class ReviewService {
           isPassing: true,
           scorecard: {
             type: {
-              in: [ScorecardType.REVIEW, ScorecardType.ITERATIVE_REVIEW],
+              in: [
+                ScorecardType.REVIEW,
+                ScorecardType.ITERATIVE_REVIEW,
+                ScorecardType.APPROVAL,
+              ],
             },
           },
           submission: {
@@ -4284,18 +4288,21 @@ export class ReviewService {
 
     const filters: Prisma.reviewWhereInput[] = [];
 
-    if (groupedByRole.has('screener')) {
-      const screeningPhaseIds = this.getPhaseIdsForNames(challengeDetail, [
-        'screening',
-      ]);
-      if (screeningPhaseIds.length) {
-        filters.push({
-          AND: [
-            { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
-            { phaseId: { in: screeningPhaseIds } },
-          ],
-        });
-      }
+    const screeningPhaseIds = this.getPhaseIdsForNames(challengeDetail, [
+      'screening',
+    ]);
+    const hasScreeningVisibility =
+      screeningPhaseIds.length > 0 &&
+      (groupedByRole.has('screener') ||
+        groupedByRole.has('reviewer') ||
+        groupedByRole.has('checkpoint-reviewer'));
+    if (hasScreeningVisibility) {
+      filters.push({
+        AND: [
+          { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
+          { phaseId: { in: screeningPhaseIds } },
+        ],
+      });
     }
 
     if (groupedByRole.has('checkpoint-screener')) {
@@ -4318,11 +4325,27 @@ export class ReviewService {
         challengeDetail,
         ['checkpoint review'],
       );
-      if (checkpointReviewPhaseIds.length) {
+      const checkpointReviewerResourceIds = (
+        groupedByRole.get('checkpoint-reviewer') ?? []
+      )
+        .map((resource) => String(resource?.id ?? '').trim())
+        .filter((id) => id.length > 0);
+      if (
+        checkpointReviewPhaseIds.length &&
+        checkpointReviewerResourceIds.length
+      ) {
         filters.push({
           AND: [
             { submission: { type: SubmissionType.CHECKPOINT_SUBMISSION } },
             { phaseId: { in: checkpointReviewPhaseIds } },
+            { resourceId: { in: checkpointReviewerResourceIds } },
+          ],
+        });
+      } else if (checkpointReviewerResourceIds.length) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CHECKPOINT_SUBMISSION } },
+            { resourceId: { in: checkpointReviewerResourceIds } },
           ],
         });
       }
@@ -4340,6 +4363,13 @@ export class ReviewService {
           AND: [
             { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
             { phaseId: { in: reviewPhaseIds } },
+            { resourceId: { in: reviewerResourceIds } },
+          ],
+        });
+      } else if (reviewerResourceIds.length) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
             { resourceId: { in: reviewerResourceIds } },
           ],
         });

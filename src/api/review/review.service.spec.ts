@@ -1291,6 +1291,29 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     return undefined;
   };
 
+  const collectSubmissionFilters = (
+    clause: PrismaWhereClause | PrismaWhereClause[] | undefined | null,
+  ): Array<{ in?: string[] }> => {
+    if (!clause) {
+      return [];
+    }
+    if (Array.isArray(clause)) {
+      return clause.flatMap((entry) => collectSubmissionFilters(entry));
+    }
+    const collected: Array<{ in?: string[] }> = [];
+    const submissionId = (clause as any).submissionId;
+    if (submissionId && typeof submissionId === 'object') {
+      collected.push(submissionId);
+    }
+    if (clause.AND) {
+      collected.push(...collectSubmissionFilters(clause.AND));
+    }
+    if (clause.OR) {
+      collected.push(...collectSubmissionFilters(clause.OR));
+    }
+    return collected;
+  };
+
   const buildResource = (roleName: string, memberId = baseAuthUser.userId) => ({
     id: 'resource-1',
     challengeId: 'challenge-1',
@@ -1383,15 +1406,25 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     expect(prismaMock.review.findMany).toHaveBeenCalledTimes(1);
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
     const whereClauses = flattenWhereClauses(callArgs.where);
-    const resourceOrClause = whereClauses.find(
-      (clause) =>
-        clause.OR?.some((entry) => typeof entry.resourceId !== 'undefined') ??
-        false,
+    const resourceOrClause = whereClauses.find((clause) =>
+      Array.isArray(clause.OR),
     );
-    expect(resourceOrClause?.OR).toEqual([
-      { resourceId: { in: ['resource-1'] } },
-      { phaseId: { in: ['phase-screening'] } },
-    ]);
+    expect(resourceOrClause).toBeDefined();
+    const flattenedRoleClauses = flattenWhereClauses(resourceOrClause?.OR);
+    const screeningVisibility = flattenedRoleClauses.find(
+      (clause) =>
+        typeof (clause as any).phaseId !== 'undefined' &&
+        Array.isArray((clause as any).phaseId?.in) &&
+        (clause as any).phaseId.in.includes('phase-screening'),
+    );
+    expect(screeningVisibility).toBeDefined();
+    const reviewerVisibility = flattenedRoleClauses.find(
+      (clause) =>
+        typeof (clause as any).resourceId !== 'undefined' &&
+        Array.isArray((clause as any).resourceId?.in) &&
+        (clause as any).resourceId.in.includes('resource-1'),
+    );
+    expect(reviewerVisibility).toBeDefined();
     const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
     expect(submissionClause?.submissionId).toEqual({
       in: [baseSubmission.id],
@@ -1479,15 +1512,25 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
     const whereClauses = flattenWhereClauses(callArgs.where);
-    const resourceOrClause = whereClauses.find(
-      (clause) =>
-        clause.OR?.some((entry) => typeof entry.resourceId !== 'undefined') ??
-        false,
+    const resourceOrClause = whereClauses.find((clause) =>
+      Array.isArray(clause.OR),
     );
-    expect(resourceOrClause?.OR).toEqual([
-      { resourceId: { in: ['resource-1'] } },
-      { phaseId: { in: ['phase-screening'] } },
-    ]);
+    expect(resourceOrClause).toBeDefined();
+    const flattenedRoleClauses = flattenWhereClauses(resourceOrClause?.OR);
+    const screeningVisibility = flattenedRoleClauses.find(
+      (clause) =>
+        typeof (clause as any).phaseId !== 'undefined' &&
+        Array.isArray((clause as any).phaseId?.in) &&
+        (clause as any).phaseId.in.includes('phase-screening'),
+    );
+    expect(screeningVisibility).toBeDefined();
+    const checkpointReviewerVisibility = flattenedRoleClauses.find(
+      (clause) =>
+        typeof (clause as any).resourceId !== 'undefined' &&
+        Array.isArray((clause as any).resourceId?.in) &&
+        (clause as any).resourceId.in.includes('resource-1'),
+    );
+    expect(checkpointReviewerVisibility).toBeDefined();
   });
 
   it('does not restrict resource visibility for copilots', async () => {
@@ -1765,11 +1808,19 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     await service.getReviews(baseAuthUser, undefined, 'challenge-1');
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    const whereClauses = flattenWhereClauses(callArgs.where);
-    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
-    expect(submissionClause?.submissionId).toEqual({
-      in: [baseSubmission.id, 'submission-other'],
-    });
+    const submissionFilters = collectSubmissionFilters(callArgs.where);
+    const hasOwnRestriction = submissionFilters.some(
+      (filter) =>
+        Array.isArray(filter.in) &&
+        filter.in.length === 1 &&
+        filter.in[0] === baseSubmission.id,
+    );
+    expect(hasOwnRestriction).toBe(true);
+    const hasChallengeVisibility = submissionFilters.some(
+      (filter) =>
+        Array.isArray(filter.in) && filter.in.includes('submission-other'),
+    );
+    expect(hasChallengeVisibility).toBe(true);
   });
 
   it('allows submitters to access reviews when the challenge failed review cancellation', async () => {
@@ -1803,11 +1854,19 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     );
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
-    const whereClauses = flattenWhereClauses(callArgs.where);
-    const submissionClause = findClauseWithKey(whereClauses, 'submissionId');
-    expect(submissionClause?.submissionId).toEqual({
-      in: [baseSubmission.id, 'submission-other'],
-    });
+    const submissionFilters = collectSubmissionFilters(callArgs.where);
+    const hasOwnRestriction = submissionFilters.some(
+      (filter) =>
+        Array.isArray(filter.in) &&
+        filter.in.length === 1 &&
+        filter.in[0] === baseSubmission.id,
+    );
+    expect(hasOwnRestriction).toBe(true);
+    const hasChallengeVisibility = submissionFilters.some(
+      (filter) =>
+        Array.isArray(filter.in) && filter.in.includes('submission-other'),
+    );
+    expect(hasChallengeVisibility).toBe(true);
     expect(result.data).toEqual([]);
   });
 

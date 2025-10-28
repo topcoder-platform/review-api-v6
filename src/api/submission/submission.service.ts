@@ -2309,6 +2309,7 @@ export class SubmissionService {
           'screening',
           'review',
           'iterative review',
+          'approval',
         ];
         const normalizedAllowedPhases = new Set(
           allowedPhaseNames.map((name) => this.normalizePhaseName(name)),
