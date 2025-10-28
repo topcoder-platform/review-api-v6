@@ -806,6 +806,35 @@ describe('ReviewService.getReview authorization checks', () => {
     });
   });
 
+  it('allows copilots who also have reviewer resources to access other reviews before completion', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValueOnce([
+      baseReviewerResource,
+      {
+        ...baseReviewerResource,
+        id: 'resource-copilot',
+        roleName: 'Copilot',
+      },
+    ]);
+
+    prismaMock.review.findUniqueOrThrow.mockResolvedValueOnce({
+      ...defaultReviewData(),
+      resourceId: 'resource-other',
+      phaseId: 'phase-review',
+    });
+
+    const copilotReviewerUser: JwtUser = {
+      ...baseAuthUser,
+      roles: [UserRole.Reviewer, UserRole.Copilot],
+    };
+
+    await expect(
+      service.getReview(copilotReviewerUser, 'review-1'),
+    ).resolves.toMatchObject({
+      id: 'review-1',
+      resourceId: 'resource-other',
+    });
+  });
+
   it('allows reviewers to access screening reviews that are not their own before completion', async () => {
     prismaMock.review.findUniqueOrThrow.mockResolvedValue({
       ...defaultReviewData(),
@@ -1542,6 +1571,117 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
     expect(callArgs.where.resourceId).toBeUndefined();
+  });
+
+  it('uses the most permissive access when the requester is both reviewer and copilot', async () => {
+    const now = new Date();
+    const reviewerResource = {
+      ...buildResource('Reviewer'),
+      id: 'resource-reviewer',
+    };
+    const copilotResource = {
+      ...buildResource('Copilot'),
+      id: 'resource-copilot',
+      roleId: 'role-copilot',
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      reviewerResource,
+      copilotResource,
+    ]);
+
+    const reviewRecords = [
+      {
+        id: 'review-1',
+        resourceId: 'resource-other',
+        submissionId: 'submission-1',
+        phaseId: 'phase-review',
+        scorecardId: 'scorecard-1',
+        typeId: 'type-1',
+        status: ReviewStatus.COMPLETED,
+        reviewDate: now,
+        committed: true,
+        metadata: null,
+        initialScore: 80,
+        finalScore: 85,
+        createdAt: now,
+        createdBy: 'system',
+        updatedAt: now,
+        updatedBy: 'system',
+        reviewItems: [
+          {
+            id: 'item-1',
+            reviewId: 'review-1',
+            scorecardQuestionId: 'question-1',
+            initialAnswer: 'Yes',
+            finalAnswer: 'No',
+            managerComment: null,
+            reviewItemComments: [],
+          },
+        ],
+        submission: {
+          id: 'submission-1',
+          memberId: 'submitter-1',
+          challengeId: 'challenge-1',
+        },
+      },
+      {
+        id: 'review-2',
+        resourceId: 'resource-reviewer',
+        submissionId: 'submission-2',
+        phaseId: 'phase-review',
+        scorecardId: 'scorecard-1',
+        typeId: 'type-1',
+        status: ReviewStatus.COMPLETED,
+        reviewDate: now,
+        committed: true,
+        metadata: null,
+        initialScore: 90,
+        finalScore: 95,
+        createdAt: now,
+        createdBy: 'system',
+        updatedAt: now,
+        updatedBy: 'system',
+        reviewItems: [
+          {
+            id: 'item-2',
+            reviewId: 'review-2',
+            scorecardQuestionId: 'question-2',
+            initialAnswer: 'Yes',
+            finalAnswer: 'Yes',
+            managerComment: 'Great work',
+            reviewItemComments: [],
+          },
+        ],
+        submission: {
+          id: 'submission-2',
+          memberId: 'submitter-2',
+          challengeId: 'challenge-1',
+        },
+      },
+    ];
+
+    prismaMock.review.findMany.mockResolvedValue(reviewRecords);
+    prismaMock.review.count.mockResolvedValue(reviewRecords.length);
+
+    const response = await service.getReviews(
+      {
+        ...baseAuthUser,
+        roles: [UserRole.Reviewer, UserRole.Copilot],
+      },
+      undefined,
+      'challenge-1',
+    );
+
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.resourceId).toBeUndefined();
+
+    const otherReview = response.data.find(
+      (review) => review.id === 'review-1',
+    );
+    expect(otherReview).toBeDefined();
+    expect(otherReview?.finalScore).toBe(85);
+    expect(otherReview?.reviewItems?.length).toBe(1);
   });
 
   it('hides scores and review items for other reviewers on active challenges while keeping reviewer metadata', async () => {

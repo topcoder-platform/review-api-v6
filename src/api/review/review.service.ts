@@ -3432,6 +3432,7 @@ export class ReviewService {
           challengeForReview?.status ?? challengeDetail?.status ?? null;
         const shouldMaskOtherReviewerDetails =
           !isPrivilegedRequester &&
+          !hasCopilotRoleForChallenge &&
           reviewerResourceIdSet.size > 0 &&
           !isReviewerForReview &&
           !this.isCompletedOrCancelledStatus(challengeStatusForReview) &&
@@ -3690,7 +3691,9 @@ export class ReviewService {
         );
         isReviewerForReview = reviewerResourceIds.has(reviewResourceId);
 
-        if (reviewerResources.length > 0) {
+        if (hasCopilotRole) {
+          // Copilots on the challenge can view any review regardless of reviewer ownership.
+        } else if (reviewerResources.length > 0) {
           const challengeInFinalState = [
             ChallengeStatus.COMPLETED,
             ChallengeStatus.CANCELLED_FAILED_REVIEW,
@@ -3720,7 +3723,7 @@ export class ReviewService {
               details: { challengeId, reviewId, requester: uid },
             });
           }
-        } else if (!hasCopilotRole) {
+        } else {
           // Confirm the user has actually submitted to this challenge (has a submission record)
           const mySubs = await this.prisma.submission.findMany({
             where: { challengeId, memberId: uid },
