@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client-member';
 import { LoggerService } from './logger.service';
+import { Utils } from './utils.service';
 
 @Injectable()
 export class MemberPrismaService
@@ -11,6 +12,7 @@ export class MemberPrismaService
 
   constructor() {
     super({
+      ...Utils.getPrismaTimeout(),
       log: [
         { level: 'query', emit: 'event' },
         { level: 'info', emit: 'event' },
