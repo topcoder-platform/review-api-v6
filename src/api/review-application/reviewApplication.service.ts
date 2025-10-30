@@ -545,7 +545,9 @@ export class ReviewApplicationService {
     // prepare challenge data
     const challengeName = challengeData.name;
     const challengeUrl =
-      CommonConfig.apis.onlineReviewUrlBase + challengeData.legacyId;
+      CommonConfig.apis.onlineReviewUrlBase +
+      challengeData.id +
+      '/challenge-details';
     // build event bus message payload
     const eventBusPayloads: EventBusSendEmailPayload[] = [];
     for (const entity of entityList) {

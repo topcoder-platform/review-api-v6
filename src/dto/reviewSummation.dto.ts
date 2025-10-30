@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 import {
   IsString,
   IsNumber,
@@ -77,6 +78,15 @@ export class ReviewSummationQueryDto {
   @IsString()
   @IsNotEmpty()
   challengeId?: string;
+
+  @ApiProperty({
+    description:
+      'When true, include the metadata payload for each review summation in responses',
+    required: false,
+  })
+  @IsOptional()
+  @IsBooleanString()
+  metadata?: string;
 }
 
 export class ReviewSummationBaseRequestDto {
@@ -140,6 +150,16 @@ export class ReviewSummationBaseRequestDto {
   @IsOptional()
   @IsDateString()
   reviewedDate?: string;
+
+  @ApiProperty({
+    description:
+      'Auxiliary metadata for the review summation (test scores, etc.)',
+    required: false,
+    type: Object,
+    additionalProperties: true,
+  })
+  @IsOptional()
+  metadata?: Prisma.JsonValue;
 }
 
 export class ReviewSummationRequestDto extends ReviewSummationBaseRequestDto {}
@@ -215,6 +235,16 @@ export class ReviewSummationUpdateRequestDto {
   @IsOptional()
   @IsDateString()
   reviewedDate?: string;
+
+  @ApiProperty({
+    description:
+      'Auxiliary metadata for the review summation (test scores, etc.)',
+    required: false,
+    type: Object,
+    additionalProperties: true,
+  })
+  @IsOptional()
+  metadata?: Prisma.JsonValue;
 }
 
 export class ReviewSummationResponseDto {
@@ -296,6 +326,16 @@ export class ReviewSummationResponseDto {
 
   @ApiProperty({
     description:
+      'Numeric member ID of the submitter associated with this review summation',
+    example: 305643,
+    required: false,
+    nullable: true,
+    type: Number,
+  })
+  submitterId?: number | null;
+
+  @ApiProperty({
+    description:
       'Handle of the submitter associated with this review summation',
     example: 'submitter123',
     required: false,
@@ -311,6 +351,16 @@ export class ReviewSummationResponseDto {
     type: Number,
   })
   submitterMaxRating?: number | null;
+
+  @ApiProperty({
+    description:
+      'Auxiliary metadata for the review summation (test scores, etc.)',
+    required: false,
+    nullable: true,
+    type: Object,
+    additionalProperties: true,
+  })
+  metadata?: Prisma.JsonValue | null;
 }
 
 export class ReviewSummationBatchResponseDto {

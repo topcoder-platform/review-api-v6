@@ -6,7 +6,11 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { SubmissionStatus, SubmissionType } from '@prisma/client';
+import {
+  SubmissionStatus,
+  SubmissionType,
+  ScorecardType,
+} from '@prisma/client';
 import { PaginationDto } from 'src/dto/pagination.dto';
 import { ReviewResponseDto } from 'src/dto/review.dto';
 import { SortDto } from 'src/dto/sort.dto';
@@ -18,17 +22,24 @@ import {
 } from 'src/dto/submission.dto';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { CommonConfig } from 'src/shared/config/common.config';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { Utils } from 'src/shared/modules/global/utils.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import {
+  ChallengeApiService,
+  ChallengeData,
+} from 'src/shared/modules/global/challenge.service';
 import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
 import { randomUUID } from 'crypto';
 import { basename } from 'path';
+import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 import {
   S3Client,
   ListObjectsV2Command,
@@ -40,12 +51,52 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { Readable, PassThrough } from 'stream';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
+import { Prisma } from '@prisma/client';
 
 type SubmissionMinimal = {
   id: string;
   systemFileName: string | null;
   url: string | null;
 };
+
+type ChallengeRoleSummary = {
+  hasCopilot: boolean;
+  hasReviewer: boolean;
+  hasSubmitter: boolean;
+  reviewerResourceIds: string[];
+};
+
+type ReviewVisibilityContext = {
+  roleSummaryByChallenge: Map<string, ChallengeRoleSummary>;
+  challengeDetailsById: Map<string, ChallengeData | null>;
+  requesterUserId: string;
+};
+
+const EMPTY_ROLE_SUMMARY: ChallengeRoleSummary = {
+  hasCopilot: false,
+  hasReviewer: false,
+  hasSubmitter: false,
+  reviewerResourceIds: [],
+};
+
+const REVIEW_ACCESS_ROLE_KEYWORDS = [
+  'reviewer',
+  'screener',
+  'approver',
+  'approval',
+];
+
+const REVIEW_ITEM_COMMENTS_INCLUDE = {
+  reviewItemComments: {
+    include: {
+      appeal: {
+        include: {
+          appealResponse: true,
+        },
+      },
+    },
+  },
+} as const;
 
 @Injectable()
 export class SubmissionService {
@@ -57,6 +108,7 @@ export class SubmissionService {
     private readonly challengePrisma: ChallengePrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
     private readonly eventBusService: EventBusService,
     private readonly challengeCatalogService: ChallengeCatalogService,
     private readonly memberPrisma: MemberPrismaService,
@@ -479,7 +531,8 @@ export class SubmissionService {
       const isOwner = !!uid && submission.memberId === uid;
       let isReviewer = false;
       let isCopilot = false;
-      if (!isOwner && submission.challengeId) {
+      let isSubmitter = false;
+      if (!isOwner && submission.challengeId && uid) {
         try {
           const resources =
             await this.resourceApiService.getMemberResourcesRoles(
@@ -487,19 +540,87 @@ export class SubmissionService {
               uid,
             );
           for (const r of resources) {
-            const rn = (r.roleName || '').toLowerCase();
-            if (rn.includes('reviewer')) isReviewer = true;
-            if (rn.includes('copilot')) isCopilot = true;
-            if (isReviewer || isCopilot) break;
+            const roleName = r.roleName || '';
+            const rn = roleName.toLowerCase();
+            const roleType = this.identifyReviewerRoleType(roleName);
+
+            switch (roleType) {
+              case 'screener':
+              case 'reviewer':
+              case 'iterative-reviewer':
+              case 'approver':
+                if (submission.type === SubmissionType.CONTEST_SUBMISSION) {
+                  isReviewer = true;
+                }
+                break;
+              case 'checkpoint-screener':
+              case 'checkpoint-reviewer':
+                if (submission.type === SubmissionType.CHECKPOINT_SUBMISSION) {
+                  isReviewer = true;
+                }
+                break;
+              default:
+                break;
+            }
+            if (rn.includes('copilot')) {
+              isCopilot = true;
+            }
+            if (rn.includes('submitter')) {
+              isSubmitter = true;
+            }
+            if (isReviewer && isCopilot && isSubmitter) {
+              break;
+            }
           }
-        } catch {
-          // If we cannot confirm roles, deny access
-          isReviewer = false;
-          isCopilot = false;
+        } catch (err) {
+          // If we cannot confirm roles, deny access unless other checks succeed
+          this.logger.warn(
+            `Failed to load member roles for challenge ${submission.challengeId} and member ${uid}: ${(err as Error)?.message}`,
+          );
         }
       }
 
-      if (!isOwner && !isReviewer && !isCopilot) {
+      let canDownload = isOwner || isReviewer || isCopilot;
+
+      if (!canDownload && isSubmitter && submission.challengeId && uid) {
+        try {
+          const challenge = await this.challengeApiService.getChallengeDetail(
+            submission.challengeId,
+          );
+          if (challenge.status === ChallengeStatus.COMPLETED) {
+            if (this.isFirst2FinishChallenge(challenge)) {
+              const memberSubmission = await this.prisma.submission.findFirst({
+                where: {
+                  challengeId: submission.challengeId,
+                  memberId: uid,
+                },
+                select: { id: true },
+              });
+              canDownload = !!memberSubmission;
+            } else {
+              const passingSubmission = await this.prisma.submission.findFirst({
+                where: {
+                  challengeId: submission.challengeId,
+                  memberId: uid,
+                  reviewSummation: {
+                    some: {
+                      isPassing: true,
+                    },
+                  },
+                },
+                select: { id: true },
+              });
+              canDownload = !!passingSubmission;
+            }
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Failed to validate submitter download eligibility for challenge ${submission.challengeId} and member ${uid}: ${(err as Error)?.message}`,
+          );
+        }
+      }
+
+      if (!canDownload) {
         throw new ForbiddenException({
           message:
             'Only the submission owner, a challenge reviewer/copilot, or an admin can download the submission',
@@ -605,6 +726,31 @@ export class SubmissionService {
     }
   }
 
+  private isFirst2FinishChallenge(challenge?: ChallengeData | null): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (
+      typeName === 'first2finish' ||
+      typeName === 'first 2 finish' ||
+      typeName === 'topgear task'
+    ) {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (legacySubTrack === 'first_2_finish') {
+      return true;
+    }
+
+    return false;
+  }
+
   /**
    * Streams a ZIP file containing all submissions for a challenge.
    * Inside the big zip are the individual submission .zip files from the clean bucket.
@@ -646,7 +792,9 @@ export class SubmissionService {
         for (const r of resources) {
           const rn = (r.roleName || '').toLowerCase();
           if (rn.includes('copilot')) isAdminOrCopilot = true;
-          if (rn.includes('reviewer')) isReviewer = true;
+          if (rn.includes('reviewer') || rn.includes('screener')) {
+            isReviewer = true;
+          }
         }
       } catch {
         // Fall through; if we can't confirm roles, deny
@@ -1374,7 +1522,7 @@ export class SubmissionService {
         }
       }
       await this.populateLatestSubmissionFlags([data]);
-      await this.populateLatestSubmissionFlags([data]);
+      await this.stripIsLatestForUnlimitedChallenges([data]);
       return this.buildResponse(data);
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
@@ -1399,12 +1547,30 @@ export class SubmissionService {
     try {
       const { page = 1, perPage = 10 } = paginationDto || {};
       const skip = (page - 1) * perPage;
-      let orderBy;
+      type OrderByClause = Record<string, 'asc' | 'desc'>;
+
+      const defaultOrderBy: OrderByClause[] = [
+        { submittedDate: 'desc' as const },
+        { createdAt: 'desc' as const },
+        { updatedAt: 'desc' as const },
+        { id: 'desc' as const },
+      ];
+
+      let orderBy: OrderByClause[] = [...defaultOrderBy];
 
       if (sortDto && sortDto.orderBy && sortDto.sortBy) {
-        orderBy = {
-          [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
+        const direction =
+          sortDto.orderBy.toLowerCase() === 'asc' ? 'asc' : 'desc';
+        const primaryOrder: OrderByClause = {
+          [sortDto.sortBy]: direction,
         };
+
+        const fallbackOrder = defaultOrderBy.filter((entry) => {
+          const [key] = Object.keys(entry);
+          return key !== sortDto.sortBy;
+        });
+
+        orderBy = [primaryOrder, ...fallbackOrder];
       }
 
       const requestedMemberId = queryDto.memberId
@@ -1455,13 +1621,72 @@ export class SubmissionService {
         submissionWhereClause.submissionPhaseId = queryDto.submissionPhaseId;
       }
 
+      const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+      const requesterUserId =
+        authUser?.userId !== undefined && authUser?.userId !== null
+          ? String(authUser.userId)
+          : '';
+
+      let restrictedChallengeIds = new Set<string>();
+      if (!isPrivilegedRequester && requesterUserId) {
+        try {
+          restrictedChallengeIds =
+            await this.getActiveSubmitterRestrictedChallengeIds(
+              requesterUserId,
+              queryDto.challengeId,
+            );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[listSubmission] Unable to resolve submitter visibility restrictions for member ${requesterUserId}: ${message}`,
+          );
+        }
+      }
+
+      const whereClause: Prisma.submissionWhereInput = {
+        ...submissionWhereClause,
+      };
+
+      if (
+        !isPrivilegedRequester &&
+        requesterUserId &&
+        restrictedChallengeIds.size
+      ) {
+        const restrictedList = Array.from(restrictedChallengeIds);
+        const restrictionCriteria: Prisma.submissionWhereInput = {
+          OR: [
+            {
+              AND: [
+                { challengeId: { in: restrictedList } },
+                { memberId: requesterUserId },
+              ],
+            },
+            { challengeId: { notIn: restrictedList } },
+            { challengeId: null },
+          ],
+        };
+
+        if (Array.isArray(whereClause.AND)) {
+          whereClause.AND = [...whereClause.AND, restrictionCriteria];
+        } else if (whereClause.AND) {
+          whereClause.AND = [whereClause.AND, restrictionCriteria];
+        } else {
+          whereClause.AND = [restrictionCriteria];
+        }
+      }
+
       // find entities by filters
-      const submissions = await this.prisma.submission.findMany({
-        where: {
-          ...submissionWhereClause,
-        },
+      let submissions = await this.prisma.submission.findMany({
+        where: whereClause,
         include: {
-          review: {},
+          review: {
+            include: {
+              reviewItems: {
+                include: REVIEW_ITEM_COMMENTS_INCLUDE,
+              },
+            },
+          },
           reviewSummation: {},
         },
         skip,
@@ -1514,14 +1739,40 @@ export class SubmissionService {
         }
       }
 
+      const reviewVisibilityContext = await this.applyReviewVisibilityFilters(
+        authUser,
+        submissions,
+      );
+      const filtered = this.filterSubmissionsForActiveSubmitters(
+        authUser,
+        submissions,
+        reviewVisibilityContext,
+      );
+      submissions = filtered.submissions;
+      await this.populateReviewPhaseNames(submissions);
+      await this.populateReviewTypeNames(submissions);
+      await this.enrichReviewerMetadata(submissions);
+
       // Count total entities matching the filter for pagination metadata
-      const totalCount = await this.prisma.submission.count({
-        where: {
-          ...submissionWhereClause,
-        },
+      let totalCount = await this.prisma.submission.count({
+        where: whereClause,
       });
+      if (filtered.filteredOut) {
+        totalCount = submissions.length;
+      }
 
       await this.populateLatestSubmissionFlags(submissions);
+      this.stripSubmitterSubmissionDetails(
+        authUser,
+        submissions,
+        reviewVisibilityContext,
+      );
+      this.stripSubmitterMemberIds(
+        authUser,
+        submissions,
+        reviewVisibilityContext,
+      );
+      await this.stripIsLatestForUnlimitedChallenges(submissions);
 
       this.logger.log(
         `Found ${submissions.length} submissions (page ${page} of ${Math.ceil(totalCount / perPage)})`,
@@ -1608,6 +1859,7 @@ export class SubmissionService {
   async getSubmission(submissionId: string): Promise<SubmissionResponseDto> {
     const data = await this.checkSubmission(submissionId);
     await this.populateLatestSubmissionFlags([data]);
+    await this.stripIsLatestForUnlimitedChallenges([data]);
     return this.buildResponse(data);
   }
 
@@ -1871,7 +2123,695 @@ export class SubmissionService {
         details: { submissionId: id },
       });
     }
+    await this.populateReviewPhaseNames([data]);
+    await this.populateReviewTypeNames([data]);
     return data;
+  }
+
+  private async applyReviewVisibilityFilters(
+    authUser: JwtUser,
+    submissions: Array<{
+      challengeId?: string | null;
+      memberId?: string | null;
+      review?: unknown;
+    }>,
+  ): Promise<ReviewVisibilityContext> {
+    const emptyContext: ReviewVisibilityContext = {
+      roleSummaryByChallenge: new Map(),
+      challengeDetailsById: new Map(),
+      requesterUserId: '',
+    };
+
+    if (!submissions.length) {
+      return emptyContext;
+    }
+
+    const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+    if (isPrivilegedRequester) {
+      const requesterUserId =
+        authUser?.userId !== undefined && authUser?.userId !== null
+          ? String(authUser.userId).trim()
+          : '';
+      return {
+        ...emptyContext,
+        requesterUserId,
+      };
+    }
+
+    const uid =
+      authUser?.userId !== undefined && authUser?.userId !== null
+        ? String(authUser.userId).trim()
+        : '';
+
+    if (!uid) {
+      return emptyContext;
+    }
+
+    const challengeIds = Array.from(
+      new Set(
+        submissions
+          .map((submission) => {
+            if (submission.challengeId == null) {
+              return null;
+            }
+            const id = String(submission.challengeId).trim();
+            return id.length ? id : null;
+          })
+          .filter((value): value is string => !!value),
+      ),
+    );
+
+    if (!challengeIds.length) {
+      return {
+        ...emptyContext,
+        requesterUserId: uid,
+      };
+    }
+
+    const challengeDetails = new Map<string, ChallengeData | null>();
+    const passingSubmissionCache = new Map<string, boolean>();
+
+    await Promise.all(
+      challengeIds.map(async (challengeId) => {
+        try {
+          const detail =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          challengeDetails.set(challengeId, detail);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[applyReviewVisibilityFilters] Failed to load challenge ${challengeId}: ${message}`,
+          );
+          challengeDetails.set(challengeId, null);
+        }
+      }),
+    );
+
+    const roleSummaryByChallenge = new Map<string, ChallengeRoleSummary>();
+
+    await Promise.all(
+      challengeIds.map(async (challengeId) => {
+        let resources: ResourceInfo[] = [];
+        try {
+          resources = await this.resourceApiService.getMemberResourcesRoles(
+            challengeId,
+            uid,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[applyReviewVisibilityFilters] Failed to load resource roles for challenge ${challengeId}, member ${uid}: ${message}`,
+          );
+        }
+
+        let hasCopilot = false;
+        let hasReviewer = false;
+        let hasSubmitter = false;
+        const reviewerResourceIds: string[] = [];
+
+        for (const resource of resources ?? []) {
+          const roleName = (resource.roleName || '').toLowerCase();
+          if (roleName.includes('copilot')) {
+            hasCopilot = true;
+          }
+          if (
+            REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
+              roleName.includes(keyword),
+            )
+          ) {
+            hasReviewer = true;
+            const resourceId = String(resource.id ?? '').trim();
+            if (resourceId && !reviewerResourceIds.includes(resourceId)) {
+              reviewerResourceIds.push(resourceId);
+            }
+          }
+          if (
+            resource.roleId === CommonConfig.roles.submitterRoleId ||
+            roleName.includes('submitter')
+          ) {
+            hasSubmitter = true;
+          }
+        }
+
+        roleSummaryByChallenge.set(challengeId, {
+          hasCopilot,
+          hasReviewer,
+          hasSubmitter,
+          reviewerResourceIds,
+        });
+      }),
+    );
+
+    for (const submission of submissions) {
+      if (!Object.prototype.hasOwnProperty.call(submission, 'review')) {
+        continue;
+      }
+
+      const challengeId =
+        submission.challengeId != null
+          ? String(submission.challengeId).trim()
+          : '';
+      if (!challengeId) {
+        continue;
+      }
+
+      const isOwnSubmission =
+        submission.memberId != null &&
+        String(submission.memberId).trim() === uid;
+
+      const roleSummary = roleSummaryByChallenge.get(challengeId) ?? {
+        hasCopilot: false,
+        hasReviewer: false,
+        hasSubmitter: false,
+        reviewerResourceIds: [],
+      };
+
+      const challenge = challengeDetails.get(challengeId);
+
+      if (roleSummary.hasCopilot) {
+        continue;
+      }
+
+      if (isOwnSubmission) {
+        const reviews = Array.isArray((submission as any).review)
+          ? ((submission as any).review as Array<Record<string, any>>)
+          : [];
+
+        if (!reviews.length) {
+          continue;
+        }
+
+        const allowedPhaseNames = [
+          'checkpoint screening',
+          'checkpoint review',
+          'screening',
+          'review',
+          'iterative review',
+          'approval',
+        ];
+        const normalizedAllowedPhases = new Set(
+          allowedPhaseNames.map((name) => this.normalizePhaseName(name)),
+        );
+        const phaseCompletionCache = new Map<string, boolean>();
+        const getPhaseCompletion = (
+          phaseName: string | null | undefined,
+        ): boolean => {
+          const normalized = this.normalizePhaseName(phaseName);
+          if (!normalized.length) {
+            return false;
+          }
+          if (phaseCompletionCache.has(normalized)) {
+            return phaseCompletionCache.get(normalized) ?? false;
+          }
+          if (!challenge) {
+            phaseCompletionCache.set(normalized, false);
+            return false;
+          }
+          const candidates: string[] = [];
+          if (phaseName && String(phaseName).trim().length > 0) {
+            candidates.push(String(phaseName));
+          }
+          if (!candidates.includes(normalized)) {
+            candidates.push(normalized);
+          }
+          const completed = this.hasChallengePhaseCompleted(
+            challenge,
+            candidates,
+          );
+          phaseCompletionCache.set(normalized, completed);
+          return completed;
+        };
+
+        const challengeForPhaseResolution = challenge ?? null;
+        const filteredReviews: Array<Record<string, any>> = [];
+
+        for (const review of reviews) {
+          if (!review || typeof review !== 'object') {
+            continue;
+          }
+
+          const phaseId =
+            review.phaseId !== undefined && review.phaseId !== null
+              ? String(review.phaseId).trim()
+              : '';
+          const resolvedPhaseName = this.getPhaseNameFromId(
+            challengeForPhaseResolution,
+            phaseId,
+          );
+          const normalizedPhaseName =
+            this.normalizePhaseName(resolvedPhaseName);
+
+          const phaseAllowed = normalizedAllowedPhases.has(normalizedPhaseName);
+          const phaseCompleted =
+            phaseAllowed && getPhaseCompletion(resolvedPhaseName);
+
+          if (phaseAllowed && phaseCompleted) {
+            filteredReviews.push(review);
+            continue;
+          }
+
+          review.initialScore = null;
+          review.finalScore = null;
+          if (Array.isArray(review.reviewItems)) {
+            review.reviewItems = [];
+          } else {
+            review.reviewItems = [];
+          }
+        }
+
+        if (!filteredReviews.length) {
+          (submission as any).review = reviews;
+        } else if (filteredReviews.length !== reviews.length) {
+          (submission as any).review = filteredReviews;
+        }
+
+        continue;
+      }
+
+      if (roleSummary.hasReviewer) {
+        const reviews = Array.isArray((submission as any).review)
+          ? ((submission as any).review as Array<Record<string, any>>)
+          : [];
+
+        if (reviews.length) {
+          const challengeCompletedOrCancelled =
+            this.isCompletedOrCancelledStatus(challenge?.status ?? null);
+
+          if (!challengeCompletedOrCancelled) {
+            for (const review of reviews) {
+              if (!review || typeof review !== 'object') {
+                continue;
+              }
+
+              const resourceId = String(review.resourceId ?? '').trim();
+              const ownsReview =
+                resourceId.length > 0 &&
+                roleSummary.reviewerResourceIds.includes(resourceId);
+              const resolvedPhaseName = this.getPhaseNameFromId(
+                challenge,
+                (review as any).phaseId ?? null,
+              );
+              const normalizedPhaseName =
+                this.normalizePhaseName(resolvedPhaseName);
+              const isScreeningPhase =
+                normalizedPhaseName === 'screening' ||
+                normalizedPhaseName === 'checkpoint screening';
+
+              if (!ownsReview) {
+                if (!isScreeningPhase) {
+                  review.initialScore = null;
+                  review.finalScore = null;
+                  review.reviewItems = Array.isArray(review.reviewItems)
+                    ? []
+                    : [];
+                } else {
+                  review.initialScore =
+                    typeof review.initialScore === 'number'
+                      ? review.initialScore
+                      : (review.initialScore ?? null);
+                  review.finalScore =
+                    typeof review.finalScore === 'number'
+                      ? review.finalScore
+                      : (review.finalScore ?? null);
+                }
+              }
+            }
+          }
+        }
+
+        continue;
+      }
+
+      if (this.isCompletedOrCancelledStatus(challenge?.status ?? null)) {
+        if (challenge?.status === ChallengeStatus.COMPLETED) {
+          continue;
+        }
+        let hasPassingSubmission = passingSubmissionCache.get(challengeId);
+        if (hasPassingSubmission === undefined) {
+          hasPassingSubmission =
+            await this.hasPassingSubmissionForReviewScorecard(challengeId, uid);
+          passingSubmissionCache.set(challengeId, hasPassingSubmission);
+        }
+
+        if (hasPassingSubmission) {
+          continue;
+        }
+
+        delete (submission as any).review;
+        continue;
+      }
+
+      if (!roleSummary.hasSubmitter) {
+        delete (submission as any).review;
+        continue;
+      }
+
+      if (this.isMarathonMatchChallenge(challenge ?? null)) {
+        continue;
+      }
+
+      const reviews = Array.isArray((submission as any).review)
+        ? ((submission as any).review as Array<Record<string, any>>)
+        : [];
+
+      if (!reviews.length) {
+        delete (submission as any).review;
+        continue;
+      }
+
+      const challengeStatus = challenge?.status ?? null;
+      if (!challenge || challengeStatus === ChallengeStatus.ACTIVE) {
+        delete (submission as any).review;
+        continue;
+      }
+    }
+    return {
+      roleSummaryByChallenge,
+      challengeDetailsById: challengeDetails,
+      requesterUserId: uid,
+    };
+  }
+
+  private async enrichReviewerMetadata(
+    submissions: Array<{ review?: unknown }>,
+  ): Promise<void> {
+    const reviews: Array<Record<string, any>> = [];
+
+    for (const submission of submissions) {
+      const reviewList = Array.isArray((submission as any).review)
+        ? ((submission as any).review as Array<Record<string, any>>)
+        : [];
+
+      for (const review of reviewList) {
+        if (review && typeof review === 'object') {
+          reviews.push(review);
+        }
+      }
+    }
+
+    if (!reviews.length) {
+      return;
+    }
+
+    const resourceIds = Array.from(
+      new Set(
+        reviews
+          .map((review) => String(review.resourceId ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+
+    if (!resourceIds.length) {
+      for (const review of reviews) {
+        if (!Object.prototype.hasOwnProperty.call(review, 'reviewerHandle')) {
+          review.reviewerHandle = null;
+        }
+        if (
+          !Object.prototype.hasOwnProperty.call(review, 'reviewerMaxRating')
+        ) {
+          review.reviewerMaxRating = null;
+        }
+      }
+      return;
+    }
+
+    try {
+      const resources = await this.resourcePrisma.resource.findMany({
+        where: { id: { in: resourceIds } },
+        select: { id: true, memberId: true },
+      });
+
+      const memberIds = Array.from(
+        new Set(
+          resources
+            .map((resource) => String(resource.memberId ?? '').trim())
+            .filter((id) => id.length > 0),
+        ),
+      );
+
+      const memberIdsAsBigInt: bigint[] = [];
+      for (const id of memberIds) {
+        try {
+          memberIdsAsBigInt.push(BigInt(id));
+        } catch (error) {
+          this.logger.debug(
+            `[enrichReviewerMetadata] Skipping reviewer memberId ${id}: unable to convert to BigInt. ${error}`,
+          );
+        }
+      }
+
+      const memberInfoById = new Map<
+        string,
+        { handle: string | null; maxRating: number | null }
+      >();
+
+      if (memberIdsAsBigInt.length) {
+        const members = await this.memberPrisma.member.findMany({
+          where: { userId: { in: memberIdsAsBigInt } },
+          select: {
+            userId: true,
+            handle: true,
+            maxRating: { select: { rating: true } },
+          },
+        });
+
+        members.forEach((member) => {
+          memberInfoById.set(member.userId.toString(), {
+            handle: member.handle ?? null,
+            maxRating: member.maxRating?.rating ?? null,
+          });
+        });
+      }
+
+      const profileByResourceId = new Map<
+        string,
+        { handle: string | null; maxRating: number | null }
+      >();
+
+      resources.forEach((resource) => {
+        const resourceId = String(resource.id ?? '').trim();
+        if (!resourceId) {
+          return;
+        }
+        const memberId = String(resource.memberId ?? '').trim();
+        const profile = memberInfoById.get(memberId) ?? {
+          handle: null,
+          maxRating: null,
+        };
+        profileByResourceId.set(resourceId, profile);
+      });
+
+      for (const review of reviews) {
+        const resourceId = String(review.resourceId ?? '').trim();
+        const profile = resourceId ? profileByResourceId.get(resourceId) : null;
+        review.reviewerHandle = profile?.handle ?? null;
+        review.reviewerMaxRating = profile?.maxRating ?? null;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[enrichReviewerMetadata] Failed to enrich reviewer metadata: ${message}`,
+      );
+    } finally {
+      for (const review of reviews) {
+        if (!Object.prototype.hasOwnProperty.call(review, 'reviewerHandle')) {
+          review.reviewerHandle = null;
+        }
+        if (
+          !Object.prototype.hasOwnProperty.call(review, 'reviewerMaxRating')
+        ) {
+          review.reviewerMaxRating = null;
+        }
+      }
+    }
+  }
+
+  private async populateReviewPhaseNames(
+    submissions: Array<{ challengeId?: string | null; review?: unknown }>,
+  ): Promise<void> {
+    const reviewEntries: Array<{
+      review: Record<string, any>;
+      challengeId: string;
+    }> = [];
+
+    for (const submission of submissions) {
+      const challengeId =
+        submission.challengeId !== undefined && submission.challengeId !== null
+          ? String(submission.challengeId).trim()
+          : '';
+      if (!challengeId) {
+        continue;
+      }
+
+      const reviewList = Array.isArray((submission as any).review)
+        ? ((submission as any).review as Array<Record<string, any>>)
+        : [];
+
+      for (const review of reviewList) {
+        if (review && typeof review === 'object') {
+          reviewEntries.push({ review, challengeId });
+        }
+      }
+    }
+
+    if (!reviewEntries.length) {
+      return;
+    }
+
+    const phaseMapByChallenge = new Map<string, Map<string, string | null>>();
+    const uniqueChallengeIds = Array.from(
+      new Set(reviewEntries.map((entry) => entry.challengeId)),
+    );
+
+    await Promise.all(
+      uniqueChallengeIds.map(async (challengeId) => {
+        try {
+          const challenge =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          const phases = Array.isArray(challenge?.phases)
+            ? (challenge?.phases as Array<Record<string, any>>)
+            : [];
+          const phaseMap = new Map<string, string | null>();
+
+          for (const phase of phases) {
+            if (!phase || typeof phase !== 'object') {
+              continue;
+            }
+
+            const rawName =
+              typeof (phase as any).name === 'string'
+                ? ((phase as any).name as string)
+                : null;
+            const normalizedName =
+              rawName && rawName.trim().length ? rawName.trim() : rawName;
+            const identifiers = [
+              String((phase as any)?.id ?? '').trim(),
+              String((phase as any)?.phaseId ?? '').trim(),
+            ].filter(
+              (value, index, arr) =>
+                value.length > 0 && arr.indexOf(value) === index,
+            );
+
+            for (const identifier of identifiers) {
+              phaseMap.set(identifier, normalizedName ?? rawName ?? null);
+            }
+          }
+
+          phaseMapByChallenge.set(challengeId, phaseMap);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `[populateReviewPhaseNames] Failed to load phases for challenge ${challengeId}: ${message}`,
+          );
+          phaseMapByChallenge.set(challengeId, new Map());
+        }
+      }),
+    );
+
+    for (const { review } of reviewEntries) {
+      if (!Object.prototype.hasOwnProperty.call(review, 'phaseName')) {
+        review.phaseName = null;
+      }
+    }
+
+    for (const { review, challengeId } of reviewEntries) {
+      const phaseId = String(review.phaseId ?? '').trim();
+      if (!phaseId) {
+        review.phaseName = null;
+        continue;
+      }
+
+      const phaseMap = phaseMapByChallenge.get(challengeId);
+      if (!phaseMap?.size) {
+        review.phaseName = null;
+        continue;
+      }
+
+      review.phaseName = phaseMap.get(phaseId) ?? null;
+    }
+  }
+
+  private async populateReviewTypeNames(
+    submissions: Array<{ review?: unknown }>,
+  ): Promise<void> {
+    const reviews: Array<Record<string, any>> = [];
+
+    for (const submission of submissions) {
+      const reviewList = Array.isArray((submission as any).review)
+        ? ((submission as any).review as Array<Record<string, any>>)
+        : [];
+
+      for (const review of reviewList) {
+        if (review && typeof review === 'object') {
+          reviews.push(review);
+        }
+      }
+    }
+
+    if (!reviews.length) {
+      return;
+    }
+
+    const typeIds = Array.from(
+      new Set(
+        reviews
+          .map((review) => String(review.typeId ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+
+    if (!typeIds.length) {
+      for (const review of reviews) {
+        if (!Object.prototype.hasOwnProperty.call(review, 'reviewType')) {
+          review.reviewType = null;
+        }
+      }
+      return;
+    }
+
+    try {
+      const reviewTypes = await this.prisma.reviewType.findMany({
+        where: { id: { in: typeIds } },
+        select: { id: true, name: true },
+      });
+
+      const typeNameById = new Map<string, string | null>();
+      for (const entry of reviewTypes) {
+        const identifier = String(entry.id ?? '').trim();
+        if (!identifier) {
+          continue;
+        }
+        let label: string | null = null;
+        if (typeof entry.name === 'string') {
+          const trimmed = entry.name.trim();
+          label = trimmed.length ? trimmed : entry.name;
+        }
+        typeNameById.set(identifier, label);
+      }
+
+      for (const review of reviews) {
+        const typeId = String(review.typeId ?? '').trim();
+        if (!typeId) {
+          review.reviewType = null;
+          continue;
+        }
+        review.reviewType = typeNameById.get(typeId) ?? null;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[populateReviewTypeNames] Failed to enrich review types: ${message}`,
+      );
+    } finally {
+      for (const review of reviews) {
+        if (!Object.prototype.hasOwnProperty.call(review, 'reviewType')) {
+          review.reviewType = null;
+        }
+      }
+    }
   }
 
   private async populateLatestSubmissionFlags(
@@ -1946,6 +2886,748 @@ export class SubmissionService {
     }
   }
 
+  private async getActiveSubmitterRestrictedChallengeIds(
+    userId: string,
+    challengeId?: string,
+  ): Promise<Set<string>> {
+    const restricted = new Set<string>();
+    if (!userId) {
+      return restricted;
+    }
+
+    const summaryByChallenge = new Map<
+      string,
+      { hasSubmitter: boolean; hasCopilot: boolean; hasReviewer: boolean }
+    >();
+
+    const accumulateRole = (
+      challengeKey: string,
+      roleId?: string | null,
+      roleName?: string | null,
+    ) => {
+      if (!challengeKey) {
+        return;
+      }
+      const normalizedRoleName = (roleName ?? '').toLowerCase();
+      const summary = summaryByChallenge.get(challengeKey) ?? {
+        hasSubmitter: false,
+        hasCopilot: false,
+        hasReviewer: false,
+      };
+      if (
+        (roleId && roleId === CommonConfig.roles.submitterRoleId) ||
+        normalizedRoleName.includes('submitter')
+      ) {
+        summary.hasSubmitter = true;
+      }
+      if (normalizedRoleName.includes('copilot')) {
+        summary.hasCopilot = true;
+      }
+      if (
+        REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
+          normalizedRoleName.includes(keyword),
+        )
+      ) {
+        summary.hasReviewer = true;
+      }
+      summaryByChallenge.set(challengeKey, summary);
+    };
+
+    let resourcesLoaded = false;
+    try {
+      const resources = await this.resourceApiService.getMemberResourcesRoles(
+        challengeId,
+        userId,
+      );
+      for (const resource of resources ?? []) {
+        const challengeKey = String(resource.challengeId ?? '').trim();
+        accumulateRole(challengeKey, resource.roleId, resource.roleName ?? '');
+      }
+      resourcesLoaded = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.debug(
+        `[getActiveSubmitterRestrictedChallengeIds] Failed to load resource roles via API for member ${userId}: ${message}`,
+      );
+    }
+
+    if (!resourcesLoaded) {
+      if (challengeId) {
+        accumulateRole(challengeId, CommonConfig.roles.submitterRoleId, null);
+      } else {
+        try {
+          const fallbackResources = await this.resourcePrisma.resource.findMany(
+            {
+              where: { memberId: userId },
+              select: { challengeId: true, roleId: true },
+            },
+          );
+          for (const resource of fallbackResources) {
+            const challengeKey = String(resource.challengeId ?? '').trim();
+            accumulateRole(challengeKey, resource.roleId, null);
+          }
+        } catch (fallbackError) {
+          const fallbackMessage =
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError);
+          this.logger.debug(
+            `[getActiveSubmitterRestrictedChallengeIds] Fallback resource lookup failed for member ${userId}: ${fallbackMessage}`,
+          );
+        }
+      }
+    }
+
+    const candidateIds = Array.from(summaryByChallenge.entries())
+      .filter(([, summary]) => summary.hasSubmitter)
+      .filter(([, summary]) => !summary.hasCopilot && !summary.hasReviewer)
+      .map(([challengeKey]) => challengeKey)
+      .filter((id) => id);
+
+    if (!candidateIds.length) {
+      return restricted;
+    }
+
+    try {
+      let details: ChallengeData[] = [];
+      if (candidateIds.length === 1) {
+        const detail = await this.challengeApiService.getChallengeDetail(
+          candidateIds[0],
+        );
+        details = detail ? [detail] : [];
+      } else {
+        details = await this.challengeApiService.getChallenges(candidateIds);
+      }
+      const detailById = new Map<string, ChallengeData>();
+      for (const detail of details ?? []) {
+        if (detail?.id) {
+          detailById.set(detail.id, detail);
+        }
+      }
+      for (const id of candidateIds) {
+        const detail = detailById.get(id);
+        if (!detail) {
+          restricted.add(id);
+          continue;
+        }
+        if (!this.isCompletedOrCancelledStatus(detail.status)) {
+          restricted.add(id);
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.debug(
+        `[getActiveSubmitterRestrictedChallengeIds] Unable to resolve challenge statuses for submitter visibility: ${message}`,
+      );
+      candidateIds.forEach((id) => restricted.add(id));
+    }
+
+    return restricted;
+  }
+
+  private filterSubmissionsForActiveSubmitters<
+    T extends {
+      challengeId?: string | null;
+      memberId?: string | null;
+    } & Record<string, unknown>,
+  >(
+    authUser: JwtUser,
+    submissions: T[],
+    visibilityContext: ReviewVisibilityContext,
+  ): {
+    submissions: T[];
+    filteredOut: boolean;
+  } {
+    if (!submissions.length) {
+      return { submissions, filteredOut: false };
+    }
+    if (authUser?.isMachine || isAdmin(authUser)) {
+      return { submissions, filteredOut: false };
+    }
+
+    const uid = visibilityContext.requesterUserId;
+    if (!uid) {
+      return { submissions, filteredOut: false };
+    }
+
+    const filtered = submissions.filter((submission) => {
+      const challengeId =
+        submission.challengeId !== undefined && submission.challengeId !== null
+          ? String(submission.challengeId).trim()
+          : '';
+      if (!challengeId) {
+        return true;
+      }
+
+      const memberIdValue =
+        submission.memberId !== undefined && submission.memberId !== null
+          ? String(submission.memberId).trim()
+          : null;
+      if (memberIdValue && memberIdValue === uid) {
+        return true;
+      }
+
+      const roleSummary =
+        visibilityContext.roleSummaryByChallenge.get(challengeId);
+      if (!roleSummary) {
+        return false;
+      }
+      if (roleSummary.hasCopilot || roleSummary.hasReviewer) {
+        return true;
+      }
+      if (!roleSummary.hasSubmitter) {
+        return true;
+      }
+
+      const challengeDetail =
+        visibilityContext.challengeDetailsById.get(challengeId);
+      if (challengeDetail == null) {
+        return false;
+      }
+      return true;
+    });
+
+    return {
+      submissions: filtered,
+      filteredOut: filtered.length !== submissions.length,
+    };
+  }
+
+  private stripSubmitterMemberIds(
+    authUser: JwtUser,
+    submissions: Array<
+      { challengeId?: string | null; memberId?: string | null } & Record<
+        string,
+        unknown
+      >
+    >,
+    visibilityContext: ReviewVisibilityContext,
+  ): void {
+    if (!submissions.length) {
+      return;
+    }
+    if (authUser?.isMachine || isAdmin(authUser)) {
+      return;
+    }
+
+    const uid = visibilityContext.requesterUserId;
+    if (!uid) {
+      return;
+    }
+
+    for (const submission of submissions) {
+      const challengeId =
+        submission.challengeId !== undefined && submission.challengeId !== null
+          ? String(submission.challengeId).trim()
+          : '';
+      if (!challengeId) {
+        continue;
+      }
+
+      const memberIdValue =
+        submission.memberId !== undefined && submission.memberId !== null
+          ? String(submission.memberId).trim()
+          : null;
+      if (!memberIdValue || memberIdValue === uid) {
+        continue;
+      }
+
+      const roleSummary =
+        visibilityContext.roleSummaryByChallenge.get(challengeId) ??
+        EMPTY_ROLE_SUMMARY;
+      const challengeDetail =
+        visibilityContext.challengeDetailsById.get(challengeId) ?? null;
+      const isCompletedChallenge = this.isCompletedOrCancelledStatus(
+        challengeDetail?.status ?? null,
+      );
+      if (isCompletedChallenge) {
+        continue;
+      }
+
+      const shouldStrip =
+        roleSummary.hasSubmitter &&
+        !roleSummary.hasCopilot &&
+        !roleSummary.hasReviewer;
+      if (!shouldStrip) {
+        continue;
+      }
+
+      (submission as any).memberId = null;
+      if (Object.prototype.hasOwnProperty.call(submission, 'submitterHandle')) {
+        delete (submission as any).submitterHandle;
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(submission, 'submitterMaxRating')
+      ) {
+        delete (submission as any).submitterMaxRating;
+      }
+    }
+  }
+
+  private stripSubmitterSubmissionDetails(
+    authUser: JwtUser,
+    submissions: Array<
+      {
+        challengeId?: string | null;
+        memberId?: string | null;
+        review?: unknown;
+        reviewSummation?: unknown;
+        url?: string | null;
+      } & Record<string, unknown>
+    >,
+    visibilityContext: ReviewVisibilityContext,
+  ): void {
+    if (!submissions.length) {
+      return;
+    }
+    if (authUser?.isMachine || isAdmin(authUser)) {
+      return;
+    }
+
+    const uid = visibilityContext.requesterUserId;
+    if (!uid) {
+      return;
+    }
+
+    for (const submission of submissions) {
+      const challengeId =
+        submission.challengeId !== undefined && submission.challengeId !== null
+          ? String(submission.challengeId).trim()
+          : '';
+      if (!challengeId) {
+        continue;
+      }
+
+      const memberIdValue =
+        submission.memberId !== undefined && submission.memberId !== null
+          ? String(submission.memberId).trim()
+          : null;
+      if (!memberIdValue || memberIdValue === uid) {
+        continue;
+      }
+
+      const roleSummary =
+        visibilityContext.roleSummaryByChallenge.get(challengeId) ??
+        EMPTY_ROLE_SUMMARY;
+      if (
+        !roleSummary.hasSubmitter ||
+        roleSummary.hasCopilot ||
+        roleSummary.hasReviewer
+      ) {
+        continue;
+      }
+
+      const challenge = visibilityContext.challengeDetailsById.get(challengeId);
+      const isActiveChallenge =
+        !challenge || challenge.status === ChallengeStatus.ACTIVE;
+      if (!isActiveChallenge) {
+        continue;
+      }
+
+      if (Array.isArray((submission as any).review)) {
+        for (const review of (submission as any).review as Array<
+          Record<string, any>
+        >) {
+          if (!review || typeof review !== 'object') {
+            continue;
+          }
+          if (Object.prototype.hasOwnProperty.call(review, 'reviewItems')) {
+            delete review.reviewItems;
+          }
+          if (Object.prototype.hasOwnProperty.call(review, 'initialScore')) {
+            review.initialScore = null;
+          }
+          if (Object.prototype.hasOwnProperty.call(review, 'finalScore')) {
+            review.finalScore = null;
+          }
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
+        delete (submission as any).reviewSummation;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(submission, 'url')) {
+        (submission as any).url = null;
+      }
+    }
+  }
+
+  private async stripIsLatestForUnlimitedChallenges(
+    submissions: Array<
+      { challengeId?: string | null } & Record<string, unknown>
+    >,
+  ): Promise<void> {
+    if (!submissions.length) {
+      return;
+    }
+
+    const challengeId = Array.from(
+      new Set(
+        submissions
+          .map((submission) =>
+            submission.challengeId !== undefined &&
+            submission.challengeId !== null
+              ? String(submission.challengeId)
+              : null,
+          )
+          .filter((id): id is string => !!id),
+      ),
+    )[0];
+
+    let metadataEntries: Array<{ value: string }> = [];
+    try {
+      metadataEntries = await this.challengePrisma.$queryRaw(Prisma.sql`
+        SELECT \"value\" from \"ChallengeMetadata\" WHERE \"challengeId\"= ${challengeId} AND name = 'submissionLimit'
+      `);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load submissionLimit metadata for challenge ${challengeId}: ${(error as Error)?.message}`,
+      );
+      return;
+    }
+
+    if (!metadataEntries.length) {
+      return;
+    }
+
+    let challengeSubmissionsAreUnlimited = false;
+    for (const entry of metadataEntries) {
+      const unlimited = this.extractSubmissionLimitUnlimited(entry.value);
+      if (unlimited === true) {
+        challengeSubmissionsAreUnlimited = true;
+      }
+    }
+
+    for (const submission of submissions) {
+      if (challengeSubmissionsAreUnlimited) {
+        delete (submission as any).isLatest;
+      }
+    }
+  }
+
+  private extractSubmissionLimitUnlimited(value: unknown): boolean | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return this.coerceLooseBoolean(
+            (parsed as Record<string, unknown>).unlimited,
+          );
+        }
+        return this.coerceLooseBoolean(parsed);
+      } catch {
+        return this.coerceLooseBoolean(trimmed);
+      }
+    }
+
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return this.coerceLooseBoolean(
+        (value as Record<string, unknown>).unlimited,
+      );
+    }
+
+    return this.coerceLooseBoolean(value);
+  }
+
+  private coerceLooseBoolean(value: unknown): boolean | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (value === true || value === false) {
+      return value;
+    }
+
+    if (value instanceof Boolean) {
+      return value.valueOf();
+    }
+
+    if (value instanceof Number) {
+      return this.coerceLooseBoolean(value.valueOf());
+    }
+
+    let candidate: string;
+
+    if (typeof value === 'string') {
+      candidate = value;
+    } else if (value instanceof String) {
+      candidate = value.valueOf();
+    } else if (typeof value === 'number') {
+      if (!Number.isFinite(value)) {
+        return null;
+      }
+      candidate = value.toString();
+    } else if (typeof value === 'bigint') {
+      candidate = value.toString();
+    } else {
+      return null;
+    }
+
+    const normalized = candidate.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (normalized === 'true') {
+      return true;
+    }
+    if (normalized === 'false') {
+      return false;
+    }
+    return null;
+  }
+
+  private isMarathonMatchChallenge(
+    challenge: ChallengeData | null | undefined,
+  ): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (typeName === 'marathon match') {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+    if (legacySubTrack.includes('marathon')) {
+      return true;
+    }
+
+    const legacyTrack = (challenge.legacy?.track ?? '').trim().toLowerCase();
+    return legacyTrack.includes('marathon');
+  }
+
+  private isCompletedOrCancelledStatus(
+    status: ChallengeStatus | null | undefined,
+  ): boolean {
+    if (!status) {
+      return false;
+    }
+    if (status === ChallengeStatus.COMPLETED) {
+      return true;
+    }
+    if (status === ChallengeStatus.CANCELLED) {
+      return true;
+    }
+    return String(status).startsWith('CANCELLED_');
+  }
+
+  private normalizePhaseName(phaseName: string | null | undefined): string {
+    return String(phaseName ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private hasTimestampValue(value: unknown): boolean {
+    if (value == null) {
+      return false;
+    }
+    if (value instanceof Date) {
+      return true;
+    }
+    switch (typeof value) {
+      case 'string':
+        return value.trim().length > 0;
+      case 'number':
+        return Number.isFinite(value);
+      case 'bigint':
+      case 'boolean':
+        return true;
+      case 'symbol':
+      case 'function':
+        return false;
+      case 'object': {
+        const valueWithToISOString = value as {
+          toISOString?: (() => string) | undefined;
+          valueOf?: (() => unknown) | undefined;
+        };
+        if (typeof valueWithToISOString.toISOString === 'function') {
+          try {
+            return valueWithToISOString.toISOString().trim().length > 0;
+          } catch {
+            return false;
+          }
+        }
+        if (typeof valueWithToISOString.valueOf === 'function') {
+          const primitiveValue = valueWithToISOString.valueOf();
+          if (primitiveValue !== value) {
+            return this.hasTimestampValue(primitiveValue);
+          }
+        }
+        return false;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private hasChallengePhaseCompleted(
+    challenge: ChallengeData | null | undefined,
+    phaseNames: string[],
+  ): boolean {
+    if (!challenge?.phases?.length) {
+      return false;
+    }
+
+    const normalizedTargets = new Set(
+      (phaseNames ?? [])
+        .map((name) => this.normalizePhaseName(name))
+        .filter((name) => name.length > 0),
+    );
+
+    if (!normalizedTargets.size) {
+      return false;
+    }
+
+    return (challenge.phases ?? []).some((phase) => {
+      if (!phase) {
+        return false;
+      }
+
+      const normalizedName = this.normalizePhaseName((phase as any).name);
+      if (!normalizedTargets.has(normalizedName)) {
+        return false;
+      }
+
+      if ((phase as any).isOpen === true) {
+        return false;
+      }
+
+      const actualEnd =
+        (phase as any).actualEndTime ??
+        (phase as any).actualEndDate ??
+        (phase as any).actualEnd ??
+        null;
+
+      return this.hasTimestampValue(actualEnd);
+    });
+  }
+
+  private getPhaseNameFromId(
+    challenge: ChallengeData | null | undefined,
+    phaseId: string | null | undefined,
+  ): string | null {
+    if (!challenge?.phases?.length || phaseId == null) {
+      return null;
+    }
+
+    const normalizedPhaseId = String(phaseId).trim();
+    if (!normalizedPhaseId.length) {
+      return null;
+    }
+
+    const match = (challenge.phases ?? []).find((phase) => {
+      if (!phase) {
+        return false;
+      }
+
+      const candidateIds = [
+        String((phase as any).id ?? '').trim(),
+        String((phase as any).phaseId ?? '').trim(),
+      ].filter((candidate) => candidate.length > 0);
+
+      return candidateIds.includes(normalizedPhaseId);
+    });
+
+    const matchName =
+      match != null ? (match as { name?: unknown }).name : undefined;
+    return typeof matchName === 'string' ? matchName : null;
+  }
+
+  private identifyReviewerRoleType(
+    roleName: string,
+  ):
+    | 'screener'
+    | 'checkpoint-screener'
+    | 'checkpoint-reviewer'
+    | 'reviewer'
+    | 'approver'
+    | 'iterative-reviewer'
+    | 'unknown' {
+    const normalized = String(roleName ?? '')
+      .trim()
+      .toLowerCase();
+    if (!normalized) {
+      return 'unknown';
+    }
+
+    if (normalized.includes('checkpoint') && normalized.includes('screener')) {
+      return 'checkpoint-screener';
+    }
+
+    if (normalized.includes('checkpoint') && normalized.includes('reviewer')) {
+      return 'checkpoint-reviewer';
+    }
+
+    if (normalized.includes('screener')) {
+      return 'screener';
+    }
+
+    if (normalized.includes('approver') || normalized.includes('approval')) {
+      return 'approver';
+    }
+
+    if (normalized.includes('iterative') && normalized.includes('reviewer')) {
+      return 'iterative-reviewer';
+    }
+
+    if (normalized.includes('reviewer')) {
+      return 'reviewer';
+    }
+
+    return 'unknown';
+  }
+
+  private async hasPassingSubmissionForReviewScorecard(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    const normalizedChallengeId = String(challengeId ?? '').trim();
+    const normalizedMemberId = String(memberId ?? '').trim();
+
+    if (!normalizedChallengeId || !normalizedMemberId) {
+      return false;
+    }
+
+    try {
+      const passingSummation = await this.prisma.reviewSummation.findFirst({
+        where: {
+          isPassing: true,
+          scorecard: {
+            type: {
+              in: [ScorecardType.REVIEW, ScorecardType.ITERATIVE_REVIEW],
+            },
+          },
+          submission: {
+            challengeId: normalizedChallengeId,
+            memberId: normalizedMemberId,
+          },
+        },
+        select: { id: true },
+      });
+
+      return Boolean(passingSummation);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[hasPassingSubmissionForReviewScorecard] Failed to check passing submission for challenge ${normalizedChallengeId}, member ${normalizedMemberId}: ${message}`,
+      );
+      return false;
+    }
+  }
+
   private buildResponse(data: any): SubmissionResponseDto {
     const dto: SubmissionResponseDto = {
       ...data,
@@ -1958,7 +3640,9 @@ export class SubmissionService {
     if (data.reviewSummation) {
       dto.reviewSummation = data.reviewSummation;
     }
-    dto.isLatest = Boolean(data.isLatest);
+    if (Object.prototype.hasOwnProperty.call(data, 'isLatest')) {
+      dto.isLatest = Boolean(data.isLatest);
+    }
     return dto;
   }
 }

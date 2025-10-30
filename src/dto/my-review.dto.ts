@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString } from 'class-validator';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 export const ACTIVE_MY_REVIEW_SORT_FIELDS = [
   'challengeName',
@@ -75,6 +76,15 @@ export class MyReviewFilterDto {
   @IsOptional()
   @IsString()
   challengeName?: string;
+
+  @ApiProperty({
+    description: 'Filter results to a specific challenge status',
+    required: false,
+    enum: ChallengeStatus,
+  })
+  @IsOptional()
+  @IsEnum(ChallengeStatus)
+  challengeStatus?: ChallengeStatus;
 
   @ApiProperty({
     description:

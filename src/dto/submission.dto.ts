@@ -356,6 +356,7 @@ export class SubmissionResponseDto {
     description:
       'Indicates whether this is the most recent submission for the member on this challenge',
     example: true,
+    required: false,
   })
-  isLatest: boolean;
+  isLatest?: boolean;
 }

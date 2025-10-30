@@ -4,6 +4,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PaginationDto } from 'src/dto/pagination.dto';
 import {
@@ -14,7 +15,7 @@ import {
   ReviewSummationUpdateRequestDto,
 } from 'src/dto/reviewSummation.dto';
 import { SortDto } from 'src/dto/sort.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import {
@@ -22,6 +23,9 @@ import {
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { UserRole } from 'src/shared/enums/userRole.enum';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ReviewSummationService {
@@ -32,9 +36,24 @@ export class ReviewSummationService {
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly memberPrisma: MemberPrismaService,
+    private readonly resourceApiService: ResourceApiService,
   ) {}
 
   private readonly systemActor = 'ReviewSummationService';
+
+  private prepareMetadata(
+    metadata?: Prisma.JsonValue | null,
+  ): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
+    if (metadata === undefined) {
+      return undefined;
+    }
+
+    if (metadata === null) {
+      return Prisma.JsonNull;
+    }
+
+    return metadata as Prisma.InputJsonValue;
+  }
 
   private phaseNameEquals(
     phaseName: string | null | undefined,
@@ -61,6 +80,20 @@ export class ReviewSummationService {
       type === 'first 2 finish' ||
       legacySubTrack === 'first_2_finish'
     );
+  }
+
+  private isMarathonMatchChallenge(challenge: ChallengeData): boolean {
+    const type = (challenge.type ?? '').trim().toLowerCase();
+    if (type === 'marathon match') {
+      return true;
+    }
+
+    const legacyTrack = (challenge.legacy?.subTrack ?? '').trim().toLowerCase();
+    if (legacyTrack.includes('marathon')) {
+      return true;
+    }
+
+    return false;
   }
 
   private roundScore(value: number): number {
@@ -433,10 +466,17 @@ export class ReviewSummationService {
         }
       }
 
+      const { metadata, ...rest } = body;
+      const createData: Prisma.reviewSummationUncheckedCreateInput = {
+        ...rest,
+      };
+      const normalizedMetadata = this.prepareMetadata(metadata);
+      if (normalizedMetadata !== undefined) {
+        createData.metadata = normalizedMetadata;
+      }
+
       const data = await this.prisma.reviewSummation.create({
-        data: {
-          ...body,
-        },
+        data: createData,
       });
       this.logger.log(`Review summation created with ID: ${data.id}`);
       return data as ReviewSummationResponseDto;
@@ -494,6 +534,7 @@ export class ReviewSummationService {
   }
 
   async searchSummation(
+    authUser: JwtUser,
     queryDto: ReviewSummationQueryDto,
     paginationDto?: PaginationDto,
     sortDto?: SortDto,
@@ -507,6 +548,154 @@ export class ReviewSummationService {
         orderBy = {
           [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
         };
+      }
+
+      const normalizedRoles = new Set(
+        (authUser?.roles ?? [])
+          .map((role) =>
+            String(role ?? '')
+              .trim()
+              .toLowerCase(),
+          )
+          .filter((role) => role.length > 0),
+      );
+
+      const hasSubmitterRole = normalizedRoles.has(
+        String(UserRole.Submitter).trim().toLowerCase(),
+      );
+      const hasCopilotRole = normalizedRoles.has(
+        String(UserRole.Copilot).trim().toLowerCase(),
+      );
+      const hasGeneralUserRole = normalizedRoles.has(
+        String(UserRole.User).trim().toLowerCase(),
+      );
+      const isPrivileged =
+        (authUser?.isMachine ?? false) || isAdmin(authUser) || hasCopilotRole;
+      const isSubmitterOnly =
+        !isPrivileged && (hasSubmitterRole || hasGeneralUserRole);
+
+      const rawChallengeId = queryDto.challengeId
+        ? String(queryDto.challengeId).trim()
+        : undefined;
+      const challengeIdFilter =
+        rawChallengeId && rawChallengeId.length ? rawChallengeId : undefined;
+      const includeMetadata =
+        (queryDto.metadata ?? '').toLowerCase() === 'true';
+
+      let enforcedMemberId: string | undefined;
+
+      if (isSubmitterOnly) {
+        const userId =
+          authUser?.userId !== undefined && authUser?.userId !== null
+            ? String(authUser.userId)
+            : '';
+        if (!userId) {
+          throw new ForbiddenException({
+            message:
+              'Authenticated user information is required to view review summations.',
+            code: 'SUBMITTER_USER_MISSING',
+            details: {
+              reason: 'USER_ID_MISSING',
+              roles: Array.from(normalizedRoles),
+            },
+          });
+        }
+
+        if (!challengeIdFilter) {
+          throw new ForbiddenException({
+            message:
+              'Submitters must specify a challengeId when listing review summations.',
+            code: 'SUBMITTER_CHALLENGE_ID_REQUIRED',
+            details: {
+              reason: 'CHALLENGE_ID_REQUIRED',
+              guidance:
+                'Pass a challengeId query parameter when requesting review summations as a submitter.',
+              submitterUserId: authUser?.userId ?? null,
+              submitterHandle: authUser?.handle ?? null,
+              roles: Array.from(normalizedRoles),
+            },
+          });
+        }
+
+        const challenge =
+          await this.challengeApiService.getChallengeDetail(challengeIdFilter);
+
+        if (!this.isMarathonMatchChallenge(challenge)) {
+          throw new ForbiddenException({
+            message:
+              'Submitters can only view review summations for Marathon Match challenges.',
+            code: 'SUBMITTER_NON_MARATHON_FORBIDDEN',
+            details: {
+              challengeId: challengeIdFilter,
+              challengeType: challenge.type ?? null,
+              legacyTrack: challenge.track ?? null,
+              legacySubTrack: challenge.legacy?.subTrack ?? null,
+              allowedChallengeTypes: ['Marathon Match'],
+              submitterUserId: authUser?.userId ?? null,
+              submitterHandle: authUser?.handle ?? null,
+              roles: Array.from(normalizedRoles),
+            },
+          });
+        }
+
+        let memberResources: unknown[] = [];
+        let resourceLookupFailed = false;
+        try {
+          memberResources = await this.resourceApiService.getResources({
+            challengeId: challengeIdFilter,
+            memberId: userId,
+          });
+        } catch (resourceLookupError) {
+          resourceLookupFailed = true;
+          const message =
+            resourceLookupError instanceof Error
+              ? resourceLookupError.message
+              : String(resourceLookupError);
+          this.logger.warn(
+            `[searchSummation] Unable to load member resources for challenge ${challengeIdFilter} and member ${userId}: ${message}`,
+          );
+        }
+
+        if (!resourceLookupFailed) {
+          const hasAnyResource =
+            Array.isArray(memberResources) && memberResources.length > 0;
+          if (!hasAnyResource) {
+            throw new ForbiddenException({
+              message:
+                'Submitter access requires active registration for this challenge.',
+              code: 'SUBMITTER_NOT_REGISTERED',
+              details: {
+                challengeId: challengeIdFilter,
+                memberId: userId,
+                info: 'Member does not have any resources on this challenge.',
+              },
+            });
+          }
+        } else {
+          try {
+            await this.resourceApiService.validateSubmitterRegistration(
+              challengeIdFilter,
+              userId,
+            );
+          } catch (validationError) {
+            const details =
+              validationError instanceof Error
+                ? validationError.message
+                : String(validationError);
+            throw new ForbiddenException({
+              message:
+                'Submitter access requires active registration for this challenge.',
+              code: 'SUBMITTER_NOT_REGISTERED',
+              details: {
+                challengeId: challengeIdFilter,
+                memberId: userId,
+                info: details,
+              },
+            });
+          }
+
+          enforcedMemberId = userId;
+        }
       }
 
       // Build the where clause for review summations based on available filter parameters
@@ -540,8 +729,11 @@ export class ReviewSummationService {
       }
 
       const submissionWhereClause: Record<string, unknown> = {};
-      if (queryDto.challengeId) {
-        submissionWhereClause.challengeId = queryDto.challengeId;
+      if (challengeIdFilter) {
+        submissionWhereClause.challengeId = challengeIdFilter;
+      }
+      if (enforcedMemberId) {
+        submissionWhereClause.memberId = enforcedMemberId;
       }
 
       const whereClause = {
@@ -551,7 +743,7 @@ export class ReviewSummationService {
           : {}),
       };
 
-      const shouldEnrichSubmitterMetadata = Boolean(queryDto.challengeId);
+      const shouldEnrichSubmitterMetadata = Boolean(challengeIdFilter);
 
       const summations = await this.prisma.reviewSummation.findMany({
         where: whereClause,
@@ -642,27 +834,47 @@ export class ReviewSummationService {
       });
 
       const data: ReviewSummationResponseDto[] = summations.map((summation) => {
-        const { submission, ...rest } = summation as typeof summation & {
-          submission?: { memberId: string | null };
-        };
+        const { submission, metadata, ...rest } =
+          summation as typeof summation & {
+            submission?: { memberId: string | null };
+            metadata?: Prisma.JsonValue | null;
+          };
 
+        let submitterId: number | null = null;
         let submitterHandle: string | null = null;
         let submitterMaxRating: number | null = null;
 
         if (submission && typeof submission.memberId === 'string') {
           const memberId = submission.memberId.trim();
           if (memberId.length) {
+            const numericMemberId = Number.parseInt(memberId, 10);
+            if (
+              Number.isNaN(numericMemberId) ||
+              !Number.isFinite(numericMemberId) ||
+              !Number.isSafeInteger(numericMemberId)
+            ) {
+              submitterId = null;
+            } else {
+              submitterId = numericMemberId;
+            }
             const profile = submitterInfoByMemberId.get(memberId);
             submitterHandle = profile?.handle ?? null;
             submitterMaxRating = profile?.maxRating ?? null;
           }
         }
 
-        return {
+        const base: ReviewSummationResponseDto = {
           ...rest,
+          submitterId,
           submitterHandle,
           submitterMaxRating,
         } as ReviewSummationResponseDto;
+
+        if (includeMetadata) {
+          base.metadata = metadata ?? null;
+        }
+
+        return base;
       });
 
       this.logger.log(
@@ -679,6 +891,10 @@ export class ReviewSummationService {
         },
       };
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `searching review summations with filters - submissionId: ${queryDto.submissionId}, scorecardId: ${queryDto.scorecardId}, challengeId: ${queryDto.challengeId}`,
@@ -747,11 +963,18 @@ export class ReviewSummationService {
         }
       }
 
+      const { metadata, ...rest } = body;
+      const updateData: Prisma.reviewSummationUncheckedUpdateInput = {
+        ...rest,
+      };
+      const normalizedMetadata = this.prepareMetadata(metadata);
+      if (normalizedMetadata !== undefined) {
+        updateData.metadata = normalizedMetadata;
+      }
+
       const data = await this.prisma.reviewSummation.update({
         where: { id },
-        data: {
-          ...body,
-        },
+        data: updateData,
       });
       this.logger.log(`Review summation updated successfully: ${id}`);
       return data as ReviewSummationResponseDto;

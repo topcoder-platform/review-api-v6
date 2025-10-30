@@ -24,9 +24,8 @@ class EventBusMessage<T> {
 export class EventBusSendEmailPayload {
   // Template-specific variables payload. Structure depends on the sendgrid template.
   data: Record<string, any>;
-  from: Record<string, string> = {
-    email: 'Topcoder <noreply@topcoder.com>',
-  };
+  from: string = 'no-reply@topcoder.com';
+  replyTo: string = 'no-reply@topcoder.com';
   version: string = 'v3';
   sendgrid_template_id: string;
   recipients: string[];
@@ -84,6 +83,7 @@ export class EventBusService {
    * @param payload send email payload
    */
   async sendEmail(payload: EventBusSendEmailPayload): Promise<void> {
+    console.log(`${JSON.stringify(payload, null, 2)}`);
     await this.postMessage('external.action.email', payload);
   }
 

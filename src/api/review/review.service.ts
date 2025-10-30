@@ -19,7 +19,7 @@ import {
   mapReviewItemRequestToDto,
   mapReviewRequestToDto,
 } from 'src/dto/review.dto';
-import { Prisma } from '@prisma/client';
+import { Prisma, ScorecardType, SubmissionType } from '@prisma/client';
 import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
@@ -51,8 +51,13 @@ const REVIEW_ITEM_COMMENTS_INCLUDE = {
 } as const;
 
 // Roles containing any of these keywords are treated as review-capable resources.
-// This includes standard reviewers plus checkpoint screeners/reviewers.
-const REVIEW_ACCESS_ROLE_KEYWORDS = ['reviewer', 'screener'];
+// This includes standard reviewers plus checkpoint screeners/reviewers/approvers.
+const REVIEW_ACCESS_ROLE_KEYWORDS = [
+  'reviewer',
+  'screener',
+  'approver',
+  'approval',
+];
 
 type ReviewItemAccessMode = 'machine' | 'admin' | 'reviewer-owner' | 'copilot';
 
@@ -965,7 +970,9 @@ export class ReviewService {
     authUser: JwtUser,
     body: ReviewRequestDto,
   ): Promise<ReviewResponseDto> {
-    this.logger.log(`Creating review for submissionId: ${body.submissionId}`);
+    this.logger.log(
+      `Creating review for submissionId: ${body.submissionId ?? 'N/A'}`,
+    );
     try {
       const scorecard = await this.prisma.scorecard.findUnique({
         where: { id: body.scorecardId },
@@ -980,18 +987,34 @@ export class ReviewService {
         });
       }
 
-      const submissions = await this.prisma.$queryRaw<
-        Array<{
-          id: string;
-          challengeId: string | null;
-          memberId: string | null;
-          isLatest: boolean | null;
-        }>
-      >(Prisma.sql`
+      const normalizedSubmissionId = body.submissionId
+        ? String(body.submissionId).trim()
+        : undefined;
+      body.submissionId = normalizedSubmissionId;
+
+      let submission: {
+        id: string;
+        challengeId: string | null;
+        memberId: string | null;
+        isLatest: boolean | null;
+      } | null = null;
+      let challengeId: string | undefined;
+      let submissionMemberId: string | null = null;
+      let submissionIsLatest = false;
+
+      if (normalizedSubmissionId) {
+        const submissions = await this.prisma.$queryRaw<
+          Array<{
+            id: string;
+            challengeId: string | null;
+            memberId: string | null;
+            isLatest: boolean | null;
+          }>
+        >(Prisma.sql`
           WITH target AS (
             SELECT s."challengeId"
             FROM "submission" s
-            WHERE s."id" = ${body.submissionId}
+            WHERE s."id" = ${normalizedSubmissionId}
           )
           SELECT
             ranked."id",
@@ -1019,31 +1042,32 @@ export class ReviewService {
               SELECT target."challengeId" FROM target
             )
           ) ranked
-          WHERE ranked."id" = ${body.submissionId}
+          WHERE ranked."id" = ${normalizedSubmissionId}
         `);
 
-      const submission = submissions[0] ?? null;
+        submission = submissions[0] ?? null;
 
-      if (!submission) {
-        throw new NotFoundException({
-          message: `Submission with ID ${body.submissionId} was not found. Please verify the submissionId and try again.`,
-          code: 'SUBMISSION_NOT_FOUND',
-          details: { submissionId: body.submissionId },
-        });
+        if (!submission) {
+          throw new NotFoundException({
+            message: `Submission with ID ${normalizedSubmissionId} was not found. Please verify the submissionId and try again.`,
+            code: 'SUBMISSION_NOT_FOUND',
+            details: { submissionId: normalizedSubmissionId },
+          });
+        }
+
+        if (!submission.challengeId) {
+          throw new BadRequestException({
+            message: `Submission ${normalizedSubmissionId} does not have an associated challengeId`,
+            code: 'MISSING_CHALLENGE_ID',
+          });
+        }
+
+        challengeId = submission.challengeId;
+        submissionMemberId = submission.memberId
+          ? String(submission.memberId)
+          : null;
+        submissionIsLatest = Boolean(submission.isLatest);
       }
-
-      if (!submission.challengeId) {
-        throw new BadRequestException({
-          message: `Submission ${body.submissionId} does not have an associated challengeId`,
-          code: 'MISSING_CHALLENGE_ID',
-        });
-      }
-
-      const challengeId = submission.challengeId;
-      const submissionMemberId = submission.memberId
-        ? String(submission.memberId)
-        : null;
-      const submissionIsLatest = Boolean(submission.isLatest);
 
       const reviewType = await this.prisma.reviewType.findUnique({
         where: { id: body.typeId },
@@ -1058,15 +1082,89 @@ export class ReviewService {
         });
       }
 
-      await this.challengeApiService.validateReviewSubmission(challengeId);
-
-      const challengeResources = await this.resourceApiService.getResources({
-        challengeId,
-      });
+      const reviewTypeName = (reviewType.name ?? '').trim();
+      const isPostMortemReview =
+        /post[\s-]?mortem/i.test(reviewTypeName) ||
+        reviewTypeName === 'Post Mortem';
 
       const providedResourceId = body.resourceId
         ? String(body.resourceId).trim()
         : undefined;
+
+      let resourceRecord:
+        | (Awaited<
+            ReturnType<typeof this.resourcePrisma.resource.findUnique>
+          > & { roleName?: string | null })
+        | null = null;
+
+      if (!challengeId) {
+        if (!isPostMortemReview) {
+          throw new BadRequestException({
+            message:
+              'submissionId is required unless creating a Post-Mortem review without submissions.',
+            code: 'SUBMISSION_ID_REQUIRED',
+          });
+        }
+
+        if (!providedResourceId) {
+          throw new BadRequestException({
+            message:
+              'resourceId must be provided when creating a Post-Mortem review without a submission.',
+            code: 'RESOURCE_ID_REQUIRED',
+          });
+        }
+
+        resourceRecord = await this.resourcePrisma.resource.findUnique({
+          where: { id: providedResourceId },
+        });
+
+        if (!resourceRecord) {
+          throw new NotFoundException({
+            message: `Resource with ID ${providedResourceId} was not found.`,
+            code: 'RESOURCE_NOT_FOUND',
+            details: { resourceId: providedResourceId },
+          });
+        }
+
+        challengeId = String(resourceRecord.challengeId ?? '').trim();
+
+        if (!challengeId) {
+          throw new BadRequestException({
+            message: `Resource ${providedResourceId} is not associated with a challenge.`,
+            code: 'MISSING_CHALLENGE_ID',
+            details: { resourceId: providedResourceId },
+          });
+        }
+      }
+
+      if (!challengeId) {
+        throw new BadRequestException({
+          message:
+            'Unable to determine the challenge associated with this review request.',
+          code: 'MISSING_CHALLENGE_ID',
+        });
+      }
+
+      if (isPostMortemReview) {
+        const postMortemOpen = await this.challengeApiService.isPhaseOpen(
+          challengeId,
+          'Post-Mortem',
+        );
+
+        if (!postMortemOpen) {
+          throw new BadRequestException({
+            message: `Post-Mortem phase is not currently open for challenge ${challengeId}.`,
+            code: 'POST_MORTEM_PHASE_CLOSED',
+            details: { challengeId },
+          });
+        }
+      } else {
+        await this.challengeApiService.validateReviewSubmission(challengeId);
+      }
+
+      const challengeResources = await this.resourceApiService.getResources({
+        challengeId,
+      });
 
       let resource: ResourceInfo | undefined;
       if (providedResourceId) {
@@ -1075,14 +1173,58 @@ export class ReviewService {
         );
 
         if (!resource) {
-          throw new NotFoundException({
-            message: `Resource with ID ${providedResourceId} was not found for challenge ${challengeId}.`,
-            code: 'RESOURCE_NOT_FOUND',
-            details: {
-              resourceId: providedResourceId,
-              challengeId,
-            },
-          });
+          if (!resourceRecord) {
+            resourceRecord = await this.resourcePrisma.resource.findUnique({
+              where: { id: providedResourceId },
+            });
+          }
+
+          if (!resourceRecord) {
+            throw new NotFoundException({
+              message: `Resource with ID ${providedResourceId} was not found for challenge ${challengeId}.`,
+              code: 'RESOURCE_NOT_FOUND',
+              details: {
+                resourceId: providedResourceId,
+                challengeId,
+              },
+            });
+          }
+
+          const resourceRecordAny = resourceRecord as Record<string, unknown>;
+
+          const phaseIdValue =
+            resourceRecordAny?.phaseId !== undefined
+              ? resourceRecordAny.phaseId
+              : undefined;
+
+          let phaseIdString: string | undefined;
+          if (typeof phaseIdValue === 'string') {
+            phaseIdString = phaseIdValue;
+          } else if (typeof phaseIdValue === 'number') {
+            phaseIdString = phaseIdValue.toString();
+          } else {
+            phaseIdString = undefined;
+          }
+
+          const createdValue = (resourceRecordAny?.created ??
+            (resourceRecord as { createdAt?: Date; created?: Date })
+              .createdAt ??
+            new Date()) as Date | string;
+
+          resource = {
+            id: resourceRecord.id,
+            challengeId: String(resourceRecord.challengeId ?? ''),
+            memberId: String(resourceRecord.memberId ?? ''),
+            memberHandle: String(resourceRecord.memberHandle ?? ''),
+            roleId: String(resourceRecord.roleId ?? ''),
+            phaseId: phaseIdString,
+            createdBy: String(resourceRecord.createdBy ?? ''),
+            created: createdValue,
+            roleName:
+              resourceRecordAny.roleName !== undefined
+                ? (resourceRecordAny.roleName as string | undefined)
+                : undefined,
+          };
         }
       }
 
@@ -1177,6 +1319,7 @@ export class ReviewService {
         await this.challengeApiService.getChallengeDetail(challengeId);
 
       if (
+        submission &&
         this.shouldEnforceLatestSubmissionForReview(
           reviewType.name,
           challenge,
@@ -1202,32 +1345,43 @@ export class ReviewService {
       const resolvePhaseId = (phase: (typeof challengePhases)[number]) =>
         String((phase as any)?.id ?? (phase as any)?.phaseId ?? '');
 
-      const matchPhaseByName = (name: string) =>
-        challengePhases.find((phase) => {
-          const phaseName = (phase?.name ?? '').trim().toLowerCase();
-          return phaseName === name;
-        });
+      const normalized = (value: string | undefined | null) =>
+        (value ?? '').toLowerCase().replace(/[\s_-]+/g, '');
 
-      const reviewPhase =
-        matchPhaseByName('review') ?? matchPhaseByName('iterative review');
-      const reviewPhaseName = reviewPhase?.name ?? null;
+      const targetPhaseKeys = isPostMortemReview
+        ? ['postmortem']
+        : ['review', 'iterativereview'];
 
-      if (!reviewPhase) {
+      const targetPhase = challengePhases.find((phase) =>
+        targetPhaseKeys.some((key) => normalized(phase?.name) === key),
+      );
+
+      const reviewPhaseName = targetPhase?.name ?? null;
+
+      if (!targetPhase) {
         throw new BadRequestException({
-          message: `Challenge ${challengeId} does not have a Review phase.`,
-          code: 'REVIEW_PHASE_NOT_FOUND',
+          message: isPostMortemReview
+            ? `Challenge ${challengeId} does not have a Post-Mortem phase.`
+            : `Challenge ${challengeId} does not have a Review phase.`,
+          code: isPostMortemReview
+            ? 'POST_MORTEM_PHASE_NOT_FOUND'
+            : 'REVIEW_PHASE_NOT_FOUND',
           details: {
             challengeId,
           },
         });
       }
 
-      const reviewPhaseId = resolvePhaseId(reviewPhase);
+      const reviewPhaseId = resolvePhaseId(targetPhase);
 
       if (!reviewPhaseId) {
         throw new BadRequestException({
-          message: `Review phase for challenge ${challengeId} is missing an identifier.`,
-          code: 'REVIEW_PHASE_NOT_FOUND',
+          message: isPostMortemReview
+            ? `Post-Mortem phase for challenge ${challengeId} is missing an identifier.`
+            : `Review phase for challenge ${challengeId} is missing an identifier.`,
+          code: isPostMortemReview
+            ? 'POST_MORTEM_PHASE_NOT_FOUND'
+            : 'REVIEW_PHASE_NOT_FOUND',
           details: {
             challengeId,
           },
@@ -1239,7 +1393,7 @@ export class ReviewService {
         : undefined;
       if (resourcePhaseId && resourcePhaseId !== reviewPhaseId) {
         throw new BadRequestException({
-          message: `Resource ${resource.id} is associated with phase ${resourcePhaseId}, which does not match the Review phase ${reviewPhaseId}.`,
+          message: `Resource ${resource.id} is associated with phase ${resourcePhaseId}, which does not match the ${reviewPhaseName ?? 'target'} phase ${reviewPhaseId}.`,
           code: 'RESOURCE_PHASE_MISMATCH',
           details: {
             resourceId: resource.id,
@@ -1378,6 +1532,7 @@ export class ReviewService {
       const prismaBody = mapReviewRequestToDto(body) as any;
       prismaBody.phaseId = reviewPhaseId;
       prismaBody.resourceId = reviewerResource.id;
+      prismaBody.submissionId = body.submissionId ?? null;
       const createdReview = await this.prisma.review.create({
         data: prismaBody,
         include: {
@@ -1457,7 +1612,7 @@ export class ReviewService {
 
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `creating review for submissionId: ${body.submissionId}`,
+        `creating review for submissionId: ${body.submissionId ?? 'N/A'}`,
         body,
       );
 
@@ -1672,6 +1827,7 @@ export class ReviewService {
     const isPrivileged = isAdmin(requester);
     const challengeId = existingReview.submission?.challengeId;
     const challengeCache = new Map<string, ChallengeData | null>();
+    let challengeDetailForPhase: ChallengeData | null = null;
     const isMemberRequester = !requester?.isMachine;
     const normalizedRoles = Array.isArray(requester.roles)
       ? requester.roles.map((role) => String(role).trim().toLowerCase())
@@ -1689,6 +1845,33 @@ export class ReviewService {
       .map(([key]) => key);
     const isStatusOnlyUpdate =
       definedBodyKeys.length === 1 && definedBodyKeys[0] === 'status';
+    const requestedStatusValue = (body as ReviewPatchRequestDto).status;
+    const requestedStatus =
+      typeof requestedStatusValue === 'string' &&
+      (Object.values(ReviewStatus) as string[]).includes(requestedStatusValue)
+        ? requestedStatusValue
+        : undefined;
+    const requestedCommittedValue = (body as ReviewPatchRequestDto).committed;
+    const requestedCommitted =
+      typeof requestedCommittedValue === 'boolean'
+        ? requestedCommittedValue
+        : undefined;
+    const reopenStatuses = new Set<ReviewStatus>([
+      ReviewStatus.IN_PROGRESS,
+      ReviewStatus.PENDING,
+    ]);
+    const isReopenStatusRequested =
+      requestedStatus !== undefined && reopenStatuses.has(requestedStatus);
+    const isReopenTransition =
+      existingReview.status === ReviewStatus.COMPLETED &&
+      isReopenStatusRequested;
+    const isCopilotReopenPayload =
+      isReopenTransition &&
+      definedBodyKeys.includes('status') &&
+      definedBodyKeys.every(
+        (field) => field === 'status' || field === 'committed',
+      ) &&
+      (requestedCommitted === undefined || requestedCommitted === false);
 
     if (isMemberRequester && !isPrivileged) {
       const requesterMemberId = String(requester?.userId ?? '');
@@ -1732,7 +1915,9 @@ export class ReviewService {
       );
 
       const allowCopilotStatusPatch =
-        hasCopilotRole && isStatusOnlyUpdate && !ownsReview;
+        hasCopilotRole &&
+        !ownsReview &&
+        (isStatusOnlyUpdate || isCopilotReopenPayload);
 
       if (!ownsReview) {
         if (allowCopilotStatusPatch) {
@@ -1810,7 +1995,6 @@ export class ReviewService {
     }
 
     if (!isPrivileged && challengeId) {
-      let challengeDetailForPhase: ChallengeData;
       try {
         challengeDetailForPhase =
           await this.challengeApiService.getChallengeDetail(challengeId);
@@ -1827,12 +2011,80 @@ export class ReviewService {
         });
       }
 
-      if (challengeDetailForPhase.status === ChallengeStatus.COMPLETED) {
+      if (
+        challengeDetailForPhase &&
+        challengeDetailForPhase.status === ChallengeStatus.COMPLETED
+      ) {
         throw new ForbiddenException({
           message:
             'Reviews for challenges in COMPLETED status cannot be updated.  Only an admin can update a review once the challenge is complete.',
           code: 'REVIEW_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
           details: { reviewId: id, challengeId },
+        });
+      }
+    }
+
+    if (
+      isReopenTransition &&
+      challengeId &&
+      existingReview.phaseId !== undefined &&
+      existingReview.phaseId !== null
+    ) {
+      const normalizedPhaseId = String(existingReview.phaseId);
+
+      if (!challengeDetailForPhase) {
+        if (challengeCache.has(challengeId)) {
+          challengeDetailForPhase = challengeCache.get(challengeId) ?? null;
+        } else {
+          try {
+            challengeDetailForPhase =
+              await this.challengeApiService.getChallengeDetail(challengeId);
+            challengeCache.set(challengeId, challengeDetailForPhase);
+          } catch (error) {
+            this.logger.error(
+              `[updateReview] Unable to verify phase ${normalizedPhaseId} for review ${id} on challenge ${challengeId}`,
+              error,
+            );
+            throw new InternalServerErrorException({
+              message:
+                'Unable to verify the phase status for this review. Please try again later.',
+              code: 'CHALLENGE_PHASE_STATUS_UNAVAILABLE',
+              details: {
+                reviewId: id,
+                challengeId,
+                phaseId: normalizedPhaseId,
+              },
+            });
+          }
+        }
+      }
+
+      const matchingPhase =
+        challengeDetailForPhase?.phases?.find((phase) => {
+          if (!phase) {
+            return false;
+          }
+          const candidateIds = [
+            String((phase as any).id ?? ''),
+            String((phase as any).phaseId ?? ''),
+          ].filter((value) => value.length > 0);
+          return candidateIds.includes(normalizedPhaseId);
+        }) ?? null;
+
+      if (
+        matchingPhase &&
+        matchingPhase.actualEndTime &&
+        matchingPhase.isOpen === false
+      ) {
+        throw new ForbiddenException({
+          message:
+            'Reviews associated with closed challenge phases cannot be reopened to Pending or In Progress.',
+          code: 'REVIEW_UPDATE_FORBIDDEN_PHASE_CLOSED',
+          details: {
+            reviewId: id,
+            challengeId,
+            phaseId: normalizedPhaseId,
+          },
         });
       }
     }
@@ -1901,6 +2153,15 @@ export class ReviewService {
       ...(reviewItemsUpdate ?? {}),
     } as Prisma.reviewUpdateInput;
 
+    if (isReopenTransition) {
+      updateData.committed = false;
+      updateData.initialScore = null;
+      updateData.finalScore = null;
+      if (updateData.reviewDate === undefined) {
+        updateData.reviewDate = null;
+      }
+    }
+
     try {
       const data = await this.prisma.review.update({
         where: { id },
@@ -1912,7 +2173,9 @@ export class ReviewService {
         },
       });
       // Recalculate scores based on current review items
-      const recomputedScores = await this.recomputeAndUpdateReviewScores(id);
+      const recomputedScores = isReopenTransition
+        ? null
+        : await this.recomputeAndUpdateReviewScores(id);
       if (
         existingReview.status !== ReviewStatus.COMPLETED &&
         data.status === ReviewStatus.COMPLETED
@@ -2304,6 +2567,7 @@ export class ReviewService {
     try {
       const reviewWhereClause: any = {};
       let challengeDetail: ChallengeData | null = null;
+      let challengeScopedFilter: Prisma.reviewWhereInput | null = null;
       let requesterIsChallengeResource = false;
       const reviewerResourceIdSet = new Set<string>();
       const submitterSubmissionIdSet = new Set<string>();
@@ -2313,6 +2577,7 @@ export class ReviewService {
         allowAny: false,
         allowOwn: false,
       };
+      const allowLimitedVisibilityForOtherSubmissions = false;
 
       // Utility to merge an allowed set of submission IDs into where clause
       const restrictToSubmissionIds = (allowedIds: string[]) => {
@@ -2380,16 +2645,57 @@ export class ReviewService {
 
       if (challengeId) {
         this.logger.debug(`Fetching reviews by challengeId: ${challengeId}`);
+
+        const hasDirectSubmissionFilter = Boolean(submissionId);
+
         const submissions = await this.prisma.submission.findMany({
           where: { challengeId },
           select: { id: true },
         });
 
         const submissionIds = submissions.map((s) => s.id);
+        const challengeFilters: Prisma.reviewWhereInput[] = [];
 
-        if (submissionIds.length > 0) {
-          reviewWhereClause.submissionId = { in: submissionIds };
-        } else {
+        if (!hasDirectSubmissionFilter && submissionIds.length > 0) {
+          challengeFilters.push({ submissionId: { in: submissionIds } });
+        }
+
+        if (!challengeDetail) {
+          try {
+            challengeDetail =
+              await this.challengeApiService.getChallengeDetail(challengeId);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            this.logger.debug(
+              `[getReviews] Unable to fetch challenge detail for phase filtering: ${message}`,
+            );
+            challengeDetail = null;
+          }
+        }
+
+        if (challengeDetail?.phases?.length) {
+          const phaseIds = new Set<string>();
+          for (const phase of challengeDetail.phases ?? []) {
+            if (!phase) {
+              continue;
+            }
+            const candidates = [
+              String((phase as any).id ?? '').trim(),
+              String((phase as any).phaseId ?? '').trim(),
+            ].filter((value) => value.length > 0);
+
+            for (const candidate of candidates) {
+              phaseIds.add(candidate);
+            }
+          }
+
+          if (phaseIds.size > 0) {
+            challengeFilters.push({ phaseId: { in: Array.from(phaseIds) } });
+          }
+        }
+
+        if (!hasDirectSubmissionFilter && challengeFilters.length === 0) {
           return {
             data: [],
             meta: {
@@ -2399,6 +2705,12 @@ export class ReviewService {
               totalPages: 0,
             },
           };
+        }
+
+        if (challengeFilters.length === 1) {
+          challengeScopedFilter = challengeFilters[0];
+        } else if (challengeFilters.length > 1) {
+          challengeScopedFilter = { OR: challengeFilters };
         }
       }
 
@@ -2448,7 +2760,69 @@ export class ReviewService {
           if (hasCopilotRoleForChallenge) {
             // Copilots retain full visibility for the challenge
           } else if (reviewerResourceIdSet.size) {
-            restrictToResourceIds(Array.from(reviewerResourceIdSet));
+            const reviewerResourceIds = Array.from(reviewerResourceIdSet);
+            const reviewerResources = normalized.filter((resource) =>
+              reviewerResourceIdSet.has(resource.id),
+            );
+            let challengeCompletedOrCancelled = false;
+            if (challengeId && !challengeDetail) {
+              try {
+                challengeDetail =
+                  await this.challengeApiService.getChallengeDetail(
+                    challengeId,
+                  );
+              } catch (error) {
+                const message =
+                  error instanceof Error ? error.message : String(error);
+                this.logger.debug(
+                  `[getReviews] Unable to fetch challenge ${challengeId} for reviewer screening access: ${message}`,
+                );
+              }
+            }
+
+            if (challengeDetail) {
+              challengeCompletedOrCancelled = this.isCompletedOrCancelledStatus(
+                challengeDetail.status,
+              );
+            }
+
+            if (challengeCompletedOrCancelled) {
+              // Completed or cancelled challenges should expose all reviews to reviewers.
+            } else if (challengeId) {
+              const reviewerRoleFilter = this.buildReviewerRoleFilters(
+                reviewerResources,
+                challengeDetail,
+                challengeCompletedOrCancelled,
+              );
+
+              if (reviewerRoleFilter) {
+                const roleOr = reviewerRoleFilter.OR;
+                if (roleOr) {
+                  const normalizedOr = Array.isArray(roleOr)
+                    ? roleOr
+                    : [roleOr];
+                  const existingOr = reviewWhereClause.OR;
+                  if (Array.isArray(existingOr)) {
+                    reviewWhereClause.OR = [...existingOr, ...normalizedOr];
+                  } else if (existingOr) {
+                    reviewWhereClause.OR = [existingOr, ...normalizedOr];
+                  } else {
+                    reviewWhereClause.OR = normalizedOr;
+                  }
+                }
+
+                Object.entries(reviewerRoleFilter).forEach(([key, value]) => {
+                  if (key === 'OR' || value === undefined) {
+                    return;
+                  }
+                  reviewWhereClause[key] = value;
+                });
+              } else {
+                restrictToResourceIds(reviewerResourceIds);
+              }
+            } else {
+              restrictToResourceIds(reviewerResourceIds);
+            }
           } else {
             // Confirm the user has actually submitted to this challenge
             const mySubs = await this.prisma.submission.findMany({
@@ -2480,6 +2854,20 @@ export class ReviewService {
                 (p.name || '').toLowerCase() === 'submission' &&
                 p.isOpen === false,
             );
+            const submitterReviewPhaseNames = [
+              'checkpoint screening',
+              'checkpoint review',
+              'screening',
+              'review',
+              'iterative review',
+            ];
+            const reviewPhasesCompleted = this.hasChallengePhaseCompleted(
+              challenge,
+              submitterReviewPhaseNames,
+            );
+            const challengeCompletedOrCancelled =
+              this.isCompletedOrCancelledStatus(challenge.status);
+            const isMarathonMatch = this.isMarathonMatchChallenge(challenge);
             const mySubmissionIds = mySubs.map((s) => s.id);
             mySubmissionIds.forEach((id) => submitterSubmissionIdSet.add(id));
             submitterVisibilityState =
@@ -2489,30 +2877,52 @@ export class ReviewService {
               requesterIsChallengeResource = true;
             }
 
-            if (challenge.status === ChallengeStatus.COMPLETED) {
-              // Allowed to see all reviews on this challenge
-              // reviewWhereClause already limited to submissions on this challenge
-            } else if (appealsOpen || appealsResponseOpen) {
-              // Restrict to own reviews (own submissions only)
-              restrictToSubmissionIds(mySubmissionIds);
+            if (challengeCompletedOrCancelled) {
+              const hasPassingSubmission =
+                await this.hasPassingSubmissionForReviewScorecard(
+                  challengeId,
+                  uid,
+                );
+
+              if (!hasPassingSubmission) {
+                restrictToSubmissionIds(mySubmissionIds);
+              }
+            } else if (isMarathonMatch) {
+              if (
+                appealsOpen ||
+                appealsResponseOpen ||
+                (challenge.status === ChallengeStatus.ACTIVE &&
+                  submissionPhaseClosed &&
+                  hasSubmitterRoleForChallenge)
+              ) {
+                restrictToSubmissionIds(mySubmissionIds);
+              } else if (
+                hasSubmitterRoleForChallenge &&
+                reviewPhasesCompleted
+              ) {
+                // Marathon submitters can still inspect their own reviews once an allowed review phase completes.
+                restrictToSubmissionIds(mySubmissionIds);
+              } else {
+                this.logger.debug(
+                  `[getReviews] Challenge ${challengeId} is in status ${challenge.status}. Returning empty review list for requester ${uid}.`,
+                );
+                restrictToSubmissionIds([]);
+              }
             } else if (
-              challenge.status === ChallengeStatus.ACTIVE &&
-              submissionPhaseClosed &&
-              hasSubmitterRoleForChallenge
+              hasSubmitterRoleForChallenge &&
+              (appealsOpen ||
+                appealsResponseOpen ||
+                submissionPhaseClosed ||
+                reviewPhasesCompleted)
             ) {
-              // Submitters can access their own submissions once submission phase closes
+              // Non-marathon submitters can only inspect their own submissions until completion/cancellation.
               restrictToSubmissionIds(mySubmissionIds);
             } else {
-              // No access for non-completed, non-appeals phases
-              throw new ForbiddenException({
-                message:
-                  'Reviews are not accessible for this challenge at the current phase',
-                code: 'FORBIDDEN_REVIEW_ACCESS',
-                details: {
-                  challengeId,
-                  status: challenge.status,
-                },
-              });
+              // Reviews exist but the phase does not allow visibility yet; respond with no results.
+              this.logger.debug(
+                `[getReviews] Challenge ${challengeId} is in status ${challenge.status}. Returning empty review list for requester ${uid}.`,
+              );
+              restrictToSubmissionIds([]);
             }
           }
         } else {
@@ -2543,7 +2953,18 @@ export class ReviewService {
               const challenges =
                 await this.challengeApiService.getChallenges(myChallengeIds);
               const completedIds = challenges
-                .filter((c) => c.status === ChallengeStatus.COMPLETED)
+                .filter((challenge) => {
+                  const status = challenge.status;
+                  if (!status) {
+                    return false;
+                  }
+                  const statusString = String(status);
+                  return (
+                    status === ChallengeStatus.COMPLETED ||
+                    status === ChallengeStatus.CANCELLED ||
+                    statusString.startsWith('CANCELLED_')
+                  );
+                })
                 .map((c) => c.id);
               const appealsAllowedIds = challenges
                 .filter((c) => {
@@ -2557,14 +2978,40 @@ export class ReviewService {
                 .map((c) => c.id);
 
               const allowed = new Set<string>();
+              const mySubsByChallenge = new Map<string, string[]>();
 
-              // For completed challenges, allow all submissions in those challenges
-              if (completedIds.length) {
-                const subs = await this.prisma.submission.findMany({
-                  where: { challengeId: { in: completedIds } },
-                  select: { id: true },
-                });
-                subs.forEach((s) => allowed.add(s.id));
+              for (const sub of mySubs) {
+                const subChallengeId = sub.challengeId;
+                if (!subChallengeId) {
+                  continue;
+                }
+                const existing = mySubsByChallenge.get(subChallengeId);
+                if (existing) {
+                  existing.push(sub.id);
+                } else {
+                  mySubsByChallenge.set(subChallengeId, [sub.id]);
+                }
+              }
+
+              // For completed challenges, allow all submissions only when the member has a passing submission
+              for (const completedId of completedIds) {
+                const hasPassingSubmission =
+                  await this.hasPassingSubmissionForReviewScorecard(
+                    completedId,
+                    uid,
+                  );
+
+                if (hasPassingSubmission) {
+                  const subs = await this.prisma.submission.findMany({
+                    where: { challengeId: completedId },
+                    select: { id: true },
+                  });
+                  subs.forEach((s) => allowed.add(s.id));
+                } else {
+                  const ownSubmissions =
+                    mySubsByChallenge.get(completedId) ?? [];
+                  ownSubmissions.forEach((id) => allowed.add(id));
+                }
               }
 
               // For appeals or appeals response, allow only the user's own submissions
@@ -2601,8 +3048,22 @@ export class ReviewService {
         ].includes(challengeDetail.status) &&
         (isAdmin(authUser) || requesterIsChallengeResource);
 
+      const whereAndClauses: Prisma.reviewWhereInput[] = [];
+      if (Object.keys(reviewWhereClause).length > 0) {
+        whereAndClauses.push(reviewWhereClause);
+      }
+      if (challengeScopedFilter) {
+        whereAndClauses.push(challengeScopedFilter);
+      }
+      const finalWhereClause: Prisma.reviewWhereInput =
+        whereAndClauses.length === 0
+          ? {}
+          : whereAndClauses.length === 1
+            ? whereAndClauses[0]
+            : { AND: whereAndClauses };
+
       this.logger.debug(`Fetching reviews with where clause:`);
-      this.logger.debug(reviewWhereClause);
+      this.logger.debug(finalWhereClause);
 
       const reviewInclude: Prisma.reviewInclude = {
         submission: {
@@ -2617,7 +3078,7 @@ export class ReviewService {
       }
 
       const reviews = await this.prisma.review.findMany({
-        where: reviewWhereClause,
+        where: finalWhereClause,
         skip,
         take: perPage,
         include: reviewInclude,
@@ -2865,7 +3326,91 @@ export class ReviewService {
         const isReviewerForReview = reviewerResourceIdSet.has(reviewResourceId);
         const isOwnSubmission =
           submitterSubmissionIdSet.has(reviewSubmissionId);
+
+        const reviewPhaseId = review.phaseId ? String(review.phaseId) : '';
+        const phaseName = reviewPhaseId
+          ? (phaseNameCache.get(reviewPhaseId) ?? null)
+          : null;
+        const normalizedPhaseName = this.normalizePhaseName(phaseName);
+
+        const reviewChallengeId =
+          review.submission?.challengeId ?? challengeId ?? null;
+        const challengeForReview = reviewChallengeId
+          ? (challengeCache.get(reviewChallengeId) ?? null)
+          : null;
+        const screeningPhaseCompleted = this.hasChallengePhaseCompleted(
+          challengeForReview,
+          ['screening'],
+        );
+        const checkpointReviewPhaseCompleted = this.hasChallengePhaseCompleted(
+          challengeForReview,
+          ['checkpoint review'],
+        );
+        const reviewPhaseCompleted = this.hasChallengePhaseCompleted(
+          challengeForReview,
+          ['review'],
+        );
+        const iterativeReviewPhaseCompleted = this.hasChallengePhaseCompleted(
+          challengeForReview,
+          ['iterative review'],
+        );
+        const phaseNamesForCompletionCheck: string[] = [];
+        if (phaseName && phaseName.trim().length > 0) {
+          phaseNamesForCompletionCheck.push(phaseName);
+        } else if (normalizedPhaseName.length > 0) {
+          phaseNamesForCompletionCheck.push(normalizedPhaseName);
+        }
+        const phaseCompletedForResolvedNames =
+          phaseNamesForCompletionCheck.length > 0 &&
+          this.hasChallengePhaseCompleted(
+            challengeForReview,
+            phaseNamesForCompletionCheck,
+          );
+        const allowOwnScreeningVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          screeningPhaseCompleted &&
+          normalizedPhaseName === 'screening';
+        const allowOwnCheckpointReviewVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          checkpointReviewPhaseCompleted &&
+          normalizedPhaseName === 'checkpoint review';
+        const allowOwnReviewVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          reviewPhaseCompleted &&
+          normalizedPhaseName === 'review';
+        const allowOwnIterativeReviewVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          iterativeReviewPhaseCompleted &&
+          normalizedPhaseName === 'iterative review';
+        const allowOwnClosedPhaseVisibility =
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          isOwnSubmission &&
+          phaseCompletedForResolvedNames;
         const shouldMaskReviewDetails =
+          !allowOwnScreeningVisibility &&
+          !allowOwnCheckpointReviewVisibility &&
+          !allowOwnReviewVisibility &&
+          !allowOwnIterativeReviewVisibility &&
+          !allowOwnClosedPhaseVisibility &&
           !isPrivilegedRequester &&
           hasSubmitterRoleForChallenge &&
           submitterSubmissionIdSet.size > 0 &&
@@ -2873,22 +3418,60 @@ export class ReviewService {
           !isReviewerForReview &&
           isOwnSubmission &&
           !submitterVisibilityState.allowOwn;
+        const shouldLimitNonOwnerVisibility =
+          allowLimitedVisibilityForOtherSubmissions &&
+          !isPrivilegedRequester &&
+          hasSubmitterRoleForChallenge &&
+          submitterSubmissionIdSet.size > 0 &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          !isOwnSubmission &&
+          !submitterVisibilityState.allowAny;
 
-        const reviewPhaseId = review.phaseId ? String(review.phaseId) : '';
-        const phaseName = reviewPhaseId
-          ? (phaseNameCache.get(reviewPhaseId) ?? null)
-          : null;
+        const challengeStatusForReview =
+          challengeForReview?.status ?? challengeDetail?.status ?? null;
+        const shouldMaskOtherReviewerDetails =
+          !isPrivilegedRequester &&
+          !hasCopilotRoleForChallenge &&
+          reviewerResourceIdSet.size > 0 &&
+          !isReviewerForReview &&
+          !this.isCompletedOrCancelledStatus(challengeStatusForReview) &&
+          normalizedPhaseName !== 'screening' &&
+          normalizedPhaseName !== 'checkpoint screening';
 
+        const sanitizeScores =
+          shouldMaskReviewDetails ||
+          shouldLimitNonOwnerVisibility ||
+          shouldMaskOtherReviewerDetails;
         const sanitizedReview: typeof review & {
           reviewItems?: typeof review.reviewItems;
         } = {
           ...review,
-          initialScore: shouldMaskReviewDetails ? null : review.initialScore,
-          finalScore: shouldMaskReviewDetails ? null : review.finalScore,
+          initialScore: sanitizeScores ? null : review.initialScore,
+          finalScore: sanitizeScores ? null : review.finalScore,
         };
 
+        const shouldTrimIterativeReviewForOtherSubmitters =
+          !isPrivilegedRequester &&
+          submitterSubmissionIdSet.size > 0 &&
+          !hasCopilotRoleForChallenge &&
+          !isReviewerForReview &&
+          !isOwnSubmission &&
+          normalizedPhaseName === 'iterative review' &&
+          this.isFirst2FinishChallenge(challengeForReview);
+        const shouldStripOtherReviewerContent =
+          shouldMaskOtherReviewerDetails &&
+          !['screening', 'checkpoint screening'].includes(
+            normalizedPhaseName ?? '',
+          );
+        const shouldStripReviewItems =
+          shouldMaskReviewDetails ||
+          shouldTrimIterativeReviewForOtherSubmitters ||
+          shouldLimitNonOwnerVisibility ||
+          shouldStripOtherReviewerContent;
+
         if (!isThin) {
-          sanitizedReview.reviewItems = shouldMaskReviewDetails
+          sanitizedReview.reviewItems = shouldStripReviewItems
             ? []
             : (review.reviewItems ?? []);
         } else {
@@ -2945,11 +3528,25 @@ export class ReviewService {
           result.submitterHandle = submitterProfile?.handle ?? null;
           result.submitterMaxRating = submitterProfile?.maxRating ?? null;
         }
+        if (shouldLimitNonOwnerVisibility) {
+          delete (result as any).finalScore;
+          delete (result as any).initialScore;
+          result.submitterHandle = null;
+          result.submitterMaxRating = null;
+          if (!isThin) {
+            (result as any).appeals = [];
+          } else {
+            delete (result as any).appeals;
+          }
+          delete (result as any).metadata;
+          delete (result as any).typeId;
+          delete (result as any).committed;
+        }
         return result;
       });
 
       const totalCount = await this.prisma.review.count({
-        where: reviewWhereClause,
+        where: finalWhereClause,
       });
 
       this.logger.log(
@@ -2999,12 +3596,53 @@ export class ReviewService {
         },
       });
 
+      const reviewResourceId = String(data.resourceId ?? '').trim();
+      let challengeId: string | null = null;
+
+      if (data.submission?.challengeId) {
+        const normalizedChallengeId = String(
+          data.submission.challengeId,
+        ).trim();
+        challengeId = normalizedChallengeId.length
+          ? normalizedChallengeId
+          : null;
+      }
+
+      if (!challengeId && reviewResourceId.length) {
+        try {
+          const resourceRecord = await this.resourcePrisma.resource.findUnique({
+            where: { id: reviewResourceId },
+            select: { challengeId: true },
+          });
+
+          const resourceChallengeId = String(
+            resourceRecord?.challengeId ?? '',
+          ).trim();
+          if (resourceChallengeId.length) {
+            challengeId = resourceChallengeId;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `[getReview] Failed to resolve challengeId via resource ${reviewResourceId}: ${message}`,
+          );
+        }
+      }
+
       const challengeCache = new Map<string, ChallengeData | null>();
+      const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+      let resolvedPhaseName: string | null = null;
+      let challengeDetail: ChallengeData | null = null;
+      let hasCopilotRole = false;
+      let hasReviewerRoleResource = false;
+      let reviewerResourceIds = new Set<string>();
+      let isReviewerForReview = false;
+      let isSubmitterForChallenge = false;
 
       // Authorization for non-M2M, non-admin users
       if (!authUser?.isMachine && !isAdmin(authUser)) {
         const uid = String(authUser?.userId ?? '');
-        const challengeId = data.submission?.challengeId;
 
         if (!challengeId) {
           throw new ForbiddenException({
@@ -3018,9 +3656,9 @@ export class ReviewService {
         const challenge =
           await this.challengeApiService.getChallengeDetail(challengeId);
         challengeCache.set(challengeId, challenge);
+        challengeDetail = challenge;
 
         let reviewerResources: ResourceInfo[] = [];
-        let hasCopilotRole = false;
         try {
           const resources =
             await this.resourceApiService.getMemberResourcesRoles(
@@ -3028,9 +3666,14 @@ export class ReviewService {
               uid,
             );
           reviewerResources = resources.filter((r) => {
-            const rn = (r.roleName || '').toLowerCase();
-            return rn.includes('reviewer');
+            const roleName = (r.roleName || '').toLowerCase();
+            return REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
+              roleName.includes(keyword),
+            );
           });
+          hasReviewerRoleResource = reviewerResources.some((resource) =>
+            (resource.roleName || '').toLowerCase().includes('reviewer'),
+          );
           hasCopilotRole = resources.some((r) =>
             (r.roleName || '').toLowerCase().includes('copilot'),
           );
@@ -3041,15 +3684,37 @@ export class ReviewService {
           );
         }
 
-        if (reviewerResources.length > 0) {
-          const reviewerResourceIds = new Set(
-            reviewerResources.map((r) => String(r.id)),
-          );
-          const reviewResourceId = String(data.resourceId ?? '');
+        reviewerResourceIds = new Set(
+          reviewerResources
+            .map((r) => String(r.id ?? '').trim())
+            .filter((id) => id.length > 0),
+        );
+        isReviewerForReview = reviewerResourceIds.has(reviewResourceId);
 
+        if (hasCopilotRole) {
+          // Copilots on the challenge can view any review regardless of reviewer ownership.
+        } else if (reviewerResources.length > 0) {
+          const challengeInFinalState = [
+            ChallengeStatus.COMPLETED,
+            ChallengeStatus.CANCELLED_FAILED_REVIEW,
+          ].includes(challenge.status);
+          if (!resolvedPhaseName && data.phaseId && challengeId) {
+            resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
+              challengeId,
+              phaseId: data.phaseId,
+              challengeCache,
+            });
+          }
+          const normalizedReviewerPhase =
+            this.normalizePhaseName(resolvedPhaseName);
+          const isScreeningPhaseForReviewer =
+            hasReviewerRoleResource &&
+            (normalizedReviewerPhase === 'screening' ||
+              normalizedReviewerPhase === 'checkpoint screening');
           if (
-            challenge.status !== ChallengeStatus.COMPLETED &&
-            !reviewerResourceIds.has(reviewResourceId)
+            !challengeInFinalState &&
+            !reviewerResourceIds.has(reviewResourceId) &&
+            !isScreeningPhaseForReviewer
           ) {
             throw new ForbiddenException({
               message:
@@ -3058,13 +3723,14 @@ export class ReviewService {
               details: { challengeId, reviewId, requester: uid },
             });
           }
-        } else if (!hasCopilotRole) {
+        } else {
           // Confirm the user has actually submitted to this challenge (has a submission record)
           const mySubs = await this.prisma.submission.findMany({
             where: { challengeId, memberId: uid },
             select: { id: true },
           });
-          if (mySubs.length === 0) {
+          isSubmitterForChallenge = mySubs.length > 0;
+          if (!isSubmitterForChallenge) {
             throw new ForbiddenException({
               message:
                 'You must have submitted to this challenge to access this review',
@@ -3076,7 +3742,41 @@ export class ReviewService {
           const visibility = this.getSubmitterVisibilityForChallenge(challenge);
           const isOwnSubmission = !!uid && data.submission?.memberId === uid;
 
-          if (!visibility.allowOwn) {
+          resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
+            challengeId,
+            phaseId: data.phaseId ?? null,
+            challengeCache,
+          });
+          const normalizedPhaseNameForAccess =
+            this.normalizePhaseName(resolvedPhaseName);
+          const phaseNamesForAccessCheck: string[] = [];
+          if (resolvedPhaseName && resolvedPhaseName.trim().length > 0) {
+            phaseNamesForAccessCheck.push(resolvedPhaseName);
+          } else if (normalizedPhaseNameForAccess.length > 0) {
+            phaseNamesForAccessCheck.push(normalizedPhaseNameForAccess);
+          }
+          const canSeeOwnScreeningReview =
+            isOwnSubmission &&
+            normalizedPhaseNameForAccess === 'screening' &&
+            this.hasChallengePhaseCompleted(challenge, ['screening']);
+          const canSeeOwnCheckpointReview =
+            isOwnSubmission &&
+            normalizedPhaseNameForAccess === 'checkpoint review' &&
+            this.hasChallengePhaseCompleted(challenge, ['checkpoint review']);
+          const canSeeOwnClosedPhaseReview =
+            isOwnSubmission &&
+            phaseNamesForAccessCheck.length > 0 &&
+            this.hasChallengePhaseCompleted(
+              challenge,
+              phaseNamesForAccessCheck,
+            );
+
+          if (
+            !visibility.allowOwn &&
+            !canSeeOwnScreeningReview &&
+            !canSeeOwnCheckpointReview &&
+            !canSeeOwnClosedPhaseReview
+          ) {
             throw new ForbiddenException({
               message:
                 'Reviews are not accessible for this challenge at the current phase',
@@ -3085,7 +3785,8 @@ export class ReviewService {
             });
           }
 
-          if (!visibility.allowAny && !isOwnSubmission) {
+          const isFirst2Finish = this.isFirst2FinishChallenge(challenge);
+          if (!visibility.allowAny && !isOwnSubmission && !isFirst2Finish) {
             throw new ForbiddenException({
               message:
                 'Only reviews of your own submission are accessible during Appeals or Appeals Response',
@@ -3113,11 +3814,37 @@ export class ReviewService {
         // ignore
       }
       result.appeals = flattenedAppeals;
-      result.phaseName = await this.resolvePhaseNameFromChallenge({
-        challengeId: data.submission?.challengeId ?? null,
-        phaseId: data.phaseId ?? null,
-        challengeCache,
-      });
+      if (!resolvedPhaseName) {
+        resolvedPhaseName = await this.resolvePhaseNameFromChallenge({
+          challengeId,
+          phaseId: data.phaseId ?? null,
+          challengeCache,
+        });
+      }
+      result.phaseName = resolvedPhaseName;
+
+      const normalizedPhaseName = this.normalizePhaseName(resolvedPhaseName);
+      const requesterId = String(authUser?.userId ?? '');
+      const submissionOwnerId = String(data.submission?.memberId ?? '');
+      const challengeForReview = challengeId
+        ? (challengeCache.get(challengeId) ?? challengeDetail)
+        : challengeDetail;
+      const shouldTrimIterativeReviewForOtherSubmitters =
+        !isPrivilegedRequester &&
+        isSubmitterForChallenge &&
+        !hasCopilotRole &&
+        !isReviewerForReview &&
+        submissionOwnerId.length > 0 &&
+        requesterId.length > 0 &&
+        submissionOwnerId !== requesterId &&
+        normalizedPhaseName === 'iterative review' &&
+        this.isFirst2FinishChallenge(challengeForReview);
+
+      if (shouldTrimIterativeReviewForOtherSubmitters) {
+        result.reviewItems = [];
+        result.appeals = [];
+      }
+
       return result as ReviewResponseDto;
     } catch (error) {
       if (error instanceof ForbiddenException) {
@@ -3200,46 +3927,514 @@ export class ReviewService {
     return matchedPhase?.name ?? null;
   }
 
-  private getSubmitterVisibilityForChallenge(challenge?: {
-    status?: ChallengeStatus;
-    phases?: Array<{ name?: string | null; isOpen?: boolean | null }>;
-  }): { allowAny: boolean; allowOwn: boolean } {
+  private normalizePhaseName(phaseName: string | null | undefined): string {
+    return String(phaseName ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private hasTimestampValue(value: unknown): boolean {
+    if (value == null) {
+      return false;
+    }
+    if (value instanceof Date) {
+      return true;
+    }
+    switch (typeof value) {
+      case 'string':
+        return value.trim().length > 0;
+      case 'number':
+        return Number.isFinite(value);
+      case 'bigint':
+      case 'boolean':
+        return true;
+      case 'symbol':
+      case 'function':
+        return false;
+      case 'object': {
+        const valueWithToISOString = value as {
+          toISOString?: (() => string) | undefined;
+          valueOf?: (() => unknown) | undefined;
+        };
+        if (typeof valueWithToISOString.toISOString === 'function') {
+          try {
+            return valueWithToISOString.toISOString().trim().length > 0;
+          } catch {
+            return false;
+          }
+        }
+        if (typeof valueWithToISOString.valueOf === 'function') {
+          const primitiveValue = valueWithToISOString.valueOf();
+          if (primitiveValue !== value) {
+            return this.hasTimestampValue(primitiveValue);
+          }
+        }
+        return false;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private hasChallengePhaseCompleted(
+    challenge: ChallengeData | null | undefined,
+    phaseNames: string[],
+  ): boolean {
+    if (!challenge?.phases?.length) {
+      return false;
+    }
+
+    const normalizedTargets = new Set(
+      (phaseNames ?? [])
+        .map((name) => this.normalizePhaseName(name))
+        .filter((name) => name.length > 0),
+    );
+
+    if (!normalizedTargets.size) {
+      return false;
+    }
+
+    return (challenge.phases ?? []).some((phase) => {
+      if (!phase) {
+        return false;
+      }
+
+      const normalizedName = this.normalizePhaseName((phase as any).name);
+      if (!normalizedTargets.has(normalizedName)) {
+        return false;
+      }
+
+      if ((phase as any).isOpen === true) {
+        return false;
+      }
+
+      const actualEnd =
+        (phase as any).actualEndTime ??
+        (phase as any).actualEndDate ??
+        (phase as any).actualEnd ??
+        null;
+
+      return this.hasTimestampValue(actualEnd);
+    });
+  }
+
+  private getPhaseIdsForNames(
+    challenge: ChallengeData | null | undefined,
+    phaseNames: string[],
+  ): string[] {
+    if (!challenge?.phases?.length) {
+      return [];
+    }
+
+    const normalizedTargets = new Set(
+      (phaseNames ?? [])
+        .map((name) => this.normalizePhaseName(name))
+        .filter((name) => name.length > 0),
+    );
+
+    if (!normalizedTargets.size) {
+      return [];
+    }
+
+    const phaseIds: string[] = [];
+
+    for (const phase of challenge.phases ?? []) {
+      if (!phase) {
+        continue;
+      }
+
+      const normalizedName = this.normalizePhaseName((phase as any).name);
+      if (!normalizedTargets.has(normalizedName)) {
+        continue;
+      }
+
+      const candidateIds = [(phase as any).id, (phase as any).phaseId]
+        .map((value) => String(value ?? '').trim())
+        .filter((value) => value.length > 0);
+
+      for (const candidate of candidateIds) {
+        if (!phaseIds.includes(candidate)) {
+          phaseIds.push(candidate);
+        }
+      }
+    }
+
+    return phaseIds;
+  }
+
+  private getSubmitterVisibilityForChallenge(
+    challenge?: ChallengeData | null,
+  ): { allowAny: boolean; allowOwn: boolean } {
     if (!challenge) {
       return { allowAny: false, allowOwn: false };
     }
 
     const status = challenge.status;
     const phases = challenge.phases || [];
-
-    const normalizeName = (phaseName: string | null | undefined) =>
-      String(phaseName ?? '').toLowerCase();
+    const isFirst2Finish = this.isFirst2FinishChallenge(challenge);
 
     const appealsOpen = phases.some(
-      (phase) => normalizeName(phase.name) === 'appeals' && phase.isOpen,
+      (phase) =>
+        this.normalizePhaseName(phase?.name) === 'appeals' &&
+        phase?.isOpen === true,
     );
     const appealsResponseOpen = phases.some(
       (phase) =>
-        normalizeName(phase.name) === 'appeals response' && phase.isOpen,
+        this.normalizePhaseName(phase?.name) === 'appeals response' &&
+        phase?.isOpen === true,
     );
 
     const hasAppealsPhases = phases.some((phase) => {
-      const name = normalizeName(phase.name);
+      const name = this.normalizePhaseName(phase?.name);
       return name === 'appeals' || name === 'appeals response';
     });
 
     const iterativeReviewClosed = phases.some((phase) => {
-      const name = normalizeName(phase.name);
-      return name === 'iterative review' && phase.isOpen === false;
+      const name = this.normalizePhaseName(phase?.name);
+      return name === 'iterative review' && phase?.isOpen === false;
     });
 
-    const allowAny = status === ChallengeStatus.COMPLETED;
+    const allowAny = this.isCompletedOrCancelledStatus(status);
     const allowOwn =
       allowAny ||
       appealsOpen ||
       appealsResponseOpen ||
-      (!hasAppealsPhases && iterativeReviewClosed);
+      (!hasAppealsPhases && iterativeReviewClosed) ||
+      isFirst2Finish;
 
     return { allowAny, allowOwn };
+  }
+
+  private isFirst2FinishChallenge(challenge?: ChallengeData | null): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (
+      typeName === 'first2finish' ||
+      typeName === 'first 2 finish' ||
+      typeName === 'topgear task'
+    ) {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (legacySubTrack === 'first_2_finish') {
+      return true;
+    }
+
+    return false;
+  }
+
+  private isMarathonMatchChallenge(challenge?: ChallengeData | null): boolean {
+    if (!challenge) {
+      return false;
+    }
+
+    const typeName = (challenge.type ?? '').trim().toLowerCase();
+    if (typeName === 'marathon match') {
+      return true;
+    }
+
+    const legacySubTrack = (challenge.legacy?.subTrack ?? '')
+      .trim()
+      .toLowerCase();
+    if (legacySubTrack.includes('marathon')) {
+      return true;
+    }
+
+    const legacyTrack = (challenge.legacy?.track ?? '').trim().toLowerCase();
+    return legacyTrack.includes('marathon');
+  }
+
+  private async hasPassingSubmissionForReviewScorecard(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    const normalizedChallengeId = String(challengeId ?? '').trim();
+    const normalizedMemberId = String(memberId ?? '').trim();
+
+    if (!normalizedChallengeId || !normalizedMemberId) {
+      return false;
+    }
+
+    try {
+      const passingSummation = await this.prisma.reviewSummation.findFirst({
+        where: {
+          isPassing: true,
+          scorecard: {
+            type: {
+              in: [
+                ScorecardType.REVIEW,
+                ScorecardType.ITERATIVE_REVIEW,
+                ScorecardType.APPROVAL,
+              ],
+            },
+          },
+          submission: {
+            challengeId: normalizedChallengeId,
+            memberId: normalizedMemberId,
+          },
+        },
+        select: { id: true },
+      });
+
+      return Boolean(passingSummation);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[hasPassingSubmissionForReviewScorecard] Failed to check passing submission for challenge ${normalizedChallengeId}, member ${normalizedMemberId}: ${message}`,
+      );
+      return false;
+    }
+  }
+
+  private isCompletedOrCancelledStatus(
+    status?: ChallengeStatus | null,
+  ): boolean {
+    if (!status) {
+      return false;
+    }
+    if (status === ChallengeStatus.COMPLETED) {
+      return true;
+    }
+    if (status === ChallengeStatus.CANCELLED) {
+      return true;
+    }
+    return String(status).startsWith('CANCELLED_');
+  }
+
+  private identifyReviewerRoleType(
+    roleName: string,
+  ):
+    | 'screener'
+    | 'checkpoint-screener'
+    | 'checkpoint-reviewer'
+    | 'reviewer'
+    | 'approver'
+    | 'iterative-reviewer'
+    | 'unknown' {
+    const normalized = (roleName ?? '').toLowerCase().trim();
+
+    if (!normalized.length) {
+      return 'unknown';
+    }
+
+    if (normalized.includes('checkpoint') && normalized.includes('screener')) {
+      return 'checkpoint-screener';
+    }
+
+    if (normalized.includes('checkpoint') && normalized.includes('reviewer')) {
+      return 'checkpoint-reviewer';
+    }
+
+    if (normalized.includes('screener') && !normalized.includes('checkpoint')) {
+      return 'screener';
+    }
+
+    if (normalized.includes('approver') || normalized.includes('approval')) {
+      return 'approver';
+    }
+
+    if (normalized.includes('iterative') && normalized.includes('reviewer')) {
+      return 'iterative-reviewer';
+    }
+
+    if (
+      normalized.includes('reviewer') &&
+      !normalized.includes('checkpoint') &&
+      !normalized.includes('iterative')
+    ) {
+      return 'reviewer';
+    }
+
+    return 'unknown';
+  }
+
+  private buildReviewerRoleFilters(
+    resources: ResourceInfo[],
+    challengeDetail: ChallengeData | null,
+    challengeCompletedOrCancelled: boolean,
+  ): Prisma.reviewWhereInput | null {
+    if (challengeCompletedOrCancelled) {
+      return null;
+    }
+
+    const allReviewerResourceIds = (resources ?? [])
+      .map((resource) => String(resource?.id ?? '').trim())
+      .filter((id) => id.length > 0);
+
+    if (!challengeDetail) {
+      return allReviewerResourceIds.length
+        ? { resourceId: { in: allReviewerResourceIds } }
+        : null;
+    }
+
+    const groupedByRole = new Map<
+      ReturnType<typeof this.identifyReviewerRoleType>,
+      ResourceInfo[]
+    >();
+
+    for (const resource of resources ?? []) {
+      if (!resource) {
+        continue;
+      }
+      const roleType = this.identifyReviewerRoleType(resource.roleName ?? '');
+      if (roleType === 'unknown') {
+        continue;
+      }
+
+      const existing = groupedByRole.get(roleType);
+      if (existing) {
+        existing.push(resource);
+      } else {
+        groupedByRole.set(roleType, [resource]);
+      }
+    }
+
+    const filters: Prisma.reviewWhereInput[] = [];
+
+    const screeningPhaseIds = this.getPhaseIdsForNames(challengeDetail, [
+      'screening',
+    ]);
+    const hasScreeningVisibility =
+      screeningPhaseIds.length > 0 &&
+      (groupedByRole.has('screener') ||
+        groupedByRole.has('reviewer') ||
+        groupedByRole.has('checkpoint-reviewer'));
+    if (hasScreeningVisibility) {
+      filters.push({
+        AND: [
+          { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
+          { phaseId: { in: screeningPhaseIds } },
+        ],
+      });
+    }
+
+    if (groupedByRole.has('checkpoint-screener')) {
+      const checkpointScreeningPhaseIds = this.getPhaseIdsForNames(
+        challengeDetail,
+        ['checkpoint screening'],
+      );
+      if (checkpointScreeningPhaseIds.length) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CHECKPOINT_SUBMISSION } },
+            { phaseId: { in: checkpointScreeningPhaseIds } },
+          ],
+        });
+      }
+    }
+
+    if (groupedByRole.has('checkpoint-reviewer')) {
+      const checkpointReviewPhaseIds = this.getPhaseIdsForNames(
+        challengeDetail,
+        ['checkpoint review'],
+      );
+      const checkpointReviewerResourceIds = (
+        groupedByRole.get('checkpoint-reviewer') ?? []
+      )
+        .map((resource) => String(resource?.id ?? '').trim())
+        .filter((id) => id.length > 0);
+      if (
+        checkpointReviewPhaseIds.length &&
+        checkpointReviewerResourceIds.length
+      ) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CHECKPOINT_SUBMISSION } },
+            { phaseId: { in: checkpointReviewPhaseIds } },
+            { resourceId: { in: checkpointReviewerResourceIds } },
+          ],
+        });
+      } else if (checkpointReviewerResourceIds.length) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CHECKPOINT_SUBMISSION } },
+            { resourceId: { in: checkpointReviewerResourceIds } },
+          ],
+        });
+      }
+    }
+
+    if (groupedByRole.has('reviewer')) {
+      const reviewPhaseIds = this.getPhaseIdsForNames(challengeDetail, [
+        'review',
+      ]);
+      const reviewerResourceIds = (groupedByRole.get('reviewer') ?? [])
+        .map((resource) => String(resource?.id ?? '').trim())
+        .filter((id) => id.length > 0);
+      if (reviewPhaseIds.length && reviewerResourceIds.length) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
+            { phaseId: { in: reviewPhaseIds } },
+            { resourceId: { in: reviewerResourceIds } },
+          ],
+        });
+      } else if (reviewerResourceIds.length) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
+            { resourceId: { in: reviewerResourceIds } },
+          ],
+        });
+      }
+    }
+
+    if (groupedByRole.has('iterative-reviewer')) {
+      const iterativeReviewPhaseIds = this.getPhaseIdsForNames(
+        challengeDetail,
+        ['iterative review'],
+      );
+      const iterativeReviewerResourceIds = (
+        groupedByRole.get('iterative-reviewer') ?? []
+      )
+        .map((resource) => String(resource?.id ?? '').trim())
+        .filter((id) => id.length > 0);
+      if (
+        iterativeReviewPhaseIds.length &&
+        iterativeReviewerResourceIds.length
+      ) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
+            { phaseId: { in: iterativeReviewPhaseIds } },
+            { resourceId: { in: iterativeReviewerResourceIds } },
+          ],
+        });
+      }
+    }
+
+    if (groupedByRole.has('approver')) {
+      const approvalPhaseIds = this.getPhaseIdsForNames(challengeDetail, [
+        'approval',
+      ]);
+      const approverResourceIds = (groupedByRole.get('approver') ?? [])
+        .map((resource) => String(resource?.id ?? '').trim())
+        .filter((id) => id.length > 0);
+      if (approvalPhaseIds.length && approverResourceIds.length) {
+        filters.push({
+          AND: [
+            { submission: { type: SubmissionType.CONTEST_SUBMISSION } },
+            { phaseId: { in: approvalPhaseIds } },
+            { resourceId: { in: approverResourceIds } },
+          ],
+        });
+      }
+    }
+
+    if (filters.length) {
+      return { OR: filters };
+    }
+
+    return allReviewerResourceIds.length
+      ? { resourceId: { in: allReviewerResourceIds } }
+      : null;
   }
 
   private shouldEnforceLatestSubmissionForReview(
@@ -3278,14 +4473,14 @@ export class ReviewService {
       return false;
     }
 
-    const enforceableNames = new Set([
+    const names = new Set([
       'review',
       'iterative review',
       'screening',
       'checkpoint screening',
     ]);
 
-    if (enforceableNames.has(normalized)) {
+    if (names.has(normalized)) {
       return true;
     }
 
@@ -3296,12 +4491,12 @@ export class ReviewService {
     challenge: ChallengeData | null | undefined,
   ): boolean {
     if (!challenge?.metadata) {
-      return false;
+      return true;
     }
 
     const rawValue = challenge.metadata['submissionLimit'];
     if (rawValue == null) {
-      return false;
+      return true;
     }
 
     let parsed: unknown = rawValue;
@@ -3309,7 +4504,7 @@ export class ReviewService {
     if (typeof rawValue === 'string') {
       const trimmed = rawValue.trim();
       if (!trimmed) {
-        return false;
+        return true;
       }
 
       try {
@@ -3323,7 +4518,7 @@ export class ReviewService {
         if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
           return false;
         }
-        return false;
+        return true;
       }
     }
 
@@ -3340,7 +4535,7 @@ export class ReviewService {
       if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
         return false;
       }
-      return false;
+      return true;
     }
 
     if (parsed && typeof parsed === 'object') {
@@ -3371,10 +4566,13 @@ export class ReviewService {
       if (limitFlag === true) {
         return true;
       }
-      return false;
+      if (limitFlag === false) {
+        return false;
+      }
+      return true;
     }
 
-    return false;
+    return true;
   }
 
   private extractSubmissionLimitUnlimited(value: unknown): boolean | null {

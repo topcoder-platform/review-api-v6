@@ -167,10 +167,23 @@ export class ContactRequestsService {
       return;
     }
 
-    // Get emails for recipients
-    const memberInfos = await this.memberService.getUserEmails(memberIds);
+    // Get emails for recipients and requester
+    const requesterId = authUser?.userId ? String(authUser.userId) : undefined;
+    const lookupIds = requesterId
+      ? Array.from(new Set([...memberIds, requesterId]))
+      : memberIds;
+
+    const memberInfos = await this.memberService.getUserEmails(lookupIds);
+    const memberInfoById = new Map(
+      memberInfos.map((info) => [String(info.userId), info]),
+    );
+
     const recipients = Array.from(
-      new Set(memberInfos.map((m) => m.email).filter(Boolean)),
+      new Set(
+        memberIds
+          .map((id) => memberInfoById.get(id)?.email)
+          .filter((email): email is string => Boolean(email)),
+      ),
     );
 
     if (recipients.length === 0) {
@@ -178,6 +191,16 @@ export class ContactRequestsService {
         `No recipient emails found for challenge ${challengeId} targeted roles`,
       );
       return;
+    }
+
+    const requesterEmail = requesterId
+      ? memberInfoById.get(requesterId)?.email
+      : undefined;
+
+    if (!requesterEmail && requesterId) {
+      this.logger.warn(
+        `No email found for requester ${requesterId} when notifying challenge ${challengeId}`,
+      );
     }
 
     const payload: EventBusSendEmailPayload = new EventBusSendEmailPayload();
@@ -189,6 +212,10 @@ export class ContactRequestsService {
       challengeName: challenge.name,
       message: message ?? '',
     };
+    if (requesterEmail) {
+      payload.from = requesterEmail;
+      payload.replyTo = requesterEmail;
+    }
 
     await this.eventBusService.sendEmail(payload);
   }

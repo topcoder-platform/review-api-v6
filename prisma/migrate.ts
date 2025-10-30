@@ -29,10 +29,174 @@ const schema = process.env.POSTGRES_SCHEMA || 'public';
 console.log(`Using PostgreSQL schema: ${schema}`);
 
 const prisma = new PrismaClient();
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'Scorecards');
+const DEFAULT_DATA_DIR = '/mnt/export/review_tables';
+const DATA_DIR = process.env.DATA_DIR || DEFAULT_DATA_DIR;
 const batchSize = 1000;
 const logSize = 20000;
-const esFileName = 'dev-submissions-api.data.json';
+const DEFAULT_ES_DATA_FILE = path.join(
+  '/home/ubuntu',
+  'submissions-api.data.json',
+);
+const ES_DATA_FILE = process.env.ES_DATA_FILE || DEFAULT_ES_DATA_FILE;
+
+const incrementalSinceInput =
+  process.env.MIGRATE_SINCE || process.env.INCREMENTAL_SINCE;
+let incrementalSince: Date | null = null;
+if (incrementalSinceInput) {
+  const parsed = new Date(incrementalSinceInput);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(
+      `Invalid MIGRATE_SINCE/INCREMENTAL_SINCE value "${incrementalSinceInput}". Use an ISO-8601 date.`,
+    );
+  }
+  incrementalSince = parsed;
+  console.log(
+    `Running incremental migration for records updated after ${incrementalSince.toISOString()}`,
+  );
+}
+const isIncrementalRun = incrementalSince !== null;
+
+const cliArgs = new Set(process.argv.slice(2));
+const shouldRepairMaps = cliArgs.has('--repair-maps');
+if (shouldRepairMaps) {
+  console.log(
+    '[map] --repair-maps enabled; duplicate or invalid mapping entries will be cleaned.',
+  );
+}
+
+const errorSummary = new Map<
+  string,
+  { count: number; files: Set<string>; examples: string[] }
+>();
+const errorPositionTracker = new Map<string, number>();
+const sourceDeltaCounters = new Map<string, number>();
+
+const incrementSourceDelta = (key: string) => {
+  if (!isIncrementalRun) {
+    return;
+  }
+  sourceDeltaCounters.set(key, (sourceDeltaCounters.get(key) ?? 0) + 1);
+};
+
+const parseDateInput = (value: string | Date | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const shouldProcessRecord = (
+  created?: string | Date | null,
+  updated?: string | Date | null,
+) => {
+  if (!incrementalSince) {
+    return true;
+  }
+  const createdAt = parseDateInput(created);
+  const updatedAt = parseDateInput(updated);
+  if (!createdAt && !updatedAt) {
+    // If there is no audit information we default to processing.
+    return true;
+  }
+  return (
+    (createdAt && createdAt >= incrementalSince) ||
+    (updatedAt && updatedAt >= incrementalSince)
+  );
+};
+
+const buildLogPrefix = (type: string, file: string, subtype?: string) =>
+  subtype ? `[${type}][${subtype}][${file}]` : `[${type}][${file}]`;
+
+const extractLegacyIdentifier = (record: any): string | null => {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const candidates = [
+    'legacyId',
+    'legacy_id',
+    'legacySubmissionId',
+    'submission_id',
+    'scorecard_id',
+    'scorecard_group_id',
+    'scorecard_section_id',
+    'scorecard_question_id',
+    'review_id',
+    'review_item_id',
+    'review_item_comment_id',
+    'project_id',
+    'upload_id',
+    'resource_id',
+    'ai_workflow_id',
+    'llm_provider_id',
+    'llm_model_id',
+  ];
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      return describeLegacyId(record[key]);
+    }
+  }
+  return null;
+};
+
+const logRecordConversionError = (
+  type: string,
+  file: string,
+  err: unknown,
+  record: unknown,
+  message: string,
+  subtype?: string,
+  context?: { index?: number },
+) => {
+  const prefix = buildLogPrefix(type, file, subtype);
+  const errorMessage = err instanceof Error ? err.message : String(err);
+  let recordPosition: number | null = null;
+  if (context?.index != null) {
+    recordPosition = context.index + 1;
+  } else {
+    const trackerKey = `${type}|${file}|${subtype ?? 'default'}`;
+    const nextPosition = (errorPositionTracker.get(trackerKey) ?? 0) + 1;
+    errorPositionTracker.set(trackerKey, nextPosition);
+    recordPosition = nextPosition;
+  }
+  const legacyIdentifier = extractLegacyIdentifier(record);
+  const positionSuffix = recordPosition ? ` record#${recordPosition}` : '';
+  const legacySuffix = legacyIdentifier ? ` legacy=${legacyIdentifier}` : '';
+
+  console.error(`${prefix} ${message}${positionSuffix}${legacySuffix}`);
+  console.error(`${prefix} Error detail: ${errorMessage}`);
+  if (err instanceof Error && err.stack) {
+    console.error(err);
+  }
+  try {
+    console.error(`${prefix} Skipping record: ${JSON.stringify(record)}`);
+  } catch (stringifyErr) {
+    const stringifyMessage =
+      stringifyErr instanceof Error
+        ? stringifyErr.message
+        : String(stringifyErr);
+    console.error(
+      `${prefix} Failed to stringify record while skipping: ${stringifyMessage}`,
+    );
+  }
+
+  const aggregationKey = `${type}${subtype ? `:${subtype}` : ''} | ${message}`;
+  const summary = errorSummary.get(aggregationKey) ?? {
+    count: 0,
+    files: new Set<string>(),
+    examples: [] as string[],
+  };
+  summary.count += 1;
+  summary.files.add(file);
+  if (summary.examples.length < 5) {
+    const exampleLabel = `${file}${recordPosition ? `#${recordPosition}` : ''}${legacyIdentifier ? `:${legacyIdentifier}` : ''}`;
+    summary.examples.push(exampleLabel);
+  }
+  errorSummary.set(aggregationKey, summary);
+};
 
 const modelMappingKeys = [
   'project_result',
@@ -79,15 +243,199 @@ const submissionMap: Record<string, Record<string, string>> = {};
 
 // Data lookup maps
 // Initialize maps from files if they exist, otherwise create new maps
-function readIdMap(filename) {
-  return fs.existsSync(`.tmp/${filename}.json`)
-    ? new Map(
-        Object.entries(
-          JSON.parse(fs.readFileSync(`.tmp/${filename}.json`, 'utf-8')),
-        ),
-      )
-    : new Map<string, string>();
+function readIdMap(filename: string): Map<string, string> {
+  if (fs.existsSync(`.tmp/${filename}.json`)) {
+    const entries = Object.entries(
+      JSON.parse(fs.readFileSync(`.tmp/${filename}.json`, 'utf-8')),
+    ).map(([key, value]) => {
+      if (typeof value !== 'string') {
+        throw new Error(
+          `Invalid mapping value for ${filename}: expected string, received "${describeLegacyId(
+            value,
+          )}"`,
+        );
+      }
+      return [key, value] as [string, string];
+    });
+    return new Map<string, string>(entries);
+  }
+  return new Map<string, string>();
 }
+
+function validateIdMap(map: Map<string, string>, label: string) {
+  const seenValues = new Map<string, string>();
+  let duplicateCount = 0;
+  let cleanedCount = 0;
+
+  for (const [key, value] of map.entries()) {
+    if (!value || typeof value !== 'string') {
+      console.warn(
+        `[map] ${label}: removing invalid mapping for key=${key} value=${describeLegacyId(value)}`,
+      );
+      map.delete(key);
+      cleanedCount += 1;
+      continue;
+    }
+
+    if (seenValues.has(value)) {
+      duplicateCount += 1;
+      const firstKey = seenValues.get(value);
+      console.warn(
+        `[map] ${label}: duplicate target id ${value} for keys ${firstKey} and ${key}`,
+      );
+      if (shouldRepairMaps) {
+        map.delete(key);
+        cleanedCount += 1;
+        continue;
+      }
+    } else {
+      seenValues.set(value, key);
+    }
+  }
+
+  if (duplicateCount > 0 && !shouldRepairMaps) {
+    console.warn(
+      `[map] ${label}: detected ${duplicateCount} duplicate value(s). Re-run with --repair-maps to clean them automatically.`,
+    );
+  }
+
+  if (cleanedCount > 0 && shouldRepairMaps) {
+    console.log(
+      `[map] ${label}: repaired ${cleanedCount} mapping entry/entries.`,
+    );
+  }
+}
+
+function validateAllIdMaps() {
+  [
+    { label: 'projectIdMap', map: projectIdMap },
+    { label: 'scorecardIdMap', map: scorecardIdMap },
+    { label: 'scorecardGroupIdMap', map: scorecardGroupIdMap },
+    { label: 'scorecardSectionIdMap', map: scorecardSectionIdMap },
+    { label: 'scorecardQuestionIdMap', map: scorecardQuestionIdMap },
+    { label: 'reviewIdMap', map: reviewIdMap },
+    { label: 'reviewItemIdMap', map: reviewItemIdMap },
+    {
+      label: 'reviewItemCommentReviewItemCommentIdMap',
+      map: reviewItemCommentReviewItemCommentIdMap,
+    },
+    {
+      label: 'reviewItemCommentAppealIdMap',
+      map: reviewItemCommentAppealIdMap,
+    },
+    {
+      label: 'reviewItemCommentAppealResponseIdMap',
+      map: reviewItemCommentAppealResponseIdMap,
+    },
+    { label: 'uploadIdMap', map: uploadIdMap },
+    { label: 'submissionIdMap', map: submissionIdMap },
+    { label: 'llmProviderIdMap', map: llmProviderIdMap },
+    { label: 'llmModelIdMap', map: llmModelIdMap },
+    { label: 'aiWorkflowIdMap', map: aiWorkflowIdMap },
+    { label: 'resourceSubmissionIdMap', map: resourceSubmissionIdMap },
+  ].forEach(({ label, map }) => validateIdMap(map, label));
+}
+
+const describeLegacyId = (value: unknown): string => {
+  if (value === null) {
+    return 'null';
+  }
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (typeof value === 'symbol') {
+    return value.toString();
+  }
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'object' || typeof value === 'function') {
+    try {
+      const json = JSON.stringify(value);
+      if (typeof json === 'string') {
+        return json;
+      }
+    } catch {
+      // ignore serialization errors
+    }
+    const fallbackDescription: string = Object.prototype.toString.call(value);
+    return fallbackDescription;
+  }
+  const fallbackDescription: string = Object.prototype.toString.call(value);
+  return fallbackDescription;
+};
+
+const normalizeLegacyKey = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    throw new Error('Missing legacy identifier when normalizing key');
+  }
+  return describeLegacyId(value);
+};
+
+const tryNormalizeLegacyKey = (value: unknown): string | undefined => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  return describeLegacyId(value);
+};
+
+const omitId = <T extends { id: string }>(entity: T): Omit<T, 'id'> => {
+  const { id: ignoredId, ...rest } = entity;
+  void ignoredId;
+  return rest;
+};
+
+const getMappedId = (
+  map: Map<string, string>,
+  legacyId: unknown,
+): string | undefined => {
+  const key = tryNormalizeLegacyKey(legacyId);
+  return key ? map.get(key) : undefined;
+};
+
+const setMappedId = (
+  map: Map<string, string>,
+  legacyId: unknown,
+  value: string,
+) => {
+  map.set(normalizeLegacyKey(legacyId), value);
+};
+
+const deleteMappedId = (map: Map<string, string>, legacyId: unknown) => {
+  const key = tryNormalizeLegacyKey(legacyId);
+  if (key) {
+    map.delete(key);
+  }
+};
+
+const requireMappedId = (
+  map: Map<string, string>,
+  legacyId: unknown,
+  context: string,
+): string => {
+  const id = getMappedId(map, legacyId);
+  if (!id) {
+    throw new Error(
+      `Missing required mapping for ${context} legacy id "${describeLegacyId(
+        legacyId,
+      )}"`,
+    );
+  }
+  return id;
+};
+
+const hasMappedId = (map: Map<string, string>, legacyId: unknown): boolean => {
+  const key = tryNormalizeLegacyKey(legacyId);
+  return key ? map.has(key) : false;
+};
 
 const projectIdMap = readIdMap('projectIdMap');
 const scorecardIdMap = readIdMap('scorecardIdMap');
@@ -108,6 +456,9 @@ const submissionIdMap = readIdMap('submissionIdMap');
 const llmProviderIdMap = readIdMap('llmProviderIdMap');
 const llmModelIdMap = readIdMap('llmModelIdMap');
 const aiWorkflowIdMap = readIdMap('aiWorkflowIdMap');
+const resourceSubmissionIdMap = readIdMap('resourceSubmissionIdMap');
+
+validateAllIdMaps();
 
 // read resourceSubmissionSet
 const rsSetFile = '.tmp/resourceSubmissionSet.json';
@@ -350,7 +701,7 @@ function convertSubmissionES(esData): any {
         id: summation.id,
         legacySubmissionId: String(esData.legacySubmissionId),
         aggregateScore: summation.aggregateScore,
-        scorecardId: scorecardIdMap.get(summation.scoreCardId),
+        scorecardId: getMappedId(scorecardIdMap, summation.scoreCardId),
         scorecardLegacyId: String(summation.scoreCardId),
         isPassing: summation.isPassing,
         reviewedDate: summation.reviewedDate
@@ -368,7 +719,12 @@ function convertSubmissionES(esData): any {
 
 async function migrateElasticSearch() {
   // migrate elastic search data
-  const filepath = path.join(DATA_DIR, esFileName);
+  const filepath = ES_DATA_FILE;
+  if (!fs.existsSync(filepath)) {
+    throw new Error(
+      `ElasticSearch export file not found at ${filepath}. Set ES_DATA_FILE to override the default.`,
+    );
+  }
   const fileStream = fs.createReadStream(filepath);
   const rl = readline.createInterface({
     input: fileStream,
@@ -403,6 +759,12 @@ async function handleElasticSearchSubmission(item) {
   if (item['legacySubmissionId'] == null) {
     return;
   }
+  const createdAudit = item.created ?? item.submittedDate ?? null;
+  const updatedAudit = item.updated ?? null;
+  if (!shouldProcessRecord(createdAudit, updatedAudit)) {
+    return;
+  }
+  incrementSourceDelta('submission');
   currentSubmissions.push(item);
   // if we can batch insert data, +
   if (currentSubmissions.length >= batchSize) {
@@ -420,18 +782,22 @@ async function importSubmissionES() {
 
     let newSubmission = false;
     try {
-      if (submissionIdMap.has(submission.legacySubmissionId)) {
+      const existingSubmissionId = getMappedId(
+        submissionIdMap,
+        submission.legacySubmissionId,
+      );
+      if (existingSubmissionId) {
         newSubmission = false;
         await prisma.submission.update({
           data: submission,
           where: {
-            id: submissionIdMap.get(submission.legacySubmissionId) as string,
+            id: existingSubmissionId,
           },
         });
       } else {
         newSubmission = true;
         const newId = nanoid(14);
-        projectIdMap.set(submission.legacySubmissionId, newId);
+        setMappedId(projectIdMap, submission.legacySubmissionId, newId);
         let type = LegacySubmissionType[item.type];
         if (!LegacySubmissionType[item.type]) {
           type = LegacySubmissionType.ContestSubmission;
@@ -446,19 +812,20 @@ async function importSubmissionES() {
             createdAt: item.created ? new Date(item.created) : new Date(),
           },
         });
+        setMappedId(submissionIdMap, submission.legacySubmissionId, newId);
       }
     } catch {
       if (newSubmission) {
-        projectIdMap.delete(submission.legacySubmissionId);
+        deleteMappedId(projectIdMap, submission.legacySubmissionId);
       }
       console.error(`Failed to import submission from ES: ${submission.esId}`);
     }
   }
 }
 
-function convertUpload(jsonData) {
+function convertUpload(jsonData, existingId?: string) {
   return {
-    id: nanoid(14),
+    id: existingId ?? nanoid(14),
     legacyId: jsonData['upload_id'],
     projectId: jsonData['project_id'],
     resourceId: jsonData['resource_id'],
@@ -499,18 +866,33 @@ async function doImportUploadData() {
         await prisma.upload.create({ data: u });
       } catch {
         console.error(`Cannot import upload data id: ${u.legacyId}`);
-        uploadIdMap.delete(u.legacyId);
+        deleteMappedId(uploadIdMap, u.legacyId);
       }
     }
   }
 }
 
-function convertSubmission(jsonData) {
+async function upsertUploadData(uploadData) {
+  const { id, ...updateData } = uploadData;
+  try {
+    await prisma.upload.upsert({
+      where: { id },
+      create: uploadData,
+      update: updateData,
+    });
+  } catch (err) {
+    console.error(`Failed to upsert upload data id: ${uploadData.legacyId}`);
+    console.error(err);
+    throw err;
+  }
+}
+
+function convertSubmission(jsonData, existingId?: string) {
   return {
-    id: nanoid(14),
+    id: existingId ?? nanoid(14),
     legacySubmissionId: jsonData['submission_id'],
     legacyUploadId: jsonData['upload_id'],
-    uploadId: uploadIdMap.get(jsonData['upload_id']),
+    uploadId: getMappedId(uploadIdMap, jsonData['upload_id']),
     status: submissionStatusMap[jsonData['submission_status_id']],
     type: submissionTypeMap[jsonData['submission_type_id']],
     screeningScore: jsonData['screening_score'],
@@ -554,9 +936,26 @@ async function doImportSubmissionData() {
         await prisma.submission.create({ data: s });
       } catch {
         console.error(`Failed to import submission ${s.legacySubmissionId}`);
-        submissionIdMap.delete(s.legacySubmissionId);
+        deleteMappedId(submissionIdMap, s.legacySubmissionId);
       }
     }
+  }
+}
+
+async function upsertSubmissionData(submissionData) {
+  const { id, ...updateData } = submissionData;
+  try {
+    await prisma.submission.upsert({
+      where: { id },
+      create: submissionData,
+      update: updateData,
+    });
+  } catch (err) {
+    console.error(
+      `Failed to upsert submission ${submissionData.legacySubmissionId}`,
+    );
+    console.error(err);
+    throw err;
   }
 }
 
@@ -595,11 +994,26 @@ async function initSubmissionMap() {
     let dataCount = 0;
     for (const d of jsonData) {
       dataCount += 1;
-      const uploadData = convertUpload(d);
-      // import upload data if any
-      if (!uploadIdMap.has(uploadData.legacyId)) {
-        uploadIdMap.set(uploadData.legacyId, uploadData.id);
-        await importUploadData(uploadData);
+      const shouldPersist = shouldProcessRecord(
+        d['create_date'],
+        d['modify_date'],
+      );
+      const legacyId = String(d['upload_id']);
+      const existingId = getMappedId(uploadIdMap, legacyId);
+      const uploadData = convertUpload(d, existingId);
+      const skipPersistence = !existingId && isIncrementalRun && !shouldPersist;
+      if (!skipPersistence) {
+        // import upload data if any
+        if (!existingId) {
+          setMappedId(uploadIdMap, uploadData.legacyId, uploadData.id);
+          if (isIncrementalRun) {
+            await upsertUploadData(uploadData);
+          } else {
+            await importUploadData(uploadData);
+          }
+        } else if (isIncrementalRun && shouldPersist) {
+          await upsertUploadData(uploadData);
+        }
       }
       // collect data to resourceUploadMap
       if (
@@ -607,7 +1021,10 @@ async function initSubmissionMap() {
         uploadData.status === UploadStatus.ACTIVE &&
         uploadData.resourceId != null
       ) {
-        resourceUploadMap[uploadData.resourceId] = uploadData.legacyId;
+        const resourceIdKey = tryNormalizeLegacyKey(uploadData.resourceId);
+        if (resourceIdKey) {
+          resourceUploadMap[resourceIdKey] = String(uploadData.legacyId);
+        }
       }
       if (dataCount % logSize === 0) {
         console.log(`Imported upload count: ${dataCount}`);
@@ -629,10 +1046,25 @@ async function initSubmissionMap() {
     let dataCount = 0;
     for (const d of jsonData) {
       dataCount += 1;
-      const dbData = convertSubmission(d);
-      if (!submissionIdMap.has(dbData.legacySubmissionId)) {
-        submissionIdMap.set(dbData.legacySubmissionId, dbData.id);
-        await importSubmissionData(dbData);
+      const shouldPersist = shouldProcessRecord(
+        d['create_date'],
+        d['modify_date'],
+      );
+      const legacyId = String(d['submission_id']);
+      const existingId = getMappedId(submissionIdMap, legacyId);
+      const dbData = convertSubmission(d, existingId);
+      const skipPersistence = !existingId && isIncrementalRun && !shouldPersist;
+      if (!skipPersistence) {
+        if (!existingId) {
+          setMappedId(submissionIdMap, dbData.legacySubmissionId, dbData.id);
+          if (isIncrementalRun) {
+            await upsertSubmissionData(dbData);
+          } else {
+            await importSubmissionData(dbData);
+          }
+        } else if (isIncrementalRun && shouldPersist) {
+          await upsertSubmissionData(dbData);
+        }
       }
       // collect data to uploadSubmissionMap
       if (
@@ -646,16 +1078,20 @@ async function initSubmissionMap() {
           submissionId: dbData.legacySubmissionId,
         };
         // pick the latest valid submission for each upload
-        if (uploadSubmissionMap[dbData.legacyUploadId]) {
-          const existing = uploadSubmissionMap[dbData.legacyUploadId];
+        const uploadIdKey = tryNormalizeLegacyKey(dbData.legacyUploadId);
+        if (!uploadIdKey) {
+          continue;
+        }
+        if (uploadSubmissionMap[uploadIdKey]) {
+          const existing = uploadSubmissionMap[uploadIdKey];
           if (
             !existing.score ||
             item.created.getTime() > existing.created.getTime()
           ) {
-            uploadSubmissionMap[dbData.legacyUploadId] = item;
+            uploadSubmissionMap[uploadIdKey] = item;
           }
         } else {
-          uploadSubmissionMap[dbData.legacyUploadId] = item;
+          uploadSubmissionMap[uploadIdKey] = item;
         }
       }
       if (dataCount % logSize === 0) {
@@ -748,85 +1184,156 @@ async function processType(type: string, subtype?: string) {
       switch (type) {
         case 'project_result': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter((pr) => !projectIdMap.has(pr.project_id + pr.user_id))
-            .map((pr) => {
-              projectIdMap.set(
-                pr.project_id + pr.user_id,
-                pr.project_id + pr.user_id,
-              );
-              let submissionId = '';
-              if (submissionMap[pr.project_id]) {
-                submissionId = submissionMap[pr.project_id][pr.user_id] || '';
+          const convertProjectResult = (pr) => {
+            let submissionId = '';
+            if (submissionMap[pr.project_id]) {
+              submissionId = submissionMap[pr.project_id][pr.user_id] || '';
+            }
+            return {
+              challengeId: pr.project_id,
+              userId: pr.user_id,
+              paymentId: pr.payment_id,
+              submissionId,
+              oldRating: parseInt(pr.old_rating),
+              newRating: parseInt(pr.new_rating),
+              initialScore: parseFloat(pr.raw_score || '0.0'),
+              finalScore: parseFloat(pr.final_score || '0.0'),
+              placement: parseInt(pr.placed || '0'),
+              rated: pr.rating_ind === '1',
+              passedReview: pr.passed_review_ind === '1',
+              validSubmission: pr.valid_submission_ind === '1',
+              pointAdjustment: parseFloat(pr.point_adjustment),
+              ratingOrder: parseInt(pr.rating_order),
+              createdAt: new Date(pr.create_date),
+              createdBy: pr.create_user || '',
+              updatedAt: new Date(pr.modify_date),
+              updatedBy: pr.modify_user || '',
+            };
+          };
+          if (!isIncrementalRun) {
+            type ChallengeResultEntity = ReturnType<
+              typeof convertProjectResult
+            >;
+            const processedData: ChallengeResultEntity[] = [];
+            let recordIndex = 0;
+            for (const pr of jsonData[key]) {
+              const mapKey = `${pr.project_id}${pr.user_id}`;
+              if (hasMappedId(projectIdMap, mapKey)) {
+                recordIndex += 1;
+                continue;
               }
-              return {
-                challengeId: pr.project_id,
-                userId: pr.user_id,
-                paymentId: pr.payment_id,
-                submissionId,
-                oldRating: parseInt(pr.old_rating),
-                newRating: parseInt(pr.new_rating),
-                initialScore: parseFloat(pr.raw_score || '0.0'),
-                finalScore: parseFloat(pr.final_score || '0.0'),
-                placement: parseInt(pr.placed || '0'),
-                rated: pr.rating_ind === '1',
-                passedReview: pr.passed_review_ind === '1',
-                validSubmission: pr.valid_submission_ind === '1',
-                pointAdjustment: parseFloat(pr.point_adjustment),
-                ratingOrder: parseInt(pr.rating_order),
-                createdAt: new Date(pr.create_date),
-                createdBy: pr.create_user || '',
-                updatedAt: new Date(pr.modify_date),
-                updatedBy: pr.modify_user || '',
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.challengeResult
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
+              try {
+                const converted = convertProjectResult(pr);
+                setMappedId(projectIdMap, mapKey, mapKey);
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  pr,
+                  `Failed to convert projectResult for challengeId ${pr.project_id}, userId ${pr.user_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
-                for (const item of batch) {
-                  await prisma.challengeResult
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      projectIdMap.delete(item.project_id + item.user_id);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, ChallengeId: ${item.challengeId}, UserId: ${item.userId}`,
-                      );
-                    });
-                }
-              });
+              }
+              recordIndex += 1;
+            }
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.challengeResult
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.challengeResult
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(
+                          projectIdMap,
+                          `${item.challengeId}${item.userId}`,
+                        );
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, ChallengeId: ${item.challengeId}, UserId: ${item.userId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            let recordIndex = 0;
+            for (const pr of jsonData[key]) {
+              if (!shouldProcessRecord(pr.create_date, pr.modify_date)) {
+                recordIndex += 1;
+                continue;
+              }
+              incrementSourceDelta(type);
+              const mapKey = `${pr.project_id}${pr.user_id}`;
+              let data: ReturnType<typeof convertProjectResult>;
+              try {
+                data = convertProjectResult(pr);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  pr,
+                  `Failed to convert projectResult for challengeId ${pr.project_id}, userId ${pr.user_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+                recordIndex += 1;
+                continue;
+              }
+              try {
+                await prisma.challengeResult.upsert({
+                  where: {
+                    challengeId_userId: {
+                      challengeId: data.challengeId,
+                      userId: data.userId,
+                    },
+                  },
+                  create: data,
+                  update: data,
+                });
+                setMappedId(projectIdMap, mapKey, mapKey);
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert challengeResult for ChallengeId: ${data.challengeId}, UserId: ${data.userId}`,
+                );
+                console.error(err);
+              }
+              recordIndex += 1;
+            }
           }
           break;
         }
         case 'scorecard': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key].map((sc) => {
-            const id = nanoid(14);
-            scorecardIdMap.set(sc.scorecard_id, id);
+          const convertScorecard = (sc, recordId: string) => {
             const minScore = parseFloat(sc.min_score);
             const passingScoreSource =
               sc.minimum_passing_score ?? sc.passing_score ?? sc.min_score;
             const parsedPassingScore = parseFloat(passingScoreSource);
+            const category = projectCategoryMap[sc.project_category_id];
             return {
-              id: id,
+              id: recordId,
               legacyId: sc.scorecard_id,
               status: scorecardStatusMap[sc.scorecard_status_id],
               type: scorecardTypeMap[sc.scorecard_type_id],
-              challengeTrack: projectCategoryMap[sc.project_category_id].type,
-              challengeType: projectCategoryMap[sc.project_category_id].name,
+              challengeTrack: category.type,
+              challengeType: category.name,
               name: sc.name,
               version: sc.version,
               minScore: minScore,
@@ -839,315 +1346,780 @@ async function processType(type: string, subtype?: string) {
               updatedAt: new Date(sc.modify_date),
               updatedBy: sc.modify_user,
             };
-          });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecard
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
+          };
+          if (!isIncrementalRun) {
+            type ScorecardEntity = ReturnType<typeof convertScorecard>;
+            const processedData: ScorecardEntity[] = [];
+            let recordIndex = 0;
+            for (const sc of jsonData[key]) {
+              const id = nanoid(14);
+              try {
+                const converted = convertScorecard(sc, id);
+                setMappedId(scorecardIdMap, sc.scorecard_id, id);
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  sc,
+                  `Failed to convert scorecard legacyId ${sc.scorecard_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
-                for (const item of batch) {
-                  await prisma.scorecard
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
+              }
+              recordIndex += 1;
+            }
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecard
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecard
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(scorecardIdMap, item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            let recordIndex = 0;
+            for (const sc of jsonData[key]) {
+              if (!shouldProcessRecord(sc.create_date, sc.modify_date)) {
+                recordIndex += 1;
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(scorecardIdMap, sc.scorecard_id);
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertScorecard>;
+              try {
+                data = convertScorecard(sc, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  sc,
+                  `Failed to convert scorecard legacyId ${sc.scorecard_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+                recordIndex += 1;
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.scorecard.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(scorecardIdMap, sc.scorecard_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecard legacyId ${sc.scorecard_id}`,
+                );
+                console.error(err);
+              }
+              recordIndex += 1;
+            }
           }
           break;
         }
         case 'scorecard_group': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter(
-              (group) => !scorecardGroupIdMap.has(group.scorecard_group_id),
-            )
-            .map((group) => {
-              const id = nanoid(14);
-              scorecardGroupIdMap.set(group.scorecard_group_id, id);
-              return {
-                id: id,
-                legacyId: group.scorecard_group_id,
-                scorecardId: scorecardIdMap.get(group.scorecard_id),
-                name: group.name,
-                weight: parseFloat(group.weight),
-                sortOrder: parseInt(group.sort),
-                createdAt: new Date(group.create_date),
-                createdBy: group.create_user,
-                updatedAt: new Date(group.modify_date),
-                updatedBy: group.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+          const convertGroup = (group, recordId: string) => {
+            const legacyId = normalizeLegacyKey(group.scorecard_group_id);
+            const scorecardId = requireMappedId(
+              scorecardIdMap,
+              group.scorecard_id,
+              'scorecard',
             );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecardGroup
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
+            return {
+              id: recordId,
+              legacyId,
+              scorecardId,
+              name: group.name,
+              weight: parseFloat(group.weight),
+              sortOrder: parseInt(group.sort),
+              createdAt: new Date(group.create_date),
+              createdBy: group.create_user,
+              updatedAt: new Date(group.modify_date),
+              updatedBy: group.modify_user,
+            };
+          };
+          if (!isIncrementalRun) {
+            type ScorecardGroupEntity = ReturnType<typeof convertGroup>;
+            const processedData: ScorecardGroupEntity[] = [];
+            let recordIndex = 0;
+            for (const group of jsonData[key]) {
+              if (hasMappedId(scorecardGroupIdMap, group.scorecard_group_id)) {
+                recordIndex += 1;
+                continue;
+              }
+              const id = nanoid(14);
+              try {
+                const converted = convertGroup(group, id);
+                setMappedId(scorecardGroupIdMap, group.scorecard_group_id, id);
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  group,
+                  `Failed to convert scorecardGroup legacyId ${group.scorecard_group_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
-                for (const item of batch) {
-                  await prisma.scorecardGroup
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardGroupIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
+              }
+              recordIndex += 1;
+            }
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecardGroup
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecardGroup
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(scorecardGroupIdMap, item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            let recordIndex = 0;
+            for (const group of jsonData[key]) {
+              if (!shouldProcessRecord(group.create_date, group.modify_date)) {
+                recordIndex += 1;
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(
+                scorecardGroupIdMap,
+                group.scorecard_group_id,
+              );
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertGroup>;
+              try {
+                data = convertGroup(group, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  group,
+                  `Failed to convert scorecardGroup legacyId ${group.scorecard_group_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+                recordIndex += 1;
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.scorecardGroup.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(
+                    scorecardGroupIdMap,
+                    group.scorecard_group_id,
+                    id,
+                  );
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecardGroup legacyId ${group.scorecard_group_id}`,
+                );
+                console.error(err);
+              }
+              recordIndex += 1;
+            }
           }
           break;
         }
         case 'scorecard_section': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter(
-              (section) =>
-                !scorecardSectionIdMap.has(section.scorecard_section_id),
-            )
-            .map((section) => {
-              const id = nanoid(14);
-              scorecardSectionIdMap.set(section.scorecard_section_id, id);
-              return {
-                id: id,
-                legacyId: section.scorecard_section_id,
-                scorecardGroupId: scorecardGroupIdMap.get(
-                  section.scorecard_group_id,
-                ),
-                name: section.name,
-                weight: parseFloat(section.weight),
-                sortOrder: parseInt(section.sort),
-                createdAt: new Date(section.create_date),
-                createdBy: section.create_user,
-                updatedAt: new Date(section.modify_date),
-                updatedBy: section.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+          const convertSection = (section, recordId: string) => {
+            const legacyId = normalizeLegacyKey(section.scorecard_section_id);
+            const scorecardGroupId = requireMappedId(
+              scorecardGroupIdMap,
+              section.scorecard_group_id,
+              'scorecard group',
             );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecardSection
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
+            return {
+              id: recordId,
+              legacyId,
+              scorecardGroupId,
+              name: section.name,
+              weight: parseFloat(section.weight),
+              sortOrder: parseInt(section.sort),
+              createdAt: new Date(section.create_date),
+              createdBy: section.create_user,
+              updatedAt: new Date(section.modify_date),
+              updatedBy: section.modify_user,
+            };
+          };
+          if (!isIncrementalRun) {
+            type ScorecardSectionEntity = ReturnType<typeof convertSection>;
+            const processedData: ScorecardSectionEntity[] = [];
+            let recordIndex = 0;
+            for (const section of jsonData[key]) {
+              if (
+                hasMappedId(scorecardSectionIdMap, section.scorecard_section_id)
+              ) {
+                recordIndex += 1;
+                continue;
+              }
+              const id = nanoid(14);
+              try {
+                const converted = convertSection(section, id);
+                setMappedId(
+                  scorecardSectionIdMap,
+                  section.scorecard_section_id,
+                  id,
                 );
-                for (const item of batch) {
-                  await prisma.scorecardSection
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardSectionIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  section,
+                  `Failed to convert scorecardSection legacyId ${section.scorecard_section_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+              }
+              recordIndex += 1;
+            }
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecardSection
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecardSection
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(scorecardSectionIdMap, item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            let recordIndex = 0;
+            for (const section of jsonData[key]) {
+              if (
+                !shouldProcessRecord(section.create_date, section.modify_date)
+              ) {
+                recordIndex += 1;
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(
+                scorecardSectionIdMap,
+                section.scorecard_section_id,
+              );
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertSection>;
+              try {
+                data = convertSection(section, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  section,
+                  `Failed to convert scorecardSection legacyId ${section.scorecard_section_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+                recordIndex += 1;
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.scorecardSection.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(
+                    scorecardSectionIdMap,
+                    section.scorecard_section_id,
+                    id,
+                  );
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecardSection legacyId ${section.scorecard_section_id}`,
+                );
+                console.error(err);
+              }
+              recordIndex += 1;
+            }
           }
           break;
         }
         case 'scorecard_question': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter(
-              (question) =>
-                !scorecardQuestionIdMap.has(question.scorecard_question_id),
-            )
-            .map((question) => {
-              const id = nanoid(14);
-              scorecardQuestionIdMap.set(question.scorecard_question_id, id);
-              return {
-                id: id,
-                legacyId: question.scorecard_question_id,
-                scorecardSectionId: scorecardSectionIdMap.get(
-                  question.scorecard_section_id,
-                ),
-                type: questionTypeMap[question.scorecard_question_type_id].name,
-                description: question.description,
-                guidelines: question.guideline,
-                weight: parseFloat(question.weight),
-                requiresUpload: question.upload_document === '1',
-                sortOrder: parseInt(question.sort),
-                createdAt: new Date(question.create_date),
-                createdBy: question.create_user,
-                updatedAt: new Date(question.modify_date),
-                updatedBy: question.modify_user,
-                scaleMin:
-                  questionTypeMap[question.scorecard_question_type_id].min,
-                scaleMax:
-                  questionTypeMap[question.scorecard_question_type_id].max,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+          const convertQuestion = (question, recordId: string) => {
+            const questionType =
+              questionTypeMap[question.scorecard_question_type_id];
+            const legacyId = normalizeLegacyKey(question.scorecard_question_id);
+            const scorecardSectionId = requireMappedId(
+              scorecardSectionIdMap,
+              question.scorecard_section_id,
+              'scorecard section',
             );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.scorecardQuestion
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
+            return {
+              id: recordId,
+              legacyId,
+              scorecardSectionId,
+              type: questionType.name,
+              description: question.description,
+              guidelines: question.guideline,
+              weight: parseFloat(question.weight),
+              requiresUpload: question.upload_document === '1',
+              sortOrder: parseInt(question.sort),
+              createdAt: new Date(question.create_date),
+              createdBy: question.create_user,
+              updatedAt: new Date(question.modify_date),
+              updatedBy: question.modify_user,
+              scaleMin: questionType.min,
+              scaleMax: questionType.max,
+            };
+          };
+          if (!isIncrementalRun) {
+            type ScorecardQuestionEntity = ReturnType<typeof convertQuestion>;
+            const processedData: ScorecardQuestionEntity[] = [];
+            let recordIndex = 0;
+            for (const question of jsonData[key]) {
+              if (
+                hasMappedId(
+                  scorecardQuestionIdMap,
+                  question.scorecard_question_id,
+                )
+              ) {
+                recordIndex += 1;
+                continue;
+              }
+              const id = nanoid(14);
+              try {
+                const converted = convertQuestion(question, id);
+                setMappedId(
+                  scorecardQuestionIdMap,
+                  question.scorecard_question_id,
+                  id,
                 );
-                for (const item of batch) {
-                  await prisma.scorecardQuestion
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      scorecardQuestionIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  question,
+                  `Failed to convert scorecardQuestion legacyId ${question.scorecard_question_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+              }
+              recordIndex += 1;
+            }
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.scorecardQuestion
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.scorecardQuestion
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(scorecardQuestionIdMap, item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            let recordIndex = 0;
+            for (const question of jsonData[key]) {
+              if (
+                !shouldProcessRecord(question.create_date, question.modify_date)
+              ) {
+                recordIndex += 1;
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(
+                scorecardQuestionIdMap,
+                question.scorecard_question_id,
+              );
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertQuestion>;
+              try {
+                data = convertQuestion(question, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  question,
+                  `Failed to convert scorecardQuestion legacyId ${question.scorecard_question_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+                recordIndex += 1;
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.scorecardQuestion.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(
+                    scorecardQuestionIdMap,
+                    question.scorecard_question_id,
+                    id,
+                  );
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert scorecardQuestion legacyId ${question.scorecard_question_id}`,
+                );
+                console.error(err);
+              }
+              recordIndex += 1;
+            }
           }
           break;
         }
         case 'review': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter((review) => !reviewIdMap.has(review.review_id))
-            .map((review) => {
-              const id = nanoid(14);
-              reviewIdMap.set(review.review_id, id);
-              return {
-                id,
-                legacyId: review.review_id,
-                resourceId: review.resource_id,
-                phaseId: review.project_phase_id,
-                submissionId: submissionIdMap.get(review.submission_id) || null,
-                legacySubmissionId: review.submission_id,
-                scorecardId: scorecardIdMap.get(review.scorecard_id),
-                committed: review.committed === '1',
-                finalScore: review.score ? parseFloat(review.score) : null,
-                initialScore: review.initial_score
-                  ? parseFloat(review.initial_score)
-                  : null,
-                createdAt: new Date(review.create_date),
-                createdBy: review.create_user,
-                updatedAt: new Date(review.modify_date),
-                updatedBy: review.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+          const convertReview = (review, recordId: string) => {
+            const legacyId = normalizeLegacyKey(review.review_id);
+            const submissionId =
+              getMappedId(submissionIdMap, review.submission_id) ?? null;
+            const scorecardId = requireMappedId(
+              scorecardIdMap,
+              review.scorecard_id,
+              'scorecard',
             );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.review.createMany({ data: batch }).catch(async () => {
-              console.error(
-                `[${type}][${file}] An error occurred, retrying individually`,
-              );
-              for (const item of batch) {
-                await prisma.review
-                  .create({
-                    data: item,
-                  })
-                  .catch((err) => {
-                    reviewIdMap.delete(item.legacyId);
-                    console.error(
-                      `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                    );
-                  });
+            return {
+              id: recordId,
+              legacyId,
+              resourceId: review.resource_id,
+              phaseId: review.project_phase_id,
+              submissionId,
+              legacySubmissionId: review.submission_id,
+              scorecardId,
+              committed: review.committed === '1',
+              finalScore: review.score ? parseFloat(review.score) : null,
+              initialScore: review.initial_score
+                ? parseFloat(review.initial_score)
+                : null,
+              createdAt: new Date(review.create_date),
+              createdBy: review.create_user,
+              updatedAt: new Date(review.modify_date),
+              updatedBy: review.modify_user,
+            };
+          };
+          if (!isIncrementalRun) {
+            type ReviewEntity = ReturnType<typeof convertReview>;
+            const processedData: ReviewEntity[] = [];
+            let recordIndex = 0;
+            for (const review of jsonData[key]) {
+              if (hasMappedId(reviewIdMap, review.review_id)) {
+                recordIndex += 1;
+                continue;
               }
-            });
+              const id = nanoid(14);
+              try {
+                const converted = convertReview(review, id);
+                setMappedId(reviewIdMap, review.review_id, id);
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  review,
+                  `Failed to convert review legacyId ${review.review_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+              }
+              recordIndex += 1;
+            }
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.review
+                .createMany({ data: batch })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.review
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(reviewIdMap, item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            let recordIndex = 0;
+            for (const review of jsonData[key]) {
+              if (
+                !shouldProcessRecord(review.create_date, review.modify_date)
+              ) {
+                recordIndex += 1;
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(reviewIdMap, review.review_id);
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertReview>;
+              try {
+                data = convertReview(review, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  review,
+                  `Failed to convert review legacyId ${review.review_id}`,
+                  undefined,
+                  { index: recordIndex },
+                );
+                recordIndex += 1;
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.review.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(reviewIdMap, review.review_id, id);
+                }
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert review legacyId ${review.review_id}`,
+                );
+                console.error(err);
+              }
+              recordIndex += 1;
+            }
           }
           break;
         }
         case 'review_item': {
           console.log(`[${type}][${file}] Processing file`);
-          const processedData = jsonData[key]
-            .filter((item) => !reviewItemIdMap.has(item.review_item_id))
-            .map((item) => {
-              const id = nanoid(14);
-              reviewItemIdMap.set(item.review_item_id, id);
-              return {
-                id: id,
-                legacyId: item.review_item_id,
-                reviewId: reviewIdMap.get(item.review_id),
-                scorecardQuestionId: scorecardQuestionIdMap.get(
-                  item.scorecard_question_id,
-                ),
-                uploadId: item.upload_id || null,
-                initialAnswer: item.answer,
-                finalAnswer: item.answer,
-                managerComment: item.answer,
-                createdAt: new Date(item.create_date),
-                createdBy: item.create_user,
-                updatedAt: new Date(item.modify_date),
-                updatedBy: item.modify_user,
-              };
-            });
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+          const logReviewItemConversionError = (err: unknown, rawItem: any) => {
+            logRecordConversionError(
+              type,
+              file,
+              err,
+              rawItem,
+              `Failed to convert reviewItem legacyId ${rawItem?.review_item_id}`,
             );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.reviewItem
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${file}] An error occurred, retrying individually`,
-                );
-                for (const item of batch) {
-                  await prisma.reviewItem
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      reviewItemIdMap.delete(item.legacyId);
-                      console.error(
-                        `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                      );
-                    });
+          };
+          const convertReviewItem = (item, recordId: string) => {
+            const legacyId = normalizeLegacyKey(item.review_item_id);
+            const reviewId = requireMappedId(
+              reviewIdMap,
+              item.review_id,
+              'review',
+            );
+            const scorecardQuestionId = requireMappedId(
+              scorecardQuestionIdMap,
+              item.scorecard_question_id,
+              'scorecard question',
+            );
+            return {
+              id: recordId,
+              legacyId,
+              reviewId,
+              scorecardQuestionId,
+              uploadId: item.upload_id || null,
+              initialAnswer: item.answer,
+              finalAnswer: item.answer,
+              managerComment: item.answer,
+              createdAt: new Date(item.create_date),
+              createdBy: item.create_user,
+              updatedAt: new Date(item.modify_date),
+              updatedBy: item.modify_user,
+            };
+          };
+          if (!isIncrementalRun) {
+            type ReviewItemEntity = ReturnType<typeof convertReviewItem>;
+            const processedData: ReviewItemEntity[] = [];
+            for (const rawItem of jsonData[key]) {
+              if (hasMappedId(reviewItemIdMap, rawItem.review_item_id)) {
+                continue;
+              }
+              const id = nanoid(14);
+              try {
+                const converted = convertReviewItem(rawItem, id);
+                setMappedId(reviewItemIdMap, rawItem.review_item_id, id);
+                processedData.push(converted);
+              } catch (err) {
+                logReviewItemConversionError(err, rawItem);
+                continue;
+              }
+            }
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.reviewItem
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.reviewItem
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(reviewItemIdMap, item.legacyId);
+                        console.error(
+                          `[${type}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const item of jsonData[key]) {
+              if (!shouldProcessRecord(item.create_date, item.modify_date)) {
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(
+                reviewItemIdMap,
+                item.review_item_id,
+              );
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertReviewItem>;
+              try {
+                data = convertReviewItem(item, id);
+              } catch (err) {
+                logReviewItemConversionError(err, item);
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.reviewItem.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(reviewItemIdMap, item.review_item_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${file}] Failed to upsert reviewItem legacyId ${item.review_item_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
@@ -1155,198 +2127,445 @@ async function processType(type: string, subtype?: string) {
           switch (subtype) {
             case 'reviewItemComment': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
-              const processedData = jsonData[key]
-                .filter(
-                  (c) =>
-                    reviewItemCommentTypeMap[c.comment_type_id] in
-                    LegacyCommentType,
-                )
-                .filter(
-                  (c) =>
-                    !reviewItemCommentReviewItemCommentIdMap.has(
-                      c.review_item_comment_id,
-                    ),
-                )
-                .map((c) => {
-                  const id = nanoid(14);
-                  reviewItemCommentReviewItemCommentIdMap.set(
-                    c.review_item_comment_id,
-                    id,
-                  );
-                  return {
-                    id: id,
-                    legacyId: c.review_item_comment_id,
-                    resourceId: c.resource_id,
-                    reviewItemId: reviewItemIdMap.get(c.review_item_id),
-                    content: c.content,
-                    type: LegacyCommentType[
-                      reviewItemCommentTypeMap[c.comment_type_id]
-                    ],
-                    sortOrder: parseInt(c.sort),
-                    createdAt: new Date(c.create_date),
-                    createdBy: c.create_user,
-                    updatedAt: new Date(c.modify_date),
-                    updatedBy: c.modify_user,
-                  };
-                });
-              const totalBatches = Math.ceil(processedData.length / batchSize);
-              for (let i = 0; i < processedData.length; i += batchSize) {
-                const batchIndex = i / batchSize + 1;
-                console.log(
-                  `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              const deltaKey = `${type}:${subtype}`;
+              const isSupportedType = (c) =>
+                reviewItemCommentTypeMap[c.comment_type_id] in
+                LegacyCommentType;
+              const convertComment = (c, recordId: string) => {
+                const legacyId = normalizeLegacyKey(c.review_item_comment_id);
+                const reviewItemId = requireMappedId(
+                  reviewItemIdMap,
+                  c.review_item_id,
+                  'review item',
                 );
-                const batch = processedData.slice(i, i + batchSize);
-                await prisma.reviewItemComment
-                  .createMany({
-                    data: batch,
-                  })
-                  .catch(async () => {
-                    console.error(
-                      `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                return {
+                  id: recordId,
+                  legacyId,
+                  resourceId: c.resource_id,
+                  reviewItemId,
+                  content: c.content,
+                  type: LegacyCommentType[
+                    reviewItemCommentTypeMap[c.comment_type_id]
+                  ],
+                  sortOrder: parseInt(c.sort),
+                  createdAt: new Date(c.create_date),
+                  createdBy: c.create_user,
+                  updatedAt: new Date(c.modify_date),
+                  updatedBy: c.modify_user,
+                };
+              };
+              if (!isIncrementalRun) {
+                type ReviewItemCommentEntity = ReturnType<
+                  typeof convertComment
+                >;
+                const processedData: ReviewItemCommentEntity[] = [];
+                for (const c of jsonData[key]) {
+                  if (!isSupportedType(c)) {
+                    continue;
+                  }
+                  if (
+                    hasMappedId(
+                      reviewItemCommentReviewItemCommentIdMap,
+                      c.review_item_comment_id,
+                    )
+                  ) {
+                    continue;
+                  }
+                  const id = nanoid(14);
+                  try {
+                    const converted = convertComment(c, id);
+                    setMappedId(
+                      reviewItemCommentReviewItemCommentIdMap,
+                      c.review_item_comment_id,
+                      id,
                     );
-                    for (const item of batch) {
-                      await prisma.reviewItemComment
-                        .create({
-                          data: item,
-                        })
-                        .catch((err) => {
-                          reviewItemCommentReviewItemCommentIdMap.delete(
-                            item.legacyId,
-                          );
-                          console.error(
-                            `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                          );
-                        });
+                    processedData.push(converted);
+                  } catch (err) {
+                    logRecordConversionError(
+                      type,
+                      file,
+                      err,
+                      c,
+                      `Failed to convert reviewItemComment legacyId ${c.review_item_comment_id}`,
+                      subtype,
+                    );
+                  }
+                }
+                const totalBatches = Math.ceil(
+                  processedData.length / batchSize,
+                );
+                for (let i = 0; i < processedData.length; i += batchSize) {
+                  const batchIndex = i / batchSize + 1;
+                  console.log(
+                    `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+                  );
+                  const batch = processedData.slice(i, i + batchSize);
+                  await prisma.reviewItemComment
+                    .createMany({
+                      data: batch,
+                    })
+                    .catch(async () => {
+                      console.error(
+                        `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      );
+                      for (const item of batch) {
+                        await prisma.reviewItemComment
+                          .create({
+                            data: item,
+                          })
+                          .catch((err) => {
+                            deleteMappedId(
+                              reviewItemCommentReviewItemCommentIdMap,
+                              item.legacyId,
+                            );
+                            console.error(
+                              `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                            );
+                          });
+                      }
+                    });
+                }
+              } else {
+                for (const c of jsonData[key]) {
+                  if (!isSupportedType(c)) {
+                    continue;
+                  }
+                  if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                    continue;
+                  }
+                  incrementSourceDelta(deltaKey);
+                  const existingId = getMappedId(
+                    reviewItemCommentReviewItemCommentIdMap,
+                    c.review_item_comment_id,
+                  );
+                  const id = existingId ?? nanoid(14);
+                  let data: ReturnType<typeof convertComment>;
+                  try {
+                    data = convertComment(c, id);
+                  } catch (err) {
+                    logRecordConversionError(
+                      type,
+                      file,
+                      err,
+                      c,
+                      `Failed to convert reviewItemComment legacyId ${c.review_item_comment_id}`,
+                      subtype,
+                    );
+                    continue;
+                  }
+                  try {
+                    const updateData = omitId(data);
+                    await prisma.reviewItemComment.upsert({
+                      where: { id },
+                      create: data,
+                      update: updateData,
+                    });
+                    if (!existingId) {
+                      setMappedId(
+                        reviewItemCommentReviewItemCommentIdMap,
+                        c.review_item_comment_id,
+                        id,
+                      );
                     }
-                  });
+                  } catch (err) {
+                    console.error(
+                      `[${type}][${subtype}][${file}] Failed to upsert reviewItemComment legacyId ${c.review_item_comment_id}`,
+                    );
+                    console.error(err);
+                  }
+                }
               }
               break;
             }
             case 'appeal': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
-              const processedData = jsonData[key]
-                .filter(
-                  (c) =>
-                    reviewItemCommentTypeMap[c.comment_type_id] === 'Appeal',
-                )
-                .filter(
-                  (c) => !reviewItemCommentAppealIdMap.has(c.review_item_id),
-                )
-                .map((c) => {
-                  const id = nanoid(14);
-                  reviewItemCommentAppealIdMap.set(c.review_item_id, id);
-                  return {
-                    id: id,
-                    legacyId: c.review_item_comment_id,
-                    resourceId: c.resource_id,
-                    reviewItemCommentId:
-                      reviewItemCommentReviewItemCommentIdMap.get(
-                        c.review_item_id,
-                      ),
-                    content: c.content,
-                    createdAt: new Date(c.create_date),
-                    createdBy: c.create_user,
-                    updatedAt: new Date(c.modify_date),
-                    updatedBy: c.modify_user,
-                  };
-                });
-
-              const totalBatches = Math.ceil(processedData.length / batchSize);
-              for (let i = 0; i < processedData.length; i += batchSize) {
-                const batchIndex = i / batchSize + 1;
-                console.log(
-                  `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              const deltaKey = `${type}:${subtype}`;
+              const isAppeal = (c) =>
+                reviewItemCommentTypeMap[c.comment_type_id] === 'Appeal';
+              const convertAppeal = (c, recordId: string) => {
+                const legacyId = normalizeLegacyKey(c.review_item_comment_id);
+                const reviewItemCommentId = requireMappedId(
+                  reviewItemCommentReviewItemCommentIdMap,
+                  c.review_item_id,
+                  'review item comment',
                 );
-                const batch = processedData.slice(i, i + batchSize);
-                await prisma.appeal
-                  .createMany({
-                    data: batch,
-                  })
-                  .catch(async () => {
-                    console.error(
-                      `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                return {
+                  id: recordId,
+                  legacyId,
+                  resourceId: c.resource_id,
+                  reviewItemCommentId,
+                  content: c.content,
+                  createdAt: new Date(c.create_date),
+                  createdBy: c.create_user,
+                  updatedAt: new Date(c.modify_date),
+                  updatedBy: c.modify_user,
+                };
+              };
+              if (!isIncrementalRun) {
+                type AppealEntity = ReturnType<typeof convertAppeal>;
+                const processedData: AppealEntity[] = [];
+                for (const c of jsonData[key]) {
+                  if (!isAppeal(c)) {
+                    continue;
+                  }
+                  if (
+                    hasMappedId(reviewItemCommentAppealIdMap, c.review_item_id)
+                  ) {
+                    continue;
+                  }
+                  const id = nanoid(14);
+                  try {
+                    const converted = convertAppeal(c, id);
+                    setMappedId(
+                      reviewItemCommentAppealIdMap,
+                      c.review_item_id,
+                      id,
                     );
-                    for (const item of batch) {
-                      await prisma.appeal
-                        .create({
-                          data: item,
-                        })
-                        .catch((err) => {
-                          reviewItemCommentAppealIdMap.delete(item.legacyId);
-                          console.error(
-                            `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                          );
-                        });
+                    processedData.push(converted);
+                  } catch (err) {
+                    logRecordConversionError(
+                      type,
+                      file,
+                      err,
+                      c,
+                      `Failed to convert appeal legacyId ${c.review_item_comment_id}`,
+                      subtype,
+                    );
+                  }
+                }
+
+                const totalBatches = Math.ceil(
+                  processedData.length / batchSize,
+                );
+                for (let i = 0; i < processedData.length; i += batchSize) {
+                  const batchIndex = i / batchSize + 1;
+                  console.log(
+                    `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+                  );
+                  const batch = processedData.slice(i, i + batchSize);
+                  await prisma.appeal
+                    .createMany({
+                      data: batch,
+                    })
+                    .catch(async () => {
+                      console.error(
+                        `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      );
+                      for (const item of batch) {
+                        await prisma.appeal
+                          .create({
+                            data: item,
+                          })
+                          .catch((err) => {
+                            deleteMappedId(
+                              reviewItemCommentAppealIdMap,
+                              item.legacyId,
+                            );
+                            console.error(
+                              `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                            );
+                          });
+                      }
+                    });
+                }
+              } else {
+                for (const c of jsonData[key]) {
+                  if (!isAppeal(c)) {
+                    continue;
+                  }
+                  if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                    continue;
+                  }
+                  incrementSourceDelta(deltaKey);
+                  const existingId = getMappedId(
+                    reviewItemCommentAppealIdMap,
+                    c.review_item_id,
+                  );
+                  const id = existingId ?? nanoid(14);
+                  let data: ReturnType<typeof convertAppeal>;
+                  try {
+                    data = convertAppeal(c, id);
+                  } catch (err) {
+                    logRecordConversionError(
+                      type,
+                      file,
+                      err,
+                      c,
+                      `Failed to convert appeal legacyId ${c.review_item_comment_id}`,
+                      subtype,
+                    );
+                    continue;
+                  }
+                  try {
+                    const updateData = omitId(data);
+                    await prisma.appeal.upsert({
+                      where: { id },
+                      create: data,
+                      update: updateData,
+                    });
+                    if (!existingId) {
+                      setMappedId(
+                        reviewItemCommentAppealIdMap,
+                        c.review_item_id,
+                        id,
+                      );
                     }
-                  });
+                  } catch (err) {
+                    console.error(
+                      `[${type}][${subtype}][${file}] Failed to upsert appeal legacyId ${c.review_item_comment_id}`,
+                    );
+                    console.error(err);
+                  }
+                }
               }
               break;
             }
             case 'appealResponse': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
-              const processedData = jsonData[key]
-                .filter(
-                  (c) =>
-                    reviewItemCommentTypeMap[c.comment_type_id] ===
-                    'Appeal Response',
-                )
-                .filter(
-                  (c) =>
-                    !reviewItemCommentAppealResponseIdMap.has(
-                      c.review_item_comment_id,
-                    ),
-                )
-                .map((c) => {
-                  const id = nanoid(14);
-                  reviewItemCommentAppealResponseIdMap.set(
-                    c.review_item_comment_id,
-                    id,
-                  );
-                  return {
-                    id: id,
-                    legacyId: c.review_item_comment_id,
-                    appealId: reviewItemCommentAppealIdMap.get(
-                      c.review_item_id,
-                    ),
-                    resourceId: c.resource_id,
-                    content: c.content,
-                    success: c.extra_info === 'Succeeded',
-                    createdAt: new Date(c.create_date),
-                    createdBy: c.create_user,
-                    updatedAt: new Date(c.modify_date),
-                    updatedBy: c.modify_user,
-                  };
-                });
-              const totalBatches = Math.ceil(processedData.length / batchSize);
-              for (let i = 0; i < processedData.length; i += batchSize) {
-                const batchIndex = i / batchSize + 1;
-                console.log(
-                  `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              const deltaKey = `${type}:${subtype}`;
+              const isAppealResponse = (c) =>
+                reviewItemCommentTypeMap[c.comment_type_id] ===
+                'Appeal Response';
+              const convertAppealResponse = (c, recordId: string) => {
+                const legacyId = normalizeLegacyKey(c.review_item_comment_id);
+                const appealId = requireMappedId(
+                  reviewItemCommentAppealIdMap,
+                  c.review_item_id,
+                  'appeal',
                 );
-                const batch = processedData.slice(i, i + batchSize);
-                await prisma.appealResponse
-                  .createMany({
-                    data: batch,
-                  })
-                  .catch(async () => {
-                    console.error(
-                      `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                return {
+                  id: recordId,
+                  legacyId,
+                  appealId,
+                  resourceId: c.resource_id,
+                  content: c.content,
+                  success: c.extra_info === 'Succeeded',
+                  createdAt: new Date(c.create_date),
+                  createdBy: c.create_user,
+                  updatedAt: new Date(c.modify_date),
+                  updatedBy: c.modify_user,
+                };
+              };
+              if (!isIncrementalRun) {
+                type AppealResponseEntity = ReturnType<
+                  typeof convertAppealResponse
+                >;
+                const processedData: AppealResponseEntity[] = [];
+                for (const c of jsonData[key]) {
+                  if (!isAppealResponse(c)) {
+                    continue;
+                  }
+                  if (
+                    hasMappedId(
+                      reviewItemCommentAppealResponseIdMap,
+                      c.review_item_comment_id,
+                    )
+                  ) {
+                    continue;
+                  }
+                  const id = nanoid(14);
+                  try {
+                    const converted = convertAppealResponse(c, id);
+                    setMappedId(
+                      reviewItemCommentAppealResponseIdMap,
+                      c.review_item_comment_id,
+                      id,
                     );
-                    for (const item of batch) {
-                      await prisma.appealResponse
-                        .create({
-                          data: item,
-                        })
-                        .catch((err) => {
-                          reviewItemCommentAppealResponseIdMap.delete(
-                            item.legacyId,
-                          );
-                          console.error(
-                            `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
-                          );
-                        });
+                    processedData.push(converted);
+                  } catch (err) {
+                    logRecordConversionError(
+                      type,
+                      file,
+                      err,
+                      c,
+                      `Failed to convert appealResponse legacyId ${c.review_item_comment_id}`,
+                      subtype,
+                    );
+                  }
+                }
+                const totalBatches = Math.ceil(
+                  processedData.length / batchSize,
+                );
+                for (let i = 0; i < processedData.length; i += batchSize) {
+                  const batchIndex = i / batchSize + 1;
+                  console.log(
+                    `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+                  );
+                  const batch = processedData.slice(i, i + batchSize);
+                  await prisma.appealResponse
+                    .createMany({
+                      data: batch,
+                    })
+                    .catch(async () => {
+                      console.error(
+                        `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                      );
+                      for (const item of batch) {
+                        await prisma.appealResponse
+                          .create({
+                            data: item,
+                          })
+                          .catch((err) => {
+                            deleteMappedId(
+                              reviewItemCommentAppealResponseIdMap,
+                              item.legacyId,
+                            );
+                            console.error(
+                              `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${item.legacyId}`,
+                            );
+                          });
+                      }
+                    });
+                }
+              } else {
+                for (const c of jsonData[key]) {
+                  if (!isAppealResponse(c)) {
+                    continue;
+                  }
+                  if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                    continue;
+                  }
+                  incrementSourceDelta(deltaKey);
+                  const existingId = getMappedId(
+                    reviewItemCommentAppealResponseIdMap,
+                    c.review_item_comment_id,
+                  );
+                  const id = existingId ?? nanoid(14);
+                  let data: ReturnType<typeof convertAppealResponse>;
+                  try {
+                    data = convertAppealResponse(c, id);
+                  } catch (err) {
+                    logRecordConversionError(
+                      type,
+                      file,
+                      err,
+                      c,
+                      `Failed to convert appealResponse legacyId ${c.review_item_comment_id}`,
+                      subtype,
+                    );
+                    continue;
+                  }
+                  try {
+                    const updateData = omitId(data);
+                    await prisma.appealResponse.upsert({
+                      where: { id },
+                      create: data,
+                      update: updateData,
+                    });
+                    if (!existingId) {
+                      setMappedId(
+                        reviewItemCommentAppealResponseIdMap,
+                        c.review_item_comment_id,
+                        id,
+                      );
                     }
-                  });
+                  } catch (err) {
+                    console.error(
+                      `[${type}][${subtype}][${file}] Failed to upsert appealResponse legacyId ${c.review_item_comment_id}`,
+                    );
+                    console.error(err);
+                  }
+                }
               }
               break;
             }
@@ -1355,61 +2574,123 @@ async function processType(type: string, subtype?: string) {
         }
         case 'llm_provider': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const idToLegacyIdMap = {};
-          const processedData = jsonData[key].map((c) => {
-            const id = nanoid(14);
-            llmProviderIdMap.set(c.llm_provider_id, id);
-            idToLegacyIdMap[id] = c.llm_provider_id;
-            return {
-              id: id,
-              name: c.name,
-              createdAt: new Date(c.create_date),
-              createdBy: c.create_user,
-            };
+          const convertProvider = (c, recordId: string) => ({
+            id: recordId,
+            name: c.name,
+            createdAt: new Date(c.create_date),
+            createdBy: c.create_user,
           });
-
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.llmProvider
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+          if (!isIncrementalRun) {
+            const idToLegacyIdMap = {};
+            type LlmProviderEntity = ReturnType<typeof convertProvider>;
+            const processedData: LlmProviderEntity[] = [];
+            for (const c of jsonData[key]) {
+              const id = nanoid(14);
+              try {
+                const converted = convertProvider(c, id);
+                setMappedId(llmProviderIdMap, c.llm_provider_id, id);
+                idToLegacyIdMap[id] = c.llm_provider_id;
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  c,
+                  `Failed to convert llmProvider legacyId ${c.llm_provider_id}`,
+                  subtype,
                 );
-                for (const item of batch) {
-                  await prisma.llmProvider
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      llmProviderIdMap.delete(idToLegacyIdMap[item.id]);
-                      console.error(
-                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
-                      );
-                    });
+              }
+            }
+
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.llmProvider
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.llmProvider
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(
+                          llmProviderIdMap,
+                          idToLegacyIdMap[item.id],
+                        );
+                        console.error(
+                          `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const c of jsonData[key]) {
+              if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(
+                llmProviderIdMap,
+                c.llm_provider_id,
+              );
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertProvider>;
+              try {
+                data = convertProvider(c, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  c,
+                  `Failed to convert llmProvider legacyId ${c.llm_provider_id}`,
+                  subtype,
+                );
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.llmProvider.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(llmProviderIdMap, c.llm_provider_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${subtype}][${file}] Failed to upsert llmProvider legacyId ${c.llm_provider_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'llm_model': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const idToLegacyIdMap = {};
-          const processedData = jsonData[key].map((c) => {
-            const id = nanoid(14);
-            llmModelIdMap.set(c.llm_model_id, id);
-            idToLegacyIdMap[id] = c.llm_model_id;
-            console.log(llmProviderIdMap.get(c.provider_id), 'c.provider_id');
+          const convertModel = (c, recordId: string) => {
+            const providerId = requireMappedId(
+              llmProviderIdMap,
+              c.provider_id,
+              'llm provider',
+            );
             return {
-              id: id,
-              providerId: llmProviderIdMap.get(c.provider_id),
+              id: recordId,
+              providerId,
               name: c.name,
               description: c.description,
               icon: c.icon,
@@ -1417,92 +2698,219 @@ async function processType(type: string, subtype?: string) {
               createdAt: new Date(c.create_date),
               createdBy: c.create_user,
             };
-          });
-
-          console.log(llmProviderIdMap, processedData, 'processedData');
-
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.llmModel
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+          };
+          if (!isIncrementalRun) {
+            const idToLegacyIdMap = {};
+            type LlmModelEntity = ReturnType<typeof convertModel>;
+            const processedData: LlmModelEntity[] = [];
+            for (const c of jsonData[key]) {
+              const id = nanoid(14);
+              try {
+                const converted = convertModel(c, id);
+                setMappedId(llmModelIdMap, c.llm_model_id, id);
+                idToLegacyIdMap[id] = c.llm_model_id;
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  c,
+                  `Failed to convert llmModel legacyId ${c.llm_model_id}`,
+                  subtype,
                 );
-                for (const item of batch) {
-                  await prisma.llmModel
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      llmModelIdMap.delete(idToLegacyIdMap[item.id]);
-                      console.error(
-                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
-                      );
-                    });
+              }
+            }
+
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.llmModel
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.llmModel
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(llmModelIdMap, idToLegacyIdMap[item.id]);
+                        console.error(
+                          `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const c of jsonData[key]) {
+              if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(llmModelIdMap, c.llm_model_id);
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertModel>;
+              try {
+                data = convertModel(c, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  c,
+                  `Failed to convert llmModel legacyId ${c.llm_model_id}`,
+                  subtype,
+                );
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.llmModel.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(llmModelIdMap, c.llm_model_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${subtype}][${file}] Failed to upsert llmModel legacyId ${c.llm_model_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
         case 'ai_workflow': {
           console.log(`[${type}][${subtype}][${file}] Processing file`);
-          const idToLegacyIdMap = {};
-          const processedData = jsonData[key].map((c) => {
-            const id = nanoid(14);
-            aiWorkflowIdMap.set(c.ai_workflow_id, id);
-            idToLegacyIdMap[id] = c.ai_workflow_id;
+          const convertWorkflow = (c, recordId: string) => {
+            const llmId = requireMappedId(llmModelIdMap, c.llm_id, 'llm model');
+            const scorecardId = requireMappedId(
+              scorecardIdMap,
+              c.scorecard_id,
+              'scorecard',
+            );
             return {
-              id: id,
-              llmId: llmModelIdMap.get(c.llm_id),
+              id: recordId,
+              llmId,
               name: c.name,
               description: c.description,
               defUrl: c.def_url,
-              gitId: c.git_id,
-              gitOwner: c.git_owner,
-              scorecardId: scorecardIdMap.get(c.scorecard_id),
+              gitWorkflowId: c.git_id,
+              gitOwnerRepo: c.git_owner,
+              scorecardId,
               createdAt: new Date(c.create_date),
               createdBy: c.create_user,
               updatedAt: new Date(c.modify_date),
               updatedBy: c.modify_user,
             };
-          });
-
-          const totalBatches = Math.ceil(processedData.length / batchSize);
-          for (let i = 0; i < processedData.length; i += batchSize) {
-            const batchIndex = i / batchSize + 1;
-            console.log(
-              `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
-            );
-            const batch = processedData.slice(i, i + batchSize);
-            await prisma.aiWorkflow
-              .createMany({
-                data: batch,
-              })
-              .catch(async () => {
-                console.error(
-                  `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+          };
+          if (!isIncrementalRun) {
+            const idToLegacyIdMap = {};
+            type AiWorkflowEntity = ReturnType<typeof convertWorkflow>;
+            const processedData: AiWorkflowEntity[] = [];
+            for (const c of jsonData[key]) {
+              const id = nanoid(14);
+              try {
+                const converted = convertWorkflow(c, id);
+                setMappedId(aiWorkflowIdMap, c.ai_workflow_id, id);
+                idToLegacyIdMap[id] = c.ai_workflow_id;
+                processedData.push(converted);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  c,
+                  `Failed to convert aiWorkflow legacyId ${c.ai_workflow_id}`,
+                  subtype,
                 );
-                for (const item of batch) {
-                  await prisma.aiWorkflow
-                    .create({
-                      data: item,
-                    })
-                    .catch((err) => {
-                      aiWorkflowIdMap.delete(idToLegacyIdMap[item.id]);
-                      console.error(
-                        `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
-                      );
-                    });
+              }
+            }
+
+            const totalBatches = Math.ceil(processedData.length / batchSize);
+            for (let i = 0; i < processedData.length; i += batchSize) {
+              const batchIndex = i / batchSize + 1;
+              console.log(
+                `[${type}][${subtype}][${file}] Processing batch ${batchIndex}/${totalBatches}`,
+              );
+              const batch = processedData.slice(i, i + batchSize);
+              await prisma.aiWorkflow
+                .createMany({
+                  data: batch,
+                })
+                .catch(async () => {
+                  console.error(
+                    `[${type}][${subtype}][${file}] An error occurred, retrying individually`,
+                  );
+                  for (const item of batch) {
+                    await prisma.aiWorkflow
+                      .create({
+                        data: item,
+                      })
+                      .catch((err) => {
+                        deleteMappedId(
+                          aiWorkflowIdMap,
+                          idToLegacyIdMap[item.id],
+                        );
+                        console.error(
+                          `[${type}][${subtype}][${file}] Error code: ${err.code}, LegacyId: ${idToLegacyIdMap[item.id]}`,
+                        );
+                      });
+                  }
+                });
+            }
+          } else {
+            for (const c of jsonData[key]) {
+              if (!shouldProcessRecord(c.create_date, c.modify_date)) {
+                continue;
+              }
+              incrementSourceDelta(type);
+              const existingId = getMappedId(aiWorkflowIdMap, c.ai_workflow_id);
+              const id = existingId ?? nanoid(14);
+              let data: ReturnType<typeof convertWorkflow>;
+              try {
+                data = convertWorkflow(c, id);
+              } catch (err) {
+                logRecordConversionError(
+                  type,
+                  file,
+                  err,
+                  c,
+                  `Failed to convert aiWorkflow legacyId ${c.ai_workflow_id}`,
+                  subtype,
+                );
+                continue;
+              }
+              try {
+                const updateData = omitId(data);
+                await prisma.aiWorkflow.upsert({
+                  where: { id },
+                  create: data,
+                  update: updateData,
+                });
+                if (!existingId) {
+                  setMappedId(aiWorkflowIdMap, c.ai_workflow_id, id);
                 }
-              });
+              } catch (err) {
+                console.error(
+                  `[${type}][${subtype}][${file}] Failed to upsert aiWorkflow legacyId ${c.ai_workflow_id}`,
+                );
+                console.error(err);
+              }
+            }
           }
           break;
         }
@@ -1528,12 +2936,14 @@ async function processAllTypes() {
   }
 }
 
-function convertResourceSubmission(jsonData) {
+function convertResourceSubmission(jsonData, existingId?: string) {
+  const legacySubmissionId = normalizeLegacyKey(jsonData['submission_id']);
   return {
-    id: nanoid(14),
+    id: existingId ?? nanoid(14),
     resourceId: jsonData['resource_id'],
-    legacySubmissionId: jsonData['submission_id'],
-    submissionId: submissionIdMap[jsonData['submission_id']] || null,
+    legacySubmissionId,
+    submissionId:
+      getMappedId(submissionIdMap, jsonData['submission_id']) ?? null,
     createdAt: new Date(jsonData['create_date']),
     createdBy: jsonData['create_user'],
     updatedAt: new Date(jsonData['modify_date']),
@@ -1543,6 +2953,10 @@ function convertResourceSubmission(jsonData) {
 
 let resourceSubmissions: any[] = [];
 async function handleResourceSubmission(data) {
+  if (isIncrementalRun) {
+    await upsertResourceSubmission(data);
+    return;
+  }
   resourceSubmissions.push(data);
   if (resourceSubmissions.length > batchSize) {
     await doImportResourceSubmission();
@@ -1570,6 +2984,237 @@ async function doImportResourceSubmission() {
   }
 }
 
+function buildIncrementalWhereClause(
+  dateFields: string[],
+  baseFilter?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!incrementalSince) {
+    return baseFilter;
+  }
+
+  const dateFilter: Record<string, unknown> = {
+    OR: dateFields.map((field) => ({ [field]: { gte: incrementalSince } })),
+  };
+  if (!baseFilter) {
+    return dateFilter;
+  }
+  return { AND: [baseFilter, dateFilter] };
+}
+
+async function verifyIncrementalReferentialIntegrity() {
+  if (!isIncrementalRun || !incrementalSince) {
+    return;
+  }
+
+  console.log('[incremental] Checking referential integrity...');
+  const checks: Array<{ label: string; query: () => Promise<number> }> = [
+    {
+      label: 'reviewItem.review',
+      query: () =>
+        prisma.reviewItem.count({
+          where: buildIncrementalWhereClause(['updatedAt', 'createdAt'], {
+            review: { is: null },
+          }),
+        }),
+    },
+    {
+      label: 'reviewItemComment.reviewItem',
+      query: () =>
+        prisma.reviewItemComment.count({
+          where: buildIncrementalWhereClause(['updatedAt', 'createdAt'], {
+            reviewItem: { is: null },
+          }),
+        }),
+    },
+    {
+      label: 'appeal.reviewItemComment',
+      query: () =>
+        prisma.appeal.count({
+          where: buildIncrementalWhereClause(['updatedAt', 'createdAt'], {
+            reviewItemComment: { is: null },
+          }),
+        }),
+    },
+  ];
+
+  for (const check of checks) {
+    try {
+      const orphanCount = await check.query();
+      if (orphanCount > 0) {
+        console.warn(
+          `[incremental] Referential issue: ${check.label} has ${orphanCount} orphan record(s) in the incremental window.`,
+        );
+      } else {
+        console.log(
+          `[incremental] Referential check passed for ${check.label}.`,
+        );
+      }
+    } catch (err: any) {
+      console.warn(
+        `[incremental] Referential check failed for ${check.label}: ${err.message}`,
+      );
+    }
+  }
+}
+
+async function verifyIncrementalMigration() {
+  if (!isIncrementalRun || !incrementalSince) {
+    return;
+  }
+
+  console.log('[incremental] Verifying incremental migration results...');
+  const configs = new Map<
+    string,
+    { delegate: any; dateFields: string[]; where?: any }
+  >([
+    [
+      'submission',
+      { delegate: prisma.submission, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'project_result',
+      {
+        delegate: prisma.challengeResult,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'scorecard',
+      { delegate: prisma.scorecard, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'scorecard_group',
+      {
+        delegate: prisma.scorecardGroup,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'scorecard_section',
+      {
+        delegate: prisma.scorecardSection,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'scorecard_question',
+      {
+        delegate: prisma.scorecardQuestion,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'review',
+      { delegate: prisma.review, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'review_item',
+      { delegate: prisma.reviewItem, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'review_item_comment:reviewItemComment',
+      {
+        delegate: prisma.reviewItemComment,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'review_item_comment:appeal',
+      { delegate: prisma.appeal, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'review_item_comment:appealResponse',
+      {
+        delegate: prisma.appealResponse,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'llm_provider',
+      { delegate: prisma.llmProvider, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'llm_model',
+      { delegate: prisma.llmModel, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'ai_workflow',
+      { delegate: prisma.aiWorkflow, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'resource_submission',
+      {
+        delegate: prisma.resourceSubmission,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+  ]);
+
+  for (const [key, sourceCount] of sourceDeltaCounters.entries()) {
+    const config = configs.get(key) ?? configs.get(key.split(':')[0]);
+    if (!config) {
+      continue;
+    }
+
+    let targetCount = 0;
+    try {
+      const whereClause = buildIncrementalWhereClause(
+        config.dateFields,
+        config.where,
+      );
+      targetCount = await config.delegate.count({ where: whereClause });
+    } catch (err: any) {
+      console.warn(
+        `[incremental] ${key}: failed to read target counts (${err.message}).`,
+      );
+      continue;
+    }
+
+    if (sourceCount !== targetCount) {
+      console.warn(
+        `[incremental] ${key}: source=${sourceCount}, target=${targetCount}`,
+      );
+    } else {
+      console.log(`[incremental] ${key}: counts OK (${targetCount}).`);
+    }
+  }
+
+  await verifyIncrementalReferentialIntegrity();
+}
+
+function reportErrorSummary() {
+  if (errorSummary.size === 0) {
+    console.log('No conversion errors recorded.');
+    return;
+  }
+
+  console.log('Error summary by type:');
+  errorSummary.forEach((info, key) => {
+    const files = Array.from(info.files).join(', ');
+    const examples = info.examples.join(', ');
+    console.log(
+      `- ${key}: count=${info.count}, files=[${files}]${examples ? `, examples=${examples}` : ''}`,
+    );
+  });
+}
+
+async function upsertResourceSubmission(data) {
+  const { id, ...updateData } = data;
+  try {
+    await prisma.resourceSubmission.upsert({
+      where: { id },
+      create: data,
+      update: updateData,
+    });
+  } catch (err) {
+    console.error(
+      `Failed to upsert resource_submission ${data.resourceId}_${data.legacySubmissionId}`,
+    );
+    console.error(err);
+    throw err;
+  }
+}
+
 async function migrateResourceSubmissions() {
   const filenameRegex = new RegExp(`^resource_submission_\\d+\\.json`);
   const filenames = fs
@@ -1585,10 +3230,30 @@ async function migrateResourceSubmissions() {
     let dataCount = 0;
     for (const d of jsonData) {
       dataCount += 1;
-      const data = convertResourceSubmission(d);
-      const key = `${data.resourceId}:${data.legacySubmissionId}`;
-      if (!resourceSubmissionSet.has(key)) {
+      const shouldPersist = shouldProcessRecord(
+        d['create_date'],
+        d['modify_date'],
+      );
+      const key = `${d['resource_id']}:${d['submission_id']}`;
+      const existingId = getMappedId(resourceSubmissionIdMap, key);
+      const data = convertResourceSubmission(d, existingId);
+      if (isIncrementalRun) {
+        if (!existingId && !shouldPersist) {
+          continue;
+        }
+        if (!resourceSubmissionSet.has(key)) {
+          resourceSubmissionSet.add(key);
+        }
+        if (!existingId) {
+          setMappedId(resourceSubmissionIdMap, key, data.id);
+        }
+        if (shouldPersist || !existingId) {
+          incrementSourceDelta('resource_submission');
+          await handleResourceSubmission(data);
+        }
+      } else if (!resourceSubmissionSet.has(key)) {
         resourceSubmissionSet.add(key);
+        setMappedId(resourceSubmissionIdMap, key, data.id);
         await handleResourceSubmission(data);
       }
       if (dataCount % logSize === 0) {
@@ -1598,9 +3263,19 @@ async function migrateResourceSubmissions() {
     totalCount += dataCount;
   }
   console.log(`resource_submission total count: ${totalCount}`);
+  if (!isIncrementalRun) {
+    await doImportResourceSubmission();
+  }
 }
 
 async function migrate() {
+  if (!fs.existsSync(DATA_DIR)) {
+    throw new Error(
+      `DATA_DIR "${DATA_DIR}" does not exist. Set DATA_DIR to a valid export path.`,
+    );
+  }
+  console.log(`Using data directory: ${DATA_DIR}`);
+  console.log(`Using ElasticSearch export file: ${ES_DATA_FILE}`);
   console.log('Starting lookup import...');
   processLookupFiles();
   console.log('Lookup import completed.');
@@ -1623,6 +3298,9 @@ async function migrate() {
   console.log('Starting importing resource-submissions...');
   await migrateResourceSubmissions();
   console.log('Resource-submissions import completed.');
+
+  await verifyIncrementalMigration();
+  reportErrorSummary();
 }
 
 migrate()
@@ -1676,6 +3354,7 @@ migrate()
       { key: 'llmProviderIdMap', value: llmProviderIdMap },
       { key: 'llmModelIdMap', value: llmModelIdMap },
       { key: 'aiWorkflowIdMap', value: aiWorkflowIdMap },
+      { key: 'resourceSubmissionIdMap', value: resourceSubmissionIdMap },
     ].forEach((f) => {
       if (!fs.existsSync('.tmp')) {
         fs.mkdirSync('.tmp');

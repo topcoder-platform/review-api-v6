@@ -50,7 +50,7 @@ export const CommonConfig = {
     v6ApiUrl: process.env.V6_API_URL ?? 'https://api.topcoder-dev.com/v6',
     memberApiUrl: process.env.MEMBER_API_URL ?? 'http://localhost:4000/members',
     onlineReviewUrlBase:
-      'https://software.topcoder.com/review/actions/ViewProjectDetails?pid=',
+      'https://review.topcoder.com/review/active-challenges/',
   },
   // Resource role configuration
   roles: {
@@ -70,5 +70,12 @@ export const CommonConfig = {
     contactManagersEmailTemplate:
       process.env.SENDGRID_CONTACT_MANAGERS_TEMPLATE ??
       'd-00000000000000000000000000000000',
+    aiWorkflowRunCompletedEmailTemplate:
+      process.env.SENDGRID_AI_WORKFLOW_RUN_COMPLETED_TEMPLATE ??
+      'd-7d14d986ba0a4317b449164b73939910',
+  },
+  ui: {
+    reviewUIUrl:
+      process.env.REVIEW_UI_URL ?? 'https://review-v6.topcoder-dev.com',
   },
 };
