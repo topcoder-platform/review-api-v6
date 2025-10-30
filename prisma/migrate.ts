@@ -56,6 +56,28 @@ if (incrementalSinceInput) {
 }
 const isIncrementalRun = incrementalSince !== null;
 
+const cliArgs = new Set(process.argv.slice(2));
+const shouldRepairMaps = cliArgs.has('--repair-maps');
+if (shouldRepairMaps) {
+  console.log(
+    '[map] --repair-maps enabled; duplicate or invalid mapping entries will be cleaned.',
+  );
+}
+
+const errorSummary = new Map<
+  string,
+  { count: number; files: Set<string>; examples: string[] }
+>();
+const errorPositionTracker = new Map<string, number>();
+const sourceDeltaCounters = new Map<string, number>();
+
+const incrementSourceDelta = (key: string) => {
+  if (!isIncrementalRun) {
+    return;
+  }
+  sourceDeltaCounters.set(key, (sourceDeltaCounters.get(key) ?? 0) + 1);
+};
+
 const parseDateInput = (value: string | Date | null | undefined) => {
   if (!value) {
     return null;
@@ -89,6 +111,37 @@ const shouldProcessRecord = (
 const buildLogPrefix = (type: string, file: string, subtype?: string) =>
   subtype ? `[${type}][${subtype}][${file}]` : `[${type}][${file}]`;
 
+const extractLegacyIdentifier = (record: any): string | null => {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const candidates = [
+    'legacyId',
+    'legacy_id',
+    'legacySubmissionId',
+    'submission_id',
+    'scorecard_id',
+    'scorecard_group_id',
+    'scorecard_section_id',
+    'scorecard_question_id',
+    'review_id',
+    'review_item_id',
+    'review_item_comment_id',
+    'project_id',
+    'upload_id',
+    'resource_id',
+    'ai_workflow_id',
+    'llm_provider_id',
+    'llm_model_id',
+  ];
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      return describeLegacyId(record[key]);
+    }
+  }
+  return null;
+};
+
 const logRecordConversionError = (
   type: string,
   file: string,
@@ -96,10 +149,24 @@ const logRecordConversionError = (
   record: unknown,
   message: string,
   subtype?: string,
+  context?: { index?: number },
 ) => {
   const prefix = buildLogPrefix(type, file, subtype);
   const errorMessage = err instanceof Error ? err.message : String(err);
-  console.error(`${prefix} ${message}`);
+  let recordPosition: number | null = null;
+  if (context?.index != null) {
+    recordPosition = context.index + 1;
+  } else {
+    const trackerKey = `${type}|${file}|${subtype ?? 'default'}`;
+    const nextPosition = (errorPositionTracker.get(trackerKey) ?? 0) + 1;
+    errorPositionTracker.set(trackerKey, nextPosition);
+    recordPosition = nextPosition;
+  }
+  const legacyIdentifier = extractLegacyIdentifier(record);
+  const positionSuffix = recordPosition ? ` record#${recordPosition}` : '';
+  const legacySuffix = legacyIdentifier ? ` legacy=${legacyIdentifier}` : '';
+
+  console.error(`${prefix} ${message}${positionSuffix}${legacySuffix}`);
   console.error(`${prefix} Error detail: ${errorMessage}`);
   if (err instanceof Error && err.stack) {
     console.error(err);
@@ -115,6 +182,20 @@ const logRecordConversionError = (
       `${prefix} Failed to stringify record while skipping: ${stringifyMessage}`,
     );
   }
+
+  const aggregationKey = `${type}${subtype ? `:${subtype}` : ''} | ${message}`;
+  const summary = errorSummary.get(aggregationKey) ?? {
+    count: 0,
+    files: new Set<string>(),
+    examples: [] as string[],
+  };
+  summary.count += 1;
+  summary.files.add(file);
+  if (summary.examples.length < 5) {
+    const exampleLabel = `${file}${recordPosition ? `#${recordPosition}` : ''}${legacyIdentifier ? `:${legacyIdentifier}` : ''}`;
+    summary.examples.push(exampleLabel);
+  }
+  errorSummary.set(aggregationKey, summary);
 };
 
 const modelMappingKeys = [
@@ -179,6 +260,80 @@ function readIdMap(filename: string): Map<string, string> {
     return new Map<string, string>(entries);
   }
   return new Map<string, string>();
+}
+
+function validateIdMap(map: Map<string, string>, label: string) {
+  const seenValues = new Map<string, string>();
+  let duplicateCount = 0;
+  let cleanedCount = 0;
+
+  for (const [key, value] of map.entries()) {
+    if (!value || typeof value !== 'string') {
+      console.warn(
+        `[map] ${label}: removing invalid mapping for key=${key} value=${describeLegacyId(value)}`,
+      );
+      map.delete(key);
+      cleanedCount += 1;
+      continue;
+    }
+
+    if (seenValues.has(value)) {
+      duplicateCount += 1;
+      const firstKey = seenValues.get(value);
+      console.warn(
+        `[map] ${label}: duplicate target id ${value} for keys ${firstKey} and ${key}`,
+      );
+      if (shouldRepairMaps) {
+        map.delete(key);
+        cleanedCount += 1;
+        continue;
+      }
+    } else {
+      seenValues.set(value, key);
+    }
+  }
+
+  if (duplicateCount > 0 && !shouldRepairMaps) {
+    console.warn(
+      `[map] ${label}: detected ${duplicateCount} duplicate value(s). Re-run with --repair-maps to clean them automatically.`,
+    );
+  }
+
+  if (cleanedCount > 0 && shouldRepairMaps) {
+    console.log(
+      `[map] ${label}: repaired ${cleanedCount} mapping entry/entries.`,
+    );
+  }
+}
+
+function validateAllIdMaps() {
+  [
+    { label: 'projectIdMap', map: projectIdMap },
+    { label: 'scorecardIdMap', map: scorecardIdMap },
+    { label: 'scorecardGroupIdMap', map: scorecardGroupIdMap },
+    { label: 'scorecardSectionIdMap', map: scorecardSectionIdMap },
+    { label: 'scorecardQuestionIdMap', map: scorecardQuestionIdMap },
+    { label: 'reviewIdMap', map: reviewIdMap },
+    { label: 'reviewItemIdMap', map: reviewItemIdMap },
+    {
+      label: 'reviewItemCommentReviewItemCommentIdMap',
+      map: reviewItemCommentReviewItemCommentIdMap,
+    },
+    {
+      label: 'reviewItemCommentAppealIdMap',
+      map: reviewItemCommentAppealIdMap,
+    },
+    {
+      label: 'reviewItemCommentAppealResponseIdMap',
+      map: reviewItemCommentAppealResponseIdMap,
+    },
+    { label: 'uploadIdMap', map: uploadIdMap },
+    { label: 'submissionIdMap', map: submissionIdMap },
+    { label: 'llmProviderIdMap', map: llmProviderIdMap },
+    { label: 'llmModelIdMap', map: llmModelIdMap },
+    { label: 'aiWorkflowIdMap', map: aiWorkflowIdMap },
+    { label: 'resourceSubmissionIdMap', map: resourceSubmissionIdMap },
+  ].forEach(({ label, map }) => validateIdMap(map, label));
 }
 
 const describeLegacyId = (value: unknown): string => {
@@ -302,6 +457,8 @@ const llmProviderIdMap = readIdMap('llmProviderIdMap');
 const llmModelIdMap = readIdMap('llmModelIdMap');
 const aiWorkflowIdMap = readIdMap('aiWorkflowIdMap');
 const resourceSubmissionIdMap = readIdMap('resourceSubmissionIdMap');
+
+validateAllIdMaps();
 
 // read resourceSubmissionSet
 const rsSetFile = '.tmp/resourceSubmissionSet.json';
@@ -607,6 +764,7 @@ async function handleElasticSearchSubmission(item) {
   if (!shouldProcessRecord(createdAudit, updatedAudit)) {
     return;
   }
+  incrementSourceDelta('submission');
   currentSubmissions.push(item);
   // if we can batch insert data, +
   if (currentSubmissions.length >= batchSize) {
@@ -1057,9 +1215,11 @@ async function processType(type: string, subtype?: string) {
               typeof convertProjectResult
             >;
             const processedData: ChallengeResultEntity[] = [];
+            let recordIndex = 0;
             for (const pr of jsonData[key]) {
               const mapKey = `${pr.project_id}${pr.user_id}`;
               if (hasMappedId(projectIdMap, mapKey)) {
+                recordIndex += 1;
                 continue;
               }
               try {
@@ -1073,8 +1233,11 @@ async function processType(type: string, subtype?: string) {
                   err,
                   pr,
                   `Failed to convert projectResult for challengeId ${pr.project_id}, userId ${pr.user_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
               }
+              recordIndex += 1;
             }
             const totalBatches = Math.ceil(processedData.length / batchSize);
             for (let i = 0; i < processedData.length; i += batchSize) {
@@ -1109,10 +1272,13 @@ async function processType(type: string, subtype?: string) {
                 });
             }
           } else {
+            let recordIndex = 0;
             for (const pr of jsonData[key]) {
               if (!shouldProcessRecord(pr.create_date, pr.modify_date)) {
+                recordIndex += 1;
                 continue;
               }
+              incrementSourceDelta(type);
               const mapKey = `${pr.project_id}${pr.user_id}`;
               let data: ReturnType<typeof convertProjectResult>;
               try {
@@ -1124,7 +1290,10 @@ async function processType(type: string, subtype?: string) {
                   err,
                   pr,
                   `Failed to convert projectResult for challengeId ${pr.project_id}, userId ${pr.user_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
+                recordIndex += 1;
                 continue;
               }
               try {
@@ -1145,6 +1314,7 @@ async function processType(type: string, subtype?: string) {
                 );
                 console.error(err);
               }
+              recordIndex += 1;
             }
           }
           break;
@@ -1180,6 +1350,7 @@ async function processType(type: string, subtype?: string) {
           if (!isIncrementalRun) {
             type ScorecardEntity = ReturnType<typeof convertScorecard>;
             const processedData: ScorecardEntity[] = [];
+            let recordIndex = 0;
             for (const sc of jsonData[key]) {
               const id = nanoid(14);
               try {
@@ -1193,8 +1364,11 @@ async function processType(type: string, subtype?: string) {
                   err,
                   sc,
                   `Failed to convert scorecard legacyId ${sc.scorecard_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
               }
+              recordIndex += 1;
             }
             const totalBatches = Math.ceil(processedData.length / batchSize);
             for (let i = 0; i < processedData.length; i += batchSize) {
@@ -1226,10 +1400,13 @@ async function processType(type: string, subtype?: string) {
                 });
             }
           } else {
+            let recordIndex = 0;
             for (const sc of jsonData[key]) {
               if (!shouldProcessRecord(sc.create_date, sc.modify_date)) {
+                recordIndex += 1;
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(scorecardIdMap, sc.scorecard_id);
               const id = existingId ?? nanoid(14);
               let data: ReturnType<typeof convertScorecard>;
@@ -1242,7 +1419,10 @@ async function processType(type: string, subtype?: string) {
                   err,
                   sc,
                   `Failed to convert scorecard legacyId ${sc.scorecard_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
+                recordIndex += 1;
                 continue;
               }
               try {
@@ -1261,6 +1441,7 @@ async function processType(type: string, subtype?: string) {
                 );
                 console.error(err);
               }
+              recordIndex += 1;
             }
           }
           break;
@@ -1290,8 +1471,10 @@ async function processType(type: string, subtype?: string) {
           if (!isIncrementalRun) {
             type ScorecardGroupEntity = ReturnType<typeof convertGroup>;
             const processedData: ScorecardGroupEntity[] = [];
+            let recordIndex = 0;
             for (const group of jsonData[key]) {
               if (hasMappedId(scorecardGroupIdMap, group.scorecard_group_id)) {
+                recordIndex += 1;
                 continue;
               }
               const id = nanoid(14);
@@ -1306,8 +1489,11 @@ async function processType(type: string, subtype?: string) {
                   err,
                   group,
                   `Failed to convert scorecardGroup legacyId ${group.scorecard_group_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
               }
+              recordIndex += 1;
             }
             const totalBatches = Math.ceil(processedData.length / batchSize);
             for (let i = 0; i < processedData.length; i += batchSize) {
@@ -1339,10 +1525,13 @@ async function processType(type: string, subtype?: string) {
                 });
             }
           } else {
+            let recordIndex = 0;
             for (const group of jsonData[key]) {
               if (!shouldProcessRecord(group.create_date, group.modify_date)) {
+                recordIndex += 1;
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(
                 scorecardGroupIdMap,
                 group.scorecard_group_id,
@@ -1358,7 +1547,10 @@ async function processType(type: string, subtype?: string) {
                   err,
                   group,
                   `Failed to convert scorecardGroup legacyId ${group.scorecard_group_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
+                recordIndex += 1;
                 continue;
               }
               try {
@@ -1381,6 +1573,7 @@ async function processType(type: string, subtype?: string) {
                 );
                 console.error(err);
               }
+              recordIndex += 1;
             }
           }
           break;
@@ -1410,10 +1603,12 @@ async function processType(type: string, subtype?: string) {
           if (!isIncrementalRun) {
             type ScorecardSectionEntity = ReturnType<typeof convertSection>;
             const processedData: ScorecardSectionEntity[] = [];
+            let recordIndex = 0;
             for (const section of jsonData[key]) {
               if (
                 hasMappedId(scorecardSectionIdMap, section.scorecard_section_id)
               ) {
+                recordIndex += 1;
                 continue;
               }
               const id = nanoid(14);
@@ -1432,8 +1627,11 @@ async function processType(type: string, subtype?: string) {
                   err,
                   section,
                   `Failed to convert scorecardSection legacyId ${section.scorecard_section_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
               }
+              recordIndex += 1;
             }
             const totalBatches = Math.ceil(processedData.length / batchSize);
             for (let i = 0; i < processedData.length; i += batchSize) {
@@ -1465,12 +1663,15 @@ async function processType(type: string, subtype?: string) {
                 });
             }
           } else {
+            let recordIndex = 0;
             for (const section of jsonData[key]) {
               if (
                 !shouldProcessRecord(section.create_date, section.modify_date)
               ) {
+                recordIndex += 1;
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(
                 scorecardSectionIdMap,
                 section.scorecard_section_id,
@@ -1486,7 +1687,10 @@ async function processType(type: string, subtype?: string) {
                   err,
                   section,
                   `Failed to convert scorecardSection legacyId ${section.scorecard_section_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
+                recordIndex += 1;
                 continue;
               }
               try {
@@ -1509,6 +1713,7 @@ async function processType(type: string, subtype?: string) {
                 );
                 console.error(err);
               }
+              recordIndex += 1;
             }
           }
           break;
@@ -1545,6 +1750,7 @@ async function processType(type: string, subtype?: string) {
           if (!isIncrementalRun) {
             type ScorecardQuestionEntity = ReturnType<typeof convertQuestion>;
             const processedData: ScorecardQuestionEntity[] = [];
+            let recordIndex = 0;
             for (const question of jsonData[key]) {
               if (
                 hasMappedId(
@@ -1552,6 +1758,7 @@ async function processType(type: string, subtype?: string) {
                   question.scorecard_question_id,
                 )
               ) {
+                recordIndex += 1;
                 continue;
               }
               const id = nanoid(14);
@@ -1570,8 +1777,11 @@ async function processType(type: string, subtype?: string) {
                   err,
                   question,
                   `Failed to convert scorecardQuestion legacyId ${question.scorecard_question_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
               }
+              recordIndex += 1;
             }
             const totalBatches = Math.ceil(processedData.length / batchSize);
             for (let i = 0; i < processedData.length; i += batchSize) {
@@ -1603,12 +1813,15 @@ async function processType(type: string, subtype?: string) {
                 });
             }
           } else {
+            let recordIndex = 0;
             for (const question of jsonData[key]) {
               if (
                 !shouldProcessRecord(question.create_date, question.modify_date)
               ) {
+                recordIndex += 1;
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(
                 scorecardQuestionIdMap,
                 question.scorecard_question_id,
@@ -1624,7 +1837,10 @@ async function processType(type: string, subtype?: string) {
                   err,
                   question,
                   `Failed to convert scorecardQuestion legacyId ${question.scorecard_question_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
+                recordIndex += 1;
                 continue;
               }
               try {
@@ -1647,6 +1863,7 @@ async function processType(type: string, subtype?: string) {
                 );
                 console.error(err);
               }
+              recordIndex += 1;
             }
           }
           break;
@@ -1684,8 +1901,10 @@ async function processType(type: string, subtype?: string) {
           if (!isIncrementalRun) {
             type ReviewEntity = ReturnType<typeof convertReview>;
             const processedData: ReviewEntity[] = [];
+            let recordIndex = 0;
             for (const review of jsonData[key]) {
               if (hasMappedId(reviewIdMap, review.review_id)) {
+                recordIndex += 1;
                 continue;
               }
               const id = nanoid(14);
@@ -1700,8 +1919,11 @@ async function processType(type: string, subtype?: string) {
                   err,
                   review,
                   `Failed to convert review legacyId ${review.review_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
               }
+              recordIndex += 1;
             }
             const totalBatches = Math.ceil(processedData.length / batchSize);
             for (let i = 0; i < processedData.length; i += batchSize) {
@@ -1731,12 +1953,15 @@ async function processType(type: string, subtype?: string) {
                 });
             }
           } else {
+            let recordIndex = 0;
             for (const review of jsonData[key]) {
               if (
                 !shouldProcessRecord(review.create_date, review.modify_date)
               ) {
+                recordIndex += 1;
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(reviewIdMap, review.review_id);
               const id = existingId ?? nanoid(14);
               let data: ReturnType<typeof convertReview>;
@@ -1749,7 +1974,10 @@ async function processType(type: string, subtype?: string) {
                   err,
                   review,
                   `Failed to convert review legacyId ${review.review_id}`,
+                  undefined,
+                  { index: recordIndex },
                 );
+                recordIndex += 1;
                 continue;
               }
               try {
@@ -1768,6 +1996,7 @@ async function processType(type: string, subtype?: string) {
                 );
                 console.error(err);
               }
+              recordIndex += 1;
             }
           }
           break;
@@ -1861,6 +2090,7 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(item.create_date, item.modify_date)) {
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(
                 reviewItemIdMap,
                 item.review_item_id,
@@ -1897,6 +2127,7 @@ async function processType(type: string, subtype?: string) {
           switch (subtype) {
             case 'reviewItemComment': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
+              const deltaKey = `${type}:${subtype}`;
               const isSupportedType = (c) =>
                 reviewItemCommentTypeMap[c.comment_type_id] in
                 LegacyCommentType;
@@ -2002,6 +2233,7 @@ async function processType(type: string, subtype?: string) {
                   if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                     continue;
                   }
+                  incrementSourceDelta(deltaKey);
                   const existingId = getMappedId(
                     reviewItemCommentReviewItemCommentIdMap,
                     c.review_item_comment_id,
@@ -2047,6 +2279,7 @@ async function processType(type: string, subtype?: string) {
             }
             case 'appeal': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
+              const deltaKey = `${type}:${subtype}`;
               const isAppeal = (c) =>
                 reviewItemCommentTypeMap[c.comment_type_id] === 'Appeal';
               const convertAppeal = (c, recordId: string) => {
@@ -2143,6 +2376,7 @@ async function processType(type: string, subtype?: string) {
                   if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                     continue;
                   }
+                  incrementSourceDelta(deltaKey);
                   const existingId = getMappedId(
                     reviewItemCommentAppealIdMap,
                     c.review_item_id,
@@ -2188,6 +2422,7 @@ async function processType(type: string, subtype?: string) {
             }
             case 'appealResponse': {
               console.log(`[${type}][${subtype}][${file}] Processing file`);
+              const deltaKey = `${type}:${subtype}`;
               const isAppealResponse = (c) =>
                 reviewItemCommentTypeMap[c.comment_type_id] ===
                 'Appeal Response';
@@ -2290,6 +2525,7 @@ async function processType(type: string, subtype?: string) {
                   if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                     continue;
                   }
+                  incrementSourceDelta(deltaKey);
                   const existingId = getMappedId(
                     reviewItemCommentAppealResponseIdMap,
                     c.review_item_comment_id,
@@ -2404,6 +2640,7 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(
                 llmProviderIdMap,
                 c.llm_provider_id,
@@ -2519,6 +2756,7 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(llmModelIdMap, c.llm_model_id);
               const id = existingId ?? nanoid(14);
               let data: ReturnType<typeof convertModel>;
@@ -2639,6 +2877,7 @@ async function processType(type: string, subtype?: string) {
               if (!shouldProcessRecord(c.create_date, c.modify_date)) {
                 continue;
               }
+              incrementSourceDelta(type);
               const existingId = getMappedId(aiWorkflowIdMap, c.ai_workflow_id);
               const id = existingId ?? nanoid(14);
               let data: ReturnType<typeof convertWorkflow>;
@@ -2745,6 +2984,220 @@ async function doImportResourceSubmission() {
   }
 }
 
+function buildIncrementalWhereClause(
+  dateFields: string[],
+  baseFilter?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!incrementalSince) {
+    return baseFilter;
+  }
+
+  const dateFilter: Record<string, unknown> = {
+    OR: dateFields.map((field) => ({ [field]: { gte: incrementalSince } })),
+  };
+  if (!baseFilter) {
+    return dateFilter;
+  }
+  return { AND: [baseFilter, dateFilter] };
+}
+
+async function verifyIncrementalReferentialIntegrity() {
+  if (!isIncrementalRun || !incrementalSince) {
+    return;
+  }
+
+  console.log('[incremental] Checking referential integrity...');
+  const checks: Array<{ label: string; query: () => Promise<number> }> = [
+    {
+      label: 'reviewItem.review',
+      query: () =>
+        prisma.reviewItem.count({
+          where: buildIncrementalWhereClause(['updatedAt', 'createdAt'], {
+            review: { is: null },
+          }),
+        }),
+    },
+    {
+      label: 'reviewItemComment.reviewItem',
+      query: () =>
+        prisma.reviewItemComment.count({
+          where: buildIncrementalWhereClause(['updatedAt', 'createdAt'], {
+            reviewItem: { is: null },
+          }),
+        }),
+    },
+    {
+      label: 'appeal.reviewItemComment',
+      query: () =>
+        prisma.appeal.count({
+          where: buildIncrementalWhereClause(['updatedAt', 'createdAt'], {
+            reviewItemComment: { is: null },
+          }),
+        }),
+    },
+  ];
+
+  for (const check of checks) {
+    try {
+      const orphanCount = await check.query();
+      if (orphanCount > 0) {
+        console.warn(
+          `[incremental] Referential issue: ${check.label} has ${orphanCount} orphan record(s) in the incremental window.`,
+        );
+      } else {
+        console.log(
+          `[incremental] Referential check passed for ${check.label}.`,
+        );
+      }
+    } catch (err: any) {
+      console.warn(
+        `[incremental] Referential check failed for ${check.label}: ${err.message}`,
+      );
+    }
+  }
+}
+
+async function verifyIncrementalMigration() {
+  if (!isIncrementalRun || !incrementalSince) {
+    return;
+  }
+
+  console.log('[incremental] Verifying incremental migration results...');
+  const configs = new Map<
+    string,
+    { delegate: any; dateFields: string[]; where?: any }
+  >([
+    [
+      'submission',
+      { delegate: prisma.submission, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'project_result',
+      {
+        delegate: prisma.challengeResult,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'scorecard',
+      { delegate: prisma.scorecard, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'scorecard_group',
+      {
+        delegate: prisma.scorecardGroup,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'scorecard_section',
+      {
+        delegate: prisma.scorecardSection,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'scorecard_question',
+      {
+        delegate: prisma.scorecardQuestion,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'review',
+      { delegate: prisma.review, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'review_item',
+      { delegate: prisma.reviewItem, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'review_item_comment:reviewItemComment',
+      {
+        delegate: prisma.reviewItemComment,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'review_item_comment:appeal',
+      { delegate: prisma.appeal, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'review_item_comment:appealResponse',
+      {
+        delegate: prisma.appealResponse,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+    [
+      'llm_provider',
+      { delegate: prisma.llmProvider, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'llm_model',
+      { delegate: prisma.llmModel, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'ai_workflow',
+      { delegate: prisma.aiWorkflow, dateFields: ['updatedAt', 'createdAt'] },
+    ],
+    [
+      'resource_submission',
+      {
+        delegate: prisma.resourceSubmission,
+        dateFields: ['updatedAt', 'createdAt'],
+      },
+    ],
+  ]);
+
+  for (const [key, sourceCount] of sourceDeltaCounters.entries()) {
+    const config = configs.get(key) ?? configs.get(key.split(':')[0]);
+    if (!config) {
+      continue;
+    }
+
+    let targetCount = 0;
+    try {
+      const whereClause = buildIncrementalWhereClause(
+        config.dateFields,
+        config.where,
+      );
+      targetCount = await config.delegate.count({ where: whereClause });
+    } catch (err: any) {
+      console.warn(
+        `[incremental] ${key}: failed to read target counts (${err.message}).`,
+      );
+      continue;
+    }
+
+    if (sourceCount !== targetCount) {
+      console.warn(
+        `[incremental] ${key}: source=${sourceCount}, target=${targetCount}`,
+      );
+    } else {
+      console.log(`[incremental] ${key}: counts OK (${targetCount}).`);
+    }
+  }
+
+  await verifyIncrementalReferentialIntegrity();
+}
+
+function reportErrorSummary() {
+  if (errorSummary.size === 0) {
+    console.log('No conversion errors recorded.');
+    return;
+  }
+
+  console.log('Error summary by type:');
+  errorSummary.forEach((info, key) => {
+    const files = Array.from(info.files).join(', ');
+    const examples = info.examples.join(', ');
+    console.log(
+      `- ${key}: count=${info.count}, files=[${files}]${examples ? `, examples=${examples}` : ''}`,
+    );
+  });
+}
+
 async function upsertResourceSubmission(data) {
   const { id, ...updateData } = data;
   try {
@@ -2795,6 +3248,7 @@ async function migrateResourceSubmissions() {
           setMappedId(resourceSubmissionIdMap, key, data.id);
         }
         if (shouldPersist || !existingId) {
+          incrementSourceDelta('resource_submission');
           await handleResourceSubmission(data);
         }
       } else if (!resourceSubmissionSet.has(key)) {
@@ -2844,6 +3298,9 @@ async function migrate() {
   console.log('Starting importing resource-submissions...');
   await migrateResourceSubmissions();
   console.log('Resource-submissions import completed.');
+
+  await verifyIncrementalMigration();
+  reportErrorSummary();
 }
 
 migrate()
