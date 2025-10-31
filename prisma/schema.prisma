@@ -400,6 +400,7 @@ model submission {
   fileSize           Int?
   viewCount          Int?
   systemFileName     String?
+  isFileSubmission   Boolean         @default(false)
   thurgoodJobId      String?
   virusScan          Boolean          @default(false)
 

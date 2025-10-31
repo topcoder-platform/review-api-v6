@@ -52,12 +52,39 @@ import { Readable, PassThrough } from 'stream';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
 import { Prisma } from '@prisma/client';
+import type { Express } from 'express';
 
 type SubmissionMinimal = {
   id: string;
   systemFileName: string | null;
   url: string | null;
 };
+
+type SubmissionBusPayloadSource = Prisma.submissionGetPayload<{
+  select: {
+    id: true;
+    type: true;
+    status: true;
+    memberId: true;
+    challengeId: true;
+    legacyChallengeId: true;
+    legacySubmissionId: true;
+    legacyUploadId: true;
+    submissionPhaseId: true;
+    fileType: true;
+    systemFileName: true;
+    submittedDate: true;
+    url: true;
+    isFileSubmission: true;
+    createdAt: true;
+    updatedAt: true;
+    createdBy: true;
+    updatedBy: true;
+    prizeId: true;
+    fileSize: true;
+    viewCount: true;
+  };
+}>;
 
 type ChallengeRoleSummary = {
   hasCopilot: boolean;
@@ -1261,6 +1288,56 @@ export class SubmissionService {
     }
   }
 
+  private async publishSubmissionCreateEvent(
+    submission: SubmissionBusPayloadSource,
+  ): Promise<void> {
+    const submittedDateValue =
+      submission.submittedDate instanceof Date
+        ? submission.submittedDate.toISOString()
+        : submission.submittedDate
+          ? new Date(submission.submittedDate).toISOString()
+          : null;
+    const updatedAtDate =
+      submission.updatedAt instanceof Date
+        ? submission.updatedAt
+        : submission.updatedAt
+          ? new Date(submission.updatedAt)
+          : submission.createdAt;
+
+    const payload = {
+      resource: 'submission',
+      id: submission.id,
+      type: submission.type,
+      status: submission.status,
+      memberId: submission.memberId ?? null,
+      challengeId: submission.challengeId ?? null,
+      legacyChallengeId: Utils.bigIntToNumber(submission.legacyChallengeId),
+      legacySubmissionId: submission.legacySubmissionId ?? null,
+      legacyUploadId: submission.legacyUploadId ?? null,
+      submissionPhaseId: submission.submissionPhaseId ?? null,
+      systemFileName: submission.systemFileName ?? null,
+      fileType: submission.fileType ?? null,
+      fileSize: submission.fileSize ?? null,
+      viewCount: submission.viewCount ?? null,
+      url: submission.url ?? null,
+      isFileSubmission: Boolean(submission.isFileSubmission),
+      submittedDate: submittedDateValue,
+      created: submission.createdAt.toISOString(),
+      updated: updatedAtDate.toISOString(),
+      createdBy: submission.createdBy ?? null,
+      updatedBy: submission.updatedBy ?? null,
+      prizeId: Utils.bigIntToNumber(submission.prizeId),
+    };
+
+    await this.eventBusService.publish(
+      'submission.notification.create',
+      payload,
+    );
+    this.logger.log(
+      `Published submission.notification.create event for submission ${submission.id}`,
+    );
+  }
+
   private async publishSubmissionScanEvent(
     submission: SubmissionMinimal,
   ): Promise<void> {
@@ -1322,7 +1399,11 @@ export class SubmissionService {
     );
   }
 
-  async createSubmission(authUser: JwtUser, body: SubmissionRequestDto) {
+  async createSubmission(
+    authUser: JwtUser,
+    body: SubmissionRequestDto,
+    file?: Express.Multer.File,
+  ) {
     console.log(`BODY: ${JSON.stringify(body)}`);
 
     // Enforce: non-admin, non-M2M users can only submit for themselves
@@ -1458,6 +1539,12 @@ export class SubmissionService {
     }
 
     try {
+      const hasUploadedFile =
+        !!file &&
+        ((typeof file.size === 'number' && file.size > 0) ||
+          (file.buffer && file.buffer.length > 0));
+      const isFileSubmission = hasUploadedFile;
+
       // Derive common metadata if available
       let systemFileName: string | undefined;
       let fileType: string | undefined;
@@ -1481,6 +1568,7 @@ export class SubmissionService {
       const data = await this.prisma.submission.create({
         data: {
           ...body,
+          isFileSubmission,
           // populate commonly expected fields on create
           submittedDate: body.submittedDate
             ? new Date(body.submittedDate)
@@ -1494,7 +1582,13 @@ export class SubmissionService {
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);
-      await this.publishSubmissionScanEvent(data);
+      if (isFileSubmission) {
+        await this.publishSubmissionScanEvent(data);
+      } else {
+        this.logger.log(
+          `Skipping AV scan event for submission ${data.id} because it is not a file-based submission.`,
+        );
+      }
       // Increment challenge submission counters if challengeId present
       if (body.challengeId) {
         try {
@@ -1521,6 +1615,9 @@ export class SubmissionService {
           );
         }
       }
+      await this.publishSubmissionCreateEvent(
+        data as SubmissionBusPayloadSource,
+      );
       await this.populateLatestSubmissionFlags([data]);
       await this.stripIsLatestForUnlimitedChallenges([data]);
       return this.buildResponse(data);
@@ -3642,6 +3739,9 @@ export class SubmissionService {
     }
     if (Object.prototype.hasOwnProperty.call(data, 'isLatest')) {
       dto.isLatest = Boolean(data.isLatest);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'isFileSubmission')) {
+      dto.isFileSubmission = Boolean(data.isFileSubmission);
     }
     return dto;
   }
