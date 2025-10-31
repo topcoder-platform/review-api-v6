@@ -75,7 +75,6 @@ export const CommonConfig = {
       'd-7d14d986ba0a4317b449164b73939910',
   },
   ui: {
-    reviewUIUrl:
-      process.env.REVIEW_UI_URL ?? 'https://review-v6.topcoder-dev.com',
+    reviewUIUrl: process.env.REVIEW_UI_URL ?? 'https://review.topcoder-dev.com',
   },
 };
