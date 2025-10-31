@@ -180,8 +180,10 @@ model review {
 
   @@index([committed]) // Index for filtering by committed status
   @@index([submissionId]) // Index for filtering by submission
+  @@index([submissionId, id]) // Helps ORDER BY id after filtering by submission
   @@index([resourceId]) // Index for filtering by resource (reviewer)
   @@index([phaseId]) // Index for filtering by phase
+  @@index([phaseId, id]) // Helps ORDER BY id after filtering by phase
   @@index([scorecardId]) // Index for joining with scorecard table
   @@index([status]) // Index for filtering by review status
   @@index([status, phaseId])
@@ -228,6 +230,7 @@ model reviewItemComment {
   appeal     appeal?
 
   @@index([reviewItemId]) // Index for joining with reviewItem table
+  @@index([reviewItemId, sortOrder, id]) // Helps ordered pagination on review item comments
   @@index([id]) // Index for direct ID lookups
   @@index([resourceId]) // Index for filtering by resource (commenter)
   @@index([type]) // Index for filtering by comment type
