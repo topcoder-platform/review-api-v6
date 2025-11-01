@@ -281,7 +281,7 @@ export class MyReviewService {
                 cp_incomplete.name ASC
               LIMIT 1
             ) AS "incompletePhaseName"
-        ) deliverable_reviews ON TRUE
+        ) deliverable_reviews ON r.id IS NOT NULL
       `,
       Prisma.sql`
         LEFT JOIN LATERAL (
@@ -301,7 +301,7 @@ export class MyReviewService {
               WHERE rv_pending."resourceId" = r.id
                 AND apr.id IS NULL
           ) AS "hasPendingAppealResponses"
-        ) pending_appeals ON TRUE
+        ) pending_appeals ON r.id IS NOT NULL
       `,
       Prisma.sql`
         LEFT JOIN LATERAL (
@@ -322,12 +322,11 @@ export class MyReviewService {
       Prisma.sql`
         LEFT JOIN LATERAL (
           SELECT
-            EXISTS (
-              SELECT 1
-              FROM challenges."ChallengeReviewer" cr
-              WHERE cr."challengeId" = c.id
-                AND cr."aiWorkflowId" is not NULL
-            ) AS "hasAIReview"
+            TRUE AS "hasAIReview"
+          FROM challenges."ChallengeReviewer" cr
+          WHERE cr."challengeId" = c.id
+            AND cr."aiWorkflowId" IS NOT NULL
+          LIMIT 1
         ) cr ON TRUE
       `,
     ];
