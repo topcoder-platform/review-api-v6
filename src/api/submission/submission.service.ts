@@ -1649,7 +1649,10 @@ export class SubmissionService {
         !!file &&
         ((typeof file.size === 'number' && file.size > 0) ||
           (file.buffer && file.buffer.length > 0));
-      const isFileSubmission = hasUploadedFile;
+      const hasS3Url =
+        typeof body.url === 'string' &&
+        body.url.includes('https://s3.amazonaws.com');
+      const isFileSubmission = hasUploadedFile || hasS3Url;
 
       // Derive common metadata if available
       let systemFileName: string | undefined;
