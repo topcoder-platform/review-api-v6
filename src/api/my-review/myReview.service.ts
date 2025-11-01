@@ -156,7 +156,7 @@ export class MyReviewService {
       whereFragments.push(Prisma.sql`c.status = 'ACTIVE'`);
     }
 
-    const joins: Prisma.Sql[] = [];
+    const baseJoins: Prisma.Sql[] = [];
 
     if (!adminUser) {
       if (!normalizedUserId) {
@@ -165,7 +165,7 @@ export class MyReviewService {
         );
       }
 
-      joins.push(
+      baseJoins.push(
         Prisma.sql`
           LEFT JOIN resources."Resource" r
             ON r."challengeId" = c.id
@@ -177,7 +177,7 @@ export class MyReviewService {
 
       whereFragments.push(Prisma.sql`r."challengeId" IS NOT NULL`);
     } else {
-      joins.push(
+      baseJoins.push(
         Prisma.sql`
           LEFT JOIN resources."Resource" r
             ON r."challengeId" = c.id
@@ -188,10 +188,13 @@ export class MyReviewService {
       );
     }
 
-    joins.push(
+    baseJoins.push(
       Prisma.sql`
         LEFT JOIN challenges."ChallengeType" ct ON ct.id = c."typeId"
       `,
+    );
+
+    const metricJoins: Prisma.Sql[] = [
       Prisma.sql`
         LEFT JOIN LATERAL (
           SELECT
@@ -279,7 +282,7 @@ export class MyReviewService {
                AND apr."resourceId" = r.id
               WHERE rv_pending."resourceId" = r.id
                 AND apr.id IS NULL
-            ) AS "hasPendingAppealResponses"
+          ) AS "hasPendingAppealResponses"
         ) pending_appeals ON TRUE
       `,
       Prisma.sql`
@@ -309,7 +312,13 @@ export class MyReviewService {
             ) AS "hasAIReview"
         ) cr ON TRUE
       `,
+    ];
+
+    const joinClause = joinSqlFragments(
+      [...baseJoins, ...metricJoins],
+      Prisma.sql``,
     );
+    const countJoinClause = joinSqlFragments(baseJoins, Prisma.sql``);
 
     if (challengeTypeId) {
       whereFragments.push(Prisma.sql`c."typeId" = ${challengeTypeId}`);
@@ -331,7 +340,6 @@ export class MyReviewService {
       );
     }
 
-    const joinClause = joinSqlFragments(joins, Prisma.sql``);
     const whereClause = joinSqlFragments(whereFragments, Prisma.sql` AND `);
 
     const phaseEndExpression = Prisma.sql`
@@ -410,7 +418,7 @@ export class MyReviewService {
     const countQuery = Prisma.sql`
       SELECT COUNT(DISTINCT c.id) AS "total"
       FROM challenges."Challenge" c
-      ${joinClause}
+      ${countJoinClause}
       WHERE ${whereClause}
     `;
 
