@@ -188,6 +188,7 @@ model review {
   @@index([status]) // Index for filtering by review status
   @@index([status, phaseId])
   @@index([resourceId, status])
+  @@index([resourceId, status, phaseId], map: "review_resource_status_phase_idx") // Supports incomplete review lookups that also consider phase ordering
   @@unique([resourceId, submissionId, scorecardId])
 }
 
@@ -284,6 +285,7 @@ model appeal {
   @@index([resourceId]) // Index for resource ID
   @@index([id]) // Index for direct ID lookups
   @@index([reviewItemCommentId]) // Index for joining with reviewItemComment table
+  @@index([reviewItemCommentId, resourceId], map: "appeal_comment_resource_idx") // Supports filtered appeal lookups by comment and resource
 }
 
 model appealResponse {
@@ -303,6 +305,7 @@ model appealResponse {
   @@index([id]) // Index for direct ID lookups
   @@index([appealId]) // Index for joining with appeal table
   @@index([resourceId]) // Index for filtering by resource (responder)
+  @@index([appealId, resourceId], map: "appeal_response_appeal_resource_idx") // Supports lookups for pending appeal responses by appeal and resource
 }
 
 model challengeResult {

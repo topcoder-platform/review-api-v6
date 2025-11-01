@@ -60,6 +60,23 @@ type SubmissionMinimal = {
   url: string | null;
 };
 
+interface TopgearSubmissionEventPayload {
+  submissionId: string;
+  challengeId: string;
+  submissionUrl: string;
+  memberHandle: string;
+  memberId: string;
+  submittedDate: string;
+}
+
+type TopgearSubmissionRecord = {
+  id: string;
+  challengeId: string | null;
+  memberId: string | null;
+  url: string | null;
+  createdAt: Date;
+};
+
 type SubmissionBusPayloadSource = Prisma.submissionGetPayload<{
   select: {
     id: true;
@@ -1399,6 +1416,95 @@ export class SubmissionService {
     );
   }
 
+  private async publishTopgearSubmissionEventIfEligible(
+    submission: TopgearSubmissionRecord,
+  ): Promise<void> {
+    if (!submission.challengeId) {
+      this.logger.log(
+        `Submission ${submission.id} missing challengeId. Skipping Topgear event publish.`,
+      );
+      return;
+    }
+
+    const challenge = await this.challengeApiService.getChallengeDetail(
+      submission.challengeId,
+    );
+
+    if (!this.isTopgearTaskChallenge(challenge?.type)) {
+      this.logger.log(
+        `Challenge ${submission.challengeId} is not Topgear Task. Skipping immediate Topgear event for submission ${submission.id}.`,
+      );
+      return;
+    }
+
+    if (!submission.url) {
+      throw new InternalServerErrorException({
+        message:
+          'Updated submission does not contain a URL required for Topgear event payload.',
+        code: 'TOPGEAR_SUBMISSION_URL_MISSING',
+        details: { submissionId: submission.id },
+      });
+    }
+
+    if (!submission.memberId) {
+      throw new InternalServerErrorException({
+        message:
+          'Submission is missing memberId. Cannot publish Topgear event.',
+        code: 'TOPGEAR_SUBMISSION_MEMBER_MISSING',
+        details: { submissionId: submission.id },
+      });
+    }
+
+    const memberHandle = await this.lookupMemberHandle(
+      submission.challengeId,
+      submission.memberId,
+    );
+
+    if (!memberHandle) {
+      throw new InternalServerErrorException({
+        message: 'Unable to locate member handle for Topgear event payload.',
+        code: 'TOPGEAR_MEMBER_HANDLE_MISSING',
+        details: {
+          submissionId: submission.id,
+          challengeId: submission.challengeId,
+          memberId: submission.memberId,
+        },
+      });
+    }
+
+    const payload: TopgearSubmissionEventPayload = {
+      submissionId: submission.id,
+      challengeId: submission.challengeId,
+      submissionUrl: submission.url,
+      memberHandle,
+      memberId: submission.memberId,
+      submittedDate: submission.createdAt.toISOString(),
+    };
+
+    await this.eventBusService.publish('topgear.submission.received', payload);
+    this.logger.log(
+      `Published topgear.submission.received event for submission ${submission.id} immediately after creation.`,
+    );
+  }
+
+  private isTopgearTaskChallenge(typeName?: string): boolean {
+    return (typeName ?? '').trim().toLowerCase() === 'topgear task';
+  }
+
+  private async lookupMemberHandle(
+    challengeId: string,
+    memberId: string,
+  ): Promise<string | null> {
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: {
+        challengeId,
+        memberId,
+      },
+    });
+
+    return resource?.memberHandle ?? null;
+  }
+
   async createSubmission(
     authUser: JwtUser,
     body: SubmissionRequestDto,
@@ -1543,7 +1649,10 @@ export class SubmissionService {
         !!file &&
         ((typeof file.size === 'number' && file.size > 0) ||
           (file.buffer && file.buffer.length > 0));
-      const isFileSubmission = hasUploadedFile;
+      const hasS3Url =
+        typeof body.url === 'string' &&
+        body.url.includes('https://s3.amazonaws.com');
+      const isFileSubmission = hasUploadedFile || hasS3Url;
 
       // Derive common metadata if available
       let systemFileName: string | undefined;
@@ -1588,6 +1697,13 @@ export class SubmissionService {
         this.logger.log(
           `Skipping AV scan event for submission ${data.id} because it is not a file-based submission.`,
         );
+        await this.publishTopgearSubmissionEventIfEligible({
+          id: data.id,
+          challengeId: data.challengeId,
+          memberId: data.memberId,
+          url: data.url,
+          createdAt: data.createdAt,
+        });
       }
       // Increment challenge submission counters if challengeId present
       if (body.challengeId) {

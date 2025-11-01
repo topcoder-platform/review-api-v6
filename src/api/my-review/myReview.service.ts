@@ -157,6 +157,9 @@ export class MyReviewService {
     }
 
     const baseJoins: Prisma.Sql[] = [];
+    const countJoins: Prisma.Sql[] = [];
+    const countExtras: Prisma.Sql[] = [];
+    const rowExtras: Prisma.Sql[] = [];
 
     if (!adminUser) {
       if (!normalizedUserId) {
@@ -175,7 +178,17 @@ export class MyReviewService {
         `,
       );
 
-      whereFragments.push(Prisma.sql`r."challengeId" IS NOT NULL`);
+      rowExtras.push(Prisma.sql`r."challengeId" IS NOT NULL`);
+      countExtras.push(
+        Prisma.sql`
+          EXISTS (
+            SELECT 1
+            FROM resources."Resource" r
+            WHERE r."challengeId" = c.id
+              AND r."memberId" = ${normalizedUserId}
+          )
+        `,
+      );
     } else {
       baseJoins.push(
         Prisma.sql`
@@ -189,6 +202,11 @@ export class MyReviewService {
     }
 
     baseJoins.push(
+      Prisma.sql`
+        LEFT JOIN challenges."ChallengeType" ct ON ct.id = c."typeId"
+      `,
+    );
+    countJoins.push(
       Prisma.sql`
         LEFT JOIN challenges."ChallengeType" ct ON ct.id = c."typeId"
       `,
@@ -318,7 +336,10 @@ export class MyReviewService {
       [...baseJoins, ...metricJoins],
       Prisma.sql``,
     );
-    const countJoinClause = joinSqlFragments(baseJoins, Prisma.sql``);
+    const countJoinClause = joinSqlFragments(countJoins, Prisma.sql``);
+
+    const rowWhereFragments = [...whereFragments, ...rowExtras];
+    const countWhereFragments = [...whereFragments, ...countExtras];
 
     if (challengeTypeId) {
       whereFragments.push(Prisma.sql`c."typeId" = ${challengeTypeId}`);
@@ -340,7 +361,14 @@ export class MyReviewService {
       );
     }
 
-    const whereClause = joinSqlFragments(whereFragments, Prisma.sql` AND `);
+    const rowWhereClause = joinSqlFragments(
+      rowWhereFragments,
+      Prisma.sql` AND `,
+    );
+    const countWhereClause = joinSqlFragments(
+      countWhereFragments,
+      Prisma.sql` AND `,
+    );
 
     const phaseEndExpression = Prisma.sql`
       COALESCE(cp."actualEndDate", cp."scheduledEndDate")
@@ -416,10 +444,10 @@ export class MyReviewService {
     const orderClause = joinSqlFragments(orderFragments, Prisma.sql`, `);
 
     const countQuery = Prisma.sql`
-      SELECT COUNT(DISTINCT c.id) AS "total"
+      SELECT COUNT(*) AS "total"
       FROM challenges."Challenge" c
       ${countJoinClause}
-      WHERE ${whereClause}
+      WHERE ${countWhereClause}
     `;
 
     const countQueryDetails = countQuery.inspect();
@@ -470,7 +498,7 @@ export class MyReviewService {
         c.status AS "status"
       FROM challenges."Challenge" c
       ${joinClause}
-      WHERE ${whereClause}
+      WHERE ${rowWhereClause}
       ORDER BY ${orderClause}
       LIMIT ${perPage}
       OFFSET ${offset}
