@@ -307,22 +307,45 @@ export class ScoreCardService {
    */
   async viewScorecard(id: string): Promise<ScorecardWithGroupResponseDto> {
     try {
-      const data = await this.prisma.scorecard.findUniqueOrThrow({
-        where: { id },
-        include: {
-          scorecardGroups: {
-            include: {
-              sections: {
-                include: {
-                  questions: true,
-                },
+      const include = {
+        scorecardGroups: {
+          include: {
+            sections: {
+              include: {
+                questions: true,
               },
             },
           },
         },
+      };
+
+      const scorecardById = await this.prisma.scorecard.findUnique({
+        where: { id },
+        include,
       });
-      return data as ScorecardWithGroupResponseDto;
+
+      if (scorecardById) {
+        return scorecardById as ScorecardWithGroupResponseDto;
+      }
+
+      const scorecardByLegacyId = await this.prisma.scorecard.findFirst({
+        where: { legacyId: id },
+        include,
+      });
+
+      if (!scorecardByLegacyId) {
+        throw new NotFoundException({
+          message: `Scorecard with ID ${id} not found. Please check the ID and try again.`,
+          details: { scorecardId: id },
+        });
+      }
+
+      return scorecardByLegacyId as ScorecardWithGroupResponseDto;
     } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `viewing scorecard with ID: ${id}`,
