@@ -89,6 +89,10 @@ export class SubmissionController {
     schema: {
       type: 'object',
       properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
         url: {
           type: 'string',
           format: 'url',
@@ -107,13 +111,14 @@ export class SubmissionController {
   })
   async createSubmission(
     @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
     @Body() body: SubmissionRequestDto,
   ): Promise<SubmissionResponseDto> {
     console.log(
       `Creating submission with request body: ${JSON.stringify(body)}`,
     );
     const authUser: JwtUser = req['user'] as JwtUser;
-    return this.service.createSubmission(authUser, body);
+    return this.service.createSubmission(authUser, body, file);
   }
 
   @Patch('/:submissionId')

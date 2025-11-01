@@ -312,6 +312,13 @@ export class SubmissionResponseDto {
   virusScan?: boolean;
 
   @ApiProperty({
+    description:
+      'Indicates whether this submission was created from a file upload, or is a URL (for Wipro)',
+    required: false,
+  })
+  isFileSubmission?: boolean;
+
+  @ApiProperty({
     description: 'The creation timestamp',
     example: '2023-10-01T00:00:00Z',
   })
