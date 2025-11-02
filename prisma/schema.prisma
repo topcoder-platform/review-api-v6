@@ -308,6 +308,15 @@ model appealResponse {
   @@index([appealId, resourceId], map: "appeal_response_appeal_resource_idx") // Supports lookups for pending appeal responses by appeal and resource
 }
 
+model reviewPendingSummary {
+  resourceId          String   @id
+  pendingAppealCount  Int
+  updatedAt           DateTime @default(now())
+
+  @@index([updatedAt], map: "review_pending_summary_updated_at_idx")
+  @@map("review_pending_summary")
+}
+
 model challengeResult {
   challengeId     String
   userId          String
