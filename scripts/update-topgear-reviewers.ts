@@ -111,6 +111,15 @@ async function fetchDefaultReviewers(
 
 async function backfillChallengeReviewers() {
   const defaultsCache = new Map<string, DefaultChallengeReviewer[]>();
+
+  const taskTypes = await prisma.challengeType.findMany({
+    where: {
+      name: { equals: 'Task', mode: 'insensitive' },
+    },
+    select: { id: true },
+  });
+  const taskTypeIds = new Set(taskTypes.map((type) => type.id));
+
   const challenges = await prisma.challenge.findMany({
     where: {
       status: ChallengeStatusEnum.ACTIVE,
@@ -144,6 +153,13 @@ async function backfillChallengeReviewers() {
     if (!challenge.typeId || !challenge.trackId) {
       console.warn(
         `Skipping challenge ${challenge.id} (${challenge.name}) because typeId or trackId is missing.`,
+      );
+      continue;
+    }
+
+    if (taskTypeIds.has(challenge.typeId)) {
+      console.log(
+        `Skipping challenge ${challenge.id} (${challenge.name}) because it is a Task type.`,
       );
       continue;
     }
