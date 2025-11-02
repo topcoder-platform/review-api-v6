@@ -26,6 +26,12 @@ interface ChallengeContext {
   name: string;
   typeId: string | null;
   trackId: string | null;
+  type?: {
+    name: string | null;
+  } | null;
+  track?: {
+    name: string | null;
+  } | null;
   phases: ChallengePhaseInfo[];
 }
 
@@ -132,6 +138,16 @@ async function backfillChallengeReviewers() {
       name: true,
       typeId: true,
       trackId: true,
+      type: {
+        select: {
+          name: true,
+        },
+      },
+      track: {
+        select: {
+          name: true,
+        },
+      },
       phases: {
         select: {
           id: true,
@@ -150,6 +166,13 @@ async function backfillChallengeReviewers() {
   let challengesUpdated = 0;
 
   for (const challenge of challenges) {
+    const typeName = challenge.type?.name ?? 'Unknown type';
+    const trackName = challenge.track?.name ?? 'Unknown track';
+
+    console.log(
+      `Processing challenge ${challenge.id} (${challenge.name}) – Type: ${typeName}, Track: ${trackName}`,
+    );
+
     if (!challenge.typeId || !challenge.trackId) {
       console.warn(
         `Skipping challenge ${challenge.id} (${challenge.name}) because typeId or trackId is missing.`,
@@ -159,7 +182,7 @@ async function backfillChallengeReviewers() {
 
     if (taskTypeIds.has(challenge.typeId)) {
       console.log(
-        `Skipping challenge ${challenge.id} (${challenge.name}) because it is a Task type.`,
+        `Skipping challenge ${challenge.id} (${challenge.name}) because it is a Task type (Type: ${typeName}, Track: ${trackName}).`,
       );
       continue;
     }
@@ -204,7 +227,9 @@ async function backfillChallengeReviewers() {
 
       if (!matchingPhases || !matchingPhases.length) {
         console.warn(
-          `Challenge ${challenge.id} (${challenge.name}) does not have a phase matching "${defaultReviewer.phaseName}".`,
+          `Challenge ${challenge.id} (${challenge.name}) does not have a phase matching "${defaultReviewer.phaseName}". Available phases: ${challenge.phases
+            .map((phase) => phase.name)
+            .join(', ')}`,
         );
         continue;
       }
