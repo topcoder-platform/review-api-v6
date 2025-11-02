@@ -533,10 +533,13 @@ export class MyReviewService {
         break;
     }
 
-    const fallbackOrderFragments = [
-      Prisma.sql`c."createdAt" DESC NULLS LAST`,
-      Prisma.sql`c.name ASC`,
-    ];
+    const fallbackOrderFragments = shouldFetchPastChallenges
+      ? [
+          Prisma.sql`c."endDate" DESC NULLS LAST`,
+          Prisma.sql`c."createdAt" DESC NULLS LAST`,
+          Prisma.sql`c.name ASC`,
+        ]
+      : [Prisma.sql`c."createdAt" DESC NULLS LAST`, Prisma.sql`c.name ASC`];
     const orderFragments = sortFragments.length
       ? [...sortFragments, ...fallbackOrderFragments]
       : fallbackOrderFragments;
