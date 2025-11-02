@@ -101,6 +101,8 @@ export class ResourceApiService {
           'Debug resources call:',
           params.toString(),
           JSON.stringify(params),
+          query.challengeId,
+          query.memberId,
         );
 
         const url = `${CommonConfig.apis.resourceApiUrl}resources?${params.toString()}`;
