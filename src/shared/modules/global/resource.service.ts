@@ -97,14 +97,6 @@ export class ResourceApiService {
       while (true) {
         params.set('page', String(page));
 
-        this.logger.log(
-          'Debug resources call:',
-          params.toString(),
-          JSON.stringify(params),
-          query.challengeId,
-          query.memberId,
-        );
-
         const url = `${CommonConfig.apis.resourceApiUrl}resources?${params.toString()}`;
         const response = await firstValueFrom(
           this.httpService.get<ResourceInfo[]>(url, {
