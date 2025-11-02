@@ -31,7 +31,7 @@ interface ChallengeSummaryRow {
   status: string;
   hasIncompleteReviews: boolean | null;
   incompletePhaseName: string | null;
-  hasPendingAppealResponses: boolean | null;
+  hasPendingAppealResponses: boolean;
   isAppealsResponsePhaseOpen: boolean | null;
   appealsResponsePhaseName: string | null;
 }
@@ -156,6 +156,7 @@ export class MyReviewService {
       whereFragments.push(Prisma.sql`c.status = 'ACTIVE'`);
     }
 
+    const cteFragments: Prisma.Sql[] = [];
     const baseJoins: Prisma.Sql[] = [];
     const countJoins: Prisma.Sql[] = [];
     const countExtras: Prisma.Sql[] = [];
@@ -168,25 +169,64 @@ export class MyReviewService {
         );
       }
 
+      cteFragments.push(
+        Prisma.sql`
+          member_resources AS (
+            SELECT
+              r.id,
+              r."challengeId",
+              r."roleId"
+            FROM resources."Resource" r
+            WHERE r."memberId" = ${normalizedUserId}
+          )
+        `,
+      );
+      cteFragments.push(
+        Prisma.sql`
+          appeals_phase AS (
+            SELECT DISTINCT ON (p."challengeId")
+              p."challengeId",
+              TRUE AS "isAppealsResponsePhaseOpen",
+              p.name AS "appealsResponsePhaseName"
+            FROM challenges."ChallengePhase" p
+            WHERE p."challengeId" IN (
+              SELECT DISTINCT mr."challengeId"
+              FROM member_resources mr
+            )
+              AND LOWER(p.name) IN ('appeals response', 'iterative appeals response')
+              AND p."isOpen" IS TRUE
+            ORDER BY
+              p."challengeId",
+              p."scheduledEndDate" DESC NULLS LAST,
+              p."actualEndDate" DESC NULLS LAST,
+              p.name ASC
+          )
+        `,
+      );
+
       baseJoins.push(
         Prisma.sql`
-          LEFT JOIN resources."Resource" r
+          JOIN member_resources r
             ON r."challengeId" = c.id
-           AND r."memberId" = ${normalizedUserId}
+        `,
+      );
+      baseJoins.push(
+        Prisma.sql`
           LEFT JOIN resources."ResourceRole" rr
             ON rr.id = r."roleId"
         `,
       );
 
-      rowExtras.push(Prisma.sql`r."challengeId" IS NOT NULL`);
-      countExtras.push(
+      countJoins.push(
         Prisma.sql`
-          EXISTS (
-            SELECT 1
-            FROM resources."Resource" r
-            WHERE r."challengeId" = c.id
-              AND r."memberId" = ${normalizedUserId}
-          )
+          JOIN member_resources r
+            ON r."challengeId" = c.id
+        `,
+      );
+      countJoins.push(
+        Prisma.sql`
+          LEFT JOIN resources."ResourceRole" rr
+            ON rr.id = r."roleId"
         `,
       );
     } else {
@@ -237,10 +277,8 @@ export class MyReviewService {
               0
             )::bigint AS "completedReviews"
           FROM reviews.review rv
-          INNER JOIN resources."Resource" rr
-            ON rr.id = rv."resourceId"
-          WHERE rr."challengeId" = c.id
-        ) rp ON TRUE
+          WHERE rv."resourceId" = r.id
+        ) rp ON r.id IS NOT NULL
       `,
       Prisma.sql`
         LEFT JOIN LATERAL (
@@ -284,41 +322,40 @@ export class MyReviewService {
         ) deliverable_reviews ON r.id IS NOT NULL
       `,
       Prisma.sql`
-        LEFT JOIN LATERAL (
-          SELECT
-            EXISTS (
-              SELECT 1
-              FROM reviews.review rv_pending
-              JOIN reviews."reviewItem" ri
-                ON ri."reviewId" = rv_pending.id
-              JOIN reviews."reviewItemComment" ric
-                ON ric."reviewItemId" = ri.id
-              JOIN reviews.appeal ap
-                ON ap."reviewItemCommentId" = ric.id
-              LEFT JOIN reviews."appealResponse" apr
-                ON apr."appealId" = ap.id
-               AND apr."resourceId" = r.id
-              WHERE rv_pending."resourceId" = r.id
-                AND apr.id IS NULL
-          ) AS "hasPendingAppealResponses"
-        ) pending_appeals ON r.id IS NOT NULL
+        LEFT JOIN reviews.review_pending_summary pending_appeals
+          ON pending_appeals."resourceId" = r.id
       `,
-      Prisma.sql`
-        LEFT JOIN LATERAL (
-          SELECT
-            TRUE AS "isAppealsResponsePhaseOpen",
-            p.name AS "appealsResponsePhaseName"
-          FROM challenges."ChallengePhase" p
-          WHERE p."challengeId" = c.id
-            AND LOWER(p.name) IN ('appeals response', 'iterative appeals response')
-            AND p."isOpen" IS TRUE
-          ORDER BY
-            p."scheduledEndDate" DESC NULLS LAST,
-            p."actualEndDate" DESC NULLS LAST,
-            p.name ASC
-          LIMIT 1
-        ) appeals_response_phase ON TRUE
-      `,
+    ];
+
+    if (!adminUser) {
+      metricJoins.push(
+        Prisma.sql`
+          LEFT JOIN appeals_phase appeals_response_phase
+            ON appeals_response_phase."challengeId" = c.id
+        `,
+      );
+    } else {
+      metricJoins.push(
+        Prisma.sql`
+          LEFT JOIN LATERAL (
+            SELECT
+              TRUE AS "isAppealsResponsePhaseOpen",
+              p.name AS "appealsResponsePhaseName"
+            FROM challenges."ChallengePhase" p
+            WHERE p."challengeId" = c.id
+              AND LOWER(p.name) IN ('appeals response', 'iterative appeals response')
+              AND p."isOpen" IS TRUE
+            ORDER BY
+              p."scheduledEndDate" DESC NULLS LAST,
+              p."actualEndDate" DESC NULLS LAST,
+              p.name ASC
+            LIMIT 1
+          ) appeals_response_phase ON TRUE
+        `,
+      );
+    }
+
+    metricJoins.push(
       Prisma.sql`
         LEFT JOIN LATERAL (
           SELECT
@@ -329,7 +366,7 @@ export class MyReviewService {
           LIMIT 1
         ) cr ON TRUE
       `,
-    ];
+    );
 
     const joinClause = joinSqlFragments(
       [...baseJoins, ...metricJoins],
@@ -442,7 +479,12 @@ export class MyReviewService {
       : fallbackOrderFragments;
     const orderClause = joinSqlFragments(orderFragments, Prisma.sql`, `);
 
+    const withClause = cteFragments.length
+      ? Prisma.sql`WITH ${joinSqlFragments(cteFragments, Prisma.sql`, `)} `
+      : Prisma.sql``;
+
     const countQuery = Prisma.sql`
+      ${withClause}
       SELECT COUNT(*) AS "total"
       FROM challenges."Challenge" c
       ${countJoinClause}
@@ -475,6 +517,7 @@ export class MyReviewService {
     }
 
     const rowQuery = Prisma.sql`
+      ${withClause}
       SELECT
         c.id AS "challengeId",
         c.name AS "challengeName",
@@ -491,7 +534,7 @@ export class MyReviewService {
         cw.winners AS "winners",
         deliverable_reviews."hasIncompleteReviews" AS "hasIncompleteReviews",
         deliverable_reviews."incompletePhaseName" AS "incompletePhaseName",
-        pending_appeals."hasPendingAppealResponses" AS "hasPendingAppealResponses",
+        COALESCE(pending_appeals."pendingAppealCount" > 0, FALSE) AS "hasPendingAppealResponses",
         appeals_response_phase."isAppealsResponsePhaseOpen" AS "isAppealsResponsePhaseOpen",
         appeals_response_phase."appealsResponsePhaseName" AS "appealsResponsePhaseName",
         c.status AS "status"
