@@ -18,6 +18,7 @@ const SCRIPT_ACTOR = 'scripts/update-topgear-reviewers';
 
 interface ChallengePhaseInfo {
   id: string;
+  phaseId: string;
   name: string;
 }
 
@@ -151,6 +152,7 @@ async function backfillChallengeReviewers() {
       phases: {
         select: {
           id: true,
+          phaseId: true,
           name: true,
         },
       },
@@ -237,7 +239,7 @@ async function backfillChallengeReviewers() {
       for (const phase of matchingPhases) {
         records.push({
           challengeId: challenge.id,
-          phaseId: phase.id,
+          phaseId: phase.phaseId,
           scorecardId: defaultReviewer.scorecardId,
           isMemberReview: defaultReviewer.isMemberReview,
           memberReviewerCount: defaultReviewer.isMemberReview
