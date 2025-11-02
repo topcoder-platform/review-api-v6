@@ -183,6 +183,47 @@ export class MyReviewService {
       );
       cteFragments.push(
         Prisma.sql`
+          review_totals AS (
+            SELECT
+              rv."resourceId",
+              COUNT(*)::bigint AS "totalReviews",
+              COALESCE(
+                SUM(CASE WHEN rv.status = 'COMPLETED' THEN 1 ELSE 0 END),
+                0
+              )::bigint AS "completedReviews"
+            FROM reviews.review rv
+            WHERE rv."resourceId" IN (
+              SELECT mr.id FROM member_resources mr
+            )
+            GROUP BY rv."resourceId"
+          )
+        `,
+      );
+      cteFragments.push(
+        Prisma.sql`
+          incomplete_reviews AS (
+            SELECT DISTINCT ON (rv."resourceId")
+              rv."resourceId",
+              TRUE AS "hasIncompleteReviews",
+              cp_incomplete.name AS "incompletePhaseName"
+            FROM reviews.review rv
+            JOIN challenges."ChallengePhase" cp_incomplete
+              ON cp_incomplete.id = rv."phaseId"
+            WHERE rv."resourceId" IN (
+              SELECT mr.id FROM member_resources mr
+            )
+              AND (rv.status IS NULL OR rv.status <> 'COMPLETED')
+            ORDER BY
+              rv."resourceId",
+              CASE WHEN cp_incomplete."isOpen" IS TRUE THEN 0 ELSE 1 END,
+              cp_incomplete."scheduledEndDate" NULLS LAST,
+              cp_incomplete."actualEndDate" NULLS LAST,
+              cp_incomplete.name ASC
+          )
+        `,
+      );
+      cteFragments.push(
+        Prisma.sql`
           appeals_phase AS (
             SELECT DISTINCT ON (p."challengeId")
               p."challengeId",
@@ -252,7 +293,9 @@ export class MyReviewService {
       `,
     );
 
-    const metricJoins: Prisma.Sql[] = [
+    const metricJoins: Prisma.Sql[] = [];
+
+    metricJoins.push(
       Prisma.sql`
         LEFT JOIN LATERAL (
           SELECT
@@ -268,18 +311,28 @@ export class MyReviewService {
           LIMIT 1
         ) cp ON TRUE
       `,
-      Prisma.sql`
-        LEFT JOIN LATERAL (
-          SELECT
-            COUNT(*)::bigint AS "totalReviews",
-            COALESCE(
-              SUM(CASE WHEN rv.status = 'COMPLETED' THEN 1 ELSE 0 END),
-              0
-            )::bigint AS "completedReviews"
-          FROM reviews.review rv
-          WHERE rv."resourceId" = r.id
-        ) rp ON r.id IS NOT NULL
-      `,
+    );
+
+    const reviewTotalsJoin = adminUser
+      ? Prisma.sql`
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::bigint AS "totalReviews",
+              COALESCE(
+                SUM(CASE WHEN rv.status = 'COMPLETED' THEN 1 ELSE 0 END),
+                0
+              )::bigint AS "completedReviews"
+            FROM reviews.review rv
+            WHERE rv."resourceId" = r.id
+          ) review_totals ON r.id IS NOT NULL
+        `
+      : Prisma.sql`
+          LEFT JOIN review_totals
+            ON review_totals."resourceId" = r.id
+        `;
+    metricJoins.push(reviewTotalsJoin);
+
+    metricJoins.push(
       Prisma.sql`
         LEFT JOIN LATERAL (
           SELECT
@@ -296,36 +349,46 @@ export class MyReviewService {
           WHERE w."challengeId" = c.id
         ) cw ON TRUE
       `,
-      Prisma.sql`
-        LEFT JOIN LATERAL (
-          SELECT
-            EXISTS (
-              SELECT 1
-              FROM reviews.review rv_incomplete
-              WHERE rv_incomplete."resourceId" = r.id
-                AND (rv_incomplete.status IS NULL OR rv_incomplete.status <> 'COMPLETED')
-            ) AS "hasIncompleteReviews",
-            (
-              SELECT cp_incomplete.name
-              FROM reviews.review rv_incomplete2
-              JOIN challenges."ChallengePhase" cp_incomplete
-                ON cp_incomplete.id = rv_incomplete2."phaseId"
-              WHERE rv_incomplete2."resourceId" = r.id
-                AND (rv_incomplete2.status IS NULL OR rv_incomplete2.status <> 'COMPLETED')
-              ORDER BY
-                CASE WHEN cp_incomplete."isOpen" IS TRUE THEN 0 ELSE 1 END,
-                cp_incomplete."scheduledEndDate" NULLS LAST,
-                cp_incomplete."actualEndDate" NULLS LAST,
-                cp_incomplete.name ASC
-              LIMIT 1
-            ) AS "incompletePhaseName"
-        ) deliverable_reviews ON r.id IS NOT NULL
-      `,
+    );
+
+    const incompleteReviewsJoin = adminUser
+      ? Prisma.sql`
+          LEFT JOIN LATERAL (
+            SELECT
+              EXISTS (
+                SELECT 1
+                FROM reviews.review rv_incomplete
+                WHERE rv_incomplete."resourceId" = r.id
+                  AND (rv_incomplete.status IS NULL OR rv_incomplete.status <> 'COMPLETED')
+              ) AS "hasIncompleteReviews",
+              (
+                SELECT cp_incomplete.name
+                FROM reviews.review rv_incomplete2
+                JOIN challenges."ChallengePhase" cp_incomplete
+                  ON cp_incomplete.id = rv_incomplete2."phaseId"
+                WHERE rv_incomplete2."resourceId" = r.id
+                  AND (rv_incomplete2.status IS NULL OR rv_incomplete2.status <> 'COMPLETED')
+                ORDER BY
+                  CASE WHEN cp_incomplete."isOpen" IS TRUE THEN 0 ELSE 1 END,
+                  cp_incomplete."scheduledEndDate" NULLS LAST,
+                  cp_incomplete."actualEndDate" NULLS LAST,
+                  cp_incomplete.name ASC
+                LIMIT 1
+              ) AS "incompletePhaseName"
+          ) deliverable_reviews ON r.id IS NOT NULL
+        `
+      : Prisma.sql`
+          LEFT JOIN incomplete_reviews deliverable_reviews
+            ON deliverable_reviews."resourceId" = r.id
+        `;
+    metricJoins.push(incompleteReviewsJoin);
+
+    metricJoins.push(
       Prisma.sql`
         LEFT JOIN reviews.review_pending_summary pending_appeals
           ON pending_appeals."resourceId" = r.id
       `,
-    ];
+    );
 
     if (!adminUser) {
       metricJoins.push(
@@ -374,9 +437,6 @@ export class MyReviewService {
     );
     const countJoinClause = joinSqlFragments(countJoins, Prisma.sql``);
 
-    const rowWhereFragments = [...whereFragments, ...rowExtras];
-    const countWhereFragments = [...whereFragments, ...countExtras];
-
     if (challengeTypeId) {
       whereFragments.push(Prisma.sql`c."typeId" = ${challengeTypeId}`);
     }
@@ -396,6 +456,9 @@ export class MyReviewService {
         Prisma.sql`LOWER(c.name) LIKE LOWER(${`%${challengeName}%`})`,
       );
     }
+
+    const rowWhereFragments = [...whereFragments, ...rowExtras];
+    const countWhereFragments = [...whereFragments, ...countExtras];
 
     const rowWhereClause = joinSqlFragments(
       rowWhereFragments,
@@ -425,12 +488,12 @@ export class MyReviewService {
           'topgear iterative review'
         ) THEN NULL
         ELSE CASE
-          WHEN rp."totalReviews" IS NULL OR rp."totalReviews" = 0 THEN 0
+          WHEN review_totals."totalReviews" IS NULL OR review_totals."totalReviews" = 0 THEN 0
           ELSE LEAST(
             1,
             GREATEST(
               0,
-              rp."completedReviews"::numeric / rp."totalReviews"::numeric
+              review_totals."completedReviews"::numeric / review_totals."totalReviews"::numeric
             )
           )
         END
@@ -529,8 +592,8 @@ export class MyReviewService {
         cp."actualEndDate" AS "currentPhaseActualEnd",
         rr.name AS "resourceRoleName",
         c."endDate" AS "challengeEndDate",
-        rp."totalReviews" AS "totalReviews",
-        rp."completedReviews" AS "completedReviews",
+        review_totals."totalReviews" AS "totalReviews",
+        review_totals."completedReviews" AS "completedReviews",
         cw.winners AS "winners",
         deliverable_reviews."hasIncompleteReviews" AS "hasIncompleteReviews",
         deliverable_reviews."incompletePhaseName" AS "incompletePhaseName",
