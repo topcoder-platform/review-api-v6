@@ -20,6 +20,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:migrate": "ts-node prisma/migrate.ts",
+    "fix:legacy-review-ids": "ts-node --project tsconfig.json scripts/update-legacy-review-ids.ts",
     "fix:topgear-reviewers": "ts-node --project tsconfig.json scripts/update-topgear-reviewers.ts",
     "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma && pnpm exec prisma generate --schema=prisma/member-schema.prisma"
   },
