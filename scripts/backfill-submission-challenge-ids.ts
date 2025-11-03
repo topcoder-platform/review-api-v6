@@ -83,30 +83,61 @@ function parseUploadFile(filePath: string) {
     return [] as UploadRecord[];
   }
 
+  const hydrateRecords = (value: unknown): UploadRecord[] => {
+    if (Array.isArray(value)) {
+      return value as UploadRecord[];
+    }
+    if (value && typeof value === 'object') {
+      const possibleKeys = ['upload', 'uploads', 'data'];
+      for (const key of possibleKeys) {
+        const candidate = (value as Record<string, unknown>)[key];
+        if (Array.isArray(candidate)) {
+          return candidate as UploadRecord[];
+        }
+      }
+      const record = value as UploadRecord;
+      if (
+        record.upload_id ||
+        record.uploadId ||
+        record.project_id ||
+        record.projectId
+      ) {
+        return [record];
+      }
+    }
+    return [];
+  };
+
   try {
     const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      return parsed as UploadRecord[];
+    const records = hydrateRecords(parsed);
+    if (records.length) {
+      return records;
     }
-    return [parsed as UploadRecord];
+    console.warn(
+      `No upload records detected in ${filePath} after JSON parse; falling back to line parsing.`,
+    );
   } catch {
-    const records: UploadRecord[] = [];
-    const lines = content.split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-      try {
-        records.push(JSON.parse(trimmed) as UploadRecord);
-      } catch (error) {
-        console.warn(
-          `Skipping malformed JSON line in ${filePath}: ${(error as Error).message}`,
-        );
-      }
-    }
-    return records;
+    // Intentionally swallow; we will try per-line parsing next.
   }
+
+  const records: UploadRecord[] = [];
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      const parsedLine = JSON.parse(trimmed);
+      records.push(...hydrateRecords(parsedLine));
+    } catch (error) {
+      console.warn(
+        `Skipping malformed JSON line in ${filePath}: ${(error as Error).message}`,
+      );
+    }
+  }
+  return records;
 }
 
 function buildUploadLookup(files: string[]) {
@@ -114,6 +145,10 @@ function buildUploadLookup(files: string[]) {
 
   for (const file of files) {
     const records = parseUploadFile(file);
+    if (records.length === 0) {
+      console.warn(`No upload records parsed from ${file}`);
+      continue;
+    }
     for (const record of records) {
       const uploadId = record.upload_id ?? record.uploadId;
       if (!uploadId) {
