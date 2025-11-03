@@ -1,6 +1,7 @@
 import {
   PrismaClient as ReviewPrismaClient,
   ScorecardType,
+  Prisma,
 } from '@prisma/client';
 import {
   PrismaClient as ChallengePrismaClient,
@@ -66,6 +67,7 @@ interface ReviewRecord {
   phaseId: string;
   submissionId: string | null;
   scorecardId: string;
+  legacyResourceId: number | null;
   createdAt: Date;
   createdBy: string | null;
   scorecardType: ScorecardType;
@@ -81,11 +83,13 @@ interface ComputedUpdate {
   reviewId: string;
   challengeId: string;
   submissionId: string | null;
+  scorecardId: string;
   scorecardType: ScorecardType;
   scorecardLegacyId: string | null;
   phaseName: string;
   reviewCreatedAt: Date;
   memberId: string | null;
+  legacyResourceId: number | null;
   oldPhaseId: string;
   newPhaseId?: string;
   phaseSelectionReason?: string;
@@ -157,7 +161,20 @@ function selectResourceForReview(
   resources: ResourceWithRole[],
   memberId: string,
   scorecardType: ScorecardType,
+  legacyResourceId: number | null,
 ): { resource: ResourceWithRole; reason: string } | null {
+  if (legacyResourceId !== null) {
+    const legacyMatch = resources.find(
+      (resource) => resource.legacyId === legacyResourceId,
+    );
+    if (legacyMatch) {
+      return {
+        resource: legacyMatch,
+        reason: `matched legacy resourceId ${legacyResourceId}`,
+      };
+    }
+  }
+
   const trimmedMemberId = memberId.trim();
   const matching = resources.filter(
     (resource) => resource.memberId === trimmedMemberId,
@@ -266,6 +283,9 @@ async function fetchLegacyReviews(): Promise<ReviewRecord[]> {
       phaseId: review.phaseId,
       submissionId: review.submissionId,
       scorecardId: review.scorecardId,
+      legacyResourceId: isLegacyId(review.resourceId)
+        ? Number.parseInt(review.resourceId, 10)
+        : null,
       createdAt: review.createdAt,
       createdBy: review.createdBy,
       scorecardType: review.scorecard.type,
@@ -339,11 +359,13 @@ async function computeUpdates(): Promise<ComputedUpdate[]> {
         reviewId: review.id,
         challengeId,
         submissionId: review.submissionId,
+        scorecardId: review.scorecardId,
         scorecardType,
         scorecardLegacyId: review.scorecardLegacyId,
         phaseName,
         reviewCreatedAt: review.createdAt,
         memberId: review.createdBy,
+        legacyResourceId: review.legacyResourceId,
         oldPhaseId: review.phaseId,
         oldResourceId: review.resourceId,
       };
@@ -367,6 +389,7 @@ async function computeUpdates(): Promise<ComputedUpdate[]> {
           resources,
           review.createdBy,
           scorecardType,
+          review.legacyResourceId,
         );
         if (selection) {
           update.newResourceId = selection.resource.id;
@@ -401,40 +424,89 @@ async function applyUpdates(updates: ComputedUpdate[]) {
     return;
   }
 
-  const BATCH_SIZE = 100;
   let updatedCount = 0;
   let phaseUpdates = 0;
   let resourceUpdates = 0;
+  let skippedConflicts = 0;
+  let errors = 0;
 
-  for (let i = 0; i < updates.length; i += BATCH_SIZE) {
-    const batch = updates.slice(i, i + BATCH_SIZE);
-    await reviewPrisma.$transaction(
-      batch.map((update) => {
-        const data: Record<string, unknown> = {};
-        if (update.newPhaseId && update.newPhaseId !== update.oldPhaseId) {
-          data.phaseId = update.newPhaseId;
-          phaseUpdates += 1;
-        }
-        if (
-          update.newResourceId &&
-          update.newResourceId !== update.oldResourceId
-        ) {
-          data.resourceId = update.newResourceId;
-          resourceUpdates += 1;
-        }
-        data.updatedBy = SCRIPT_ACTOR;
+  for (const update of updates) {
+    const data: Record<string, unknown> = {};
+    const phaseChanged =
+      update.newPhaseId && update.newPhaseId !== update.oldPhaseId;
+    const resourceChanged =
+      update.newResourceId && update.newResourceId !== update.oldResourceId;
 
-        return reviewPrisma.review.update({
-          where: { id: update.reviewId },
-          data,
+    if (phaseChanged) {
+      data.phaseId = update.newPhaseId;
+    }
+
+    let applyResource = false;
+    if (resourceChanged) {
+      if (!update.submissionId) {
+        applyResource = true;
+      } else {
+        const conflictingReview = await reviewPrisma.review.findFirst({
+          where: {
+            id: { not: update.reviewId },
+            submissionId: update.submissionId,
+            scorecardId: update.scorecardId,
+            resourceId: update.newResourceId,
+          },
+          select: { id: true },
         });
-      }),
-    );
-    updatedCount += batch.length;
+
+        if (conflictingReview) {
+          console.warn(
+            `Skipping resource update for review ${update.reviewId}: would conflict with review ${conflictingReview.id}.`,
+          );
+          skippedConflicts += 1;
+        } else {
+          applyResource = true;
+        }
+      }
+    }
+
+    if (applyResource && update.newResourceId) {
+      data.resourceId = update.newResourceId;
+    }
+
+    if (!phaseChanged && !applyResource) {
+      continue;
+    }
+
+    data.updatedBy = SCRIPT_ACTOR;
+
+    try {
+      await reviewPrisma.review.update({
+        where: { id: update.reviewId },
+        data,
+      });
+
+      updatedCount += 1;
+      if (phaseChanged) {
+        phaseUpdates += 1;
+      }
+      if (applyResource) {
+        resourceUpdates += 1;
+      }
+    } catch (error) {
+      errors += 1;
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        console.warn(
+          `Unique constraint prevented updating review ${update.reviewId}; leaving legacy value in place.`,
+        );
+      } else {
+        console.error(`Failed to update review ${update.reviewId}:`, error);
+      }
+    }
   }
 
   console.log(
-    `Updated ${updatedCount} review(s): ${phaseUpdates} phaseId change(s), ${resourceUpdates} resourceId change(s).`,
+    `Updated ${updatedCount} review(s): ${phaseUpdates} phaseId change(s), ${resourceUpdates} resourceId change(s). Skipped conflicts: ${skippedConflicts}. Failed updates: ${errors}.`,
   );
 }
 
