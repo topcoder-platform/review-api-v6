@@ -527,7 +527,10 @@ export class AiWorkflowService {
 
     const submission = runs[0]?.submission;
     if ((!submission || !submission.challengeId) && filter.submissionId) {
-      throw new BadRequestException(`Invalid submissionId provided!`);
+      this.logger.log(
+        `No runs have been found for submission ${filter.submissionId}`,
+      );
+      return [];
     }
 
     const challengeId = submission.challengeId;
