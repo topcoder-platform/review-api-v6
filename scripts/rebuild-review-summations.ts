@@ -17,8 +17,9 @@ interface ScriptOptions {
 interface ScriptSummary {
   examined: number;
   updated: number;
+  deleted: number;
   dryRunUpdates: number;
-  skippedNoReview: number;
+  dryRunDeletes: number;
   skippedNoScore: number;
   skippedMissingScorecard: number;
 }
@@ -187,10 +188,18 @@ async function processBatch(
 
     const review = bestReviewBySubmission.get(summation.submissionId);
     if (!review) {
-      summary.skippedNoReview += 1;
-      console.warn(
-        `No committed review with a supported scorecard found for submission ${summation.submissionId}.`,
-      );
+      if (options.dryRun) {
+        summary.dryRunDeletes += 1;
+        console.info(
+          `[DRY-RUN] Would delete reviewSummation ${summation.id} because no committed review exists for submission ${summation.submissionId}.`,
+        );
+        continue;
+      }
+
+      await prisma.reviewSummation.delete({
+        where: { id: summation.id },
+      });
+      summary.deleted += 1;
       continue;
     }
 
@@ -241,8 +250,9 @@ async function main() {
   const summary: ScriptSummary = {
     examined: 0,
     updated: 0,
+    deleted: 0,
     dryRunUpdates: 0,
-    skippedNoReview: 0,
+    dryRunDeletes: 0,
     skippedNoScore: 0,
     skippedMissingScorecard: 0,
   };
