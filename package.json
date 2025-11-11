@@ -24,6 +24,7 @@
     "fix:topgear-reviewers": "ts-node --project tsconfig.json scripts/update-topgear-reviewers.ts",
     "fix:submission-challenge-ids": "ts-node --project tsconfig.json scripts/backfill-submission-challenge-ids.ts",
     "fix:review-phase-ids": "ts-node --project tsconfig.json scripts/fix-review-phase-ids.ts",
+    "fix:review-summations": "ts-node --project tsconfig.json scripts/rebuild-review-summations.ts",
     "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma && pnpm exec prisma generate --schema=prisma/member-schema.prisma"
   },
   "dependencies": {
