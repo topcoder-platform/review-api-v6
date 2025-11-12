@@ -1649,9 +1649,25 @@ export class SubmissionService {
         !!file &&
         ((typeof file.size === 'number' && file.size > 0) ||
           (file.buffer && file.buffer.length > 0));
-      const hasS3Url =
-        typeof body.url === 'string' &&
-        body.url.includes('https://s3.amazonaws.com');
+      let hasS3Url = false;
+      if (typeof body.url === 'string') {
+        try {
+          const urlObj = new URL(body.url);
+          // Accept s3.amazonaws.com and any subdomain of s3.amazonaws.com
+          const s3Hosts = [
+            's3.amazonaws.com',
+          ];
+          // Accept region pattern: *.s3.amazonaws.com or *.s3.<region>.amazonaws.com
+          const host = urlObj.host;
+          hasS3Url =
+            s3Hosts.includes(host) ||
+            host.endsWith('.s3.amazonaws.com') ||
+            /^s3\.[a-z0-9-]+\.amazonaws\.com$/.test(host) ||
+            /^[^\.]+\.s3\.[a-z0-9-]+\.amazonaws\.com$/.test(host);
+        } catch (e) {
+          hasS3Url = false;
+        }
+      }
       const isFileSubmission = hasUploadedFile || hasS3Url;
 
       // Derive common metadata if available
