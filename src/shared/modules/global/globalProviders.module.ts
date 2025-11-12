@@ -59,6 +59,7 @@ import { WorkflowQueueHandler } from './workflow-queue.handler';
     WorkflowQueueHandler,
   ],
   exports: [
+    KafkaModule,
     PrismaService,
     JwtService,
     LoggerService,
