@@ -4,15 +4,11 @@ import {
   ReviewStatus,
 } from '@prisma/client';
 import { PrismaClient as ResourcePrismaClient } from '@prisma/client-resource';
-import * as fs from 'node:fs';
-import { createRequire } from 'node:module';
-import * as path from 'node:path';
 
-type IdentityPrismaModule = typeof import('../../identity-api-v6/node_modules/@prisma/client');
-type IdentityPrismaClient = IdentityPrismaModule['PrismaClient'];
 const DEFAULT_REVIEW_BATCH_SIZE = 2000;
 const DEFAULT_RESOURCE_BATCH_SIZE = 500;
 const DEFAULT_ASSIGN_BATCH_SIZE = 500;
+
 const MEMBER_SUBJECT_TYPE = Number(
   process.env.REVIEWER_ROLE_SUBJECT_TYPE ?? '1',
 ) || 1;
@@ -50,63 +46,6 @@ function ensureEnv(name: string): string {
   return value;
 }
 
-function resolveIdentityRepoRoot(): string {
-  const overridePath = process.env.IDENTITY_API_PATH;
-  if (overridePath) {
-    const absolute = path.resolve(overridePath);
-    if (!fs.existsSync(absolute)) {
-      throw new Error(
-        `IDENTITY_API_PATH was set to "${overridePath}", but that path does not exist.`,
-      );
-    }
-    return absolute;
-  }
-
-  const defaultPath = path.resolve(
-    __dirname,
-    '..',
-    '..',
-    '..',
-    'identity-api-v6',
-  );
-  if (!fs.existsSync(defaultPath)) {
-    throw new Error(
-      `Failed to locate identity-api-v6. Set IDENTITY_API_PATH to the repository root if it lives elsewhere.`,
-    );
-  }
-  return defaultPath;
-}
-
-function createIdentityPrismaClient(identityDbUrl: string): IdentityPrismaClient {
-  const identityRoot = resolveIdentityRepoRoot();
-  const packageJsonPath = path.join(identityRoot, 'package.json');
-  if (!fs.existsSync(packageJsonPath)) {
-    throw new Error(
-      `Could not find package.json at ${packageJsonPath}. Verify identity-api-v6 is installed.`,
-    );
-  }
-
-  const identityRequire = createRequire(packageJsonPath);
-  let identityModule: IdentityPrismaModule;
-  try {
-    identityModule = identityRequire(
-      '@prisma/client',
-    ) as IdentityPrismaModule;
-  } catch (error) {
-    throw new Error(
-      `Unable to load Prisma client from identity-api-v6. Run "pnpm install" inside identity-api-v6 first.\n${error}`,
-    );
-  }
-
-  return new identityModule.PrismaClient({
-    datasources: {
-      db: {
-        url: identityDbUrl,
-      },
-    },
-  });
-}
-
 function chunkArray<T>(items: T[], chunkSize: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += chunkSize) {
@@ -126,7 +65,6 @@ async function collectCompletedReviewResourceIds(
     const reviews = await reviewPrisma.review.findMany({
       where: {
         status: ReviewStatus.COMPLETED,
-        resourceId: { not: null },
       },
       select: {
         id: true,
@@ -174,23 +112,19 @@ async function resolveReviewerMemberIds(
   const ids = Array.from(resourceIds);
 
   for (const chunk of chunkArray(ids, RESOURCE_BATCH_SIZE)) {
-    const whereClause: Parameters<
-      ResourcePrismaClient['resource']['findMany']
-    >[0]['where'] = {
-      id: { in: chunk },
-      memberId: { not: null },
-    };
-
-    if (RESOURCE_ROLE_KEYWORD) {
-      whereClause.resourceRole = {
-        nameLower: {
-          contains: RESOURCE_ROLE_KEYWORD,
-        },
-      };
-    }
-
     const resources = await resourcePrisma.resource.findMany({
-      where: whereClause,
+      where: {
+        id: { in: chunk },
+        ...(RESOURCE_ROLE_KEYWORD
+          ? {
+              resourceRole: {
+                nameLower: {
+                  contains: RESOURCE_ROLE_KEYWORD,
+                },
+              },
+            }
+          : {}),
+      },
       include: {
         resourceRole: true,
       },
@@ -220,93 +154,54 @@ async function resolveReviewerMemberIds(
   return { memberIds, skipped: skippedResources.size };
 }
 
-async function addReviewerRoleAssignments(
-  identityPrisma: IdentityPrismaClient,
-  memberIds: Set<number>,
-): Promise<{ created: number; alreadyHadRole: number; roleName: string }> {
+function escapeSqlLiteral(value: string) {
+  return value.replace(/'/g, "''");
+}
+
+function buildInsertStatement(memberIds: number[]) {
+  const values = memberIds
+    .map((subjectId) => `(${subjectId})`)
+    .join(',\n    ');
+
+  return `WITH role_cte AS (
+  SELECT id
+  FROM identity.role
+  WHERE LOWER(name) = LOWER('${escapeSqlLiteral(ROLE_NAME)}')
+  LIMIT 1
+)
+INSERT INTO identity.role_assignment (role_id, subject_id, subject_type, created_by, created_at, modified_by, modified_at)
+SELECT role_cte.id,
+       data.subject_id,
+       ${MEMBER_SUBJECT_TYPE},
+       NULL,
+       CURRENT_TIMESTAMP,
+       NULL,
+       CURRENT_TIMESTAMP
+FROM role_cte
+CROSS JOIN (VALUES
+    ${values}
+) AS data(subject_id)
+ON CONFLICT (role_id, subject_id, subject_type) DO NOTHING;`;
+}
+
+function generateRoleAssignmentSql(memberIds: Set<number>): string[] {
   if (!memberIds.size) {
-    return { created: 0, alreadyHadRole: 0, roleName: ROLE_NAME };
-  }
-
-  const role = await identityPrisma.role.findFirst({
-    where: {
-      name: {
-        equals: ROLE_NAME,
-        mode: 'insensitive',
-      },
-    },
-    select: {
-      id: true,
-      name: true,
-    },
-  });
-
-  if (!role) {
-    throw new Error(
-      `Role "${ROLE_NAME}" was not found in the identity database.`,
-    );
+    return [];
   }
 
   const memberIdList = Array.from(memberIds);
+  const statements: string[] = [];
 
-  const existingAssignments = await identityPrisma.roleAssignment.findMany({
-    where: {
-      roleId: role.id,
-      subjectType: MEMBER_SUBJECT_TYPE,
-      subjectId: {
-        in: memberIdList,
-      },
-    },
-    select: {
-      subjectId: true,
-    },
-  });
-
-  const alreadyAssigned = new Set(
-    existingAssignments.map((assignment) => assignment.subjectId),
-  );
-
-  const pendingAssignments = memberIdList.filter(
-    (memberId) => !alreadyAssigned.has(memberId),
-  );
-
-  if (!pendingAssignments.length) {
-    return {
-      created: 0,
-      alreadyHadRole: alreadyAssigned.size,
-      roleName: role.name,
-    };
+  for (const chunk of chunkArray(memberIdList, ASSIGN_BATCH_SIZE)) {
+    statements.push(buildInsertStatement(chunk));
   }
 
-  let created = 0;
-  for (const chunk of chunkArray(pendingAssignments, ASSIGN_BATCH_SIZE)) {
-    const now = new Date();
-    const result = await identityPrisma.roleAssignment.createMany({
-      data: chunk.map((subjectId) => ({
-        roleId: role.id,
-        subjectId,
-        subjectType: MEMBER_SUBJECT_TYPE,
-        createdAt: now,
-        modifiedAt: now,
-        createdBy: null,
-        modifiedBy: null,
-      })),
-      skipDuplicates: true,
-    });
-    created += result.count;
-  }
-
-  return {
-    created,
-    alreadyHadRole: alreadyAssigned.size,
-    roleName: role.name,
-  };
+  return statements;
 }
 
 async function main() {
   const reviewDbUrl = ensureEnv('DATABASE_URL');
   const resourceDbUrl = ensureEnv('RESOURCE_DB_URL');
-  const identityDbUrl = ensureEnv('IDENTITY_DB_URL');
 
   const reviewPrisma = new ReviewPrismaClient({
     datasources: {
@@ -323,10 +218,7 @@ async function main() {
     },
   });
 
-  let identityPrisma: IdentityPrismaClient | null = null;
-
   try {
-    identityPrisma = createIdentityPrismaClient(identityDbUrl);
     console.log('Collecting resource IDs for completed reviews...');
     const { resourceIds, scanned } =
       await collectCompletedReviewResourceIds(reviewPrisma);
@@ -355,26 +247,35 @@ async function main() {
       return;
     }
 
-    console.log(`Assigning role "${ROLE_NAME}" to reviewer members...`);
-    const { created, alreadyHadRole, roleName } =
-      await addReviewerRoleAssignments(identityPrisma, memberIds);
     console.log(
-      `Role assignment complete. Created ${created} new "${roleName}" assignments (${alreadyHadRole} already had the role).`,
+      `Preparing SQL to assign role "${ROLE_NAME}" to reviewer members...`,
+    );
+    const statements = generateRoleAssignmentSql(memberIds);
+
+    if (!statements.length) {
+      console.log('All members already processed locally. No SQL generated.');
+      return;
+    }
+
+    console.log(
+      `Generated ${statements.length} INSERT statement(s) covering ${memberIds.size} members.`,
+    );
+    statements.forEach((statement, index) => {
+      console.log(`\n-- Statement ${index + 1}\n${statement}`);
+    });
+    console.log(
+      '\n-- Apply the above SQL inside the identity database to grant the reviewer role.',
     );
   } finally {
-    const tasks = [
+    await Promise.allSettled([
       reviewPrisma.$disconnect(),
       resourcePrisma.$disconnect(),
-    ];
-    if (identityPrisma) {
-      tasks.push(identityPrisma.$disconnect());
-    }
-    await Promise.allSettled(tasks);
+    ]);
   }
 }
 
 main().catch((error) => {
-  console.error('Failed to grant reviewer role assignments.');
+  console.error('Failed to prepare reviewer role assignments.');
   console.error(error);
   process.exit(1);
 });
