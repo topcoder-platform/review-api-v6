@@ -1250,9 +1250,12 @@ export class SubmissionService {
     const trimmed = name.trim();
     if (!trimmed) return undefined;
     const base = basename(trimmed);
-    const sanitized = base
-      .replace(/[^A-Za-z0-9_.-]/g, '_')
-      .replace(/\.+$/g, '');
+    let sanitized = base.replace(/[^A-Za-z0-9_.-]/g, '_');
+    let end = sanitized.length;
+    while (end > 0 && sanitized.charCodeAt(end - 1) === 46) {
+      end -= 1;
+    }
+    sanitized = end === sanitized.length ? sanitized : sanitized.slice(0, end);
     if (!sanitized || sanitized === '.' || sanitized === '..') {
       return undefined;
     }
@@ -1654,17 +1657,15 @@ export class SubmissionService {
         try {
           const urlObj = new URL(body.url);
           // Accept s3.amazonaws.com and any subdomain of s3.amazonaws.com
-          const s3Hosts = [
-            's3.amazonaws.com',
-          ];
+          const s3Hosts = ['s3.amazonaws.com'];
           // Accept region pattern: *.s3.amazonaws.com or *.s3.<region>.amazonaws.com
           const host = urlObj.host;
           hasS3Url =
             s3Hosts.includes(host) ||
             host.endsWith('.s3.amazonaws.com') ||
             /^s3\.[a-z0-9-]+\.amazonaws\.com$/.test(host) ||
-            /^[^\.]+\.s3\.[a-z0-9-]+\.amazonaws\.com$/.test(host);
-        } catch (e) {
+            /^[^.]+\.s3\.[a-z0-9-]+\.amazonaws\.com$/.test(host);
+        } catch {
           hasS3Url = false;
         }
       }
