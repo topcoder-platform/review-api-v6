@@ -5,7 +5,7 @@ import {
   type ProducerOptions,
   type SASLOptions as PlatformaticSaslOptions,
 } from '@platformatic/kafka';
-import { Utils } from 'src/shared/modules/global/utils.service';
+import { Utils } from '../src/shared/modules/global/utils.service';
 
 const SUBMISSION_AGGREGATE_TOPIC = 'submission.notification.aggregate';
 const ORIGINAL_TOPIC = 'submission.notification.create';
