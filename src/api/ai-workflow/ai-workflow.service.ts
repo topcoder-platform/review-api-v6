@@ -546,6 +546,7 @@ export class AiWorkflowService {
     const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
     if (!isM2mOrAdmin) {
       const requiredRoles = [
+        UserRole.IterativeReviewer,
         UserRole.Reviewer,
         UserRole.ProjectManager,
         UserRole.Copilot,

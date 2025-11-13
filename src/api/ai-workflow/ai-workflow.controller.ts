@@ -36,7 +36,7 @@ import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { User } from 'src/shared/decorators/user.decorator';
 
-@ApiTags('ai_workflow')
+@ApiTags('AI Workflows')
 @ApiBearerAuth()
 @Controller('/workflows')
 export class AiWorkflowController {
