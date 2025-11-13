@@ -22,6 +22,7 @@
     "db:migrate": "ts-node prisma/migrate.ts",
     "fix:topgear-reviewers": "ts-node --project tsconfig.json scripts/update-topgear-reviewers.ts",
     "grant-reviewers": "ts-node scripts/grant-reviewer-role.ts",
+    "publish:submission-aggregates": "ts-node --project tsconfig.json scripts/publish-submission-aggregates.ts",
     "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma && pnpm exec prisma generate --schema=prisma/member-schema.prisma"
   },
   "dependencies": {
