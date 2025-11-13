@@ -4,6 +4,23 @@
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
+    "^.+\\.(t|j)s$": [
+      "@swc/jest",
+      {
+        "jsc": {
+          "parser": {
+            "syntax": "typescript",
+            "decorators": true
+          },
+          "transform": {
+            "decoratorMetadata": true
+          },
+          "target": "es2021"
+        },
+        "module": {
+          "type": "commonjs"
+        }
+      }
+    ]
   }
 }
