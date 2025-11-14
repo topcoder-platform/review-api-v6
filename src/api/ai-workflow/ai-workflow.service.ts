@@ -27,6 +27,7 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
+import { VoteType } from '@prisma/client';
 
 @Injectable()
 export class AiWorkflowService {
@@ -96,7 +97,49 @@ export class AiWorkflowService {
         );
       }
 
-      const allowedFields = ['content', 'upVotes', 'downVotes'];
+      // Handle vote updates
+      if (patchData.upVote !== undefined || patchData.downVote !== undefined) {
+        if (!user.userId) {
+          throw new BadRequestException('User id is not available');
+        }
+
+        // Remove existing votes by this user for this comment
+        await this.prisma.aiWorkflowRunItemCommentVote.deleteMany({
+          where: {
+            workflowRunItemCommentId: commentId,
+            createdBy: user.userId.toString(),
+          },
+        });
+
+        // Add new vote if upVote or downVote is true
+        if (patchData.upVote) {
+          await this.prisma.aiWorkflowRunItemCommentVote.create({
+            data: {
+              workflowRunItemCommentId: commentId,
+              voteType: VoteType.UPVOTE,
+              createdBy: user.userId.toString(),
+            },
+          });
+        } else if (patchData.downVote) {
+          await this.prisma.aiWorkflowRunItemCommentVote.create({
+            data: {
+              workflowRunItemCommentId: commentId,
+              voteType: VoteType.DOWNVOTE,
+              createdBy: user.userId.toString(),
+            },
+          });
+        }
+
+        delete patchData.downVote;
+        delete patchData.upVote;
+      }
+
+      // No other fields to update apart from likes
+      if (Object.keys(patchData).length === 0) {
+        return;
+      }
+
+      const allowedFields = ['content'];
       const updateData: any = {};
       for (const key of allowedFields) {
         if (key in patchData) {
@@ -388,8 +431,6 @@ export class AiWorkflowService {
         workflowRunId: runId,
         scorecardQuestionId: item.scorecardQuestionId,
         content: item.content,
-        upVotes: item.upVotes ?? 0,
-        downVotes: item.downVotes ?? 0,
         questionScore: item.questionScore ?? null,
         createdAt: new Date(),
         // TODO: Remove this once prisma middleware implementation is done
@@ -819,15 +860,6 @@ export class AiWorkflowService {
       );
     }
 
-    const updateData: any = {};
-
-    if (patchData.upVotes !== undefined) {
-      updateData.upVotes = patchData.upVotes;
-    }
-    if (patchData.downVotes !== undefined) {
-      updateData.downVotes = patchData.downVotes;
-    }
-
     if (!user.isMachine) {
       const keys = Object.keys(patchData);
       const prohibitedKeys = ['content', 'questionScore'];
@@ -838,12 +870,45 @@ export class AiWorkflowService {
       }
     }
 
-    // Update properties which can be updated only via m2m
+    if (patchData.upVote !== undefined || patchData.downVote !== undefined) {
+      // Remove existing votes by this user for this item
+      if (!user.userId) {
+        throw new BadRequestException('User id is not available');
+      }
+
+      await this.prisma.aiWorkflowRunItemVote.deleteMany({
+        where: {
+          workflowRunItemId: itemId,
+          createdBy: user.userId.toString(),
+        },
+      });
+
+      // Add new vote if upVote or downVote is true
+      if (patchData.upVote) {
+        await this.prisma.aiWorkflowRunItemVote.create({
+          data: {
+            workflowRunItemId: itemId,
+            voteType: VoteType.UPVOTE,
+            createdBy: user.userId.toString(),
+          },
+        });
+      } else if (patchData.downVote) {
+        await this.prisma.aiWorkflowRunItemVote.create({
+          data: {
+            workflowRunItemId: itemId,
+            voteType: VoteType.DOWNVOTE,
+            createdBy: user.userId.toString(),
+          },
+        });
+      }
+    }
+
+    // Update other properties only allowed for machine users
+    const updateData: any = {};
     if (user.isMachine) {
       if (patchData.content) {
         updateData.content = patchData.content;
       }
-
       if (patchData.questionScore) {
         updateData.questionScore = patchData.questionScore;
       }
@@ -853,6 +918,7 @@ export class AiWorkflowService {
       where: { id: itemId },
       include: {
         comments: true,
+        votes: true,
       },
       data: updateData,
     });
