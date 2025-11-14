@@ -17,6 +17,7 @@ import {
   IsUUID,
   Max,
   IsEmpty,
+  IsBoolean,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -134,15 +135,13 @@ export class CreateAiWorkflowRunItemDto {
 
   @ApiProperty({ required: false })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  upVotes?: number;
+  @IsBoolean()
+  upVote?: boolean;
 
   @ApiProperty({ required: false })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  downVotes?: number;
+  @IsBoolean()
+  downVote?: boolean;
 
   @ApiProperty({ required: false })
   @IsOptional()
@@ -202,14 +201,14 @@ export class UpdateRunItemCommentDto {
   content?: string;
 
   @ApiProperty({ required: false })
-  @IsInt()
+  @IsBoolean()
   @IsOptional()
-  upVotes?: number;
+  upVote?: boolean;
 
   @ApiProperty({ required: false })
-  @IsInt()
+  @IsBoolean()
   @IsOptional()
-  downVotes?: number;
+  downVote?: boolean;
 
   @ApiHideProperty()
   @IsEmpty({ message: 'parentId cannot be updated' })
