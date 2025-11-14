@@ -201,14 +201,14 @@ export class UpdateRunItemCommentDto {
   content?: string;
 
   @ApiProperty({ required: false })
-  @IsInt()
+  @IsBoolean()
   @IsOptional()
-  upVote?: number;
+  upVote?: boolean;
 
   @ApiProperty({ required: false })
-  @IsInt()
+  @IsBoolean()
   @IsOptional()
-  downVote?: number;
+  downVote?: boolean;
 
   @ApiHideProperty()
   @IsEmpty({ message: 'parentId cannot be updated' })
