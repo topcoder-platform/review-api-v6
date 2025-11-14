@@ -901,6 +901,9 @@ export class AiWorkflowService {
           },
         });
       }
+      
+      delete patchData.downVote;
+      delete patchData.upVote;
     }
 
     // Update other properties only allowed for machine users
@@ -912,6 +915,18 @@ export class AiWorkflowService {
       if (patchData.questionScore) {
         updateData.questionScore = patchData.questionScore;
       }
+    }
+
+    // If there are no other fields to update
+    // just return the run item
+    if (Object.keys(updateData).length === 0) {
+      return this.prisma.aiWorkflowRunItem.findUnique({
+        where: { id: itemId },
+        include: {
+          comments: true,
+          votes: true,
+        },
+      });
     }
 
     return this.prisma.aiWorkflowRunItem.update({
