@@ -548,6 +548,7 @@ export class AiWorkflowService {
       const requiredRoles = [
         UserRole.IterativeReviewer,
         UserRole.Reviewer,
+        UserRole.Screener,
         UserRole.ProjectManager,
         UserRole.Copilot,
         UserRole.Submitter,
