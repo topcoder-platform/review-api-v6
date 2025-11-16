@@ -396,7 +396,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
           [user.firstName, user.lastName].filter(Boolean).join(' ') ||
           user.handle,
         aiWorkflowName: aiWorkflowRun.workflow.name,
-        reviewLink: `${CommonConfig.ui.reviewUIUrl}/review/active-challenges/${challenge.id}/scorecard-details/${submission.id}#aiWorkflowRunId=${aiWorkflowRun.id}`,
+        reviewLink: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challenge.id}/reviews/${submission.id}?workflowId=${aiWorkflowRun.workflowIdid}`,
         submissionId: submission.id,
         challengeName: challenge.name,
       },
