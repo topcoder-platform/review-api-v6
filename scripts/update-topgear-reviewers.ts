@@ -224,6 +224,14 @@ async function backfillChallengeReviewers() {
     const records: Prisma.ChallengeReviewerCreateManyInput[] = [];
 
     for (const defaultReviewer of defaultReviewers) {
+      const { scorecardId } = defaultReviewer;
+      if (!scorecardId) {
+        console.warn(
+          `Skipping default reviewer for challenge ${challenge.id} (${challenge.name}) because scorecardId is missing for phase "${defaultReviewer.phaseName}".`,
+        );
+        continue;
+      }
+
       const normalizedPhaseName = normalizeName(defaultReviewer.phaseName);
       const matchingPhases = phasesByName.get(normalizedPhaseName);
 
@@ -240,7 +248,7 @@ async function backfillChallengeReviewers() {
         records.push({
           challengeId: challenge.id,
           phaseId: phase.phaseId,
-          scorecardId: defaultReviewer.scorecardId,
+          scorecardId,
           isMemberReview: defaultReviewer.isMemberReview,
           memberReviewerCount: defaultReviewer.isMemberReview
             ? defaultReviewer.memberReviewerCount ?? null
