@@ -812,6 +812,7 @@ export class AiWorkflowService {
       where: { workflowRunId: runId },
       include: {
         comments: true,
+        votes: true,
       },
       orderBy: {
         createdAt: 'asc',

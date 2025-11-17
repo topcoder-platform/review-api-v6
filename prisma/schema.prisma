@@ -648,11 +648,11 @@ model aiWorkflowRunItemVote {
   workflowRunItemId   String   @db.VarChar(14)
   voteType            VoteType
   createdAt           DateTime @default(now()) @db.Timestamp(3)
-  createdBy           String?  @db.Text
+  createdBy           String   @db.Text
 
   item aiWorkflowRunItem @relation(fields: [workflowRunItemId], references: [id], onDelete: Cascade)
 
-  @@index([workflowRunItemId])
+  @@index([workflowRunItemId, createdBy])
 }
 
 model aiWorkflowRunItemCommentVote {
@@ -660,11 +660,11 @@ model aiWorkflowRunItemCommentVote {
   workflowRunItemCommentId String   @db.VarChar(14)
   voteType              VoteType
   createdAt             DateTime @default(now()) @db.Timestamp(3)
-  createdBy             String?  @db.Text
+  createdBy             String   @db.Text
 
   comment aiWorkflowRunItemComment @relation(fields: [workflowRunItemCommentId], references: [id], onDelete: Cascade)
 
-  @@index([workflowRunItemCommentId])
+  @@index([workflowRunItemCommentId, createdBy])
 }
 
 enum VoteType {

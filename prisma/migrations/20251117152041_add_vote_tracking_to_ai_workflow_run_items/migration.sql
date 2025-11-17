@@ -24,7 +24,7 @@ CREATE TABLE "aiWorkflowRunItemVote" (
     "workflowRunItemId" VARCHAR(14) NOT NULL,
     "voteType" "VoteType" NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdBy" TEXT,
+    "createdBy" TEXT NOT NULL,
 
     CONSTRAINT "aiWorkflowRunItemVote_pkey" PRIMARY KEY ("id")
 );
@@ -35,16 +35,16 @@ CREATE TABLE "aiWorkflowRunItemCommentVote" (
     "workflowRunItemCommentId" VARCHAR(14) NOT NULL,
     "voteType" "VoteType" NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdBy" TEXT,
+    "createdBy" TEXT NOT NULL,
 
     CONSTRAINT "aiWorkflowRunItemCommentVote_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
-CREATE INDEX "aiWorkflowRunItemVote_workflowRunItemId_idx" ON "aiWorkflowRunItemVote"("workflowRunItemId");
+CREATE INDEX "aiWorkflowRunItemVote_workflowRunItemId_createdBy_idx" ON "aiWorkflowRunItemVote"("workflowRunItemId", "createdBy");
 
 -- CreateIndex
-CREATE INDEX "aiWorkflowRunItemCommentVote_workflowRunItemCommentId_idx" ON "aiWorkflowRunItemCommentVote"("workflowRunItemCommentId");
+CREATE INDEX "aiWorkflowRunItemCommentVote_workflowRunItemCommentId_creat_idx" ON "aiWorkflowRunItemCommentVote"("workflowRunItemCommentId", "createdBy");
 
 -- AddForeignKey
 ALTER TABLE "aiWorkflowRunItemVote" ADD CONSTRAINT "aiWorkflowRunItemVote_workflowRunItemId_fkey" FOREIGN KEY ("workflowRunItemId") REFERENCES "aiWorkflowRunItem"("id") ON DELETE CASCADE ON UPDATE CASCADE;
