@@ -815,7 +815,7 @@ export class AiWorkflowService {
         comments: {
           include: {
             votes: true,
-          }
+          },
         },
         votes: true,
       },
@@ -907,7 +907,7 @@ export class AiWorkflowService {
           },
         });
       }
-      
+
       delete patchData.downVote;
       delete patchData.upVote;
     }
