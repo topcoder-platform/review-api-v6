@@ -811,7 +811,11 @@ export class AiWorkflowService {
     const items = await this.prisma.aiWorkflowRunItem.findMany({
       where: { workflowRunId: runId },
       include: {
-        comments: true,
+        comments: {
+          include: {
+            votes: true,
+          }
+        },
         votes: true,
       },
       orderBy: {
