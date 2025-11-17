@@ -11,7 +11,6 @@ import {
   IsArray,
   ValidateNested,
   IsOptional,
-  IsInt,
   IsDate,
   Min,
   IsUUID,
