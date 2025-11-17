@@ -643,6 +643,37 @@ model llmModel {
   workflows aiWorkflow[]
 }
 
+model aiWorkflowRunItemVote {
+  id                  String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  workflowRunItemId   String   @db.VarChar(14)
+  voteType            VoteType
+  createdAt           DateTime @default(now()) @db.Timestamp(3)
+  createdBy           String   @db.Text
+
+  item aiWorkflowRunItem @relation(fields: [workflowRunItemId], references: [id], onDelete: Cascade)
+
+  @@index([workflowRunItemId])
+  @@unique([workflowRunItemId, createdBy])
+}
+
+model aiWorkflowRunItemCommentVote {
+  id                    String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  workflowRunItemCommentId String   @db.VarChar(14)
+  voteType              VoteType
+  createdAt             DateTime @default(now()) @db.Timestamp(3)
+  createdBy             String   @db.Text
+
+  comment aiWorkflowRunItemComment @relation(fields: [workflowRunItemCommentId], references: [id], onDelete: Cascade)
+
+  @@index([workflowRunItemCommentId])
+  @@unique([workflowRunItemCommentId, createdBy])
+}
+
+enum VoteType {
+  UPVOTE
+  DOWNVOTE
+}
+
 model aiWorkflow {
   id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
   name        String   @unique @db.VarChar
@@ -690,8 +721,6 @@ model aiWorkflowRunItem {
   workflowRunId       String   @db.VarChar(14)
   scorecardQuestionId String   @db.VarChar(14)
   content             String   @db.Text
-  upVotes             Int      @default(0)
-  downVotes           Int      @default(0)
   questionScore       Float?   @db.DoublePrecision
   createdAt           DateTime @db.Timestamp(3)
   createdBy           String?  @db.Text
@@ -699,6 +728,8 @@ model aiWorkflowRunItem {
   run      aiWorkflowRun              @relation(fields: [workflowRunId], references: [id])
   question scorecardQuestion          @relation(fields: [scorecardQuestionId], references: [id])
   comments aiWorkflowRunItemComment[]
+
+  votes aiWorkflowRunItemVote[]
 }
 
 model aiWorkflowRunItemComment {
@@ -706,8 +737,6 @@ model aiWorkflowRunItemComment {
   workflowRunItemId String   @db.VarChar(14)
   userId            String   @db.Text
   content           String   @db.Text
-  upVotes           Int      @default(0)
-  downVotes         Int      @default(0)
   parentId          String?  @db.VarChar(14)
   createdAt         DateTime @default(now()) @db.Timestamp(3)
   createdBy         String?  @db.Text
@@ -717,4 +746,6 @@ model aiWorkflowRunItemComment {
   item    aiWorkflowRunItem          @relation(fields: [workflowRunItemId], references: [id])
   parent  aiWorkflowRunItemComment?  @relation("CommentHierarchy", fields: [parentId], references: [id])
   replies aiWorkflowRunItemComment[] @relation("CommentHierarchy")
+
+  votes aiWorkflowRunItemCommentVote[]
 }
