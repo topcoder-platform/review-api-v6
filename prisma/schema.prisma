@@ -652,7 +652,8 @@ model aiWorkflowRunItemVote {
 
   item aiWorkflowRunItem @relation(fields: [workflowRunItemId], references: [id], onDelete: Cascade)
 
-  @@index([workflowRunItemId, createdBy])
+  @@index([workflowRunItemId])
+  @@unique([workflowRunItemId, createdBy])
 }
 
 model aiWorkflowRunItemCommentVote {
@@ -664,7 +665,8 @@ model aiWorkflowRunItemCommentVote {
 
   comment aiWorkflowRunItemComment @relation(fields: [workflowRunItemCommentId], references: [id], onDelete: Cascade)
 
-  @@index([workflowRunItemCommentId, createdBy])
+  @@index([workflowRunItemCommentId])
+  @@unique([workflowRunItemCommentId, createdBy])
 }
 
 enum VoteType {

@@ -41,10 +41,16 @@ CREATE TABLE "aiWorkflowRunItemCommentVote" (
 );
 
 -- CreateIndex
-CREATE INDEX "aiWorkflowRunItemVote_workflowRunItemId_createdBy_idx" ON "aiWorkflowRunItemVote"("workflowRunItemId", "createdBy");
+CREATE INDEX "aiWorkflowRunItemVote_workflowRunItemId_idx" ON "aiWorkflowRunItemVote"("workflowRunItemId");
 
 -- CreateIndex
-CREATE INDEX "aiWorkflowRunItemCommentVote_workflowRunItemCommentId_creat_idx" ON "aiWorkflowRunItemCommentVote"("workflowRunItemCommentId", "createdBy");
+CREATE UNIQUE INDEX "aiWorkflowRunItemVote_workflowRunItemId_createdBy_key" ON "aiWorkflowRunItemVote"("workflowRunItemId", "createdBy");
+
+-- CreateIndex
+CREATE INDEX "aiWorkflowRunItemCommentVote_workflowRunItemCommentId_idx" ON "aiWorkflowRunItemCommentVote"("workflowRunItemCommentId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "aiWorkflowRunItemCommentVote_workflowRunItemCommentId_creat_key" ON "aiWorkflowRunItemCommentVote"("workflowRunItemCommentId", "createdBy");
 
 -- AddForeignKey
 ALTER TABLE "aiWorkflowRunItemVote" ADD CONSTRAINT "aiWorkflowRunItemVote_workflowRunItemId_fkey" FOREIGN KEY ("workflowRunItemId") REFERENCES "aiWorkflowRunItem"("id") ON DELETE CASCADE ON UPDATE CASCADE;
