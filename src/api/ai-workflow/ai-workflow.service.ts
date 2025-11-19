@@ -836,14 +836,20 @@ export class AiWorkflowService {
       select: {
         userId: true,
         handle: true,
-        maxRating: { select: { rating: true } },
+        maxRating: { select: { ratingColor: true } },
       },
     });
 
-    const membersMap = members.reduce(
+    const normalized = members.map((m: any) => ({
+      ...m,
+      userId: m.userId.toString(),
+      ratingColor: m.maxRating ?? m.maxRating.ratingColor,
+    }));
+
+    const membersMap = normalized.reduce(
       (acc, item) => {
         if (item.userId) {
-          acc[item.userId.toString()] = item;
+          acc[item.userId] = item;
         }
         return acc;
       },
