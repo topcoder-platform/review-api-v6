@@ -1,5 +1,5 @@
 import { createReadStream, promises as fs } from 'fs';
-import path from 'path';
+import * as path from 'path';
 import readline from 'readline';
 import { Prisma, PrismaClient } from '@prisma/client';
 
