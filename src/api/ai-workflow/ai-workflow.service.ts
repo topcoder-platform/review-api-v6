@@ -848,11 +848,11 @@ export class AiWorkflowService {
     }));
 
     const membersMap = normalized.reduce(
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       (acc, item) => {
         if (item.userId) {
           acc[item.userId] = item;
         }
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
         return acc;
       },
       {} as Record<string, (typeof members)[0]>,
