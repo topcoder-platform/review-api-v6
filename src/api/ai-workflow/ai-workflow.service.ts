@@ -844,7 +844,7 @@ export class AiWorkflowService {
     const normalized = members.map((m: any) => ({
       ...m,
       userId: m.userId.toString(),
-      ratingColor: m.maxRating ?? m.maxRating.ratingColor,
+      ratingColor: m.maxRating?.ratingColor,
     }));
 
     const membersMap = normalized.reduce(
