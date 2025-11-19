@@ -843,7 +843,7 @@ export class AiWorkflowService {
     const membersMap = members.reduce(
       (acc, item) => {
         if (item.userId) {
-          acc[String(item.userId)] = item;
+          acc[item.userId.toString()] = item;
         }
         return acc;
       },
