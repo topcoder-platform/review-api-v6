@@ -843,7 +843,7 @@ export class AiWorkflowService {
     const membersMap = members.reduce(
       (acc, item) => {
         if (item.userId) {
-          acc[item.userId] = item;
+          acc[String(item.userId)] = item;
         }
         return acc;
       },
@@ -854,7 +854,7 @@ export class AiWorkflowService {
       ...item,
       comments: item.comments.map((comment) => ({
         ...comment,
-        createdUser: membersMap[comment.createdBy],
+        createdUser: membersMap[comment.createdBy as string],
       })),
     }));
   }
