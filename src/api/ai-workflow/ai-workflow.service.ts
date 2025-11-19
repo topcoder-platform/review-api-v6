@@ -30,7 +30,6 @@ import { GiteaService } from 'src/shared/modules/global/gitea.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { VoteType } from '@prisma/client';
 
-
 @Injectable()
 export class AiWorkflowService {
   private readonly logger: LoggerService;
@@ -828,29 +827,36 @@ export class AiWorkflowService {
     });
 
     const createdByList = items
-      .filter(item => !!item.id)
-      .map(item => item.createdBy as string);
+      .map((item) => item.comments)
+      .flat()
+      .map((item) => item.createdBy as string);
 
     const members = await this.memberPrisma.member.findMany({
-      where: { userId: { in: createdByList.map((id) => BigInt(id)), } },
+      where: { userId: { in: createdByList.map((id) => BigInt(id)) } },
       select: {
         userId: true,
         handle: true,
         maxRating: { select: { rating: true } },
       },
-    })
-    
-    const membersMap = members.reduce((acc, item) => {
-      if (item.userId) {
-        acc[item.userId] = item;
-      }
-      return acc;
-    }, {} as Record<string, typeof members[0]>);
+    });
+
+    const membersMap = members.reduce(
+      (acc, item) => {
+        if (item.userId) {
+          acc[item.userId] = item;
+        }
+        return acc;
+      },
+      {} as Record<string, (typeof members)[0]>,
+    );
 
     return items.map((item) => ({
-        ...item,
-        createdUser: membersMap[item.createdBy],
-      }));
+      ...item,
+      comments: item.comments.map((comment) => ({
+        ...comment,
+        createdUser: membersMap[comment.createdBy],
+      })),
+    }));
   }
 
   async updateRunItem(
