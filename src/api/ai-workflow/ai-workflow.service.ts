@@ -27,7 +27,9 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
+import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { VoteType } from '@prisma/client';
+
 
 @Injectable()
 export class AiWorkflowService {
@@ -35,6 +37,7 @@ export class AiWorkflowService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly memberPrisma: MemberPrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
     private readonly giteaService: GiteaService,
@@ -824,7 +827,30 @@ export class AiWorkflowService {
       },
     });
 
-    return items;
+    const createdByList = items
+      .filter(item => !!item.id)
+      .map(item => item.createdBy as string);
+
+    const members = await this.memberPrisma.member.findMany({
+      where: { userId: { in: createdByList.map((id) => BigInt(id)), } },
+      select: {
+        userId: true,
+        handle: true,
+        maxRating: { select: { rating: true } },
+      },
+    })
+    
+    const membersMap = members.reduce((acc, item) => {
+      if (item.userId) {
+        acc[item.userId] = item;
+      }
+      return acc;
+    }, {} as Record<string, typeof members[0]>);
+
+    return items.map((item) => ({
+        ...item,
+        createdUser: membersMap[item.createdBy],
+      }));
   }
 
   async updateRunItem(
