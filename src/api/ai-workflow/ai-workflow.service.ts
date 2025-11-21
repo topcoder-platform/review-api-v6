@@ -858,12 +858,40 @@ export class AiWorkflowService {
       {} as Record<string, (typeof members)[0]>,
     );
 
+    // Reconstruct comments with child comments nested in parent's "comments" property
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    const commentsById: Record<string, any> = {};
+
+    for (const item of items) {
+      for (const comment of item.comments) {
+        commentsById[comment.id] = {
+          ...comment,
+          createdUser: membersMap[comment.createdBy as string],
+          comments: [],
+        };
+      }
+    }
+
+    for (const item of items) {
+      for (const comment of item.comments) {
+        if (comment.parentId) {
+          const parent = commentsById[comment.parentId];
+          if (parent) {
+            parent.comments.push(commentsById[comment.id]);
+          }
+        }
+      }
+    }
+
+    for (const item of items) {
+      item.comments = item.comments
+        .filter((comment) => !comment.parentId)
+        .map((comment) => commentsById[comment.id]);
+    }
+
     return items.map((item) => ({
       ...item,
-      comments: item.comments.map((comment) => ({
-        ...comment,
-        createdUser: membersMap[comment.createdBy as string],
-      })),
+      comments: item.comments,
     }));
   }
 
