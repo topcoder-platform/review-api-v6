@@ -859,7 +859,6 @@ export class AiWorkflowService {
     );
 
     // Reconstruct comments with child comments nested in parent's "comments" property
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     const commentsById: Record<string, any> = {};
 
     for (const item of items) {
@@ -886,6 +885,7 @@ export class AiWorkflowService {
     for (const item of items) {
       item.comments = item.comments
         .filter((comment) => !comment.parentId)
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
         .map((comment) => commentsById[comment.id]);
     }
 
