@@ -3085,34 +3085,58 @@ export class SubmissionService {
       return;
     }
 
-    const latestIds = new Set<string>();
-    await Promise.all(
-      Array.from(uniquePairs.values()).map(
-        async ({ challengeId, memberId }) => {
-          const latest = await this.prisma.submission.findFirst({
-            where: {
-              challengeId,
-              memberId,
-            },
-            orderBy: [
-              { submittedDate: 'desc' },
-              { createdAt: 'desc' },
-              { updatedAt: 'desc' },
-            ],
-            select: { id: true },
-          });
-
-          if (latest?.id) {
-            latestIds.add(latest.id);
-          }
-        },
+    const challengeIds = Array.from(
+      new Set(
+        Array.from(uniquePairs.values()).map((entry) => entry.challengeId),
       ),
     );
+    const memberIds = Array.from(
+      new Set(Array.from(uniquePairs.values()).map((entry) => entry.memberId)),
+    );
 
-    for (const submission of submissions) {
-      if (latestIds.has(submission.id)) {
-        (submission as any).isLatest = true;
+    if (!challengeIds.length || !memberIds.length) {
+      return;
+    }
+
+    try {
+      // Use a single windowed query to locate the latest submission per (challengeId, memberId)
+      const latestEntries = await this.prisma.$queryRaw<
+        Array<{ id: string }>
+      >(Prisma.sql`
+        SELECT "id"
+        FROM (
+          SELECT
+            "id",
+            ROW_NUMBER() OVER (
+              PARTITION BY "challengeId", "memberId"
+              ORDER BY "submittedDate" DESC NULLS LAST,
+                       "createdAt" DESC,
+                       "updatedAt" DESC NULLS LAST
+            ) AS row_num
+          FROM "submission"
+          WHERE "challengeId" IN (${Prisma.join(challengeIds)})
+            AND "memberId" IN (${Prisma.join(memberIds)})
+        ) ranked
+        WHERE row_num = 1
+      `);
+
+      const latestIds = new Set(
+        latestEntries
+          .map((entry) => String(entry.id ?? '').trim())
+          .filter((id) => id.length > 0),
+      );
+
+      for (const submission of submissions) {
+        if (latestIds.has(submission.id)) {
+          (submission as any).isLatest = true;
+        }
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[populateLatestSubmissionFlags] Failed to resolve latest submissions via bulk query: ${message}`,
+      );
+      throw error;
     }
   }
 

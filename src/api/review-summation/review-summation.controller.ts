@@ -179,6 +179,7 @@ export class ReviewSummationController {
       `Getting review summations with filters - ${JSON.stringify(queryDto)}`,
     );
     const authUser: JwtUser = req['user'] as JwtUser;
+    const wantsTabSeparated = this.requestWantsTabSeparated(req);
     const results = await this.service.searchSummation(
       authUser,
       queryDto,
@@ -186,7 +187,7 @@ export class ReviewSummationController {
       sortDto,
     );
 
-    if (!this.requestWantsTabSeparated(req)) {
+    if (!wantsTabSeparated) {
       return results;
     }
 
@@ -199,7 +200,13 @@ export class ReviewSummationController {
       });
     }
 
-    const payload = this.buildReviewSummationTsv(results);
+    const completeResults = await this.loadAllReviewSummationsForExport(
+      authUser,
+      queryDto,
+      sortDto,
+      results,
+    );
+    const payload = this.buildReviewSummationTsv(completeResults);
     const safeChallengeSlug = this.buildFilenameSlug(challengeId);
     const filename = `${ReviewSummationController.TSV_FILENAME_PREFIX}-${safeChallengeSlug}.tsv`;
     res.setHeader(
@@ -319,6 +326,28 @@ export class ReviewSummationController {
     return {
       message: `Review type ${reviewSummationId} deleted successfully.`,
     };
+  }
+
+  private async loadAllReviewSummationsForExport(
+    authUser: JwtUser,
+    queryDto: ReviewSummationQueryDto,
+    sortDto: SortDto | undefined,
+    initialResults: PaginatedResponse<ReviewSummationResponseDto>,
+  ): Promise<PaginatedResponse<ReviewSummationResponseDto>> {
+    const totalCount =
+      initialResults.meta?.totalCount ?? initialResults.data.length;
+    const currentCount = initialResults.data.length;
+
+    if (!Number.isFinite(totalCount) || totalCount <= currentCount) {
+      return initialResults;
+    }
+
+    return this.service.searchSummation(
+      authUser,
+      queryDto,
+      { page: 1, perPage: totalCount },
+      sortDto,
+    );
   }
 
   private requestWantsTabSeparated(req: Request): boolean {
