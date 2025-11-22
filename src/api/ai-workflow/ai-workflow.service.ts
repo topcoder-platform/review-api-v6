@@ -27,6 +27,7 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
+import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { VoteType } from '@prisma/client';
 
 @Injectable()
@@ -35,6 +36,7 @@ export class AiWorkflowService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly memberPrisma: MemberPrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
     private readonly giteaService: GiteaService,
@@ -824,7 +826,73 @@ export class AiWorkflowService {
       },
     });
 
-    return items;
+    const createdByList = items
+      .map((item) => item.comments)
+      .flat()
+      .map((item) => item.createdBy as string);
+
+    const members = await this.memberPrisma.member.findMany({
+      where: { userId: { in: createdByList.map((id) => BigInt(id)) } },
+      select: {
+        userId: true,
+        handle: true,
+        maxRating: { select: { ratingColor: true } },
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    const normalized = members.map((m: any) => ({
+      ...m,
+      userId: m.userId.toString(),
+      ratingColor: m.maxRating?.ratingColor,
+    }));
+
+    const membersMap = normalized.reduce(
+      (acc, item) => {
+        if (item.userId) {
+          acc[item.userId] = item;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        return acc;
+      },
+      {} as Record<string, (typeof members)[0]>,
+    );
+
+    // Reconstruct comments with child comments nested in parent's "comments" property
+    const commentsById: Record<string, any> = {};
+
+    for (const item of items) {
+      for (const comment of item.comments) {
+        commentsById[comment.id] = {
+          ...comment,
+          createdUser: membersMap[comment.createdBy as string],
+          comments: [],
+        };
+      }
+    }
+
+    for (const item of items) {
+      for (const comment of item.comments) {
+        if (comment.parentId) {
+          const parent = commentsById[comment.parentId];
+          if (parent) {
+            parent.comments.push(commentsById[comment.id]);
+          }
+        }
+      }
+    }
+
+    for (const item of items) {
+      item.comments = item.comments
+        .filter((comment) => !comment.parentId)
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        .map((comment) => commentsById[comment.id]);
+    }
+
+    return items.map((item) => ({
+      ...item,
+      comments: item.comments,
+    }));
   }
 
   async updateRunItem(
