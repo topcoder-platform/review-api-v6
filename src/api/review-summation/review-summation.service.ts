@@ -544,6 +544,13 @@ export class ReviewSummationService {
       const skip = (page - 1) * perPage;
       let orderBy;
 
+      const parseBooleanString = (value?: string): boolean | undefined => {
+        if (typeof value !== 'string') {
+          return undefined;
+        }
+        return value.toLowerCase() === 'true';
+      };
+
       if (sortDto && sortDto.orderBy && sortDto.sortBy) {
         orderBy = {
           [sortDto.sortBy]: sortDto.orderBy.toLowerCase(),
@@ -700,6 +707,14 @@ export class ReviewSummationService {
 
       // Build the where clause for review summations based on available filter parameters
       const reviewSummationWhereClause: any = {};
+      const isPassingFilter = parseBooleanString(queryDto.isPassing);
+      const isFinalFilter = parseBooleanString(queryDto.isFinal);
+      const isProvisionalFilter = parseBooleanString(queryDto.isProvisional);
+      const isExampleFilter = parseBooleanString(queryDto.isExample);
+      const exampleOnly = parseBooleanString(queryDto.example) === true;
+      const provisionalOnly = parseBooleanString(queryDto.provisional) === true;
+      const systemOnly = parseBooleanString(queryDto.system) === true;
+
       if (queryDto.submissionId) {
         reviewSummationWhereClause.submissionId = queryDto.submissionId;
       }
@@ -711,21 +726,23 @@ export class ReviewSummationService {
       if (queryDto.scorecardId) {
         reviewSummationWhereClause.scorecardId = queryDto.scorecardId;
       }
-      if (queryDto.isPassing !== undefined) {
-        reviewSummationWhereClause.isPassing =
-          queryDto.isPassing.toLowerCase() === 'true';
+      if (isPassingFilter !== undefined) {
+        reviewSummationWhereClause.isPassing = isPassingFilter;
       }
-      if (queryDto.isFinal !== undefined) {
-        reviewSummationWhereClause.isFinal =
-          queryDto.isFinal.toLowerCase() === 'true';
+      if (isFinalFilter !== undefined) {
+        reviewSummationWhereClause.isFinal = isFinalFilter;
+      } else if (systemOnly) {
+        reviewSummationWhereClause.isFinal = true;
       }
-      if (queryDto.isProvisional !== undefined) {
-        reviewSummationWhereClause.isProvisional =
-          queryDto.isProvisional.toLowerCase() === 'true';
+      if (isProvisionalFilter !== undefined) {
+        reviewSummationWhereClause.isProvisional = isProvisionalFilter;
+      } else if (provisionalOnly) {
+        reviewSummationWhereClause.isProvisional = true;
       }
-      if (queryDto.isExample !== undefined) {
-        reviewSummationWhereClause.isExample =
-          queryDto.isExample.toLowerCase() === 'true';
+      if (isExampleFilter !== undefined) {
+        reviewSummationWhereClause.isExample = isExampleFilter;
+      } else if (exampleOnly) {
+        reviewSummationWhereClause.isExample = true;
       }
 
       const submissionWhereClause: Record<string, unknown> = {};

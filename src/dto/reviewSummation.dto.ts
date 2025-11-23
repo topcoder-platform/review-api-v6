@@ -71,6 +71,33 @@ export class ReviewSummationQueryDto {
   isExample?: string;
 
   @ApiProperty({
+    description:
+      'When true, only include review summations flagged as examples (isExample = true)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBooleanString()
+  example?: string;
+
+  @ApiProperty({
+    description:
+      'When true, only include provisional review summations (isProvisional = true)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBooleanString()
+  provisional?: string;
+
+  @ApiProperty({
+    description:
+      'When true, only include system (final) review summations (isFinal = true)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBooleanString()
+  system?: string;
+
+  @ApiProperty({
     description: 'The challenge id tied to the submission',
     required: false,
   })
