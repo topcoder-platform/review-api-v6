@@ -93,12 +93,6 @@ export class AiWorkflowService {
         );
       }
 
-      if (String(comment.userId) !== String(user.userId)) {
-        throw new ForbiddenException(
-          'User is not the creator of this comment and cannot update it.',
-        );
-      }
-
       // Handle vote updates
       if (patchData.upVote !== undefined || patchData.downVote !== undefined) {
         if (!user.userId) {
@@ -139,6 +133,12 @@ export class AiWorkflowService {
       // No other fields to update apart from likes
       if (Object.keys(patchData).length === 0) {
         return;
+      }
+
+      if (String(comment.userId) !== String(user.userId)) {
+        throw new ForbiddenException(
+          'User is not the creator of this comment and cannot update it.',
+        );
       }
 
       const allowedFields = ['content'];
