@@ -519,8 +519,6 @@ export class AiWorkflowService {
 
     // validate workflowId
     if (workflowId !== undefined) {
-      console.log('here1');
-
       try {
         await this.getWorkflowById(workflowId);
       } catch (e) {
