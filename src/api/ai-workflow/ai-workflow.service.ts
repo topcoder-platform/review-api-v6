@@ -510,21 +510,53 @@ export class AiWorkflowService {
   }
 
   async getWorkflowRuns(
-    workflowId: string,
     user: JwtUser,
-    filter: { submissionId?: string; runId?: string },
+    filter: { workflowId?: string; submissionId?: string; runId?: string },
   ) {
-    this.logger.log(
-      `fetching workflow runs for workflowId ${workflowId} and ${JSON.stringify(filter)}`,
-    );
+    this.logger.log(`fetching workflow runs for ${JSON.stringify(filter)}`);
+
+    const { workflowId, submissionId } = filter;
 
     // validate workflowId
-    try {
-      await this.getWorkflowById(workflowId);
-    } catch (e) {
-      if (e instanceof NotFoundException) {
-        throw new BadRequestException(
-          `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+    if (workflowId !== undefined) {
+      console.log('here1');
+
+      try {
+        await this.getWorkflowById(workflowId);
+      } catch (e) {
+        if (e instanceof NotFoundException) {
+          throw new BadRequestException(
+            `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+          );
+        }
+      }
+    }
+
+    // validate submissionId
+    if (workflowId === undefined && !submissionId?.trim()) {
+      throw new BadRequestException('Submission id is required!');
+    }
+
+    if (submissionId) {
+      try {
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: submissionId },
+        });
+        if (!submission) {
+          throw new BadRequestException(
+            `Invalid submission id provided! Submission with id ${submissionId} does not exist!`,
+          );
+        }
+      } catch (e) {
+        if (e instanceof BadRequestException) {
+          throw e;
+        }
+        this.logger.error(
+          `Failed to validate submission id ${submissionId}`,
+          e,
+        );
+        throw new InternalServerErrorException(
+          'Failed to validate submission id',
         );
       }
     }
@@ -533,7 +565,7 @@ export class AiWorkflowService {
       where: {
         workflowId,
         id: filter.runId,
-        submissionId: filter.submissionId,
+        submissionId,
       },
       include: {
         submission: true,
@@ -729,6 +761,7 @@ export class AiWorkflowService {
     const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
     if (!isM2mOrAdmin) {
       const requiredRoles = [
+        UserRole.Screener,
         UserRole.Reviewer,
         UserRole.ProjectManager,
         UserRole.Copilot,
