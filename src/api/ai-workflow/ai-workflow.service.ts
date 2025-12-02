@@ -27,6 +27,8 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
+import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
+import { VoteType } from '@prisma/client';
 
 @Injectable()
 export class AiWorkflowService {
@@ -34,6 +36,7 @@ export class AiWorkflowService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly memberPrisma: MemberPrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
     private readonly giteaService: GiteaService,
@@ -90,13 +93,55 @@ export class AiWorkflowService {
         );
       }
 
+      // Handle vote updates
+      if (patchData.upVote !== undefined || patchData.downVote !== undefined) {
+        if (!user.userId) {
+          throw new BadRequestException('User id is not available');
+        }
+
+        // Remove existing votes by this user for this comment
+        await this.prisma.aiWorkflowRunItemCommentVote.deleteMany({
+          where: {
+            workflowRunItemCommentId: commentId,
+            createdBy: user.userId.toString(),
+          },
+        });
+
+        // Add new vote if upVote or downVote is true
+        if (patchData.upVote) {
+          await this.prisma.aiWorkflowRunItemCommentVote.create({
+            data: {
+              workflowRunItemCommentId: commentId,
+              voteType: VoteType.UPVOTE,
+              createdBy: user.userId.toString(),
+            },
+          });
+        } else if (patchData.downVote) {
+          await this.prisma.aiWorkflowRunItemCommentVote.create({
+            data: {
+              workflowRunItemCommentId: commentId,
+              voteType: VoteType.DOWNVOTE,
+              createdBy: user.userId.toString(),
+            },
+          });
+        }
+
+        delete patchData.downVote;
+        delete patchData.upVote;
+      }
+
+      // No other fields to update apart from likes
+      if (Object.keys(patchData).length === 0) {
+        return;
+      }
+
       if (String(comment.userId) !== String(user.userId)) {
         throw new ForbiddenException(
           'User is not the creator of this comment and cannot update it.',
         );
       }
 
-      const allowedFields = ['content', 'upVotes', 'downVotes'];
+      const allowedFields = ['content'];
       const updateData: any = {};
       for (const key of allowedFields) {
         if (key in patchData) {
@@ -388,8 +433,6 @@ export class AiWorkflowService {
         workflowRunId: runId,
         scorecardQuestionId: item.scorecardQuestionId,
         content: item.content,
-        upVotes: item.upVotes ?? 0,
-        downVotes: item.downVotes ?? 0,
         questionScore: item.questionScore ?? null,
         createdAt: new Date(),
         // TODO: Remove this once prisma middleware implementation is done
@@ -467,21 +510,51 @@ export class AiWorkflowService {
   }
 
   async getWorkflowRuns(
-    workflowId: string,
     user: JwtUser,
-    filter: { submissionId?: string; runId?: string },
+    filter: { workflowId?: string; submissionId?: string; runId?: string },
   ) {
-    this.logger.log(
-      `fetching workflow runs for workflowId ${workflowId} and ${JSON.stringify(filter)}`,
-    );
+    this.logger.log(`fetching workflow runs for ${JSON.stringify(filter)}`);
+
+    const { workflowId, submissionId } = filter;
 
     // validate workflowId
-    try {
-      await this.getWorkflowById(workflowId);
-    } catch (e) {
-      if (e instanceof NotFoundException) {
-        throw new BadRequestException(
-          `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+    if (workflowId !== undefined) {
+      try {
+        await this.getWorkflowById(workflowId);
+      } catch (e) {
+        if (e instanceof NotFoundException) {
+          throw new BadRequestException(
+            `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+          );
+        }
+      }
+    }
+
+    // validate submissionId
+    if (workflowId === undefined && !submissionId?.trim()) {
+      throw new BadRequestException('Submission id is required!');
+    }
+
+    if (submissionId) {
+      try {
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: submissionId },
+        });
+        if (!submission) {
+          throw new BadRequestException(
+            `Invalid submission id provided! Submission with id ${submissionId} does not exist!`,
+          );
+        }
+      } catch (e) {
+        if (e instanceof BadRequestException) {
+          throw e;
+        }
+        this.logger.error(
+          `Failed to validate submission id ${submissionId}`,
+          e,
+        );
+        throw new InternalServerErrorException(
+          'Failed to validate submission id',
         );
       }
     }
@@ -490,7 +563,7 @@ export class AiWorkflowService {
       where: {
         workflowId,
         id: filter.runId,
-        submissionId: filter.submissionId,
+        submissionId,
       },
       include: {
         submission: true,
@@ -527,7 +600,10 @@ export class AiWorkflowService {
 
     const submission = runs[0]?.submission;
     if ((!submission || !submission.challengeId) && filter.submissionId) {
-      throw new BadRequestException(`Invalid submissionId provided!`);
+      this.logger.log(
+        `No runs have been found for submission ${filter.submissionId}`,
+      );
+      return [];
     }
 
     const challengeId = submission.challengeId;
@@ -543,7 +619,9 @@ export class AiWorkflowService {
     const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
     if (!isM2mOrAdmin) {
       const requiredRoles = [
+        UserRole.IterativeReviewer,
         UserRole.Reviewer,
+        UserRole.Screener,
         UserRole.ProjectManager,
         UserRole.Copilot,
         UserRole.Submitter,
@@ -681,6 +759,7 @@ export class AiWorkflowService {
     const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
     if (!isM2mOrAdmin) {
       const requiredRoles = [
+        UserRole.Screener,
         UserRole.Reviewer,
         UserRole.ProjectManager,
         UserRole.Copilot,
@@ -766,14 +845,85 @@ export class AiWorkflowService {
     const items = await this.prisma.aiWorkflowRunItem.findMany({
       where: { workflowRunId: runId },
       include: {
-        comments: true,
+        comments: {
+          include: {
+            votes: true,
+          },
+        },
+        votes: true,
       },
       orderBy: {
         createdAt: 'asc',
       },
     });
 
-    return items;
+    const createdByList = items
+      .map((item) => item.comments)
+      .flat()
+      .map((item) => item.createdBy as string);
+
+    const members = await this.memberPrisma.member.findMany({
+      where: { userId: { in: createdByList.map((id) => BigInt(id)) } },
+      select: {
+        userId: true,
+        handle: true,
+        maxRating: { select: { ratingColor: true } },
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    const normalized = members.map((m: any) => ({
+      ...m,
+      userId: m.userId.toString(),
+      ratingColor: m.maxRating?.ratingColor,
+    }));
+
+    const membersMap = normalized.reduce(
+      (acc, item) => {
+        if (item.userId) {
+          acc[item.userId] = item;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        return acc;
+      },
+      {} as Record<string, (typeof members)[0]>,
+    );
+
+    // Reconstruct comments with child comments nested in parent's "comments" property
+    const commentsById: Record<string, any> = {};
+
+    for (const item of items) {
+      for (const comment of item.comments) {
+        commentsById[comment.id] = {
+          ...comment,
+          createdUser: membersMap[comment.createdBy as string],
+          comments: [],
+        };
+      }
+    }
+
+    for (const item of items) {
+      for (const comment of item.comments) {
+        if (comment.parentId) {
+          const parent = commentsById[comment.parentId];
+          if (parent) {
+            parent.comments.push(commentsById[comment.id]);
+          }
+        }
+      }
+    }
+
+    for (const item of items) {
+      item.comments = item.comments
+        .filter((comment) => !comment.parentId)
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        .map((comment) => commentsById[comment.id]);
+    }
+
+    return items.map((item) => ({
+      ...item,
+      comments: item.comments,
+    }));
   }
 
   async updateRunItem(
@@ -815,15 +965,6 @@ export class AiWorkflowService {
       );
     }
 
-    const updateData: any = {};
-
-    if (patchData.upVotes !== undefined) {
-      updateData.upVotes = patchData.upVotes;
-    }
-    if (patchData.downVotes !== undefined) {
-      updateData.downVotes = patchData.downVotes;
-    }
-
     if (!user.isMachine) {
       const keys = Object.keys(patchData);
       const prohibitedKeys = ['content', 'questionScore'];
@@ -834,21 +975,70 @@ export class AiWorkflowService {
       }
     }
 
-    // Update properties which can be updated only via m2m
+    if (patchData.upVote !== undefined || patchData.downVote !== undefined) {
+      // Remove existing votes by this user for this item
+      if (!user.userId) {
+        throw new BadRequestException('User id is not available');
+      }
+
+      await this.prisma.aiWorkflowRunItemVote.deleteMany({
+        where: {
+          workflowRunItemId: itemId,
+          createdBy: user.userId.toString(),
+        },
+      });
+
+      // Add new vote if upVote or downVote is true
+      if (patchData.upVote) {
+        await this.prisma.aiWorkflowRunItemVote.create({
+          data: {
+            workflowRunItemId: itemId,
+            voteType: VoteType.UPVOTE,
+            createdBy: user.userId.toString(),
+          },
+        });
+      } else if (patchData.downVote) {
+        await this.prisma.aiWorkflowRunItemVote.create({
+          data: {
+            workflowRunItemId: itemId,
+            voteType: VoteType.DOWNVOTE,
+            createdBy: user.userId.toString(),
+          },
+        });
+      }
+
+      delete patchData.downVote;
+      delete patchData.upVote;
+    }
+
+    // Update other properties only allowed for machine users
+    const updateData: any = {};
     if (user.isMachine) {
       if (patchData.content) {
         updateData.content = patchData.content;
       }
-
       if (patchData.questionScore) {
         updateData.questionScore = patchData.questionScore;
       }
+    }
+
+    // If there are no other fields to update
+    // just return the run item
+    if (Object.keys(updateData).length === 0) {
+      return this.prisma.aiWorkflowRunItem.findUnique({
+        where: { id: itemId },
+        include: {
+          comments: true,
+          votes: true,
+        },
+      });
     }
 
     return this.prisma.aiWorkflowRunItem.update({
       where: { id: itemId },
       include: {
         comments: true,
+        votes: true,
       },
       data: updateData,
     });

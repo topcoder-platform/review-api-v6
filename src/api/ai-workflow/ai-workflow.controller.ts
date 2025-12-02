@@ -36,7 +36,7 @@ import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { User } from 'src/shared/decorators/user.decorator';
 
-@ApiTags('ai_workflow')
+@ApiTags('AI Workflows')
 @ApiBearerAuth()
 @Controller('/workflows')
 export class AiWorkflowController {
@@ -68,6 +68,38 @@ export class AiWorkflowController {
   @ApiResponse({ status: 200, description: 'The AI workflow records.' })
   async fetchRecords(@Query('name') name: string) {
     return this.aiWorkflowService.getWorkflows({ name: name?.trim() });
+  }
+
+  @Get('/runs')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.Submitter,
+    UserRole.User,
+  )
+  @Scopes(Scope.ReadWorkflowRun)
+  @ApiOperation({
+    summary: 'Get all the AI workflow runs for a given submission ID',
+  })
+  @ApiQuery({
+    name: 'submissionId',
+    description: 'The ID of the submission to fetch AI workflow runs for',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The AI workflow runs for the given submission ID.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  getSubmissionRuns(
+    @Query('submissionId') submissionId: string,
+    @User() user: JwtUser,
+  ) {
+    return this.aiWorkflowService.getWorkflowRuns(user, {
+      submissionId,
+    });
   }
 
   @Get(':id')
@@ -130,7 +162,8 @@ export class AiWorkflowController {
   )
   @Scopes(Scope.ReadWorkflowRun)
   @ApiOperation({
-    summary: 'Get all the AI workflow runs for a given submission ID',
+    summary:
+      'Get all the AI workflow runs for a given submission ID & workflow ID',
   })
   @ApiQuery({
     name: 'submissionId',
@@ -142,12 +175,13 @@ export class AiWorkflowController {
     description: 'The AI workflow runs for the given submission ID.',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  getRuns(
+  getWorkflowRuns(
     @Param('workflowId') workflowId: string,
     @Query('submissionId') submissionId: string,
     @User() user: JwtUser,
   ) {
-    return this.aiWorkflowService.getWorkflowRuns(workflowId, user, {
+    return this.aiWorkflowService.getWorkflowRuns(user, {
+      workflowId,
       submissionId,
     });
   }
@@ -180,13 +214,10 @@ export class AiWorkflowController {
     @Param('runId') runId: string,
     @User() user: JwtUser,
   ) {
-    const runs = await this.aiWorkflowService.getWorkflowRuns(
+    const runs = await this.aiWorkflowService.getWorkflowRuns(user, {
       workflowId,
-      user,
-      {
-        runId,
-      },
-    );
+      runId,
+    });
 
     return runs[0];
   }
@@ -358,6 +389,7 @@ export class AiWorkflowController {
   @Roles(
     UserRole.Admin,
     UserRole.Copilot,
+    UserRole.Reviewer,
     UserRole.ProjectManager,
     UserRole.User,
   )

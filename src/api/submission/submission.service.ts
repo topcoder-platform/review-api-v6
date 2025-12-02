@@ -1250,9 +1250,12 @@ export class SubmissionService {
     const trimmed = name.trim();
     if (!trimmed) return undefined;
     const base = basename(trimmed);
-    const sanitized = base
-      .replace(/[^A-Za-z0-9_.-]/g, '_')
-      .replace(/\.+$/g, '');
+    let sanitized = base.replace(/[^A-Za-z0-9_.-]/g, '_');
+    let end = sanitized.length;
+    while (end > 0 && sanitized.charCodeAt(end - 1) === 46) {
+      end -= 1;
+    }
+    sanitized = end === sanitized.length ? sanitized : sanitized.slice(0, end);
     if (!sanitized || sanitized === '.' || sanitized === '..') {
       return undefined;
     }
@@ -1649,9 +1652,23 @@ export class SubmissionService {
         !!file &&
         ((typeof file.size === 'number' && file.size > 0) ||
           (file.buffer && file.buffer.length > 0));
-      const hasS3Url =
-        typeof body.url === 'string' &&
-        body.url.includes('https://s3.amazonaws.com');
+      let hasS3Url = false;
+      if (typeof body.url === 'string') {
+        try {
+          const urlObj = new URL(body.url);
+          // Accept s3.amazonaws.com and any subdomain of s3.amazonaws.com
+          const s3Hosts = ['s3.amazonaws.com'];
+          // Accept region pattern: *.s3.amazonaws.com or *.s3.<region>.amazonaws.com
+          const host = urlObj.host;
+          hasS3Url =
+            s3Hosts.includes(host) ||
+            host.endsWith('.s3.amazonaws.com') ||
+            /^s3\.[a-z0-9-]+\.amazonaws\.com$/.test(host) ||
+            /^[^.]+\.s3\.[a-z0-9-]+\.amazonaws\.com$/.test(host);
+        } catch {
+          hasS3Url = false;
+        }
+      }
       const isFileSubmission = hasUploadedFile || hasS3Url;
 
       // Derive common metadata if available
@@ -3068,34 +3085,58 @@ export class SubmissionService {
       return;
     }
 
-    const latestIds = new Set<string>();
-    await Promise.all(
-      Array.from(uniquePairs.values()).map(
-        async ({ challengeId, memberId }) => {
-          const latest = await this.prisma.submission.findFirst({
-            where: {
-              challengeId,
-              memberId,
-            },
-            orderBy: [
-              { submittedDate: 'desc' },
-              { createdAt: 'desc' },
-              { updatedAt: 'desc' },
-            ],
-            select: { id: true },
-          });
-
-          if (latest?.id) {
-            latestIds.add(latest.id);
-          }
-        },
+    const challengeIds = Array.from(
+      new Set(
+        Array.from(uniquePairs.values()).map((entry) => entry.challengeId),
       ),
     );
+    const memberIds = Array.from(
+      new Set(Array.from(uniquePairs.values()).map((entry) => entry.memberId)),
+    );
 
-    for (const submission of submissions) {
-      if (latestIds.has(submission.id)) {
-        (submission as any).isLatest = true;
+    if (!challengeIds.length || !memberIds.length) {
+      return;
+    }
+
+    try {
+      // Use a single windowed query to locate the latest submission per (challengeId, memberId)
+      const latestEntries = await this.prisma.$queryRaw<
+        Array<{ id: string }>
+      >(Prisma.sql`
+        SELECT "id"
+        FROM (
+          SELECT
+            "id",
+            ROW_NUMBER() OVER (
+              PARTITION BY "challengeId", "memberId"
+              ORDER BY "submittedDate" DESC NULLS LAST,
+                       "createdAt" DESC,
+                       "updatedAt" DESC NULLS LAST
+            ) AS row_num
+          FROM "submission"
+          WHERE "challengeId" IN (${Prisma.join(challengeIds)})
+            AND "memberId" IN (${Prisma.join(memberIds)})
+        ) ranked
+        WHERE row_num = 1
+      `);
+
+      const latestIds = new Set(
+        latestEntries
+          .map((entry) => String(entry.id ?? '').trim())
+          .filter((id) => id.length > 0),
+      );
+
+      for (const submission of submissions) {
+        if (latestIds.has(submission.id)) {
+          (submission as any).isLatest = true;
+        }
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[populateLatestSubmissionFlags] Failed to resolve latest submissions via bulk query: ${message}`,
+      );
+      throw error;
     }
   }
 

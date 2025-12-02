@@ -70,7 +70,7 @@ export class SubmissionScanCompleteHandler
       this.logger.log('Payload: ' + JSON.stringify(message, null, 2));
       this.logger.log('==============================');
 
-      if (!message.isInfected) {
+      if (!message.payload.isInfected) {
         const submission = await this.updateSubmissionUrl(
           message.payload.submissionId,
           message.payload.url,

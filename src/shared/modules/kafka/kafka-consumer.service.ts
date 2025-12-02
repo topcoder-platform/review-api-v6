@@ -16,6 +16,20 @@ import {
 import { KafkaHandlerRegistry } from './kafka-handler.registry';
 import { LoggerService } from '../global/logger.service';
 
+export enum KafkaConnectionState {
+  disabled = 'disabled',
+  initializing = 'initializing',
+  ready = 'ready',
+  reconnecting = 'reconnecting',
+  failed = 'failed',
+}
+
+export interface KafkaHealthStatus {
+  state: KafkaConnectionState;
+  reconnectAttempts: number;
+  reason?: string;
+}
+
 export type KafkaSaslMechanism =
   | 'plain'
   | 'scram-sha-256'
@@ -61,6 +75,11 @@ export class KafkaConsumerService
   private logger: LoggerService;
   private messageRetryCount: Map<string, number> = new Map();
   private readonly isDisabled: boolean;
+  private kafkaState: KafkaConnectionState;
+  private kafkaFailureReason?: string;
+  private reconnectionTask?: Promise<void>;
+  private kafkaReconnectAttempts = 0;
+  private isShuttingDown = false;
 
   constructor(
     private readonly options: KafkaModuleOptions,
@@ -68,6 +87,9 @@ export class KafkaConsumerService
   ) {
     this.logger = LoggerService.forRoot('KafkaConsumerService');
     this.isDisabled = options.disabled ?? false;
+    this.kafkaState = this.isDisabled
+      ? KafkaConnectionState.disabled
+      : KafkaConnectionState.initializing;
   }
 
   onModuleInit() {
@@ -91,7 +113,25 @@ export class KafkaConsumerService
     if (this.isDisabled) {
       return;
     }
+    this.isShuttingDown = true;
+
+    if (this.reconnectionTask) {
+      try {
+        await this.reconnectionTask;
+      } catch (error) {
+        const trace =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+        this.logger.error(
+          'Kafka reconnection task failed during shutdown',
+          trace,
+        );
+      }
+    }
+
     await this.disconnect();
+    this.kafkaState = KafkaConnectionState.disabled;
   }
 
   connect(): void {
@@ -185,14 +225,14 @@ export class KafkaConsumerService
       });
 
       this.stream.on('error', (error) => {
-        const trace =
-          error instanceof Error
-            ? (error.stack ?? error.message)
-            : String(error);
-        this.logger.error('Kafka consumer stream error', trace);
+        this.handleKafkaFailure('Kafka consumer stream error', error);
       });
 
       this.consumerLoop = this.consumeStream(this.stream);
+
+      this.kafkaState = KafkaConnectionState.ready;
+      this.kafkaFailureReason = undefined;
+      this.kafkaReconnectAttempts = 0;
 
       this.logger.log('Kafka consumer started successfully');
     } catch (error) {
@@ -211,10 +251,7 @@ export class KafkaConsumerService
         await this.processMessage(message.topic, message.partition, message);
       }
     } catch (error) {
-      const trace =
-        error instanceof Error ? (error.stack ?? error.message) : String(error);
-      this.logger.error('Kafka consumer stream processing failed', trace);
-      throw error;
+      this.handleKafkaFailure('Kafka consumer stream processing failed', error);
     }
   }
 
@@ -456,6 +493,110 @@ export class KafkaConsumerService
       this.logger.error(
         'Failed to commit message offset',
         error.stack ?? error.message,
+      );
+    }
+  }
+
+  getKafkaStatus(): KafkaHealthStatus {
+    return {
+      state: this.kafkaState,
+      reconnectAttempts: this.kafkaReconnectAttempts,
+      reason: this.kafkaFailureReason,
+    };
+  }
+
+  private handleKafkaFailure(context: string, error: unknown): void {
+    if (this.isDisabled || this.isShuttingDown) {
+      return;
+    }
+
+    const trace =
+      error instanceof Error ? (error.stack ?? error.message) : String(error);
+
+    this.logger.error(context, trace);
+    this.kafkaFailureReason = trace;
+
+    if (this.kafkaState !== KafkaConnectionState.reconnecting) {
+      this.kafkaState = KafkaConnectionState.reconnecting;
+    }
+
+    void this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): Promise<void> {
+    if (this.reconnectionTask) {
+      return this.reconnectionTask;
+    }
+
+    this.reconnectionTask = this.performReconnect().finally(() => {
+      this.reconnectionTask = undefined;
+    });
+
+    return this.reconnectionTask;
+  }
+
+  private async performReconnect(): Promise<void> {
+    if (this.isDisabled || this.isShuttingDown) {
+      return;
+    }
+
+    const maxAttempts = Math.max(this.options.retry?.retries ?? 5, 1);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (this.isShuttingDown) {
+        return;
+      }
+
+      this.kafkaReconnectAttempts = attempt;
+
+      try {
+        await this.disconnect();
+
+        if (this.isShuttingDown) {
+          return;
+        }
+
+        this.connect();
+        await this.startConsumer();
+
+        this.kafkaState = KafkaConnectionState.ready;
+        this.kafkaFailureReason = undefined;
+        this.kafkaReconnectAttempts = 0;
+
+        this.logger.log({
+          message: 'Kafka consumer reconnected successfully',
+          attempt,
+        });
+
+        return;
+      } catch (error) {
+        const trace =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+
+        this.kafkaFailureReason = trace;
+
+        this.logger.error(
+          {
+            message: 'Kafka reconnection attempt failed',
+            attempt,
+            maxAttempts,
+          },
+          trace,
+        );
+
+        if (attempt < maxAttempts && !this.isShuttingDown) {
+          await this.wait(this.getRetryDelay(attempt));
+        }
+      }
+    }
+
+    if (!this.isShuttingDown) {
+      this.kafkaState = KafkaConnectionState.failed;
+      this.logger.error(
+        'Kafka reconnection attempts exhausted',
+        this.kafkaFailureReason ?? 'Kafka reconnection attempts exhausted',
       );
     }
   }
