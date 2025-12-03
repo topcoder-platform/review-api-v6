@@ -2287,6 +2287,34 @@ export class SubmissionService {
           });
         }
       }
+      const TERMINAL_STATUSES = [
+        'COMPLETED',
+        'FAILURE',
+        'CANCELLED',
+        'SUCCESS',
+      ];
+
+      const runs = await this.prisma.aiWorkflowRun.findMany({
+        where: { submissionId: id },
+        select: { id: true, status: true },
+      });
+
+      if (runs.length > 0) {
+        const nonTerminal = runs.filter(
+          (r) => !TERMINAL_STATUSES.includes(r.status),
+        );
+
+        if (nonTerminal.length > 0) {
+          throw new Error(
+            `Cannot delete submission: ${nonTerminal.length} workflow run(s) still active.`,
+          );
+        }
+
+        await this.prisma.aiWorkflowRun.deleteMany({
+          where: { submissionId: id },
+        });
+      }
+
       await this.prisma.submission.delete({
         where: { id },
       });
