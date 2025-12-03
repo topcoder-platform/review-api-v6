@@ -2313,46 +2313,6 @@ export class SubmissionService {
         await this.prisma.aiWorkflowRun.deleteMany({
           where: { submissionId: id },
         });
-
-        // await this.prisma.$transaction(async (tx) => {
-        //   for (const run of runs) {
-        //     const runId = run.id;
-
-        //     const items = await tx.aiWorkflowRunItem.findMany({
-        //       where: { workflowRunId: runId },
-        //       select: { id: true },
-        //     });
-
-        //     const itemIds = items.map((i) => i.id);
-
-        //     const comments = await tx.aiWorkflowRunItemComment.findMany({
-        //       where: { workflowRunItemId: { in: itemIds } },
-        //       select: { id: true },
-        //     });
-
-        //     const commentIds = comments.map((c) => c.id);
-
-        //     await tx.aiWorkflowRunItemVote.deleteMany({
-        //       where: { workflowRunItemId: { in: itemIds } },
-        //     });
-
-        //     await tx.aiWorkflowRunItemCommentVote.deleteMany({
-        //       where: { workflowRunItemCommentId: { in: commentIds } },
-        //     });
-
-        //     await tx.aiWorkflowRunItemComment.deleteMany({
-        //       where: { workflowRunItemId: { in: itemIds } },
-        //     });
-
-        //     await tx.aiWorkflowRunItem.deleteMany({
-        //       where: { workflowRunId: runId },
-        //     });
-
-        //     await tx.aiWorkflowRun.deleteMany({
-        //       where: { id: runId },
-        //     });
-        //   }
-        // });
       }
 
       await this.prisma.submission.delete({
