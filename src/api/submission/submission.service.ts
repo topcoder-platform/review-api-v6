@@ -2287,7 +2287,12 @@ export class SubmissionService {
           });
         }
       }
-      const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'CANCELLED'];
+      const TERMINAL_STATUSES = [
+        'COMPLETED',
+        'FAILURE',
+        'CANCELLED',
+        'SUCCESS',
+      ];
 
       const runs = await this.prisma.aiWorkflowRun.findMany({
         where: { submissionId: id },
