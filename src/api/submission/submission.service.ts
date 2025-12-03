@@ -2287,6 +2287,65 @@ export class SubmissionService {
           });
         }
       }
+      const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'CANCELLED'];
+
+      const runs = await this.prisma.aiWorkflowRun.findMany({
+        where: { submissionId: id },
+        select: { id: true, status: true },
+      });
+
+      if (runs.length > 0) {
+        const nonTerminal = runs.filter(
+          (r) => !TERMINAL_STATUSES.includes(r.status),
+        );
+
+        if (nonTerminal.length > 0) {
+          throw new Error(
+            `Cannot delete submission: ${nonTerminal.length} workflow run(s) still active.`,
+          );
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+          for (const run of runs) {
+            const runId = run.id;
+
+            const items = await tx.aiWorkflowRunItem.findMany({
+              where: { workflowRunId: runId },
+              select: { id: true },
+            });
+
+            const itemIds = items.map((i) => i.id);
+
+            const comments = await tx.aiWorkflowRunItemComment.findMany({
+              where: { workflowRunItemId: { in: itemIds } },
+              select: { id: true },
+            });
+
+            const commentIds = comments.map((c) => c.id);
+
+            await tx.aiWorkflowRunItemVote.deleteMany({
+              where: { workflowRunItemId: { in: itemIds } },
+            });
+
+            await tx.aiWorkflowRunItemCommentVote.deleteMany({
+              where: { workflowRunItemCommentId: { in: commentIds } },
+            });
+
+            await tx.aiWorkflowRunItemComment.deleteMany({
+              where: { workflowRunItemId: { in: itemIds } },
+            });
+
+            await tx.aiWorkflowRunItem.deleteMany({
+              where: { workflowRunId: runId },
+            });
+
+            await tx.aiWorkflowRun.deleteMany({
+              where: { id: runId },
+            });
+          }
+        });
+      }
+
       await this.prisma.submission.delete({
         where: { id },
       });
