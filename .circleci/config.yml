@@ -75,6 +75,7 @@ workflows:
                           only:
                               - develop
                               - pm-2660
+                              - PM-2524
 
 
             - 'build-prod':
