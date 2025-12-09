@@ -2400,6 +2400,8 @@ export class SubmissionService {
       requesterUserId: '',
     };
 
+    console.log(CommonConfig.roles.submitterRoleId);
+
     if (!submissions.length) {
       return emptyContext;
     }
