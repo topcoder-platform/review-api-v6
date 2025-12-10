@@ -104,21 +104,6 @@ export class WorkflowQueueHandler implements OnModuleInit {
       },
     });
 
-    // return not-resolved promise,
-    // this will put a pause on the job
-    // until it is marked as completed via webhook call
-    await new Promise<void>((resolve, reject) => {
-      this.scheduler.registerJobHandler(
-        job.id,
-        (resolution: string = 'complete', result: any) => {
-          this.logger.log(
-            `Job handler called with ${resolution} and ${result}`,
-          );
-          (resolution === 'fail' ? reject : resolve)(result);
-        },
-      );
-    });
-
     this.logger.log(`Job ${job.id} promise finished.`);
   }
 
