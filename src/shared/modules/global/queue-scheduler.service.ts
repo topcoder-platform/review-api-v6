@@ -7,9 +7,8 @@ import {
 import * as PgBoss from 'pg-boss';
 import { policies, Queue } from 'pg-boss';
 
-const PGBOSS_JOB_POLLING_INTERVAL = parseInt(
-  process.env.PGBOSS_JOB_POLLING_INTERVAL || '1000',
-  10,
+const PGBOSS_JOB_POLLING_INTERVAL_SEC = parseFloat(
+  process.env.PGBOSS_JOB_POLLING_INTERVAL_SEC || '10',
 );
 
 /**
@@ -216,7 +215,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
               poll().catch((err) =>
                 this.logger.error('Unhandled poll error', err),
               );
-            }, PGBOSS_JOB_POLLING_INTERVAL);
+            }, PGBOSS_JOB_POLLING_INTERVAL_SEC * 1000);
           }
         };
 
