@@ -267,6 +267,11 @@ export class AppealService {
         );
       }
 
+      // Check if the appeal phase is open while updating appeals
+      if (!isPrivileged && challengeId) {
+        await this.challengeApiService.validateAppealSubmission(challengeId);
+      }
+
       if (!isPrivileged) {
         await this.ensureChallengeAllowsAppealChange(challengeId, {
           logContext: 'updateAppeal',

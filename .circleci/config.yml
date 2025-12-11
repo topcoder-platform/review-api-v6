@@ -74,11 +74,7 @@ workflows:
                       branches:
                           only:
                               - develop
-                              - feat/ai-workflows
-                              - pm-1955_2
-                              - re-try-failed-jobs
-                              - pm-2539
-                              - pm-2177_fixes
+                              - pm-2660
 
 
             - 'build-prod':

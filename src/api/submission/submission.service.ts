@@ -576,6 +576,7 @@ export class SubmissionService {
       let isReviewer = false;
       let isCopilot = false;
       let isSubmitter = false;
+      let isManager = false;
       if (!isOwner && submission.challengeId && uid) {
         try {
           const resources =
@@ -612,7 +613,10 @@ export class SubmissionService {
             if (rn.includes('submitter')) {
               isSubmitter = true;
             }
-            if (isReviewer && isCopilot && isSubmitter) {
+            if (rn.includes('manager')) {
+              isManager = true;
+            }
+            if (isReviewer && isCopilot && isSubmitter && isManager) {
               break;
             }
           }
@@ -624,7 +628,7 @@ export class SubmissionService {
         }
       }
 
-      let canDownload = isOwner || isReviewer || isCopilot;
+      let canDownload = isOwner || isReviewer || isCopilot || isManager;
 
       if (!canDownload && isSubmitter && submission.challengeId && uid) {
         try {
@@ -667,7 +671,7 @@ export class SubmissionService {
       if (!canDownload) {
         throw new ForbiddenException({
           message:
-            'Only the submission owner, a challenge reviewer/copilot, or an admin can download the submission',
+            'Only the submission owner, a challenge reviewer/copilot/manager, or an admin can download the submission',
           code: 'FORBIDDEN_SUBMISSION_DOWNLOAD',
           details: {
             submissionId,
@@ -2287,6 +2291,34 @@ export class SubmissionService {
           });
         }
       }
+      const TERMINAL_STATUSES = [
+        'COMPLETED',
+        'FAILURE',
+        'CANCELLED',
+        'SUCCESS',
+      ];
+
+      const runs = await this.prisma.aiWorkflowRun.findMany({
+        where: { submissionId: id },
+        select: { id: true, status: true },
+      });
+
+      if (runs.length > 0) {
+        const nonTerminal = runs.filter(
+          (r) => !TERMINAL_STATUSES.includes(r.status),
+        );
+
+        if (nonTerminal.length > 0) {
+          throw new Error(
+            `Cannot delete submission: ${nonTerminal.length} workflow run(s) still active.`,
+          );
+        }
+
+        await this.prisma.aiWorkflowRun.deleteMany({
+          where: { submissionId: id },
+        });
+      }
+
       await this.prisma.submission.delete({
         where: { id },
       });
