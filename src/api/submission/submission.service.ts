@@ -1812,9 +1812,7 @@ export class SubmissionService {
         : undefined;
 
       if (requestedMemberId) {
-        const userId = authUser?.userId
-          ? String(authUser.userId)
-          : undefined;
+        const userId = authUser?.userId ? String(authUser.userId) : undefined;
         const isRequestingMember = userId === requestedMemberId;
         const hasCopilotRole = (authUser?.roles ?? []).includes(
           UserRole.Copilot,
@@ -1864,11 +1862,7 @@ export class SubmissionService {
           : '';
 
       let restrictedChallengeIds = new Set<string>();
-      if (
-        !isPrivilegedRequester &&
-        requesterUserId &&
-        !queryDto.challengeId
-      ) {
+      if (!isPrivilegedRequester && requesterUserId && !queryDto.challengeId) {
         try {
           restrictedChallengeIds =
             await this.getActiveSubmitterRestrictedChallengeIds(
@@ -1940,7 +1934,10 @@ export class SubmissionService {
         submissions.length > 0 &&
         (queryDto.challengeId
           ? true
-          : await this.canViewSubmitterIdentity(authUser, queryDto.challengeId));
+          : await this.canViewSubmitterIdentity(
+              authUser,
+              queryDto.challengeId,
+            ));
       if (shouldEnrichSubmitter) {
         try {
           const memberIds = Array.from(

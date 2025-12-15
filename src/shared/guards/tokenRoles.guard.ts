@@ -262,7 +262,9 @@ export class TokenRolesGuard implements CanActivate {
   ): boolean {
     const generalUserRole = String(UserRole.User).trim().toLowerCase();
     const normalizedRequiredRoles = (requiredRoles || []).map((role) =>
-      String(role ?? '').trim().toLowerCase(),
+      String(role ?? '')
+        .trim()
+        .toLowerCase(),
     );
 
     if (!normalizedRequiredRoles.includes(generalUserRole)) {

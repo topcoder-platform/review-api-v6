@@ -71,7 +71,6 @@ export class ReviewApplicationService {
       }
       // make sure application role matches
       if (
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
         ReviewApplicationRoleOpportunityTypeMap[dto.role] !== opportunity.type
       ) {
         throw new BadRequestException(
