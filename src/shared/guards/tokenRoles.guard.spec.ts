@@ -20,7 +20,7 @@ describe('TokenRolesGuard', () => {
   type TestRequest = Record<string, unknown> & {
     method: string;
     query: Record<string, unknown>;
-    user: {
+    user?: {
       userId: string;
       isMachine: boolean;
       roles?: unknown[];
@@ -131,6 +131,17 @@ describe('TokenRolesGuard', () => {
       const context = createExecutionContext(request);
 
       expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+    });
+
+    it('allows anonymous access when challengeId is provided', () => {
+      const request = {
+        method: 'GET',
+        query: { challengeId: '12345' },
+      };
+
+      const context = createExecutionContext(request as TestRequest);
+
+      expect(guard.canActivate(context)).toBe(true);
     });
   });
 });

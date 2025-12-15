@@ -197,7 +197,8 @@ export class SubmissionController {
     this.logger.log(
       `Getting submissions with filters - ${JSON.stringify(queryDto)}`,
     );
-    const authUser: JwtUser = req['user'] as JwtUser;
+    const authUser: JwtUser =
+      (req['user'] as JwtUser) ?? ({ isMachine: false, roles: [] } as JwtUser);
     return this.service.listSubmission(
       authUser,
       queryDto,

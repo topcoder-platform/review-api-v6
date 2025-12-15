@@ -510,6 +510,7 @@ describe('SubmissionService', () => {
       reviewType: {
         findMany: jest.Mock;
       };
+      $queryRaw: jest.Mock;
     };
     let prismaErrorServiceMock: { handleError: jest.Mock };
     let challengePrismaMock: {
@@ -537,9 +538,14 @@ describe('SubmissionService', () => {
         reviewType: {
           findMany: jest.fn().mockResolvedValue([]),
         },
+        $queryRaw: jest.fn().mockResolvedValue([]),
       };
       prismaErrorServiceMock = {
-        handleError: jest.fn(),
+        handleError: jest.fn().mockReturnValue({
+          message: 'Unexpected error',
+          code: 'INTERNAL_ERROR',
+          details: {},
+        }),
       };
       challengePrismaMock = {
         $queryRaw: jest.fn().mockResolvedValue([]),
@@ -624,6 +630,7 @@ describe('SubmissionService', () => {
       prismaMock.submission.findFirst.mockResolvedValue({
         id: 'submission-new',
       });
+      prismaMock.$queryRaw.mockResolvedValue([{ id: 'submission-new' }]);
 
       const result = await listService.listSubmission(
         { isMachine: false } as any,
@@ -1240,6 +1247,57 @@ describe('SubmissionService', () => {
       expect(screeningReview?.reviewItems).toHaveLength(1);
       expect(screeningReview?.reviewerHandle).toBe('screeningHandle');
       expect(screeningReview?.reviewerMaxRating).toBe(2000);
+    });
+
+    it('exposes submitter identity but strips reviews for anonymous challenge queries', async () => {
+      const now = new Date('2025-02-01T12:00:00Z');
+      const submissions = [
+        {
+          id: 'submission-anon',
+          challengeId: 'challenge-1',
+          memberId: '101',
+          submittedDate: now,
+          createdAt: now,
+          updatedAt: now,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [{ id: 'review-public', score: 100 }],
+          reviewSummation: [{ id: 'summation-public' }],
+          url: 'https://example.com/submission.zip',
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-anon',
+      });
+
+      memberPrismaMock.member.findMany.mockResolvedValue([
+        {
+          userId: BigInt(101),
+          handle: 'anonUser',
+          maxRating: { rating: 1500 },
+        },
+      ]);
+
+      const result = await listService.listSubmission(
+        { isMachine: false, roles: [] } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 10 } as any,
+      );
+
+      const submissionResult = result.data[0];
+      expect(submissionResult.memberId).toBe('101');
+      expect(submissionResult.submitterHandle).toBe('anonUser');
+      expect(submissionResult.submitterMaxRating).toBe(1500);
+      expect(submissionResult).not.toHaveProperty('review');
+      expect(submissionResult).not.toHaveProperty('reviewSummation');
+      expect(submissionResult.url).toBeNull();
     });
   });
 });

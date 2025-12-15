@@ -49,7 +49,7 @@
     "pg-boss": "^11.0.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "tc-core-library-js": "appirio-tech/tc-core-library-js.git#security"
+    "tc-core-library-js": "topcoder-platform/tc-core-library-js.git#master"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
