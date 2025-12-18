@@ -49,6 +49,18 @@ export class SubmissionScanCompleteOrchestrator {
         return;
       }
 
+      // check if workflow runs have already been queued for this submission
+      const alreadyQueued = await this.workflowQueueHandler.hasQueuedWorkflowRuns(
+        submissionId,
+      );
+
+      if (alreadyQueued) {
+        this.logger.log(
+          `AI workflow runs already queued for submission ${submissionId}. Skipping queueing.`,
+        );
+        return;
+      }
+
       await this.workflowQueueHandler.queueWorkflowRuns(
         challenge.workflows,
         challenge.id,
