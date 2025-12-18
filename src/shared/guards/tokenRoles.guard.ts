@@ -66,6 +66,23 @@ export class TokenRolesGuard implements CanActivate {
       const user = request['user'];
 
       if (!user && (requiredRoles.length || requiredScopes.length)) {
+        if (
+          this.allowAnonymousSubmissionListByChallenge(
+            context,
+            request,
+            requiredRoles,
+          )
+        ) {
+          this.logger.log({
+            message:
+              'Allowing anonymous request for submission list with challengeId',
+            ...requestMeta,
+            hasUser: false,
+            requiredRoles,
+            requiredScopes,
+          });
+          return true;
+        }
         this.logger.warn({
           message: 'Rejecting request due to missing user payload',
           ...requestMeta,
@@ -209,6 +226,46 @@ export class TokenRolesGuard implements CanActivate {
     if (user?.isMachine || !user?.userId) {
       return false;
     }
+
+    if (!normalizedRequiredRoles.includes(generalUserRole)) {
+      return false;
+    }
+
+    const handler = context.getHandler?.();
+    const controllerClass = context.getClass?.();
+
+    const isSubmissionListHandler =
+      controllerClass?.name === 'SubmissionController' &&
+      handler?.name === 'listSubmissions';
+
+    if (!isSubmissionListHandler) {
+      return false;
+    }
+
+    const method = (request?.method || '').toUpperCase();
+    if (method !== 'GET') {
+      return false;
+    }
+
+    const challengeId = request?.query?.challengeId;
+    if (!this.hasNonEmptyQueryParam(challengeId)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private allowAnonymousSubmissionListByChallenge(
+    context: ExecutionContext,
+    request: any,
+    requiredRoles: UserRole[],
+  ): boolean {
+    const generalUserRole = String(UserRole.User).trim().toLowerCase();
+    const normalizedRequiredRoles = (requiredRoles || []).map((role) =>
+      String(role ?? '')
+        .trim()
+        .toLowerCase(),
+    );
 
     if (!normalizedRequiredRoles.includes(generalUserRole)) {
       return false;

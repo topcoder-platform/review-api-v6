@@ -1812,9 +1812,9 @@ export class SubmissionService {
         : undefined;
 
       if (requestedMemberId) {
-        const userId = authUser.userId ? String(authUser.userId) : undefined;
+        const userId = authUser?.userId ? String(authUser.userId) : undefined;
         const isRequestingMember = userId === requestedMemberId;
-        const hasCopilotRole = (authUser.roles ?? []).includes(
+        const hasCopilotRole = (authUser?.roles ?? []).includes(
           UserRole.Copilot,
         );
         const hasElevatedAccess = isAdmin(authUser) || hasCopilotRole;
@@ -1862,7 +1862,7 @@ export class SubmissionService {
           : '';
 
       let restrictedChallengeIds = new Set<string>();
-      if (!isPrivilegedRequester && requesterUserId) {
+      if (!isPrivilegedRequester && requesterUserId && !queryDto.challengeId) {
         try {
           restrictedChallengeIds =
             await this.getActiveSubmitterRestrictedChallengeIds(
@@ -1885,7 +1885,8 @@ export class SubmissionService {
       if (
         !isPrivilegedRequester &&
         requesterUserId &&
-        restrictedChallengeIds.size
+        restrictedChallengeIds.size &&
+        !queryDto.challengeId
       ) {
         const restrictedList = Array.from(restrictedChallengeIds);
         const restrictionCriteria: Prisma.submissionWhereInput = {
@@ -1928,12 +1929,16 @@ export class SubmissionService {
         orderBy,
       });
 
-      // Enrich with submitter handle and max rating for authorized callers
-      const canViewSubmitter = await this.canViewSubmitterIdentity(
-        authUser,
-        queryDto.challengeId,
-      );
-      if (canViewSubmitter && submissions.length) {
+      // Enrich with submitter handle and max rating (always for challenge listings)
+      const shouldEnrichSubmitter =
+        submissions.length > 0 &&
+        (queryDto.challengeId
+          ? true
+          : await this.canViewSubmitterIdentity(
+              authUser,
+              queryDto.challengeId,
+            ));
+      if (shouldEnrichSubmitter) {
         try {
           const memberIds = Array.from(
             new Set(
@@ -1943,11 +1948,24 @@ export class SubmissionService {
             ),
           );
           if (memberIds.length) {
-            const idsAsBigInt = memberIds.map((id) => BigInt(id));
-            const members = await this.memberPrisma.member.findMany({
-              where: { userId: { in: idsAsBigInt } },
-              include: { maxRating: true },
-            });
+            const idsAsBigInt: bigint[] = [];
+            for (const id of memberIds) {
+              try {
+                idsAsBigInt.push(BigInt(id));
+              } catch (error) {
+                this.logger.debug(
+                  `[listSubmission] Skipping submitter ${id}: unable to convert to BigInt. ${error}`,
+                );
+              }
+            }
+
+            const members =
+              idsAsBigInt.length > 0
+                ? await this.memberPrisma.member.findMany({
+                    where: { userId: { in: idsAsBigInt } },
+                    include: { maxRating: true },
+                  })
+                : [];
             const map = new Map<
               string,
               { handle: string; maxRating: number | null }
@@ -1997,11 +2015,6 @@ export class SubmissionService {
 
       await this.populateLatestSubmissionFlags(submissions);
       this.stripSubmitterSubmissionDetails(
-        authUser,
-        submissions,
-        reviewVisibilityContext,
-      );
-      this.stripSubmitterMemberIds(
         authUser,
         submissions,
         reviewVisibilityContext,
@@ -2408,25 +2421,43 @@ export class SubmissionService {
       return emptyContext;
     }
 
+    const requesterUserId =
+      authUser?.userId !== undefined && authUser?.userId !== null
+        ? String(authUser.userId).trim()
+        : '';
+
     const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
-    if (isPrivilegedRequester) {
-      const requesterUserId =
-        authUser?.userId !== undefined && authUser?.userId !== null
-          ? String(authUser.userId).trim()
-          : '';
+    if (!isPrivilegedRequester && !requesterUserId) {
+      for (const submission of submissions) {
+        if (Object.prototype.hasOwnProperty.call(submission, 'review')) {
+          delete (submission as any).review;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')
+        ) {
+          delete (submission as any).reviewSummation;
+        }
+      }
       return {
         ...emptyContext,
         requesterUserId,
       };
     }
 
-    const uid =
-      authUser?.userId !== undefined && authUser?.userId !== null
-        ? String(authUser.userId).trim()
-        : '';
+    if (isPrivilegedRequester) {
+      return {
+        ...emptyContext,
+        requesterUserId,
+      };
+    }
+
+    const uid = requesterUserId;
 
     if (!uid) {
-      return emptyContext;
+      return {
+        ...emptyContext,
+        requesterUserId,
+      };
     }
 
     const challengeIds = Array.from(
@@ -3397,7 +3428,26 @@ export class SubmissionService {
     }
 
     const uid = visibilityContext.requesterUserId;
+    this.logger.debug(
+      `[stripSubmitterSubmissionDetails] requesterUserId=${uid ?? '<undefined>'}`,
+    );
     if (!uid) {
+      this.logger.debug(
+        '[stripSubmitterSubmissionDetails] Anonymized requester; removing review metadata and URLs.',
+      );
+      for (const submission of submissions) {
+        if (Object.prototype.hasOwnProperty.call(submission, 'review')) {
+          delete (submission as any).review;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')
+        ) {
+          delete (submission as any).reviewSummation;
+        }
+        if (Object.prototype.hasOwnProperty.call(submission, 'url')) {
+          (submission as any).url = null;
+        }
+      }
       return;
     }
 
@@ -3472,6 +3522,19 @@ export class SubmissionService {
 
     const uid = visibilityContext.requesterUserId;
     if (!uid) {
+      for (const submission of submissions) {
+        if (Object.prototype.hasOwnProperty.call(submission, 'review')) {
+          delete (submission as any).review;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')
+        ) {
+          delete (submission as any).reviewSummation;
+        }
+        if (Object.prototype.hasOwnProperty.call(submission, 'url')) {
+          (submission as any).url = null;
+        }
+      }
       return;
     }
 

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import type { ReviewOpportunityType as PrismaReviewOpportunityType } from '@prisma/client';
 import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { ReviewOpportunityType } from './reviewOpportunity.dto';
 
@@ -37,7 +38,7 @@ export const ReviewApplicationRoleIds: Record<ReviewApplicationRole, number> = {
 // read from review_application_role_lu.review_auction_type_id
 export const ReviewApplicationRoleOpportunityTypeMap: Record<
   ReviewApplicationRole,
-  ReviewOpportunityType
+  PrismaReviewOpportunityType
 > = {
   PRIMARY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
   SECONDARY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,

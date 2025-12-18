@@ -79,6 +79,18 @@ export class WorkflowQueueHandler implements OnModuleInit {
     });
   }
 
+  async hasQueuedWorkflowRuns(submissionId: string): Promise<boolean> {
+    if (!submissionId) return false;
+
+    const existing = await this.prisma.aiWorkflowRun.findFirst({
+      where: {
+        submissionId,
+      },
+    });
+
+    return !!existing;
+  }
+
   async handleQueuedWorkflowRun([job]: [Job]) {
     this.logger.log(`Processing job ${job.id}`);
 
