@@ -50,9 +50,8 @@ export class SubmissionScanCompleteOrchestrator {
       }
 
       // check if workflow runs have already been queued for this submission
-      const alreadyQueued = await this.workflowQueueHandler.hasQueuedWorkflowRuns(
-        submissionId,
-      );
+      const alreadyQueued =
+        await this.workflowQueueHandler.hasQueuedWorkflowRuns(submissionId);
 
       if (alreadyQueued) {
         this.logger.log(
