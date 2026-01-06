@@ -1709,6 +1709,7 @@ export class SubmissionService {
           status: SubmissionStatus.ACTIVE,
           type: body.type as SubmissionType,
           virusScan: false,
+          eventRaised: false,
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);
