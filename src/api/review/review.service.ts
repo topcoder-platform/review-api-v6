@@ -2788,6 +2788,8 @@ export class ReviewService {
 
             if (challengeCompletedOrCancelled) {
               // Completed or cancelled challenges should expose all reviews to reviewers.
+              delete reviewWhereClause.resourceId;
+              delete reviewWhereClause.OR;
             } else if (challengeId) {
               const reviewerRoleFilter = this.buildReviewerRoleFilters(
                 reviewerResources,
