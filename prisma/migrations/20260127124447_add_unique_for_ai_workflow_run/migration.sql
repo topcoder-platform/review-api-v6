@@ -1,9 +1,23 @@
 /*
   Warnings:
 
-  - A unique constraint covering the columns `[workflowId,submissionId]` on the table `aiWorkflowRun` will be added. If there are existing duplicate values, this will fail.
-
+  - A unique constraint covering the columns `[workflowId,submissionId]` on the table `aiWorkflowRun` will be added.
 */
+
+-- Remove duplicate aiWorkflowRun rows (keep the row with the smallest id for each (workflowId, submissionId)).
+-- Excludes rows where submissionId IS NULL. Remove the WHERE clause if you want to dedupe NULLs as well.
+-- This ensures the unique index creation below will succeed even when duplicates exist.
+DELETE FROM "aiWorkflowRun"
+WHERE id IN (
+  SELECT id FROM (
+    SELECT id,
+           ROW_NUMBER() OVER (PARTITION BY "workflowId","submissionId" ORDER BY id) AS rn
+    FROM "aiWorkflowRun"
+    WHERE "submissionId" IS NOT NULL
+  ) t
+  WHERE t.rn > 1
+);
+
 -- DropForeignKey
 ALTER TABLE "aiWorkflowRunItem" DROP CONSTRAINT "aiWorkflowRunItem_workflowRunId_fkey";
 
