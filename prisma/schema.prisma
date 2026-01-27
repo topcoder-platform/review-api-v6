@@ -715,6 +715,7 @@ model aiWorkflowRun {
 
   @@index([submissionId, status])
   @@index([workflowId])
+  @@unique([workflowId, submissionId], map: "ai_workflow_run_workflow_submission_unique")
 }
 
 model aiWorkflowRunItem {

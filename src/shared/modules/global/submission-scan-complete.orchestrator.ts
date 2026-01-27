@@ -3,6 +3,7 @@ import { SubmissionBaseService } from './submission-base.service';
 import { ChallengeApiService, ChallengeData } from './challenge.service';
 import { SubmissionResponseDto } from 'src/dto/submission.dto';
 import { WorkflowQueueHandler } from './workflow-queue.handler';
+import { Prisma } from '@prisma/client';
 
 /**
  * Orchestrator for handling submission scan completion events.
@@ -60,11 +61,29 @@ export class SubmissionScanCompleteOrchestrator {
         return;
       }
 
-      await this.workflowQueueHandler.queueWorkflowRuns(
-        challenge.workflows,
-        challenge.id,
-        submissionId,
-      );
+      try {
+        await this.workflowQueueHandler.queueWorkflowRuns(
+          challenge.workflows,
+          challenge.id,
+          submissionId,
+        );
+      } catch (e) {
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          (e as any).code === 'P2002'
+        ) {
+          this.logger.log(
+            `AI workflow runs already exist for submission ${submissionId} (unique constraint). Skipping queueing.`,
+          );
+          return;
+        }
+
+        this.logger.error(
+          `Error orchestrating scan complete for submission ID ${submissionId}`,
+          e,
+        );
+        throw e;
+      }
     } catch (error) {
       this.logger.error(
         `Error orchestrating scan complete for submission ID ${submissionId}`,
