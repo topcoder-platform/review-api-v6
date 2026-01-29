@@ -23,6 +23,7 @@ type SubmissionRecord = {
   memberId: string | null;
   url: string | null;
   createdAt: Date;
+  eventRaised: boolean;
 };
 
 @Injectable()
@@ -140,6 +141,7 @@ export class SubmissionScanCompleteHandler
           memberId: true,
           url: true,
           createdAt: true,
+          eventRaised: true,
         },
       });
       this.logger.log(
@@ -158,6 +160,13 @@ export class SubmissionScanCompleteHandler
   private async publishFirst2FinishEvent(
     submission: SubmissionRecord,
   ): Promise<void> {
+    if (submission.eventRaised) {
+      this.logger.log(
+        `Submission ${submission.id} already has eventRaised set. Skipping First2Finish event publish.`,
+      );
+      return;
+    }
+
     if (!submission.challengeId) {
       this.logger.warn(
         `Submission ${submission.id} missing challengeId. Skipping First2Finish event publish.`,
@@ -214,6 +223,10 @@ export class SubmissionScanCompleteHandler
       'first2finish.submission.received',
       payload,
     );
+    await this.markEventRaised(
+      submission.id,
+      'first2finish.submission.received',
+    );
 
     this.logger.log(
       `Published first2finish.submission.received event for submission ${submission.id}.`,
@@ -227,6 +240,13 @@ export class SubmissionScanCompleteHandler
   private async publishTopgearTaskEvent(
     submission: SubmissionRecord,
   ): Promise<void> {
+    if (submission.eventRaised) {
+      this.logger.log(
+        `Submission ${submission.id} already has eventRaised set. Skipping Topgear event publish.`,
+      );
+      return;
+    }
+
     if (!submission.challengeId) {
       this.logger.warn(
         `Submission ${submission.id} missing challengeId. Skipping Topgear event publish.`,
@@ -280,6 +300,7 @@ export class SubmissionScanCompleteHandler
     };
 
     await this.eventBusService.publish('topgear.submission.received', payload);
+    await this.markEventRaised(submission.id, 'topgear.submission.received');
 
     this.logger.log(
       `Published topgear.submission.received event for submission ${submission.id}.`,
@@ -293,6 +314,13 @@ export class SubmissionScanCompleteHandler
   private async publishMarathonMatchEvent(
     submission: SubmissionRecord,
   ): Promise<void> {
+    if (submission.eventRaised) {
+      this.logger.log(
+        `Submission ${submission.id} already has eventRaised set. Skipping Marathon Match event publish.`,
+      );
+      return;
+    }
+
     if (!submission.challengeId) {
       this.logger.warn(
         `Submission ${submission.id} missing challengeId. Skipping Marathon Match event publish.`,
@@ -349,6 +377,10 @@ export class SubmissionScanCompleteHandler
       'marathonmatch.submission.received',
       payload,
     );
+    await this.markEventRaised(
+      submission.id,
+      'marathonmatch.submission.received',
+    );
 
     this.logger.log(
       `Published marathonmatch.submission.received event for submission ${submission.id}.`,
@@ -357,6 +389,29 @@ export class SubmissionScanCompleteHandler
 
   private isMarathonMatchChallenge(typeName?: string): boolean {
     return (typeName ?? '').trim().toLowerCase() === 'marathon match';
+  }
+
+  private async markEventRaised(
+    submissionId: string,
+    eventName: string,
+  ): Promise<void> {
+    try {
+      await this.prisma.submission.update({
+        where: { id: submissionId },
+        data: {
+          eventRaised: true,
+          updatedBy: 'SubmissionScanCompleteHandler',
+        },
+      });
+      this.logger.log(
+        `Marked eventRaised on submission ${submissionId} after ${eventName} publish.`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to mark eventRaised for submission ${submissionId} after ${eventName} publish.`,
+        error,
+      );
+    }
   }
 
   private async lookupMemberHandle(

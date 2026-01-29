@@ -415,6 +415,7 @@ model submission {
   isFileSubmission   Boolean         @default(false)
   thurgoodJobId      String?
   virusScan          Boolean          @default(false)
+  eventRaised        Boolean          @default(false)
 
   // ES data
   url               String?
