@@ -9,6 +9,18 @@ import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 
+// A helper to generate a 32-bit integer hash from a string
+function stringToHash(string: string): number {
+  let hash = 0;
+  if (string.length === 0) return hash;
+  for (let i = 0; i < string.length; i++) {
+    const char = string.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return hash;
+}
+
 @Injectable()
 export class WorkflowQueueHandler implements OnModuleInit {
   private readonly logger: Logger = new Logger(WorkflowQueueHandler.name);
@@ -41,6 +53,19 @@ export class WorkflowQueueHandler implements OnModuleInit {
     submissionId: string,
   ) {
     await this.prisma.$transaction(async (tx) => {
+      // get a lock for the challengeId, submissionId pair
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${stringToHash(`queueWorkflowRuns, ${challengeId}:${submissionId}`)})`;
+
+      // check if workflow runs have already been queued for this submission
+      const alreadyQueued = await this.hasQueuedWorkflowRuns(submissionId);
+
+      if (alreadyQueued) {
+        this.logger.log(
+          `AI workflow runs already queued for submission ${submissionId}. Skipping queueing.`,
+        );
+        return;
+      }
+
       const workflowRuns = await tx.aiWorkflowRun.createManyAndReturn({
         data: aiWorkflows.map((workflow) => ({
           workflowId: workflow.id,
