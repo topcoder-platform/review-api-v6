@@ -3,16 +3,10 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { M2MService } from './m2m.service';
-import { HttpService } from '@nestjs/axios';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { firstValueFrom } from 'rxjs';
-import { plainToInstance } from 'class-transformer';
-import { validateOrReject } from 'class-validator';
-import { AxiosError } from 'axios';
+import { MemberPrismaService } from './member-prisma.service';
 
 export class MemberInfo {
-  userId: number;
+  userId: string;
   email: string;
 }
 
@@ -20,10 +14,7 @@ export class MemberInfo {
 export class MemberService {
   private readonly logger: Logger = new Logger(MemberService.name);
 
-  constructor(
-    private readonly m2mService: M2MService,
-    private readonly httpService: HttpService,
-  ) {}
+  constructor(private readonly memberPrisma: MemberPrismaService) {}
 
   /**
    * Get user emails from Member API
@@ -31,38 +22,19 @@ export class MemberService {
    * @returns user info list
    */
   async getUserEmails(userIds: string[]) {
-    const token = await this.m2mService.getM2MToken();
-    // construct URL of member API. Eg, https://api.topcoder-dev.com/v5/members?fields=email,userId&userIds=[123456]
-    const url =
-      CommonConfig.apis.memberApiUrl +
-      `?fields=email,userId&userIds=[${userIds.join(',')}]`;
-    console.log(`Getting user emails from Member API: ${url}`);
-    // send request
+    if (!userIds || userIds.length === 0) return [];
+
     try {
-      const response = await firstValueFrom(
-        this.httpService.get<MemberInfo[]>(url, {
-          headers: {
-            Authorization: 'Bearer ' + token,
-          },
-        }),
-      );
-      const infoList = plainToInstance(MemberInfo, response.data);
-      await Promise.all(infoList.map((e) => validateOrReject(e)));
-      return infoList;
+      const ids = userIds.map((id) => BigInt(id));
+      const members = await this.memberPrisma.member.findMany({
+        where: { userId: { in: ids } },
+        select: { userId: true, email: true },
+      });
+
+      return members.map((m) => ({ userId: String(m.userId), email: m.email }));
     } catch (e) {
-      if (e instanceof AxiosError) {
-        this.logger.error(
-          `Can't get member info: ${e.message}`,
-          e.response?.data,
-        );
-        throw new InternalServerErrorException(
-          'Cannot get data from Member API.',
-        );
-      }
-      this.logger.error(`Member Data validation error: ${e}`);
-      throw new InternalServerErrorException(
-        'Malformed data returned from Member API',
-      );
+      this.logger.error(`Can't get member info from DB: ${e}`);
+      throw new InternalServerErrorException('Cannot get data from Member DB.');
     }
   }
 }

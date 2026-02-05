@@ -114,7 +114,7 @@ export class ReviewSummationService {
     return this.roundScore(sum / valid.length);
   }
 
-  private async getMinScoreByScorecard(
+  private async getPassingScoreByScorecard(
     scorecardIds: string[],
   ): Promise<Map<string, number>> {
     if (!scorecardIds.length) {
@@ -134,11 +134,25 @@ export class ReviewSummationService {
       },
       select: {
         id: true,
+        minimumPassingScore: true,
         minScore: true,
       },
     });
 
-    return new Map(scorecards.map((card) => [card.id, card.minScore ?? 0]));
+    return new Map(
+      scorecards.map((card) => {
+        const minimumPassingScore =
+          typeof card.minimumPassingScore === 'number' &&
+          Number.isFinite(card.minimumPassingScore)
+            ? card.minimumPassingScore
+            : undefined;
+        const minScore =
+          typeof card.minScore === 'number' && Number.isFinite(card.minScore)
+            ? card.minScore
+            : 0;
+        return [card.id, minimumPassingScore ?? minScore];
+      }),
+    );
   }
 
   private buildBatchResponse(
@@ -307,7 +321,7 @@ export class ReviewSummationService {
         .map((review) => review.scorecardId)
         .filter((id): id is string => typeof id === 'string' && id.length > 0);
       const minScoreByScorecard =
-        await this.getMinScoreByScorecard(scorecardIds);
+        await this.getPassingScoreByScorecard(scorecardIds);
 
       const reviewsBySubmission = new Map<string, typeof reviews>();
       for (const review of reviews) {
