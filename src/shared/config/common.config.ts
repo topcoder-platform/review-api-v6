@@ -49,8 +49,7 @@ export const CommonConfig = {
     // Base URL for Topcoder v6 APIs (challenge types, tracks, etc.)
     v6ApiUrl: process.env.V6_API_URL ?? 'https://api.topcoder-dev.com/v6',
     memberApiUrl: process.env.MEMBER_API_URL ?? 'http://localhost:4000/members',
-    onlineReviewUrlBase:
-      'https://review.topcoder.com/active-challenges/',
+    onlineReviewUrlBase: 'https://review.topcoder.com/active-challenges/',
   },
   // Resource role configuration
   roles: {
