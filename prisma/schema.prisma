@@ -441,6 +441,7 @@ model submission {
   reviewSummation     reviewSummation[]
   resourceSubmissions resourceSubmission[]
   aiWorkflowRun       aiWorkflowRun[]
+  aiReviewDecisions   aiReviewDecision[]
   auditLogs           reviewAudit[]
   accessAudits        submissionAccessAudit[]
 
@@ -556,6 +557,7 @@ enum SubmissionStatus {
   DELETED
   FAILED_CHECKPOINT_SCREENING
   FAILED_CHECKPOINT_REVIEW
+  AI_FAILED_REVIEW
 }
 
 model upload {
@@ -675,6 +677,18 @@ enum VoteType {
   DOWNVOTE
 }
 
+enum AiReviewMode {
+  AI_GATING
+  AI_ONLY
+}
+
+enum AiReviewDecisionStatus {
+  PENDING
+  PASSED
+  FAILED
+  ERROR
+}
+
 model aiWorkflow {
   id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
   name        String   @unique @db.VarChar
@@ -689,9 +703,11 @@ model aiWorkflow {
   updatedAt   DateTime @updatedAt
   updatedBy   String?  @db.Text
 
-  llm       llmModel        @relation(fields: [llmId], references: [id])
-  scorecard scorecard       @relation(fields: [scorecardId], references: [id])
-  runs      aiWorkflowRun[]
+  llm                    llmModel                         @relation(fields: [llmId], references: [id])
+  scorecard              scorecard                        @relation(fields: [scorecardId], references: [id])
+  runs                   aiWorkflowRun[]
+  configWorkflows        aiReviewConfigWorkflow[]
+  templateConfigWorkflows aiReviewTemplateConfigWorkflow[]
 }
 
 model aiWorkflowRun {
@@ -749,4 +765,118 @@ model aiWorkflowRunItemComment {
   replies aiWorkflowRunItemComment[] @relation("CommentHierarchy")
 
   votes aiWorkflowRunItemCommentVote[]
+}
+
+model aiReviewConfig {
+  id                  String       @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+
+  challengeId          String
+  version             Int          @default(1)
+  minPassingThreshold  Decimal      @db.Decimal(5, 2)
+  autoFinalize         Boolean      @default(false)
+  mode                 AiReviewMode @default(AI_GATING)
+  formula             Json?
+
+  templateId           String?      @db.VarChar(14)
+
+  createdAt            DateTime     @default(now())
+  createdBy            String?
+  updatedAt            DateTime     @updatedAt
+  updatedBy            String?
+
+  template             aiReviewTemplateConfig? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  workflows            aiReviewConfigWorkflow[]
+  decisions            aiReviewDecision[]
+
+  @@unique([challengeId, version])
+  @@index([challengeId])
+  @@index([templateId])
+}
+
+model aiReviewTemplateConfig {
+  id                 String        @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+
+  challengeTrack     String
+  challengeType      String
+  version            Int           @default(1)
+  title              String
+  description        String
+  minPassingThreshold Decimal      @db.Decimal(5, 2)
+  mode               AiReviewMode  @default(AI_GATING)
+  autoFinalize       Boolean       @default(false)
+  formula            Json?
+
+  createdAt          DateTime      @default(now())
+  createdBy          String?
+  updatedAt          DateTime      @updatedAt
+  updatedBy          String?
+
+  workflows          aiReviewTemplateConfigWorkflow[]
+  challengeConfigs   aiReviewConfig[]
+
+  @@unique([challengeTrack, challengeType, version])
+  @@index([challengeTrack, challengeType])
+}
+
+model aiReviewTemplateConfigWorkflow {
+  id            String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+
+  configId      String   @db.VarChar(14)
+  workflowId    String   @db.VarChar(14)
+  weightPercent Decimal @db.Decimal(5, 2)
+  isGating      Boolean  @default(false)
+
+  createdAt     DateTime @default(now())
+  createdBy     String?
+
+  config   aiReviewTemplateConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  workflow aiWorkflow             @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+
+  @@unique([configId, workflowId])
+  @@index([configId])
+  @@index([workflowId])
+}
+
+model aiReviewConfigWorkflow {
+  id             String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+
+  configId       String   @db.VarChar(14)
+  workflowId     String   @db.VarChar(14)
+  weightPercent  Decimal  @db.Decimal(5, 2)
+  isGating       Boolean  @default(false)
+
+  createdAt      DateTime @default(now())
+  createdBy      String?
+
+  config   aiReviewConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  workflow aiWorkflow    @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+
+  @@unique([configId, workflowId])
+  @@index([configId])
+  @@index([workflowId])
+}
+
+model aiReviewDecision {
+  id               String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+
+  submissionId     String   @db.VarChar(14)
+  configId         String   @db.VarChar(14)
+  status           AiReviewDecisionStatus
+
+  totalScore       Decimal? @db.Decimal(5, 2)
+  submissionLocked Boolean  @default(false)
+  reason           String?  @db.Text
+  breakdown        Json?    @db.JsonB
+  isFinal          Boolean  @default(false)
+  finalizedAt      DateTime?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  config     aiReviewConfig @relation(fields: [configId], references: [id], onDelete: Restrict)
+  submission submission     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, configId])
+  @@index([configId, status])
+  @@index([submissionId])
 }
