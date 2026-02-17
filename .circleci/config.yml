@@ -74,7 +74,7 @@ workflows:
                       branches:
                           only:
                               - develop
-                              - pm-2660
+                              - pm-3833
 
 
             - 'build-prod':
