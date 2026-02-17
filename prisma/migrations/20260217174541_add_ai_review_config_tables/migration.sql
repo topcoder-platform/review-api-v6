@@ -7,12 +7,6 @@ CREATE TYPE "AiReviewDecisionStatus" AS ENUM ('PENDING', 'PASSED', 'FAILED', 'ER
 -- AlterEnum
 ALTER TYPE "SubmissionStatus" ADD VALUE 'AI_FAILED_REVIEW';
 
--- DropForeignKey
-ALTER TABLE "aiWorkflowRunItem" DROP CONSTRAINT "aiWorkflowRunItem_workflowRunId_fkey";
-
--- DropForeignKey
-ALTER TABLE "aiWorkflowRunItemComment" DROP CONSTRAINT "aiWorkflowRunItemComment_workflowRunItemId_fkey";
-
 -- CreateTable
 CREATE TABLE "aiReviewConfig" (
     "id" VARCHAR(14) NOT NULL DEFAULT nanoid(),
@@ -136,12 +130,6 @@ CREATE INDEX "aiReviewDecision_submissionId_idx" ON "aiReviewDecision"("submissi
 
 -- CreateIndex
 CREATE UNIQUE INDEX "aiReviewDecision_submissionId_configId_key" ON "aiReviewDecision"("submissionId", "configId");
-
--- AddForeignKey
-ALTER TABLE "aiWorkflowRunItem" ADD CONSTRAINT "aiWorkflowRunItem_workflowRunId_fkey" FOREIGN KEY ("workflowRunId") REFERENCES "aiWorkflowRun"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "aiWorkflowRunItemComment" ADD CONSTRAINT "aiWorkflowRunItemComment_workflowRunItemId_fkey" FOREIGN KEY ("workflowRunItemId") REFERENCES "aiWorkflowRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "aiReviewConfig" ADD CONSTRAINT "aiReviewConfig_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "aiReviewTemplateConfig"("id") ON DELETE SET NULL ON UPDATE CASCADE;
