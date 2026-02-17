@@ -9,6 +9,7 @@ import { AppealService } from './appeal/appeal.service';
 import { ContactRequestsController } from './contact/contactRequests.controller';
 import { ReviewController } from './review/review.controller';
 import { ProjectResultModule } from './project-result/projectResult.module';
+import { AiReviewTemplateModule } from './ai-review-template/ai-review-template.module';
 
 import { ReviewTypeController } from './review-type/review-type.controller';
 import { ReviewTypeService } from './review-type/review-type.service';
@@ -42,6 +43,7 @@ import { MyReviewService } from './my-review/myReview.service';
     GlobalProvidersModule,
     FileUploadModule,
     ProjectResultModule,
+    AiReviewTemplateModule,
   ],
   controllers: [
     HealthCheckController,
