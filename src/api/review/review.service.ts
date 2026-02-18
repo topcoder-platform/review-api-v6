@@ -2824,12 +2824,33 @@ export class ReviewService {
               restrictToResourceIds(reviewerResourceIds);
             }
           } else {
+            if (!challengeDetail) {
+              challengeDetail =
+                await this.challengeApiService.getChallengeDetail(challengeId);
+            }
+            const challenge = challengeDetail;
+            const type = (challenge?.type ?? '').trim().toLowerCase();
+            const isTask = type === 'task';
+
+            // 🔍 Debug logs for newly added logic
+            this.logger.debug(
+              `[getReviews] Challenge ${challengeId} type="${type}", isTask=${isTask}`,
+            );
+
+            this.logger.debug(
+              `[getReviews] User ${uid} hasSubmitterRoleForChallenge=${hasSubmitterRoleForChallenge}`,
+            );
+
+            // skip the "You must be a submitter..." error when user is assigned to the task
+            const bypassSubmitterSubmissionCheck =
+              isTask && hasSubmitterRoleForChallenge;
+
             // Confirm the user has actually submitted to this challenge
             const mySubs = await this.prisma.submission.findMany({
               where: { challengeId, memberId: uid },
               select: { id: true },
             });
-            if (mySubs.length === 0) {
+            if (mySubs.length === 0 && !bypassSubmitterSubmissionCheck) {
               throw new ForbiddenException({
                 message:
                   'You must be a submitter on this challenge to access reviews',
@@ -2838,10 +2859,7 @@ export class ReviewService {
               });
             }
 
-            // Fetch challenge to determine phase-based visibility
-            challengeDetail =
-              await this.challengeApiService.getChallengeDetail(challengeId);
-            const challenge = challengeDetail;
+            // Determine phase-based visibility
             const phases = challenge.phases || [];
             const appealsOpen = phases.some(
               (p) => p.name === 'Appeals' && p.isOpen,
