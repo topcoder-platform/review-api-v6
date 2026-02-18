@@ -2832,15 +2832,6 @@ export class ReviewService {
             const type = (challenge?.type ?? '').trim().toLowerCase();
             const isTask = type === 'task';
 
-            // 🔍 Debug logs for newly added logic
-            this.logger.debug(
-              `[getReviews] Challenge ${challengeId} type="${type}", isTask=${isTask}`,
-            );
-
-            this.logger.debug(
-              `[getReviews] User ${uid} hasSubmitterRoleForChallenge=${hasSubmitterRoleForChallenge}`,
-            );
-
             // skip the "You must be a submitter..." error when user is assigned to the task
             const bypassSubmitterSubmissionCheck =
               isTask && hasSubmitterRoleForChallenge;
