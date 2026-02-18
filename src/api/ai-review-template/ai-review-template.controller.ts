@@ -43,8 +43,7 @@ export class AiReviewTemplateController {
   @Scopes(Scope.CreateAiReviewTemplate)
   @ApiOperation({
     summary: 'Create an AI review template',
-    description:
-      'Roles: Admin, Copilot | Scopes: create:ai-review-template',
+    description: 'Roles: Admin, Copilot | Scopes: create:ai-review-template',
   })
   @ApiBody({
     description: 'AI review template configuration',
@@ -55,7 +54,10 @@ export class AiReviewTemplateController {
     description: 'The AI review template has been successfully created.',
     type: AiReviewTemplateConfigResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Bad Request (e.g. workflow not found).' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request (e.g. workflow not found).',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async create(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -69,8 +71,7 @@ export class AiReviewTemplateController {
   @Scopes(Scope.ReadAiReviewTemplate)
   @ApiOperation({
     summary: 'List AI review templates',
-    description:
-      'Roles: Admin, Copilot | Scopes: read:ai-review-template',
+    description: 'Roles: Admin, Copilot | Scopes: read:ai-review-template',
   })
   @ApiQuery({
     name: 'challengeTrack',
@@ -105,8 +106,7 @@ export class AiReviewTemplateController {
   @Scopes(Scope.ReadAiReviewTemplate)
   @ApiOperation({
     summary: 'Get an AI review template by ID',
-    description:
-      'Roles: Admin, Copilot | Scopes: read:ai-review-template',
+    description: 'Roles: Admin, Copilot | Scopes: read:ai-review-template',
   })
   @ApiParam({
     name: 'id',
@@ -146,7 +146,10 @@ export class AiReviewTemplateController {
     description: 'AI review template updated successfully.',
     type: AiReviewTemplateConfigResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Bad Request (e.g. workflow not found).' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request (e.g. workflow not found).',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'AI review template not found.' })
   async update(
@@ -162,8 +165,7 @@ export class AiReviewTemplateController {
   @Scopes(Scope.DeleteAiReviewTemplate)
   @ApiOperation({
     summary: 'Delete an AI review template',
-    description:
-      'Roles: Admin, Copilot | Scopes: delete:ai-review-template',
+    description: 'Roles: Admin, Copilot | Scopes: delete:ai-review-template',
   })
   @ApiParam({
     name: 'id',

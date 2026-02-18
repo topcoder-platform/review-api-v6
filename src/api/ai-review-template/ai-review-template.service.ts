@@ -102,7 +102,9 @@ export class AiReviewTemplateService {
     });
     if (!template) {
       this.logger.error(`AI review template with id ${id} not found.`);
-      throw new NotFoundException(`AI review template with id ${id} not found.`);
+      throw new NotFoundException(
+        `AI review template with id ${id} not found.`,
+      );
     }
     return template;
   }
@@ -126,9 +128,12 @@ export class AiReviewTemplateService {
     await this.findById(id);
 
     const { workflows, ...rest } = dto;
-    const configData: Parameters<typeof this.prisma.aiReviewTemplateConfig.update>[0]['data'] = {};
+    const configData: Parameters<
+      typeof this.prisma.aiReviewTemplateConfig.update
+    >[0]['data'] = {};
     if (rest.title !== undefined) configData.title = rest.title;
-    if (rest.description !== undefined) configData.description = rest.description;
+    if (rest.description !== undefined)
+      configData.description = rest.description;
     if (rest.minPassingThreshold !== undefined)
       configData.minPassingThreshold = rest.minPassingThreshold;
     if (rest.mode !== undefined) configData.mode = rest.mode as AiReviewMode;
