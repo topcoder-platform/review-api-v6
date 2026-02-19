@@ -34,7 +34,7 @@ async function bootstrap() {
   // CORS related settings
   const corsConfig: cors.CorsOptions = {
     allowedHeaders:
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization, Access-Control-Allow-Origin, Access-Control-Allow-Headers,currentOrg,overrideOrg,x-atlassian-cloud-id,x-api-key,x-orgid',
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization, Access-Control-Allow-Origin, Access-Control-Allow-Headers,currentOrg,overrideOrg,x-atlassian-cloud-id,x-api-key,x-orgid,app-version',
     credentials: true,
     origin: process.env.CORS_ALLOWED_ORIGIN
       ? new RegExp(process.env.CORS_ALLOWED_ORIGIN)
