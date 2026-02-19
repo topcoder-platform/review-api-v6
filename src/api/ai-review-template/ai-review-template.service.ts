@@ -49,6 +49,18 @@ export class AiReviewTemplateService {
     this.logger = LoggerService.forRoot('AiReviewTemplateService');
   }
 
+  private validateWeightsSumTo100(
+    workflows: { weightPercent: number }[],
+  ): void {
+    const sum = workflows.reduce((acc, w) => acc + w.weightPercent, 0);
+    const rounded = Math.round(sum * 100) / 100;
+    if (rounded !== 100) {
+      throw new BadRequestException(
+        `Workflow weights must sum to 100 (got ${sum}).`,
+      );
+    }
+  }
+
   async create(dto: CreateAiReviewTemplateConfigDto) {
     const workflowIds = dto.workflows.map((w) => w.workflowId);
     if (workflowIds.length === 0) {
@@ -66,6 +78,8 @@ export class AiReviewTemplateService {
         `Workflow(s) not found: ${missing.join(', ')}`,
       );
     }
+
+    this.validateWeightsSumTo100(dto.workflows);
 
     const { workflows, ...configData } = dto;
     let template;
@@ -171,6 +185,8 @@ export class AiReviewTemplateService {
           `Workflow(s) not found: ${missing.join(', ')}`,
         );
       }
+
+      this.validateWeightsSumTo100(workflows);
 
       await this.prisma.$transaction(async (tx) => {
         await tx.aiReviewTemplateConfigWorkflow.deleteMany({
