@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
@@ -67,21 +68,36 @@ export class AiReviewTemplateService {
     }
 
     const { workflows, ...configData } = dto;
-    const template = await this.prisma.aiReviewTemplateConfig.create({
-      data: {
-        challengeTrack: configData.challengeTrack,
-        challengeType: configData.challengeType,
-        title: configData.title,
-        description: configData.description,
-        minPassingThreshold: configData.minPassingThreshold,
-        mode: configData.mode as AiReviewMode,
-        autoFinalize: configData.autoFinalize,
-        formula:
-          configData.formula != null
-            ? (configData.formula as Prisma.InputJsonValue)
-            : undefined,
-      },
-    });
+    let template;
+    try {
+      template = await this.prisma.aiReviewTemplateConfig.create({
+        data: {
+          challengeTrack: configData.challengeTrack,
+          challengeType: configData.challengeType,
+          title: configData.title,
+          description: configData.description,
+          minPassingThreshold: configData.minPassingThreshold,
+          mode: configData.mode as AiReviewMode,
+          autoFinalize: configData.autoFinalize,
+          formula:
+            configData.formula != null
+              ? (configData.formula as Prisma.InputJsonValue)
+              : undefined,
+        },
+      });
+    } catch (e: unknown) {
+      if (
+        e &&
+        typeof e === 'object' &&
+        'code' in e &&
+        (e as { code: string }).code === 'P2002'
+      ) {
+        throw new ConflictException(
+          `A template already exists for challenge track "${configData.challengeTrack}" and challenge type "${configData.challengeType}". Use a different combination or update the existing template.`,
+        );
+      }
+      throw e;
+    }
 
     await this.prisma.aiReviewTemplateConfigWorkflow.createMany({
       data: workflows.map((w) => ({

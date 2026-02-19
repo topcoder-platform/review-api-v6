@@ -58,6 +58,11 @@ export class AiReviewTemplateController {
     status: 400,
     description: 'Bad Request (e.g. workflow not found).',
   })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Conflict. A template already exists for this challenge track and challenge type combination.',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async create(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
