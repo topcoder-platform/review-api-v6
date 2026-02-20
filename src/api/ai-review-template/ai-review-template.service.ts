@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
 import {
   CreateAiReviewTemplateConfigDto,
   UpdateAiReviewTemplateConfigDto,
@@ -45,8 +46,52 @@ const TEMPLATE_INCLUDE = {
 export class AiReviewTemplateService {
   private readonly logger: LoggerService;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly challengePrisma: ChallengePrismaService,
+  ) {
     this.logger = LoggerService.forRoot('AiReviewTemplateService');
+  }
+
+  private async validateChallengeTrackExists(value: string): Promise<void> {
+    const trimmed = value.trim();
+    const rows = await this.challengePrisma.$queryRaw<{ exists: number }[]>`
+      SELECT 1 AS exists
+      FROM "ChallengeTrack"
+      WHERE id = ${trimmed} OR name = ${trimmed} OR abbreviation = ${trimmed}
+      LIMIT 1
+    `;
+    if (!rows?.length) {
+      throw new BadRequestException(
+        `Invalid challengeTrack: "${value}". Must match an existing track id, name, or abbreviation.`,
+      );
+    }
+  }
+
+  private async validateChallengeTypeExists(value: string): Promise<void> {
+    const trimmed = value.trim();
+    const rows = await this.challengePrisma.$queryRaw<{ exists: number }[]>`
+      SELECT 1 AS exists
+      FROM "ChallengeType"
+      WHERE id = ${trimmed} OR name = ${trimmed} OR abbreviation = ${trimmed}
+      LIMIT 1
+    `;
+    if (!rows?.length) {
+      throw new BadRequestException(
+        `Invalid challengeType: "${value}". Must match an existing type id, name, or abbreviation.`,
+      );
+    }
+  }
+
+  private validateFormulaNotEmpty(formula: unknown): void {
+    if (
+      formula != null &&
+      typeof formula === 'object' &&
+      !Array.isArray(formula) &&
+      Object.keys(formula).length === 0
+    ) {
+      throw new BadRequestException('formula must not be an empty object');
+    }
   }
 
   private validateWeightsSumTo100(
@@ -62,6 +107,12 @@ export class AiReviewTemplateService {
   }
 
   async create(dto: CreateAiReviewTemplateConfigDto) {
+    await this.validateChallengeTrackExists(dto.challengeTrack);
+    await this.validateChallengeTypeExists(dto.challengeType);
+    if (dto.formula !== undefined) {
+      this.validateFormulaNotEmpty(dto.formula);
+    }
+
     const workflowIds = dto.workflows.map((w) => w.workflowId);
     if (workflowIds.length === 0) {
       throw new BadRequestException('At least one workflow is required.');
@@ -156,6 +207,10 @@ export class AiReviewTemplateService {
 
   async update(id: string, dto: UpdateAiReviewTemplateConfigDto) {
     await this.findById(id);
+
+    if (dto.formula !== undefined) {
+      this.validateFormulaNotEmpty(dto.formula);
+    }
 
     const { workflows, ...rest } = dto;
     const configData: Parameters<
