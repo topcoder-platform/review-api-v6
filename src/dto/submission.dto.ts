@@ -352,6 +352,13 @@ export class SubmissionResponseDto {
   submitterHandle?: string;
 
   @ApiProperty({
+    description: 'Submitter email (visible to Admin/Copilot/M2M)',
+    required: false,
+    nullable: true,
+  })
+  submitterEmail?: string | null;
+
+  @ApiProperty({
     description: 'Submitter maximum rating (visible to Admin/Copilot/M2M)',
     required: false,
     nullable: true,
