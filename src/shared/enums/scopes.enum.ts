@@ -83,6 +83,12 @@ export enum Scope {
   ReadAiReviewTemplate = 'read:ai-review-template',
   UpdateAiReviewTemplate = 'update:ai-review-template',
   DeleteAiReviewTemplate = 'delete:ai-review-template',
+
+  // AI review config scopes
+  CreateAiReviewConfig = 'create:ai-review-config',
+  ReadAiReviewConfig = 'read:ai-review-config',
+  UpdateAiReviewConfig = 'update:ai-review-config',
+  DeleteAiReviewConfig = 'delete:ai-review-config',
 }
 
 /**
