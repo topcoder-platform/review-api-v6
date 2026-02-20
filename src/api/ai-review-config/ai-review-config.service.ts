@@ -197,16 +197,31 @@ export class AiReviewConfigService {
     this.validateWeightsSumTo100(payload.workflows);
 
     const { workflows, ...configData } = payload;
-    const config = await this.prisma.aiReviewConfig.create({
-      data: {
-        challengeId: configData.challengeId,
-        minPassingThreshold: configData.minPassingThreshold,
-        mode: configData.mode,
-        autoFinalize: configData.autoFinalize,
-        formula: configData.formula,
-        templateId: configData.templateId,
-      },
-    });
+    let config;
+    try {
+      config = await this.prisma.aiReviewConfig.create({
+        data: {
+          challengeId: configData.challengeId,
+          minPassingThreshold: configData.minPassingThreshold,
+          mode: configData.mode,
+          autoFinalize: configData.autoFinalize,
+          formula: configData.formula,
+          templateId: configData.templateId,
+        },
+      });
+    } catch (e: unknown) {
+      if (
+        e &&
+        typeof e === 'object' &&
+        'code' in e &&
+        (e as { code: string }).code === 'P2002'
+      ) {
+        throw new ConflictException(
+          `An AI review config already exists for challenge ${configData.challengeId}. Use update or a different challenge.`,
+        );
+      }
+      throw e;
+    }
 
     await this.prisma.aiReviewConfigWorkflow.createMany({
       data: workflows.map((w) => ({
