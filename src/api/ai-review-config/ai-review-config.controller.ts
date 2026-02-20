@@ -34,9 +34,7 @@ import { Roles } from 'src/shared/guards/tokenRoles.guard';
 @ApiBearerAuth()
 @Controller('ai-review/configs')
 export class AiReviewConfigController {
-  constructor(
-    private readonly aiReviewConfigService: AiReviewConfigService,
-  ) {}
+  constructor(private readonly aiReviewConfigService: AiReviewConfigService) {}
 
   @Post()
   @Roles(UserRole.Admin, UserRole.Copilot)
@@ -57,7 +55,8 @@ export class AiReviewConfigController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad Request (e.g. workflow not found, weights do not sum to 100).',
+    description:
+      'Bad Request (e.g. workflow not found, weights do not sum to 100).',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({
@@ -66,8 +65,7 @@ export class AiReviewConfigController {
   })
   @ApiResponse({
     status: 409,
-    description:
-      'Conflict. Challenge already has submissions.',
+    description: 'Conflict. Challenge already has submissions.',
   })
   async create(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -163,9 +161,13 @@ export class AiReviewConfigController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad Request (e.g. workflow not found, weights do not sum to 100).',
+    description:
+      'Bad Request (e.g. workflow not found, weights do not sum to 100).',
   })
-  @ApiResponse({ status: 403, description: 'Forbidden (e.g. challenge completed).' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden (e.g. challenge completed).',
+  })
   @ApiResponse({ status: 404, description: 'AI review config not found.' })
   @ApiResponse({
     status: 409,
@@ -196,7 +198,10 @@ export class AiReviewConfigController {
     status: 200,
     description: 'AI review config deleted successfully.',
   })
-  @ApiResponse({ status: 403, description: 'Forbidden (e.g. challenge completed).' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden (e.g. challenge completed).',
+  })
   @ApiResponse({ status: 404, description: 'AI review config not found.' })
   @ApiResponse({
     status: 409,

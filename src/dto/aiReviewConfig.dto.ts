@@ -174,7 +174,10 @@ export class AiReviewConfigResponseDto {
   @ApiProperty({ description: 'Formula configuration', required: false })
   formula?: Record<string, unknown>;
 
-  @ApiProperty({ description: 'Template ID if cloned from template', required: false })
+  @ApiProperty({
+    description: 'Template ID if cloned from template',
+    required: false,
+  })
   templateId?: string | null;
 
   @ApiProperty({ description: 'Created at' })

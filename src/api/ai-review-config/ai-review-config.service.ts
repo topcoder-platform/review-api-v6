@@ -61,7 +61,9 @@ export class AiReviewConfigService {
     try {
       await this.challengeApiService.getChallengeDetail(challengeId);
     } catch {
-      throw new NotFoundException(`Challenge with id ${challengeId} not found.`);
+      throw new NotFoundException(
+        `Challenge with id ${challengeId} not found.`,
+      );
     }
   }
 
@@ -144,7 +146,9 @@ export class AiReviewConfigService {
       mode: dto.mode as AiReviewMode,
       autoFinalize: dto.autoFinalize,
       formula:
-        dto.formula != null ? (dto.formula as Prisma.InputJsonValue) : undefined,
+        dto.formula != null
+          ? (dto.formula as Prisma.InputJsonValue)
+          : undefined,
       templateId: dto.templateId?.trim() || undefined,
       workflows: dto.workflows,
     };
@@ -165,7 +169,8 @@ export class AiReviewConfigService {
       await this.validateWorkflowIdsExist(templateWorkflowIds);
       payload = {
         challengeId: dto.challengeId,
-        minPassingThreshold: dto.minPassingThreshold ?? Number(template.minPassingThreshold),
+        minPassingThreshold:
+          dto.minPassingThreshold ?? Number(template.minPassingThreshold),
         mode: (dto.mode ?? template.mode) as AiReviewMode,
         autoFinalize: dto.autoFinalize ?? template.autoFinalize,
         formula:
@@ -239,9 +244,7 @@ export class AiReviewConfigService {
     });
     if (!config) {
       this.logger.error(`AI review config with id ${id} not found.`);
-      throw new NotFoundException(
-        `AI review config with id ${id} not found.`,
-      );
+      throw new NotFoundException(`AI review config with id ${id} not found.`);
     }
     return config;
   }
@@ -308,7 +311,12 @@ export class AiReviewConfigService {
         where: { id },
       });
     } catch (e: unknown) {
-      if (e && typeof e === 'object' && 'code' in e && (e as { code: string }).code === 'P2025') {
+      if (
+        e &&
+        typeof e === 'object' &&
+        'code' in e &&
+        (e as { code: string }).code === 'P2025'
+      ) {
         throw new NotFoundException(
           `AI review config with id ${id} not found.`,
         );
