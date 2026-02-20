@@ -1969,18 +1969,27 @@ export class SubmissionService {
                 : [];
             const map = new Map<
               string,
-              { handle: string; maxRating: number | null }
+              {
+                email: string | null;
+                handle: string | null;
+                maxRating: number | null;
+              }
             >();
             for (const m of members) {
               const idStr = String(m.userId);
               const rating = m.maxRating ? m.maxRating.rating : null;
-              map.set(idStr, { handle: m.handle, maxRating: rating });
+              map.set(idStr, {
+                email: m.email ?? null,
+                handle: m.handle ?? null,
+                maxRating: rating,
+              });
             }
             for (const s of submissions) {
               const key = s.memberId ? String(s.memberId) : undefined;
               if (key && map.has(key)) {
                 const info = map.get(key)!;
                 (s as any).submitterHandle = info.handle;
+                (s as any).submitterEmail = info.email;
                 (s as any).submitterMaxRating = info.maxRating;
               }
             }
