@@ -58,7 +58,7 @@ export class AiReviewTemplateService {
     const rows = await this.challengePrisma.$queryRaw<{ exists: number }[]>`
       SELECT 1 AS exists
       FROM "ChallengeTrack"
-      WHERE track = ${trimmed}
+      WHERE track::text = ${trimmed}
       LIMIT 1
     `;
     if (!rows?.length) {
