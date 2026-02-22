@@ -77,6 +77,12 @@ export enum Scope {
   CreateWorkflowRun = 'create:workflow-run',
   ReadWorkflowRun = 'read:workflow-run',
   UpdateWorkflowRun = 'update:workflow-run',
+
+  // AI review template scopes
+  CreateAiReviewTemplate = 'create:ai-review-template',
+  ReadAiReviewTemplate = 'read:ai-review-template',
+  UpdateAiReviewTemplate = 'update:ai-review-template',
+  DeleteAiReviewTemplate = 'delete:ai-review-template',
 }
 
 /**
