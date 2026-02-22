@@ -2729,6 +2729,61 @@ export class ReviewService {
               );
 
             normalized = resources || [];
+            const missingRoleIds = Array.from(
+              new Set(
+                normalized
+                  .filter(
+                    (resource) => String(resource.roleName ?? '').trim() === '',
+                  )
+                  .map((resource) => String(resource.roleId ?? '').trim())
+                  .filter((roleId) => roleId.length > 0),
+              ),
+            );
+
+            if (missingRoleIds.length > 0) {
+              try {
+                const fallbackRoles =
+                  await this.resourcePrisma.resourceRole.findMany({
+                    where: { id: { in: missingRoleIds } },
+                    select: { id: true, nameLower: true },
+                  });
+                const fallbackRoleNameById = new Map(
+                  fallbackRoles.map((role) => [role.id, role.nameLower]),
+                );
+
+                if (fallbackRoleNameById.size > 0) {
+                  normalized = normalized.map((resource) => {
+                    const currentRoleName = String(
+                      resource.roleName ?? '',
+                    ).trim();
+                    if (currentRoleName.length > 0) {
+                      return resource;
+                    }
+
+                    const fallbackRoleName = fallbackRoleNameById.get(
+                      String(resource.roleId ?? '').trim(),
+                    );
+                    if (!fallbackRoleName) {
+                      return resource;
+                    }
+
+                    return {
+                      ...resource,
+                      roleName: fallbackRoleName,
+                    };
+                  });
+                }
+              } catch (fallbackError) {
+                const fallbackMessage =
+                  fallbackError instanceof Error
+                    ? fallbackError.message
+                    : String(fallbackError);
+                this.logger.debug(
+                  `[getReviews] Failed to resolve fallback resource role names for challenge ${challengeId}, member ${uid}: ${fallbackMessage}`,
+                );
+              }
+            }
+
             requesterIsChallengeResource = normalized.length > 0;
             normalized.forEach((r) => {
               const roleName = (r.roleName || '').toLowerCase();
