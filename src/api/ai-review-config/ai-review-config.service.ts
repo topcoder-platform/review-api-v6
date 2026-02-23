@@ -95,6 +95,30 @@ export class AiReviewConfigService {
     }
   }
 
+  private async validateCallerHasResourceForChallenge(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<void> {
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return;
+    }
+    const memberId = (authUser.userId ?? authUser.handle ?? '')
+      .toString()
+      .trim();
+    if (!memberId) {
+      throw new ForbiddenException('Cannot determine user identity.');
+    }
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: { challengeId, memberId },
+      select: { id: true },
+    });
+    if (!resource) {
+      throw new ForbiddenException(
+        'You must be assigned to this challenge to view its AI review config.',
+      );
+    }
+  }
+
   private async validateChallengeExists(challengeId: string): Promise<void> {
     try {
       await this.challengeApiService.getChallengeDetail(challengeId);
@@ -291,7 +315,8 @@ export class AiReviewConfigService {
     return this.getById(config.id);
   }
 
-  async getByChallengeId(challengeId: string) {
+  async getByChallengeId(challengeId: string, authUser: JwtUser) {
+    await this.validateCallerHasResourceForChallenge(challengeId, authUser);
     const config = await this.prisma.aiReviewConfig.findFirst({
       where: { challengeId },
       orderBy: { version: 'desc' },

@@ -136,8 +136,11 @@ export class AiReviewConfigController {
   })
   @ApiResponse({ status: 404, description: 'AI review config not found.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  async getByChallengeId(@Param('challengeId') challengeId: string) {
-    return this.aiReviewConfigService.getByChallengeId(challengeId);
+  async getByChallengeId(
+    @Param('challengeId') challengeId: string,
+    @User() authUser: JwtUser,
+  ) {
+    return this.aiReviewConfigService.getByChallengeId(challengeId, authUser);
   }
 
   @Put(':id')
