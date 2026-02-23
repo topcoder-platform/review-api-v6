@@ -102,9 +102,7 @@ export class AiReviewConfigService {
     if (authUser.isMachine || isAdmin(authUser)) {
       return;
     }
-    const memberId = authUser.userId
-      ?.toString()
-      ?.trim();
+    const memberId = authUser.userId?.toString()?.trim();
     if (!memberId) {
       throw new ForbiddenException('Cannot determine user identity.');
     }
