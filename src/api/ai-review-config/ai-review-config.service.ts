@@ -67,8 +67,7 @@ export class AiReviewConfigService {
     if (authUser.isMachine || isAdmin(authUser)) {
       return;
     }
-    const memberId = authUser.userId?.toString()
-      ?.trim();
+    const memberId = authUser.userId?.toString()?.trim();
     if (!memberId) {
       throw new ForbiddenException(
         'Cannot determine user identity for copilot check.',
@@ -79,9 +78,7 @@ export class AiReviewConfigService {
       select: { id: true },
     });
     if (!copilotRole) {
-      throw new ForbiddenException(
-        'Copilot role not found in resources.',
-      );
+      throw new ForbiddenException('Copilot role not found in resources.');
     }
     const resource = await this.resourcePrisma.resource.findFirst({
       where: {
@@ -402,7 +399,10 @@ export class AiReviewConfigService {
 
   async delete(id: string, authUser: JwtUser): Promise<void> {
     const config = await this.getById(id);
-    await this.validateCopilotIsResourceForChallenge(config.challengeId, authUser);
+    await this.validateCopilotIsResourceForChallenge(
+      config.challengeId,
+      authUser,
+    );
     await this.validateChallengeNotCompleted(config.challengeId);
     await this.validateNoDecisionsForConfig(id);
 
