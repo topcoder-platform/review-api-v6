@@ -303,7 +303,8 @@ export class AiReviewConfigService {
     if (rest.formula !== undefined)
       configData.formula = rest.formula as Prisma.InputJsonValue;
 
-    if (rest.templateId !== undefined) configData.templateId = rest.templateId || null;
+    if (rest.templateId !== undefined)
+      configData.templateId = rest.templateId || null;
 
     if (workflows !== undefined && workflows.length > 0) {
       await this.validateWorkflowIdsExist(workflows.map((w) => w.workflowId));
