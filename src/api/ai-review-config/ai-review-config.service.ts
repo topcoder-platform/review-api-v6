@@ -249,7 +249,17 @@ export class AiReviewConfigService {
         `AI review config for challenge ${challengeId} not found.`,
       );
     }
-    return config;
+    return {
+      ...config,
+      minPassingThreshold:
+        config.minPassingThreshold != null
+          ? Number(config.minPassingThreshold)
+          : config.minPassingThreshold,
+      workflows: config.workflows.map((w) => ({
+        ...w,
+        weightPercent: Number(w.weightPercent),
+      })),
+    };
   }
 
   async getById(id: string) {
@@ -261,7 +271,17 @@ export class AiReviewConfigService {
       this.logger.error(`AI review config with id ${id} not found.`);
       throw new NotFoundException(`AI review config with id ${id} not found.`);
     }
-    return config;
+    return {
+      ...config,
+      minPassingThreshold:
+        config.minPassingThreshold != null
+          ? Number(config.minPassingThreshold)
+          : config.minPassingThreshold,
+      workflows: config.workflows.map((w) => ({
+        ...w,
+        weightPercent: Number(w.weightPercent),
+      })),
+    };
   }
 
   async update(id: string, dto: UpdateAiReviewConfigDto) {
@@ -282,6 +302,8 @@ export class AiReviewConfigService {
       configData.autoFinalize = rest.autoFinalize;
     if (rest.formula !== undefined)
       configData.formula = rest.formula as Prisma.InputJsonValue;
+
+    if (rest.templateId !== undefined) configData.templateId = rest.templateId || null;
 
     if (workflows !== undefined && workflows.length > 0) {
       await this.validateWorkflowIdsExist(workflows.map((w) => w.workflowId));
@@ -349,10 +371,22 @@ export class AiReviewConfigService {
       where.mode = filters.mode as AiReviewMode;
     }
 
-    return this.prisma.aiReviewConfig.findMany({
+    const results = await this.prisma.aiReviewConfig.findMany({
       where,
       include: CONFIG_INCLUDE,
       orderBy: [{ challengeId: 'asc' }, { version: 'desc' }],
     });
+
+    return results.map((config) => ({
+      ...config,
+      minPassingThreshold:
+        config.minPassingThreshold != null
+          ? Number(config.minPassingThreshold)
+          : config.minPassingThreshold,
+      workflows: config.workflows.map((w) => ({
+        ...w,
+        weightPercent: Number(w.weightPercent),
+      })),
+    }));
   }
 }
