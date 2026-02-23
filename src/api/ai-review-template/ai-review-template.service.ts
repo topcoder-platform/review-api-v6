@@ -187,7 +187,17 @@ export class AiReviewTemplateService {
         `AI review template with id ${id} not found.`,
       );
     }
-    return template;
+    return {
+      ...template,
+      minPassingThreshold:
+        template.minPassingThreshold != null
+          ? Number(template.minPassingThreshold)
+          : template.minPassingThreshold,
+      workflows: template.workflows.map((w) => ({
+        ...w,
+        weightPercent: Number(w.weightPercent),
+      })),
+    };
   }
 
   async findAll(filters: { challengeTrack?: string; challengeType?: string }) {
@@ -199,10 +209,22 @@ export class AiReviewTemplateService {
       where.challengeType = filters.challengeType.trim();
     }
 
-    return this.prisma.aiReviewTemplateConfig.findMany({
+    const results = await this.prisma.aiReviewTemplateConfig.findMany({
       where,
       include: TEMPLATE_INCLUDE,
     });
+
+    return results.map((template) => ({
+      ...template,
+      minPassingThreshold:
+        template.minPassingThreshold != null
+          ? Number(template.minPassingThreshold)
+          : template.minPassingThreshold,
+      workflows: template.workflows.map((w) => ({
+        ...w,
+        weightPercent: Number(w.weightPercent),
+      })),
+    }));
   }
 
   async update(id: string, dto: UpdateAiReviewTemplateConfigDto) {

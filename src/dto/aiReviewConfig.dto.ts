@@ -112,7 +112,7 @@ export class CreateAiReviewConfigDto {
 
 export class UpdateAiReviewConfigDto extends OmitType(
   PartialType(CreateAiReviewConfigDto),
-  ['challengeId', 'templateId'],
+  ['challengeId'],
 ) {}
 
 export class ListAiReviewConfigQueryDto {
