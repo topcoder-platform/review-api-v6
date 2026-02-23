@@ -26,6 +26,8 @@ import {
   AiReviewConfigResponseDto,
 } from '../../dto/aiReviewConfig.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
+import { User } from 'src/shared/decorators/user.decorator';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { Roles } from 'src/shared/guards/tokenRoles.guard';
@@ -70,8 +72,9 @@ export class AiReviewConfigController {
   async create(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: CreateAiReviewConfigDto,
+    @User() authUser: JwtUser,
   ) {
-    return this.aiReviewConfigService.create(dto);
+    return this.aiReviewConfigService.create(dto, authUser);
   }
 
   @Get()
@@ -177,8 +180,9 @@ export class AiReviewConfigController {
     @Param('id') id: string,
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: UpdateAiReviewConfigDto,
+    @User() authUser: JwtUser,
   ) {
-    return this.aiReviewConfigService.update(id, dto);
+    return this.aiReviewConfigService.update(id, dto, authUser);
   }
 
   @Delete(':id')
@@ -207,7 +211,7 @@ export class AiReviewConfigController {
     status: 409,
     description: 'Conflict. Config has decisions.',
   })
-  async delete(@Param('id') id: string) {
-    await this.aiReviewConfigService.delete(id);
+  async delete(@Param('id') id: string, @User() authUser: JwtUser) {
+    await this.aiReviewConfigService.delete(id, authUser);
   }
 }
