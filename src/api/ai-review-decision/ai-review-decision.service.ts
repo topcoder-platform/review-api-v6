@@ -1,0 +1,183 @@
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import {
+  ListAiReviewDecisionQueryDto,
+  AiReviewDecisionResponseDto,
+  AiReviewDecisionStatus,
+} from '../../dto/aiReviewDecision.dto';
+import { Prisma } from '@prisma/client';
+
+const DECISION_INCLUDE = {
+  config: {
+    select: { id: true, challengeId: true, version: true },
+  },
+  submission: {
+    select: { id: true, challengeId: true, memberId: true },
+  },
+} as const;
+
+@Injectable()
+export class AiReviewDecisionService {
+  private readonly logger: LoggerService;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly resourcePrisma: ResourcePrismaService,
+  ) {
+    this.logger = LoggerService.forRoot('AiReviewDecisionService');
+  }
+
+  private async validateCallerHasResourceForChallenge(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<void> {
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return;
+    }
+    const memberId = authUser.userId
+      ?.toString()
+      ?.trim();
+    if (!memberId) {
+      throw new ForbiddenException('Cannot determine user identity.');
+    }
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: { challengeId, memberId },
+      select: { id: true },
+    });
+    if (!resource) {
+      throw new ForbiddenException(
+        'You must be assigned to this challenge to view its AI review decisions.',
+      );
+    }
+  }
+
+  private mapToResponse(
+    row: {
+      id: string;
+      submissionId: string;
+      configId: string;
+      status: string;
+      totalScore: unknown;
+      submissionLocked: boolean;
+      reason: string | null;
+      breakdown: unknown;
+      isFinal: boolean;
+      finalizedAt: Date | null;
+      createdAt: Date;
+      updatedAt: Date;
+      config?: { id: string; challengeId: string; version: number };
+      submission?: { id: string; challengeId: string | null; memberId: string | null };
+    },
+  ): AiReviewDecisionResponseDto {
+    return {
+      id: row.id,
+      submissionId: row.submissionId,
+      configId: row.configId,
+      status: row.status as AiReviewDecisionStatus,
+      totalScore:
+        row.totalScore != null ? Number(row.totalScore) : null,
+      submissionLocked: row.submissionLocked,
+      reason: row.reason,
+      breakdown: row.breakdown as Record<string, unknown> | null,
+      isFinal: row.isFinal,
+      finalizedAt: row.finalizedAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      config: row.config as Record<string, unknown>,
+      submission: row.submission as Record<string, unknown>,
+    };
+  }
+
+  async list(
+    query: ListAiReviewDecisionQueryDto,
+    authUser: JwtUser,
+  ): Promise<AiReviewDecisionResponseDto[]> {
+    const isAllowed = authUser.isMachine || isAdmin(authUser);
+    if (!isAllowed && !query.configId && !query.submissionId) {
+      throw new BadRequestException(
+        'For non-admin access, configId or submissionId is required to verify challenge access.',
+      );
+    }
+
+    if (!isAllowed) {
+      let challengeId: string | null = null;
+      if (query.configId) {
+        const config = await this.prisma.aiReviewConfig.findUnique({
+          where: { id: query.configId },
+          select: { challengeId: true },
+        });
+        if (!config) {
+          throw new NotFoundException(
+            `AI review config with id ${query.configId} not found.`,
+          );
+        }
+        challengeId = config.challengeId;
+      } else if (query.submissionId) {
+        const sub = await this.prisma.submission.findUnique({
+          where: { id: query.submissionId },
+          select: { challengeId: true },
+        });
+        if (!sub) {
+          throw new NotFoundException(
+            `Submission with id ${query.submissionId} not found.`,
+          );
+        }
+        challengeId = sub.challengeId ?? null;
+      }
+      if (!challengeId) {
+        throw new ForbiddenException(
+          'You must be assigned to this challenge to view its AI review decisions.',
+        );
+      }
+      await this.validateCallerHasResourceForChallenge(challengeId, authUser);
+    }
+
+    const where: Prisma.aiReviewDecisionWhereInput = {};
+    if (query.submissionId) where.submissionId = query.submissionId;
+    if (query.configId) where.configId = query.configId;
+    if (query.status)
+      where.status = query.status as unknown as Prisma.EnumAiReviewDecisionStatusFilter;
+
+    const decisions = await this.prisma.aiReviewDecision.findMany({
+      where,
+      include: DECISION_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return decisions.map((d) => this.mapToResponse(d));
+  }
+
+  async getById(
+    id: string,
+    authUser: JwtUser,
+  ): Promise<AiReviewDecisionResponseDto> {
+    const decision = await this.prisma.aiReviewDecision.findUnique({
+      where: { id },
+      include: DECISION_INCLUDE,
+    });
+    if (!decision) {
+      this.logger.error(`AI review decision with id ${id} not found.`);
+      throw new NotFoundException(
+        `AI review decision with id ${id} not found.`,
+      );
+    }
+
+    const challengeId =
+      decision.config?.challengeId ??
+      (decision.submission?.challengeId as string | null) ??
+      null;
+    if (challengeId) {
+      await this.validateCallerHasResourceForChallenge(challengeId, authUser);
+    }
+
+    return this.mapToResponse(decision);
+  }
+}

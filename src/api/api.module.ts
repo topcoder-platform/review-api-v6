@@ -11,6 +11,7 @@ import { ReviewController } from './review/review.controller';
 import { ProjectResultModule } from './project-result/projectResult.module';
 import { AiReviewTemplateModule } from './ai-review-template/ai-review-template.module';
 import { AiReviewConfigModule } from './ai-review-config/ai-review-config.module';
+import { AiReviewDecisionModule } from './ai-review-decision/ai-review-decision.module';
 
 import { ReviewTypeController } from './review-type/review-type.controller';
 import { ReviewTypeService } from './review-type/review-type.service';
@@ -41,6 +42,8 @@ import { AiReviewTemplateService } from './ai-review-template/ai-review-template
 import { AiReviewTemplateController } from './ai-review-template/ai-review-template.controller';
 import { AiReviewConfigService } from './ai-review-config/ai-review-config.service';
 import { AiReviewConfigController } from './ai-review-config/ai-review-config.controller';
+import { AiReviewDecisionController } from './ai-review-decision/ai-review-decision.controller';
+import { AiReviewDecisionService } from './ai-review-decision/ai-review-decision.service';
 
 @Module({
   imports: [
@@ -50,6 +53,7 @@ import { AiReviewConfigController } from './ai-review-config/ai-review-config.co
     ProjectResultModule,
     AiReviewTemplateModule,
     AiReviewConfigModule,
+    AiReviewDecisionModule,
   ],
   controllers: [
     HealthCheckController,
@@ -69,6 +73,7 @@ import { AiReviewConfigController } from './ai-review-config/ai-review-config.co
     ProjectResultController,
     AiReviewTemplateController,
     AiReviewConfigController,
+    AiReviewDecisionController,
   ],
   providers: [
     ReviewService,
@@ -89,6 +94,7 @@ import { AiReviewConfigController } from './ai-review-config/ai-review-config.co
     MyReviewService,
     AiReviewTemplateService,
     AiReviewConfigService,
+    AiReviewDecisionService,
   ],
 })
 export class ApiModule {}

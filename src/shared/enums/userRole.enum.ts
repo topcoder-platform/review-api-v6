@@ -9,5 +9,7 @@ export enum UserRole {
   Reviewer = 'reviewer',
   Submitter = 'Submitter',
   ProjectManager = 'Manager',
+  Observer = 'Observer',
+  Approver = 'Approver',
   User = 'Topcoder Talent',
 }
