@@ -105,6 +105,22 @@ export class AiReviewConfigService {
     }
   }
 
+  private validateNoDuplicateWorkflowIds(
+    workflows: { workflowId: string }[],
+  ): void {
+    const workflowIds = workflows.map((w) => w.workflowId);
+    if (workflowIds.length === new Set(workflowIds).size) return;
+    const seen = new Set<string>();
+    const duplicateIds = new Set<string>();
+    for (const id of workflowIds) {
+      if (seen.has(id)) duplicateIds.add(id);
+      else seen.add(id);
+    }
+    throw new BadRequestException(
+      `Duplicate workflow IDs are not allowed. Each workflow can only appear once. Duplicates: ${[...duplicateIds].join(', ')}.`,
+    );
+  }
+
   private async validateChallengeNotCompleted(
     challengeId: string,
   ): Promise<void> {
@@ -191,6 +207,7 @@ export class AiReviewConfigService {
     if (!payload.workflows?.length) {
       throw new BadRequestException('At least one workflow is required.');
     }
+    this.validateNoDuplicateWorkflowIds(payload.workflows);
     await this.validateWorkflowIdsExist(
       payload.workflows.map((w) => w.workflowId),
     );
@@ -307,6 +324,7 @@ export class AiReviewConfigService {
       configData.templateId = rest.templateId || null;
 
     if (workflows !== undefined && workflows.length > 0) {
+      this.validateNoDuplicateWorkflowIds(workflows);
       await this.validateWorkflowIdsExist(workflows.map((w) => w.workflowId));
       this.validateWeightsSumTo100(workflows);
 
