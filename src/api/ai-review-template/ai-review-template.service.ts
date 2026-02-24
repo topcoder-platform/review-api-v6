@@ -106,6 +106,22 @@ export class AiReviewTemplateService {
     }
   }
 
+  private validateNoDuplicateWorkflowIds(
+    workflows: { workflowId: string }[],
+  ): void {
+    const workflowIds = workflows.map((w) => w.workflowId);
+    if (workflowIds.length === new Set(workflowIds).size) return;
+    const seen = new Set<string>();
+    const duplicateIds = new Set<string>();
+    for (const id of workflowIds) {
+      if (seen.has(id)) duplicateIds.add(id);
+      else seen.add(id);
+    }
+    throw new BadRequestException(
+      `Duplicate workflow IDs are not allowed. Each workflow can only appear once. Duplicates: ${[...duplicateIds].join(', ')}.`,
+    );
+  }
+
   async create(dto: CreateAiReviewTemplateConfigDto) {
     await this.validateChallengeTrackExists(dto.challengeTrack);
     await this.validateChallengeTypeExists(dto.challengeType);
@@ -117,6 +133,8 @@ export class AiReviewTemplateService {
     if (workflowIds.length === 0) {
       throw new BadRequestException('At least one workflow is required.');
     }
+
+    this.validateNoDuplicateWorkflowIds(dto.workflows);
 
     const found = await this.prisma.aiWorkflow.findMany({
       where: { id: { in: workflowIds } },
@@ -250,6 +268,7 @@ export class AiReviewTemplateService {
       configData.formula = rest.formula as Prisma.InputJsonValue;
 
     if (workflows !== undefined) {
+      this.validateNoDuplicateWorkflowIds(workflows);
       const workflowIds = workflows.map((w) => w.workflowId);
       const found = await this.prisma.aiWorkflow.findMany({
         where: { id: { in: workflowIds } },

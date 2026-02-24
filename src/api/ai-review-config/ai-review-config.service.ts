@@ -8,6 +8,8 @@ import {
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import {
   CreateAiReviewConfigDto,
@@ -53,8 +55,66 @@ export class AiReviewConfigService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly resourcePrisma: ResourcePrismaService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewConfigService');
+  }
+
+  private async validateCopilotIsResourceForChallenge(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<void> {
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return;
+    }
+    const memberId = authUser.userId?.toString()?.trim();
+    if (!memberId) {
+      throw new ForbiddenException(
+        'Cannot determine user identity for copilot check.',
+      );
+    }
+    const copilotRole = await this.resourcePrisma.resourceRole.findFirst({
+      where: { nameLower: 'copilot' },
+      select: { id: true },
+    });
+    if (!copilotRole) {
+      throw new ForbiddenException('Copilot role not found in resources.');
+    }
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: {
+        challengeId,
+        roleId: copilotRole.id,
+        memberId,
+      },
+      select: { id: true },
+    });
+    if (!resource) {
+      throw new ForbiddenException(
+        'You must be assigned as a copilot to this challenge to perform this action.',
+      );
+    }
+  }
+
+  private async validateCallerHasResourceForChallenge(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<void> {
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return;
+    }
+    const memberId = authUser.userId?.toString()?.trim();
+    if (!memberId) {
+      throw new ForbiddenException('Cannot determine user identity.');
+    }
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: { challengeId, memberId },
+      select: { id: true },
+    });
+    if (!resource) {
+      throw new ForbiddenException(
+        'You must be assigned to this challenge to view its AI review config.',
+      );
+    }
   }
 
   private async validateChallengeExists(challengeId: string): Promise<void> {
@@ -105,6 +165,22 @@ export class AiReviewConfigService {
     }
   }
 
+  private validateNoDuplicateWorkflowIds(
+    workflows: { workflowId: string }[],
+  ): void {
+    const workflowIds = workflows.map((w) => w.workflowId);
+    if (workflowIds.length === new Set(workflowIds).size) return;
+    const seen = new Set<string>();
+    const duplicateIds = new Set<string>();
+    for (const id of workflowIds) {
+      if (seen.has(id)) duplicateIds.add(id);
+      else seen.add(id);
+    }
+    throw new BadRequestException(
+      `Duplicate workflow IDs are not allowed. Each workflow can only appear once. Duplicates: ${[...duplicateIds].join(', ')}.`,
+    );
+  }
+
   private async validateChallengeNotCompleted(
     challengeId: string,
   ): Promise<void> {
@@ -128,9 +204,10 @@ export class AiReviewConfigService {
     }
   }
 
-  async create(dto: CreateAiReviewConfigDto) {
+  async create(dto: CreateAiReviewConfigDto, authUser: JwtUser) {
     await this.validateChallengeExists(dto.challengeId);
     await this.validateNoSubmissionsExistForChallenge(dto.challengeId);
+    await this.validateCopilotIsResourceForChallenge(dto.challengeId, authUser);
 
     let payload: {
       challengeId: string;
@@ -191,6 +268,7 @@ export class AiReviewConfigService {
     if (!payload.workflows?.length) {
       throw new BadRequestException('At least one workflow is required.');
     }
+    this.validateNoDuplicateWorkflowIds(payload.workflows);
     await this.validateWorkflowIdsExist(
       payload.workflows.map((w) => w.workflowId),
     );
@@ -235,7 +313,8 @@ export class AiReviewConfigService {
     return this.getById(config.id);
   }
 
-  async getByChallengeId(challengeId: string) {
+  async getByChallengeId(challengeId: string, authUser: JwtUser) {
+    await this.validateCallerHasResourceForChallenge(challengeId, authUser);
     const config = await this.prisma.aiReviewConfig.findFirst({
       where: { challengeId },
       orderBy: { version: 'desc' },
@@ -284,10 +363,11 @@ export class AiReviewConfigService {
     };
   }
 
-  async update(id: string, dto: UpdateAiReviewConfigDto) {
+  async update(id: string, dto: UpdateAiReviewConfigDto, authUser: JwtUser) {
     const config = await this.getById(id);
     const challengeId = config.challengeId;
 
+    await this.validateCopilotIsResourceForChallenge(challengeId, authUser);
     await this.validateChallengeNotCompleted(challengeId);
     await this.validateNoDecisionsForConfig(id);
 
@@ -307,6 +387,7 @@ export class AiReviewConfigService {
       configData.templateId = rest.templateId || null;
 
     if (workflows !== undefined && workflows.length > 0) {
+      this.validateNoDuplicateWorkflowIds(workflows);
       await this.validateWorkflowIdsExist(workflows.map((w) => w.workflowId));
       this.validateWeightsSumTo100(workflows);
 
@@ -339,8 +420,12 @@ export class AiReviewConfigService {
     return this.getById(id);
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, authUser: JwtUser): Promise<void> {
     const config = await this.getById(id);
+    await this.validateCopilotIsResourceForChallenge(
+      config.challengeId,
+      authUser,
+    );
     await this.validateChallengeNotCompleted(config.challengeId);
     await this.validateNoDecisionsForConfig(id);
 
