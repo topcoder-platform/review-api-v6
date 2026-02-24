@@ -42,9 +42,7 @@ export class AiReviewDecisionService {
     if (authUser.isMachine || isAdmin(authUser)) {
       return;
     }
-    const memberId = authUser.userId
-      ?.toString()
-      ?.trim();
+    const memberId = authUser.userId?.toString()?.trim();
     if (!memberId) {
       throw new ForbiddenException('Cannot determine user identity.');
     }
@@ -59,31 +57,32 @@ export class AiReviewDecisionService {
     }
   }
 
-  private mapToResponse(
-    row: {
+  private mapToResponse(row: {
+    id: string;
+    submissionId: string;
+    configId: string;
+    status: string;
+    totalScore: unknown;
+    submissionLocked: boolean;
+    reason: string | null;
+    breakdown: unknown;
+    isFinal: boolean;
+    finalizedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+    config?: { id: string; challengeId: string; version: number };
+    submission?: {
       id: string;
-      submissionId: string;
-      configId: string;
-      status: string;
-      totalScore: unknown;
-      submissionLocked: boolean;
-      reason: string | null;
-      breakdown: unknown;
-      isFinal: boolean;
-      finalizedAt: Date | null;
-      createdAt: Date;
-      updatedAt: Date;
-      config?: { id: string; challengeId: string; version: number };
-      submission?: { id: string; challengeId: string | null; memberId: string | null };
-    },
-  ): AiReviewDecisionResponseDto {
+      challengeId: string | null;
+      memberId: string | null;
+    };
+  }): AiReviewDecisionResponseDto {
     return {
       id: row.id,
       submissionId: row.submissionId,
       configId: row.configId,
       status: row.status as AiReviewDecisionStatus,
-      totalScore:
-        row.totalScore != null ? Number(row.totalScore) : null,
+      totalScore: row.totalScore != null ? Number(row.totalScore) : null,
       submissionLocked: row.submissionLocked,
       reason: row.reason,
       breakdown: row.breakdown as Record<string, unknown> | null,
@@ -144,7 +143,8 @@ export class AiReviewDecisionService {
     if (query.submissionId) where.submissionId = query.submissionId;
     if (query.configId) where.configId = query.configId;
     if (query.status)
-      where.status = query.status as unknown as Prisma.EnumAiReviewDecisionStatusFilter;
+      where.status =
+        query.status as unknown as Prisma.EnumAiReviewDecisionStatusFilter;
 
     const decisions = await this.prisma.aiReviewDecision.findMany({
       where,
@@ -171,9 +171,7 @@ export class AiReviewDecisionService {
     }
 
     const challengeId =
-      decision.config?.challengeId ??
-      (decision.submission?.challengeId as string | null) ??
-      null;
+      decision.config?.challengeId ?? decision.submission?.challengeId ?? null;
     if (challengeId) {
       await this.validateCallerHasResourceForChallenge(challengeId, authUser);
     }
