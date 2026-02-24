@@ -8,6 +8,7 @@ import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
+import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
 
 // A helper to generate a 32-bit integer hash from a string
 function stringToHash(string: string): number {
@@ -32,7 +33,34 @@ export class WorkflowQueueHandler implements OnModuleInit {
     private readonly scheduler: QueueSchedulerService,
     private readonly giteaService: GiteaService,
     private readonly eventBusService: EventBusService,
+    private readonly aiReviewerDecisionMaker: AiReviewerDecisionMakerService,
   ) {}
+
+  private async triggerEvaluateSubmission(submissionId: string): Promise<void> {
+    try {
+      await this.aiReviewerDecisionMaker.evaluateSubmission(submissionId);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : JSON.stringify(error);
+      this.logger.error(
+        `Failed to evaluate submission ${submissionId}. error=${errorMessage}`,
+      );
+      try {
+        await this.aiReviewerDecisionMaker.markDecisionError(
+          submissionId,
+          `Failed to evaluate AI decision: ${errorMessage}`,
+        );
+      } catch (markError) {
+        const markErrorMessage =
+          markError instanceof Error
+            ? markError.message
+            : JSON.stringify(markError);
+        this.logger.error(
+          `Failed to mark AI decision error for submission ${submissionId}: ${markErrorMessage}`,
+        );
+      }
+    }
+  }
 
   async onModuleInit() {
     const queues = (
@@ -296,6 +324,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
           this.logger.log(
             `Workflow job ${(aiWorkflowRun.completedJobs ?? 0) + 1}/${aiWorkflowRun.jobsCount} completed.`,
           );
+          await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
           break;
         }
 
@@ -307,6 +336,8 @@ export class WorkflowQueueHandler implements OnModuleInit {
             completedJobs: { increment: 1 },
           },
         });
+
+        await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
 
         try {
           await this.scheduler.completeJob(
