@@ -447,32 +447,4 @@ export class AiReviewConfigService {
       throw e;
     }
   }
-
-  async list(filters: ListAiReviewConfigQueryDto) {
-    const where: { challengeId?: string; mode?: AiReviewMode } = {};
-    if (filters.challengeId?.trim()) {
-      where.challengeId = filters.challengeId.trim();
-    }
-    if (filters.mode !== undefined) {
-      where.mode = filters.mode as AiReviewMode;
-    }
-
-    const results = await this.prisma.aiReviewConfig.findMany({
-      where,
-      include: CONFIG_INCLUDE,
-      orderBy: [{ challengeId: 'asc' }, { version: 'desc' }],
-    });
-
-    return results.map((config) => ({
-      ...config,
-      minPassingThreshold:
-        config.minPassingThreshold != null
-          ? Number(config.minPassingThreshold)
-          : config.minPassingThreshold,
-      workflows: config.workflows.map((w) => ({
-        ...w,
-        weightPercent: Number(w.weightPercent),
-      })),
-    }));
-  }
 }
