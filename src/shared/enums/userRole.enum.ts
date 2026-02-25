@@ -12,4 +12,6 @@ export enum UserRole {
   Observer = 'Observer',
   Approver = 'Approver',
   User = 'Topcoder Talent',
+  CheckpointReviewer = 'Checkpoint Reviewer',
+  CheckpointScreener = 'Checkpoint Screener',
 }
