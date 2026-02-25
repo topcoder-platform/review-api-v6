@@ -85,6 +85,8 @@ export class AiReviewConfigController {
     UserRole.Reviewer,
     UserRole.ProjectManager,
     UserRole.User,
+    UserRole.CheckpointReviewer,
+    UserRole.CheckpointScreener,
   )
   @Scopes(Scope.ReadAiReviewConfig)
   @ApiOperation({
