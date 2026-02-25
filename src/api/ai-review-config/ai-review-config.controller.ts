@@ -77,38 +77,6 @@ export class AiReviewConfigController {
     return this.aiReviewConfigService.create(dto, authUser);
   }
 
-  @Get()
-  @Roles(UserRole.Admin, UserRole.Copilot)
-  @Scopes(Scope.ReadAiReviewConfig)
-  @ApiOperation({
-    summary: 'List AI review configs',
-    description: 'Roles: Admin, Copilot | Scopes: read:ai-review-config',
-  })
-  @ApiQuery({
-    name: 'challengeId',
-    description: 'Filter by challenge ID',
-    required: false,
-    type: String,
-  })
-  @ApiQuery({
-    name: 'mode',
-    description: 'Filter by mode',
-    required: false,
-    enum: ['AI_GATING', 'AI_ONLY'],
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'List of AI review configs.',
-    type: [AiReviewConfigResponseDto],
-  })
-  @ApiResponse({ status: 403, description: 'Forbidden.' })
-  async list(
-    @Query(new ValidationPipe({ whitelist: true, transform: true }))
-    query: ListAiReviewConfigQueryDto,
-  ) {
-    return this.aiReviewConfigService.list(query);
-  }
-
   @Get(':challengeId')
   @Roles(
     UserRole.Admin,
