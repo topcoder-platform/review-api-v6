@@ -150,10 +150,21 @@ export class AiReviewTemplateService {
     this.validateWeightsSumTo100(dto.workflows);
 
     const { workflows, ...configData } = dto;
+    const existing = await this.prisma.aiReviewTemplateConfig.findFirst({
+      where: {
+        challengeTrack: configData.challengeTrack,
+        challengeType: configData.challengeType,
+      },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    });
+    const nextVersion = (existing?.version ?? 0) + 1;
+
     const template = await this.prisma.aiReviewTemplateConfig.create({
       data: {
         challengeTrack: configData.challengeTrack,
         challengeType: configData.challengeType,
+        version: nextVersion,
         title: configData.title,
         description: configData.description,
         minPassingThreshold: configData.minPassingThreshold,
