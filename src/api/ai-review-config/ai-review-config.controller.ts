@@ -6,7 +6,6 @@ import {
   Delete,
   Body,
   Param,
-  Query,
   ValidationPipe,
 } from '@nestjs/common';
 import {
@@ -16,13 +15,11 @@ import {
   ApiResponse,
   ApiParam,
   ApiBody,
-  ApiQuery,
 } from '@nestjs/swagger';
 import { AiReviewConfigService } from './ai-review-config.service';
 import {
   CreateAiReviewConfigDto,
   UpdateAiReviewConfigDto,
-  ListAiReviewConfigQueryDto,
   AiReviewConfigResponseDto,
 } from '../../dto/aiReviewConfig.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
