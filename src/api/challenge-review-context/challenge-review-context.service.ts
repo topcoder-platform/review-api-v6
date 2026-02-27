@@ -40,9 +40,7 @@ function mapToResponse(row: {
   };
 }
 
-function toPrismaStatus(
-  status: ChallengeReviewContextStatus,
-): PrismaStatus {
+function toPrismaStatus(status: ChallengeReviewContextStatus): PrismaStatus {
   return status as PrismaStatus;
 }
 
@@ -70,8 +68,8 @@ export class ChallengeReviewContextService {
       await this.challengeApiService.getChallengeDetail(challengeId);
     const isDraft = challenge.status === ChallengeStatus.DRAFT;
     const hasRegistrationPhase =
-      challenge.phases?.some((p) =>
-        REGISTRATION_PHASE_NAMES.includes(p.name) && p.isOpen,
+      challenge.phases?.some(
+        (p) => REGISTRATION_PHASE_NAMES.includes(p.name) && p.isOpen,
       ) ?? false;
     if (!isDraft && !hasRegistrationPhase) {
       throw new ForbiddenException(
@@ -145,7 +143,11 @@ export class ChallengeReviewContextService {
     }
 
     const userId = authUser.userId?.toString() ?? null;
-    const updateData: { context: object; status?: PrismaStatus; updatedBy: string | null } = {
+    const updateData: {
+      context: object;
+      status?: PrismaStatus;
+      updatedBy: string | null;
+    } = {
       context: dto.context as object,
       updatedBy: userId,
     };

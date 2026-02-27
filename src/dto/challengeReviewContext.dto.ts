@@ -18,7 +18,7 @@ function isNonEmptyObject(value: unknown): value is Record<string, unknown> {
     typeof value === 'object' &&
     value !== null &&
     !Array.isArray(value) &&
-    Object.keys(value as object).length > 0
+    Object.keys(value).length > 0
   );
 }
 
@@ -113,12 +113,18 @@ export class ChallengeReviewContextResponseDto {
   @ApiProperty({ description: 'Creation timestamp' })
   createdAt: Date;
 
-  @ApiProperty({ description: 'User ID that created the record', nullable: true })
+  @ApiProperty({
+    description: 'User ID that created the record',
+    nullable: true,
+  })
   createdBy: string | null;
 
   @ApiProperty({ description: 'Last update timestamp' })
   updatedAt: Date;
 
-  @ApiProperty({ description: 'User ID that last updated the record', nullable: true })
+  @ApiProperty({
+    description: 'User ID that last updated the record',
+    nullable: true,
+  })
   updatedBy: string | null;
 }
