@@ -30,7 +30,7 @@ import { Roles } from 'src/shared/guards/tokenRoles.guard';
 
 @ApiTags('Challenge Review Context')
 @ApiBearerAuth()
-@Controller('reviews/context')
+@Controller('ai-review/context')
 export class ChallengeReviewContextController {
   constructor(
     private readonly challengeReviewContextService: ChallengeReviewContextService,
