@@ -814,8 +814,8 @@ model aiReviewTemplateConfig {
   workflows          aiReviewTemplateConfigWorkflow[]
   challengeConfigs   aiReviewConfig[]
 
-  @@unique([challengeTrack, challengeType, version])
   @@index([challengeTrack, challengeType])
+  @@index([challengeTrack, challengeType, version])
 }
 
 model aiReviewTemplateConfigWorkflow {
