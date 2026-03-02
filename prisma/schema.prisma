@@ -814,8 +814,8 @@ model aiReviewTemplateConfig {
   workflows          aiReviewTemplateConfigWorkflow[]
   challengeConfigs   aiReviewConfig[]
 
-  @@unique([challengeTrack, challengeType, version])
   @@index([challengeTrack, challengeType])
+  @@index([challengeTrack, challengeType, version])
 }
 
 model aiReviewTemplateConfigWorkflow {
@@ -879,4 +879,25 @@ model aiReviewDecision {
   @@unique([submissionId, configId])
   @@index([configId, status])
   @@index([submissionId])
+}
+
+enum ChallengeReviewContextStatus {
+  AI_GENERATED
+  HUMAN_APPROVED
+  HUMAN_REJECTED
+}
+
+model challengeReviewContext {
+  id         String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  challengeId String
+  context   Json     @db.JsonB
+  status    ChallengeReviewContextStatus
+
+  createdAt DateTime  @default(now())
+  createdBy String?
+  updatedAt DateTime  @updatedAt
+  updatedBy String?
+
+  @@unique([challengeId])
+  @@index([challengeId])
 }

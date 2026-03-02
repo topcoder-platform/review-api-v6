@@ -22,6 +22,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 import { QueueSchedulerService } from './queue-scheduler.service';
 import { WorkflowQueueHandler } from './workflow-queue.handler';
+import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -57,6 +58,7 @@ import { WorkflowQueueHandler } from './workflow-queue.handler';
     SubmissionService,
     QueueSchedulerService,
     WorkflowQueueHandler,
+    AiReviewerDecisionMakerService,
   ],
   exports: [
     KafkaModule,
@@ -78,6 +80,7 @@ import { WorkflowQueueHandler } from './workflow-queue.handler';
     SubmissionScanCompleteOrchestrator,
     QueueSchedulerService,
     WorkflowQueueHandler,
+    AiReviewerDecisionMakerService,
   ],
 })
 export class GlobalProvidersModule {}
