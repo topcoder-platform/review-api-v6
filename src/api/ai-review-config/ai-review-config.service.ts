@@ -14,7 +14,6 @@ import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import {
   CreateAiReviewConfigDto,
   UpdateAiReviewConfigDto,
-  ListAiReviewConfigQueryDto,
 } from '../../dto/aiReviewConfig.dto';
 import { AiReviewMode, Prisma } from '@prisma/client';
 
