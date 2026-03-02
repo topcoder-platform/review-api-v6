@@ -484,4 +484,17 @@ export class ChallengeApiService {
       );
     }
   }
+
+  /**
+   * Validate if final-fix submissions can be created (Final Fix phase is open)
+   */
+  async validateFinalFixSubmissionCreation(challengeId: string): Promise<void> {
+    const finalFixPhaseOpen = await this.isPhaseOpen(challengeId, 'Final Fix');
+
+    if (!finalFixPhaseOpen) {
+      throw new Error(
+        `Final fix submissions cannot be created for challenge ${challengeId}. Final Fix phase is not currently open.`,
+      );
+    }
+  }
 }
