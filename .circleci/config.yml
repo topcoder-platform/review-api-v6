@@ -75,6 +75,7 @@ workflows:
                           only:
                               - develop
                               - pm-3849
+                              - PM-4172_rerun-ai-workflows
 
 
             - 'build-prod':
