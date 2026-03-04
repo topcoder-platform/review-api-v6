@@ -645,8 +645,7 @@ export class AiWorkflowService {
       if (
         challenge.status !== ChallengeStatus.COMPLETED &&
         memberRoles.some(
-          (r) =>
-            r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
+          (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
         ) &&
         String(user.userId) !== String(submission.memberId)
       ) {
@@ -786,8 +785,7 @@ export class AiWorkflowService {
       if (
         challenge.status !== ChallengeStatus.COMPLETED &&
         memberRoles.some(
-          (r) =>
-            r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
+          (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
         ) &&
         user.userId?.toString() !== submission?.memberId
       ) {
