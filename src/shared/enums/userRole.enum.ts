@@ -10,9 +10,6 @@ export enum UserRole {
   Copilot = 'copilot',
   TopcoderStaff = 'Topcoder Staff',
   TalentManager = 'Talent Manager',
-}
-
-export enum ResourceRole {
   Submitter = 'Submitter',
   Reviewer = 'Reviewer',
   Observer = 'Observer',
