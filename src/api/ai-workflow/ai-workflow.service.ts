@@ -23,7 +23,7 @@ import {
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
-import { UserRole } from 'src/shared/enums/userRole.enum';
+import { ResourceRole, UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
@@ -619,12 +619,12 @@ export class AiWorkflowService {
     const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
     if (!isM2mOrAdmin) {
       const requiredRoles = [
-        UserRole.IterativeReviewer,
-        UserRole.Reviewer,
-        UserRole.Screener,
+        ResourceRole.IterativeReviewer,
+        ResourceRole.Reviewer,
+        ResourceRole.Screener,
         UserRole.ProjectManager,
         UserRole.Copilot,
-        UserRole.Submitter,
+        ResourceRole.Submitter,
       ].map((r) => r.toLowerCase());
 
       const memberRoles = (
@@ -645,7 +645,8 @@ export class AiWorkflowService {
       if (
         challenge.status !== ChallengeStatus.COMPLETED &&
         memberRoles.some(
-          (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
+          (r) =>
+            r.roleName?.toLowerCase() === ResourceRole.Submitter.toLowerCase(),
         ) &&
         String(user.userId) !== String(submission.memberId)
       ) {
@@ -759,11 +760,11 @@ export class AiWorkflowService {
     const isM2mOrAdmin = user.isMachine || user.roles?.includes(UserRole.Admin);
     if (!isM2mOrAdmin) {
       const requiredRoles = [
-        UserRole.Screener,
-        UserRole.Reviewer,
+        ResourceRole.Screener,
+        ResourceRole.Reviewer,
         UserRole.ProjectManager,
         UserRole.Copilot,
-        UserRole.Submitter,
+        ResourceRole.Submitter,
       ].map((r) => r.toLowerCase());
 
       const userRoles = await this.resourceApiService.getMemberResourcesRoles(
@@ -785,7 +786,8 @@ export class AiWorkflowService {
       if (
         challenge.status !== ChallengeStatus.COMPLETED &&
         memberRoles.some(
-          (r) => r.roleName?.toLowerCase() === UserRole.Submitter.toLowerCase(),
+          (r) =>
+            r.roleName?.toLowerCase() === ResourceRole.Submitter.toLowerCase(),
         ) &&
         user.userId?.toString() !== submission?.memberId
       ) {

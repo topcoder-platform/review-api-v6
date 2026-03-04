@@ -32,15 +32,9 @@ export class AiReviewDecisionController {
   @Roles(
     UserRole.Admin,
     UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Reviewer,
+    UserRole.User,
     UserRole.ProjectManager,
-    UserRole.Observer,
-    UserRole.Approver,
-    UserRole.CheckpointReviewer,
-    UserRole.CheckpointScreener,
-    UserRole.IterativeReviewer,
-    UserRole.Screener,
+    UserRole.TopcoderTalent,
   )
   @Scopes(Scope.ReadAiReviewDecision)
   @ApiOperation({
@@ -92,15 +86,9 @@ export class AiReviewDecisionController {
   @Roles(
     UserRole.Admin,
     UserRole.Copilot,
-    UserRole.Submitter,
-    UserRole.Reviewer,
+    UserRole.User,
+    UserRole.TopcoderTalent,
     UserRole.ProjectManager,
-    UserRole.Observer,
-    UserRole.Approver,
-    UserRole.CheckpointReviewer,
-    UserRole.CheckpointScreener,
-    UserRole.IterativeReviewer,
-    UserRole.Screener,
   )
   @Scopes(Scope.ReadAiReviewDecision)
   @ApiOperation({
