@@ -135,9 +135,15 @@ export class AiReviewDecisionService {
         challengeId = sub.challengeId ?? null;
 
         if (challengeId) {
-          const challenge = await this.challengeApiService.getChallengeDetail(challengeId);
-          if (challenge.status !== ChallengeStatus.COMPLETED && sub.memberId !== authUser.userId) {
-            throw new ForbiddenException('You are not allowed to view this submission\'s AI review decisions.');
+          const challenge =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            sub.memberId !== authUser.userId
+          ) {
+            throw new ForbiddenException(
+              "You are not allowed to view this submission's AI review decisions.",
+            );
           }
         }
       }
