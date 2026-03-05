@@ -67,9 +67,9 @@ export class SubmissionController {
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
     summary:
-      'Create a new submission, assuming the challenge is active and the submission phase is open',
+      'Create a new submission when the required submission phase is open (Submission, Checkpoint Submission, or Final Fix)',
     description:
-      'Roles: Admin, User (must be registered to the challenge) | Scopes: create:submission',
+      'Roles: Admin, User (must be registered to the challenge). Final Fix submissions are restricted to winners. | Scopes: create:submission',
   })
   @ApiResponse({
     status: 201,

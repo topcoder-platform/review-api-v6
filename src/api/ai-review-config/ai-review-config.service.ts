@@ -203,9 +203,27 @@ export class AiReviewConfigService {
     }
   }
 
+  private async validateNoAiRunsExistForChallenge(
+    challengeId: string,
+  ): Promise<void> {
+    const count = await this.prisma.aiWorkflowRun.count({
+      where: {
+        submission: {
+          challengeId,
+        },
+      },
+    });
+    if (count > 0) {
+      throw new ConflictException(
+        `Cannot create, update, or delete AI review config: challenge ${challengeId} already has AI workflow runs.`,
+      );
+    }
+  }
+
   async create(dto: CreateAiReviewConfigDto, authUser: JwtUser) {
     await this.validateChallengeExists(dto.challengeId);
     await this.validateNoSubmissionsExistForChallenge(dto.challengeId);
+    await this.validateNoAiRunsExistForChallenge(dto.challengeId);
     await this.validateCopilotIsResourceForChallenge(dto.challengeId, authUser);
 
     let payload: {
@@ -369,6 +387,7 @@ export class AiReviewConfigService {
     await this.validateCopilotIsResourceForChallenge(challengeId, authUser);
     await this.validateChallengeNotCompleted(challengeId);
     await this.validateNoDecisionsForConfig(id);
+    await this.validateNoAiRunsExistForChallenge(challengeId);
 
     const { workflows, ...rest } = dto;
     const configData: Parameters<
@@ -427,6 +446,7 @@ export class AiReviewConfigService {
     );
     await this.validateChallengeNotCompleted(config.challengeId);
     await this.validateNoDecisionsForConfig(id);
+    await this.validateNoAiRunsExistForChallenge(config.challengeId);
 
     try {
       await this.prisma.aiReviewConfig.delete({

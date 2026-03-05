@@ -92,6 +92,11 @@ export enum Scope {
 
   // AI review decision scopes
   ReadAiReviewDecision = 'read:ai-review-decision',
+
+  // Challenge review context scopes
+  CreateChallengeReviewContext = 'create:challenge-review-context',
+  ReadChallengeReviewContext = 'read:challenge-review-context',
+  UpdateChallengeReviewContext = 'update:challenge-review-context',
 }
 
 /**
