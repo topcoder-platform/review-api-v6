@@ -74,8 +74,6 @@ workflows:
                       branches:
                           only:
                               - develop
-                              - pm-4076_1
-
 
             - 'build-prod':
                   context: org-global

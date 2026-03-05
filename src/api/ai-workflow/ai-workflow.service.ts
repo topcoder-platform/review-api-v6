@@ -28,6 +28,7 @@ import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
+import { QueueSchedulerService } from 'src/shared/modules/global/queue-scheduler.service';
 import { VoteType } from '@prisma/client';
 
 @Injectable()
@@ -40,8 +41,85 @@ export class AiWorkflowService {
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
     private readonly giteaService: GiteaService,
+    private readonly scheduler: QueueSchedulerService,
   ) {
     this.logger = LoggerService.forRoot('AiWorkflowService');
+  }
+
+  async retriggerWorkflowRun(workflowRunId: string) {
+    const existingRun = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: workflowRunId },
+      include: {
+        workflow: true,
+        submission: {
+          select: {
+            id: true,
+            challengeId: true,
+          },
+        },
+      },
+    });
+
+    if (!existingRun) {
+      throw new NotFoundException(
+        `AI Workflow run with id ${workflowRunId} not found.`,
+      );
+    }
+
+    if (!existingRun.submissionId) {
+      throw new BadRequestException(
+        `Workflow run ${workflowRunId} is missing submissionId.`,
+      );
+    }
+
+    if (!existingRun.submission?.challengeId) {
+      throw new InternalServerErrorException(
+        `Challenge ID not found for submission ${existingRun.submissionId}.`,
+      );
+    }
+
+    const retriggeredRun = await this.prisma.aiWorkflowRun.create({
+      data: {
+        workflowId: existingRun.workflowId,
+        submissionId: existingRun.submissionId,
+        gitRunId: '',
+        status: 'INIT',
+      },
+      include: {
+        workflow: true,
+      },
+    });
+
+    if (!this.scheduler.isEnabled) {
+      this.logger.log(
+        `Scheduler is disabled; retriggered run ${retriggeredRun.id} remains INIT.`,
+      );
+      return retriggeredRun;
+    }
+
+    await this.scheduler.queueJob(
+      existingRun.workflow.gitWorkflowId,
+      retriggeredRun.id,
+      {
+        workflowId: retriggeredRun.workflowId,
+        params: {
+          challengeId: existingRun.submission.challengeId,
+          submissionId: retriggeredRun.submissionId,
+          aiWorkflowId: retriggeredRun.workflowId,
+          aiWorkflowRunId: retriggeredRun.id,
+        },
+      },
+    );
+
+    return this.prisma.aiWorkflowRun.update({
+      where: { id: retriggeredRun.id },
+      data: {
+        status: 'QUEUED',
+      },
+      include: {
+        workflow: true,
+      },
+    });
   }
 
   async updateCommentById(
