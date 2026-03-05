@@ -142,7 +142,7 @@ export class AiReviewDecisionService {
             sub.memberId !== authUser.userId?.toString()
           ) {
             throw new ForbiddenException(
-              `You are not allowed to view this submission's AI review decisions. challengeId: ${challengeId}, memberId: ${sub.memberId}, userId: ${authUser.userId} typeof memberId: ${typeof sub.memberId} typeof userId: ${typeof authUser.userId?.toString()}`,
+              `You are not allowed to view this submission's AI review decisions.`,
             );
           }
         }
