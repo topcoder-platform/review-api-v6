@@ -120,6 +120,13 @@ export class UpdateAiWorkflowRunDto extends OmitType(
   ['submissionId'],
 ) {}
 
+export class RetriggerAiWorkflowRunDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  workflowRunId: string;
+}
+
 export class CreateAiWorkflowRunItemDto {
   @ApiProperty()
   @IsString()
