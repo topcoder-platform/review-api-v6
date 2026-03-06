@@ -162,6 +162,13 @@ export class AiReviewDecisionService {
       where.status =
         query.status as unknown as Prisma.EnumAiReviewDecisionStatusFilter;
 
+    if (!isAllowed) {
+      const memberId = authUser.userId?.toString()?.trim();
+      if (memberId) {
+        where.submission = { memberId };
+      }
+    }
+
     const decisions = await this.prisma.aiReviewDecision.findMany({
       where,
       include: DECISION_INCLUDE,
