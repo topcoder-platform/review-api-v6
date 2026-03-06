@@ -14,6 +14,8 @@ import {
   AiReviewDecisionStatus,
 } from '../../dto/aiReviewDecision.dto';
 import { Prisma } from '@prisma/client';
+import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 const DECISION_INCLUDE = {
   config: {
@@ -31,6 +33,7 @@ export class AiReviewDecisionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly resourcePrisma: ResourcePrismaService,
+    private readonly challengeApiService: ChallengeApiService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewDecisionService');
   }
@@ -122,7 +125,7 @@ export class AiReviewDecisionService {
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
           where: { id: query.submissionId },
-          select: { challengeId: true },
+          select: { challengeId: true, memberId: true },
         });
         if (!sub) {
           throw new NotFoundException(
@@ -130,6 +133,19 @@ export class AiReviewDecisionService {
           );
         }
         challengeId = sub.challengeId ?? null;
+
+        if (challengeId) {
+          const challenge =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            sub.memberId !== authUser.userId?.toString()
+          ) {
+            throw new ForbiddenException(
+              `You are not allowed to view this submission's AI review decisions.`,
+            );
+          }
+        }
       }
       if (!challengeId) {
         throw new ForbiddenException(
