@@ -9,6 +9,7 @@ import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
+import { forwardRef, Inject } from '@nestjs/common';
 
 // A helper to generate a 32-bit integer hash from a string
 function stringToHash(string: string): number {
@@ -34,6 +35,8 @@ export class WorkflowQueueHandler implements OnModuleInit {
     private readonly giteaService: GiteaService,
     private readonly eventBusService: EventBusService,
     private readonly aiReviewerDecisionMaker: AiReviewerDecisionMakerService,
+    @Inject(forwardRef(() => 'ReviewService'))
+    private readonly reviewService?: any,
   ) {}
 
   private async triggerEvaluateSubmission(submissionId: string): Promise<void> {
@@ -376,6 +379,27 @@ export class WorkflowQueueHandler implements OnModuleInit {
         } catch (e) {
           this.logger.log(
             `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${e.message ?? e}!`,
+          );
+        }
+
+        // Check if all AI workflows for the challenge are complete and publish phase completion event
+        try {
+          if (this.reviewService && aiWorkflowRun.submissionId) {
+            const submission = await this.prisma.submission.findUnique({
+              where: { id: aiWorkflowRun.submissionId },
+              select: { challengeId: true },
+            });
+
+            if (submission?.challengeId) {
+              await this.reviewService.publishAiWorkflowPhaseCompletedEvent(
+                submission.challengeId,
+                aiWorkflowRun.submissionId,
+              );
+            }
+          }
+        } catch (e) {
+          this.logger.error(
+            `Failed to publish AI workflow phase completion event for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${e.message ?? e}!`,
           );
         }
         break;

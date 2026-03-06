@@ -680,6 +680,183 @@ export class ReviewService {
     }
   }
 
+  /**
+   * Count the number of in-progress AI workflow runs for a challenge.
+   * Used to determine if the AI Screening phase can be closed.
+   */
+  async getInProgressAiWorkflowRunCount(
+    challengeId: string,
+    aiWorkflowIds: string[],
+  ): Promise<number> {
+    try {
+      if (!aiWorkflowIds || aiWorkflowIds.length === 0) {
+        return 0;
+      }
+
+      const inProgressStatuses = [
+        'INIT',
+        'QUEUED',
+        'DISPATCHED',
+        'IN_PROGRESS',
+      ];
+
+      const count = await this.prisma.aiWorkflowRun.count({
+        where: {
+          workflowId: { in: aiWorkflowIds },
+          status: { in: inProgressStatuses },
+          submission: {
+            challengeId,
+          },
+        },
+      });
+
+      return count;
+    } catch (error) {
+      this.logger.error(
+        `[getInProgressAiWorkflowRunCount] Failed to count in-progress AI workflow runs for challenge ${challengeId}`,
+        error,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * Check if all AI workflow runs are complete for a challenge.
+   * Returns true if there are no in-progress runs.
+   */
+  private async areAllAiWorkflowsComplete(
+    challengeId: string,
+    aiWorkflowIds: string[],
+  ): Promise<boolean> {
+    const inProgressCount = await this.getInProgressAiWorkflowRunCount(
+      challengeId,
+      aiWorkflowIds,
+    );
+    return inProgressCount === 0;
+  }
+
+  /**
+   * Publish an event when all AI workflow runs for a challenge have completed.
+   * This is similar to publishReviewCompletedEvent but for the entire AI screening phase.
+   */
+  async publishAiWorkflowPhaseCompletedEvent(
+    challengeId: string,
+    submissionId: string,
+  ): Promise<void> {
+    try {
+      // Get challenge details to find AI Screening phase
+      const challenge =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+
+      if (!challenge || !challenge.phases) {
+        this.logger.warn(
+          `[publishAiWorkflowPhaseCompletedEvent] Challenge ${challengeId} not found or has no phases`,
+        );
+        return;
+      }
+
+      // Find AI Screening phase
+      const aiScreeningPhase = challenge.phases.find(
+        (p) => p.name === 'AI Screening',
+      );
+
+      if (!aiScreeningPhase) {
+        this.logger.debug(
+          `[publishAiWorkflowPhaseCompletedEvent] No AI Screening phase found for challenge ${challengeId}`,
+        );
+        return;
+      }
+
+      // Check if AI Screening phase is still open
+      if (!aiScreeningPhase.isOpen) {
+        this.logger.debug(
+          `[publishAiWorkflowPhaseCompletedEvent] AI Screening phase ${aiScreeningPhase.id} is not open for challenge ${challengeId}`,
+        );
+        return;
+      }
+
+      // Get all AI workflow IDs configured for this challenge
+      const aiWorkflowIds: string[] = Array.from(
+        new Set(
+          (challenge.workflows ?? [])
+            .map((workflow) => workflow.id)
+            .filter((workflowId): workflowId is string => Boolean(workflowId)),
+        ),
+      );
+
+      if (aiWorkflowIds.length === 0) {
+        this.logger.debug(
+          `[publishAiWorkflowPhaseCompletedEvent] No AI workflows configured for challenge ${challengeId}`,
+        );
+        return;
+      }
+
+      // Check if all AI workflows are complete
+      const allComplete = await this.areAllAiWorkflowsComplete(
+        challengeId,
+        aiWorkflowIds,
+      );
+
+      if (!allComplete) {
+        this.logger.debug(
+          `[publishAiWorkflowPhaseCompletedEvent] Not all AI workflows complete for challenge ${challengeId}`,
+        );
+        return;
+      }
+
+      // Get the most recent completed workflow run for this submission to use as representative data
+      const recentWorkflowRun = await this.prisma.aiWorkflowRun.findFirst({
+        where: {
+          submissionId,
+          status: { in: ['SUCCESS', 'FAILURE', 'CANCELLED'] },
+        },
+        orderBy: {
+          completedAt: 'desc',
+        },
+        select: {
+          id: true,
+          workflowId: true,
+          status: true,
+          score: true,
+          completedAt: true,
+        },
+      });
+
+      if (!recentWorkflowRun) {
+        this.logger.warn(
+          `[publishAiWorkflowPhaseCompletedEvent] No completed workflow run found for submission ${submissionId}`,
+        );
+        return;
+      }
+
+      const payload = {
+        challengeId,
+        submissionId,
+        aiWorkflowRunId: recentWorkflowRun.id,
+        aiWorkflowId: recentWorkflowRun.workflowId,
+        status: recentWorkflowRun.status,
+        score: recentWorkflowRun.score ?? 0,
+        completedAt: recentWorkflowRun.completedAt
+          ? recentWorkflowRun.completedAt.toISOString()
+          : new Date().toISOString(),
+      };
+
+      await this.eventBusService.publish(
+        'aiworkflow.action.completed',
+        payload,
+      );
+      this.logger.log(
+        `[publishAiWorkflowPhaseCompletedEvent] Published AI workflow phase completion for challenge ${challengeId}, all AI workflows completed`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `[publishAiWorkflowPhaseCompletedEvent] Failed to publish AI workflow phase completion event for challenge ${challengeId}`,
+        error,
+      );
+      // Don't throw - this is a non-critical notification
+    }
+  }
+
   private async ensureReviewItemChangeAccess(
     authUser: JwtUser | undefined,
     review: {
