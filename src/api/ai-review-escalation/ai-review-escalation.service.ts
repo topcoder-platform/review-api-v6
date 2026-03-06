@@ -117,6 +117,42 @@ export class AiReviewEscalationService {
     return !!resource;
   }
 
+  private async createDirectUnlockEscalation(
+    aiReviewDecisionId: string,
+    dto: CreateAiReviewEscalationDto,
+    userId: string | null,
+  ): Promise<AiReviewDecisionEscalationResponseDto> {
+    const approverNotes = (dto.approverNotes ?? '').trim();
+    if (!approverNotes) {
+      throw new BadRequestException(
+        'approverNotes is required when creating an escalation as Admin or Copilot.',
+      );
+    }
+
+    const [escalation] = await this.prisma.$transaction([
+      this.prisma.aiReviewDecisionEscalation.create({
+        data: {
+          aiReviewDecisionId,
+          escalationNotes: (dto.escalationNotes ?? '').trim() || null,
+          approverNotes,
+          status: AiReviewDecisionEscalationStatus.APPROVED,
+          createdBy: userId,
+          updatedBy: userId,
+        },
+      }),
+      this.prisma.aiReviewDecision.update({
+        where: { id: aiReviewDecisionId },
+        data: {
+          status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
+          submissionLocked: false,
+          updatedAt: new Date(),
+        },
+      }),
+    ]);
+
+    return mapEscalationToResponse(escalation);
+  }
+
   async create(
     aiReviewDecisionId: string,
     dto: CreateAiReviewEscalationDto,
@@ -166,70 +202,14 @@ export class AiReviewEscalationService {
     }
 
     if (isAdmin(authUser)) {
-      const approverNotes = (dto.approverNotes ?? '').trim();
-      if (!approverNotes) {
-        throw new BadRequestException(
-          'approverNotes is required when creating an escalation as Admin or Copilot.',
-        );
-      }
-
-      const [escalation] = await this.prisma.$transaction([
-        this.prisma.aiReviewDecisionEscalation.create({
-          data: {
-            aiReviewDecisionId,
-            escalationNotes: (dto.escalationNotes ?? '').trim() || null,
-            approverNotes,
-            status: AiReviewDecisionEscalationStatus.APPROVED,
-            createdBy: userId,
-            updatedBy: userId,
-          },
-        }),
-        this.prisma.aiReviewDecision.update({
-          where: { id: aiReviewDecisionId },
-          data: {
-            status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
-            submissionLocked: false,
-            updatedAt: new Date(),
-          },
-        }),
-      ]);
-
-      return mapEscalationToResponse(escalation);
+      return this.createDirectUnlockEscalation(aiReviewDecisionId, dto, userId);
     }
 
     await this.validateCallerHasResourceForChallenge(challengeId, userId);
 
     const isCopilot = await this.isUserCopilotForChallenge(challengeId, userId);
     if (isCopilot) {
-      const approverNotes = (dto.approverNotes ?? '').trim();
-      if (!approverNotes) {
-        throw new BadRequestException(
-          'approverNotes is required when creating an escalation as Copilot.',
-        );
-      }
-
-      const [escalation] = await this.prisma.$transaction([
-        this.prisma.aiReviewDecisionEscalation.create({
-          data: {
-            aiReviewDecisionId,
-            escalationNotes: (dto.escalationNotes ?? '').trim() || null,
-            approverNotes,
-            status: AiReviewDecisionEscalationStatus.APPROVED,
-            createdBy: userId,
-            updatedBy: userId,
-          },
-        }),
-        this.prisma.aiReviewDecision.update({
-          where: { id: aiReviewDecisionId },
-          data: {
-            status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
-            submissionLocked: false,
-            updatedAt: new Date(),
-          },
-        }),
-      ]);
-
-      return mapEscalationToResponse(escalation);
+      return this.createDirectUnlockEscalation(aiReviewDecisionId, dto, userId);
     }
 
     const isReviewer = await this.isUserReviewerForChallenge(challengeId, userId);
