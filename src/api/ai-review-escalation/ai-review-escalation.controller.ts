@@ -38,10 +38,6 @@ export class AiReviewEscalationController {
     UserRole.Admin,
     UserRole.Copilot,
     UserRole.Reviewer,
-    UserRole.CheckpointReviewer,
-    UserRole.CheckpointScreener,
-    UserRole.IterativeReviewer,
-    UserRole.Screener,
   )
   @ApiOperation({
     summary: 'Create an AI review escalation',
