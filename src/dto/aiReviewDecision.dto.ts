@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsOptional, IsString, IsEnum } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { AiReviewDecisionEscalationResponseDto } from './aiReviewEscalation.dto';
 
 const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
   typeof value === 'string' ? value.trim() : undefined;
@@ -10,6 +11,7 @@ export enum AiReviewDecisionStatus {
   PASSED = 'PASSED',
   FAILED = 'FAILED',
   ERROR = 'ERROR',
+  HUMAN_OVERRIDE = 'HUMAN_OVERRIDE',
 }
 
 export class ListAiReviewDecisionQueryDto {
@@ -107,4 +109,11 @@ export class AiReviewDecisionResponseDto {
     required: false,
   })
   submission?: Record<string, unknown>;
+
+  @ApiProperty({
+    description: 'Escalation records for this decision',
+    required: false,
+    type: [AiReviewDecisionEscalationResponseDto],
+  })
+  escalations?: AiReviewDecisionEscalationResponseDto[];
 }

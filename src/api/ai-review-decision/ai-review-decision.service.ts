@@ -13,6 +13,10 @@ import {
   AiReviewDecisionResponseDto,
   AiReviewDecisionStatus,
 } from '../../dto/aiReviewDecision.dto';
+import {
+  AiReviewDecisionEscalationResponseDto,
+  AiReviewDecisionEscalationStatus,
+} from '../../dto/aiReviewEscalation.dto';
 import { Prisma } from '@prisma/client';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
@@ -23,6 +27,9 @@ const DECISION_INCLUDE = {
   },
   submission: {
     select: { id: true, challengeId: true, memberId: true },
+  },
+  escalations: {
+    orderBy: { createdAt: 'desc' as const },
   },
 } as const;
 
@@ -60,6 +67,30 @@ export class AiReviewDecisionService {
     }
   }
 
+  private mapEscalation(e: {
+    id: string;
+    aiReviewDecisionId: string;
+    escalationNotes: string | null;
+    approverNotes: string | null;
+    status: string;
+    createdAt: Date;
+    createdBy: string | null;
+    updatedAt: Date;
+    updatedBy: string | null;
+  }): AiReviewDecisionEscalationResponseDto {
+    return {
+      id: e.id,
+      aiReviewDecisionId: e.aiReviewDecisionId,
+      escalationNotes: e.escalationNotes,
+      approverNotes: e.approverNotes,
+      status: e.status as AiReviewDecisionEscalationStatus,
+      createdAt: e.createdAt,
+      createdBy: e.createdBy,
+      updatedAt: e.updatedAt,
+      updatedBy: e.updatedBy,
+    };
+  }
+
   private mapToResponse(row: {
     id: string;
     submissionId: string;
@@ -79,6 +110,17 @@ export class AiReviewDecisionService {
       challengeId: string | null;
       memberId: string | null;
     };
+    escalations?: Array<{
+      id: string;
+      aiReviewDecisionId: string;
+      escalationNotes: string | null;
+      approverNotes: string | null;
+      status: string;
+      createdAt: Date;
+      createdBy: string | null;
+      updatedAt: Date;
+      updatedBy: string | null;
+    }>;
   }): AiReviewDecisionResponseDto {
     return {
       id: row.id,
@@ -95,6 +137,7 @@ export class AiReviewDecisionService {
       updatedAt: row.updatedAt,
       config: row.config as Record<string, unknown>,
       submission: row.submission as Record<string, unknown>,
+      escalations: row.escalations?.map((e) => this.mapEscalation(e)) ?? [],
     };
   }
 
