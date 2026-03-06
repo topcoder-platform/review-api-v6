@@ -77,7 +77,7 @@ export class AiReviewEscalationService {
     });
     if (!resource) {
       throw new ForbiddenException(
-        'You must be assigned to this challenge as Copilot or a Reviewer (e.g. Reviewer, Iterative Reviewer, Checkpoint Reviewer, Screener) to request or perform an AI review override.',
+        'You must be assigned to this challenge as Copilot or a Reviewer (e.g. Reviewer, Iterative Reviewer, Checkpoint Reviewer) to request or perform an AI review override.',
       );
     }
   }
@@ -268,15 +268,6 @@ export class AiReviewEscalationService {
     if (!escalation || escalation.aiReviewDecisionId !== aiReviewDecisionId) {
       throw new NotFoundException(
         `Escalation with id ${escalationId} not found for this decision.`,
-      );
-    }
-
-    if (
-      escalation.status !==
-      PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL
-    ) {
-      throw new BadRequestException(
-        'Only PENDING_APPROVAL escalations can be updated.',
       );
     }
 
