@@ -15,7 +15,10 @@ import {
   AiReviewDecisionEscalationResponseDto,
   AiReviewDecisionEscalationStatus,
 } from '../../dto/aiReviewEscalation.dto';
-import { AiReviewDecisionStatus } from '@prisma/client';
+import {
+  AiReviewDecisionStatus,
+  AiReviewDecisionEscalationStatus as PrismaAiReviewDecisionEscalationStatus,
+} from '@prisma/client';
 
 function mapEscalationToResponse(row: {
   id: string;
@@ -33,7 +36,7 @@ function mapEscalationToResponse(row: {
     aiReviewDecisionId: row.aiReviewDecisionId,
     escalationNotes: row.escalationNotes,
     approverNotes: row.approverNotes,
-    status: row.status as AiReviewDecisionEscalationStatus,
+    status: row.status as AiReviewDecisionEscalationResponseDto['status'],
     createdAt: row.createdAt,
     createdBy: row.createdBy,
     updatedAt: row.updatedAt,
@@ -57,8 +60,6 @@ export class AiReviewEscalationService {
     challengeId: string,
     memberId: string,
   ): Promise<void> {
-
-
     const resource = await this.resourcePrisma.resource.findFirst({
       where: {
         challengeId,
@@ -135,7 +136,7 @@ export class AiReviewEscalationService {
           aiReviewDecisionId,
           escalationNotes: (dto.escalationNotes ?? '').trim() || null,
           approverNotes,
-          status: AiReviewDecisionEscalationStatus.APPROVED,
+          status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
           createdBy: userId,
           updatedBy: userId,
         },
@@ -212,7 +213,10 @@ export class AiReviewEscalationService {
       return this.createDirectUnlockEscalation(aiReviewDecisionId, dto, userId);
     }
 
-    const isReviewer = await this.isUserReviewerForChallenge(challengeId, userId);
+    const isReviewer = await this.isUserReviewerForChallenge(
+      challengeId,
+      userId,
+    );
     if (isReviewer) {
       const escalationNotes = (dto.escalationNotes ?? '').trim();
       if (!escalationNotes) {
@@ -226,7 +230,7 @@ export class AiReviewEscalationService {
           aiReviewDecisionId,
           escalationNotes,
           approverNotes: (dto.approverNotes ?? '').trim() || null,
-          status: AiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+          status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
           createdBy: userId,
           updatedBy: userId,
         },
@@ -267,7 +271,10 @@ export class AiReviewEscalationService {
       );
     }
 
-    if (escalation.status !== AiReviewDecisionEscalationStatus.PENDING_APPROVAL) {
+    if (
+      escalation.status !==
+      PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL
+    ) {
       throw new BadRequestException(
         'Only PENDING_APPROVAL escalations can be updated.',
       );
@@ -295,7 +302,6 @@ export class AiReviewEscalationService {
     const isAdminUser = isAdmin(authUser);
     const isCopilot = await this.isUserCopilotForChallenge(challengeId, userId);
     if (!isAdminUser && !isCopilot) {
-      
       throw new ForbiddenException(
         'Only Admin or a Copilot assigned to this challenge can update an escalation.',
       );
@@ -307,7 +313,7 @@ export class AiReviewEscalationService {
           where: { id: escalationId },
           data: {
             approverNotes: dto.approverNotes.trim(),
-            status: AiReviewDecisionEscalationStatus.APPROVED,
+            status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
             updatedBy: userId,
           },
         }),
@@ -327,7 +333,7 @@ export class AiReviewEscalationService {
       where: { id: escalationId },
       data: {
         approverNotes: dto.approverNotes.trim(),
-        status: AiReviewDecisionEscalationStatus.REJECTED,
+        status: PrismaAiReviewDecisionEscalationStatus.REJECTED,
         updatedBy: userId,
       },
     });

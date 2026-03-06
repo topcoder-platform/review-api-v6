@@ -34,11 +34,7 @@ export class AiReviewEscalationController {
   ) {}
 
   @Post()
-  @Roles(
-    UserRole.Admin,
-    UserRole.Copilot,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer)
   @ApiOperation({
     summary: 'Create an AI review escalation',
     description:
@@ -109,7 +105,8 @@ export class AiReviewEscalationController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad Request. Only PENDING_APPROVAL escalations can be updated.',
+    description:
+      'Bad Request. Only PENDING_APPROVAL escalations can be updated.',
   })
   @ApiResponse({
     status: 404,
@@ -122,6 +119,11 @@ export class AiReviewEscalationController {
     dto: UpdateAiReviewEscalationDto,
     @User() authUser: JwtUser,
   ) {
-    return this.aiReviewEscalationService.update(id, escalationId, dto, authUser);
+    return this.aiReviewEscalationService.update(
+      id,
+      escalationId,
+      dto,
+      authUser,
+    );
   }
 }

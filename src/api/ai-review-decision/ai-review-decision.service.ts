@@ -67,19 +67,17 @@ export class AiReviewDecisionService {
     }
   }
 
-  private mapEscalation(
-    e: {
-      id: string;
-      aiReviewDecisionId: string;
-      escalationNotes: string | null;
-      approverNotes: string | null;
-      status: string;
-      createdAt: Date;
-      createdBy: string | null;
-      updatedAt: Date;
-      updatedBy: string | null;
-    },
-  ): AiReviewDecisionEscalationResponseDto {
+  private mapEscalation(e: {
+    id: string;
+    aiReviewDecisionId: string;
+    escalationNotes: string | null;
+    approverNotes: string | null;
+    status: string;
+    createdAt: Date;
+    createdBy: string | null;
+    updatedAt: Date;
+    updatedBy: string | null;
+  }): AiReviewDecisionEscalationResponseDto {
     return {
       id: e.id,
       aiReviewDecisionId: e.aiReviewDecisionId,

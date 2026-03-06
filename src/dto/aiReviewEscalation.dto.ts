@@ -1,11 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  IsOptional,
-  IsString,
-  IsEnum,
-  IsIn,
-  IsNotEmpty,
-} from 'class-validator';
+import { IsOptional, IsString, IsIn, IsNotEmpty } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
@@ -22,7 +16,8 @@ export class CreateAiReviewEscalationDto {
     description:
       'Escalation notes / reason (required when creating as Reviewer)',
     required: false,
-    example: 'Evidence suggests the submission meets the bar; see comment thread.',
+    example:
+      'Evidence suggests the submission meets the bar; see comment thread.',
   })
   @IsOptional()
   @IsString()
@@ -43,7 +38,8 @@ export class CreateAiReviewEscalationDto {
 
 export class UpdateAiReviewEscalationDto {
   @ApiProperty({
-    description: 'Approver notes (required for Admin/Copilot when reacting to escalation)',
+    description:
+      'Approver notes (required for Admin/Copilot when reacting to escalation)',
     example: 'Approved after manual review.',
   })
   @IsString()
@@ -53,12 +49,23 @@ export class UpdateAiReviewEscalationDto {
 
   @ApiProperty({
     description: 'New escalation status',
-    enum: [AiReviewDecisionEscalationStatus.APPROVED, AiReviewDecisionEscalationStatus.REJECTED],
+    enum: [
+      AiReviewDecisionEscalationStatus.APPROVED,
+      AiReviewDecisionEscalationStatus.REJECTED,
+    ],
   })
-  @IsIn([AiReviewDecisionEscalationStatus.APPROVED, AiReviewDecisionEscalationStatus.REJECTED], {
-    message: 'status must be APPROVED or REJECTED',
-  })
-  status: AiReviewDecisionEscalationStatus.APPROVED | AiReviewDecisionEscalationStatus.REJECTED;
+  @IsIn(
+    [
+      AiReviewDecisionEscalationStatus.APPROVED,
+      AiReviewDecisionEscalationStatus.REJECTED,
+    ],
+    {
+      message: 'status must be APPROVED or REJECTED',
+    },
+  )
+  status:
+    | AiReviewDecisionEscalationStatus.APPROVED
+    | AiReviewDecisionEscalationStatus.REJECTED;
 }
 
 export class AiReviewDecisionEscalationResponseDto {
