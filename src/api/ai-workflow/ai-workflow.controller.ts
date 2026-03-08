@@ -25,6 +25,7 @@ import {
   UpdateAiWorkflowDto,
   CreateAiWorkflowRunItemsDto,
   UpdateAiWorkflowRunDto,
+  RetriggerAiWorkflowRunDto,
   CreateRunItemCommentDto,
   UpdateAiWorkflowRunItemDto,
   UpdateRunItemCommentDto,
@@ -237,6 +238,26 @@ export class AiWorkflowController {
     body: UpdateAiWorkflowRunDto,
   ) {
     return this.aiWorkflowService.updateWorkflowRun(workflowId, runId, body);
+  }
+
+  @Post('/runs/retrigger')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.UpdateWorkflowRun)
+  @ApiOperation({ summary: 'Re-trigger an AI workflow run by its run ID' })
+  @ApiBody({
+    description: 'Workflow run ID to re-trigger',
+    type: RetriggerAiWorkflowRunDto,
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'A new AI workflow run has been queued for re-dispatch.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  retriggerRun(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: RetriggerAiWorkflowRunDto,
+  ) {
+    return this.aiWorkflowService.retriggerWorkflowRun(body.workflowRunId);
   }
 
   @Get('/:workflowId/runs/:runId/attachments')

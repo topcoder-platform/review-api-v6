@@ -2,16 +2,20 @@
  * Enum defining user roles for role-based access control
  */
 export enum UserRole {
+  Customer = 'Self-Service Customer',
+  User = 'Topcoder User',
+  TopcoderTalent = 'Topcoder Talent',
   Admin = 'administrator',
+  ProjectManager = 'Project Manager',
   Copilot = 'copilot',
-  Screener = 'Screener',
-  IterativeReviewer = 'Iterative Reviewer',
-  Reviewer = 'reviewer',
+  TopcoderStaff = 'Topcoder Staff',
+  TalentManager = 'Talent Manager',
   Submitter = 'Submitter',
-  ProjectManager = 'Manager',
+  Reviewer = 'Reviewer',
   Observer = 'Observer',
   Approver = 'Approver',
-  User = 'Topcoder Talent',
   CheckpointReviewer = 'Checkpoint Reviewer',
   CheckpointScreener = 'Checkpoint Screener',
+  IterativeReviewer = 'Iterative Reviewer',
+  Screener = 'Screener',
 }
