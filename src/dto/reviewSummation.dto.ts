@@ -30,7 +30,8 @@ export class ReviewSummationQueryDto {
   aggregateScore?: string;
 
   @ApiProperty({
-    description: 'The scorecard id',
+    description:
+      'The scorecard identifier filter. Supports scorecard id or legacy id.',
     required: false,
   })
   @IsOptional()
@@ -133,7 +134,8 @@ export class ReviewSummationBaseRequestDto {
   aggregateScore: number;
 
   @ApiProperty({
-    description: 'The scorecard id',
+    description:
+      'The scorecard identifier. Supports scorecard id or legacy id.',
     example: 'd24d4180-65aa-42ec-a945-5fd21dec0501',
   })
   @IsOptional()
@@ -214,7 +216,8 @@ export class ReviewSummationUpdateRequestDto {
   aggregateScore?: number;
 
   @ApiProperty({
-    description: 'The scorecard id',
+    description:
+      'The scorecard identifier. Supports scorecard id or legacy id.',
     example: 'd24d4180-65aa-42ec-a945-5fd21dec0501',
     required: false,
   })

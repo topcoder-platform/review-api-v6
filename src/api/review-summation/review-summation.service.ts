@@ -55,6 +55,65 @@ export class ReviewSummationService {
     return metadata as Prisma.InputJsonValue;
   }
 
+  /**
+   * Resolves a scorecard reference from either internal id or legacy id.
+   * @param rawScorecardId Scorecard identifier provided by caller.
+   * @returns Canonical scorecard id and optional legacy id for persistence.
+   * @throws BadRequestException When the scorecard cannot be resolved.
+   */
+  private async resolveScorecardReference(rawScorecardId?: string): Promise<{
+    scorecardId?: string;
+    scorecardLegacyId?: string | null;
+  }> {
+    if (rawScorecardId === undefined) {
+      return {};
+    }
+
+    const requestedScorecardId = String(rawScorecardId).trim();
+    if (!requestedScorecardId.length) {
+      return {};
+    }
+
+    const scorecardById = await this.prisma.scorecard.findUnique({
+      where: { id: requestedScorecardId },
+      select: {
+        id: true,
+        legacyId: true,
+      },
+    });
+
+    if (scorecardById) {
+      return {
+        scorecardId: scorecardById.id,
+        scorecardLegacyId: scorecardById.legacyId ?? null,
+      };
+    }
+
+    const scorecardByLegacyId = await this.prisma.scorecard.findFirst({
+      where: { legacyId: requestedScorecardId },
+      select: {
+        id: true,
+        legacyId: true,
+      },
+    });
+
+    if (scorecardByLegacyId) {
+      return {
+        scorecardId: scorecardByLegacyId.id,
+        scorecardLegacyId: scorecardByLegacyId.legacyId ?? requestedScorecardId,
+      };
+    }
+
+    throw new BadRequestException({
+      message: `Scorecard with ID ${requestedScorecardId} was not found. Provide a valid scorecard ID or legacy ID.`,
+      code: 'INVALID_SCORECARD_ID',
+      details: {
+        field: 'scorecardId',
+        value: requestedScorecardId,
+      },
+    });
+  }
+
   private phaseNameEquals(
     phaseName: string | null | undefined,
     target: string,
@@ -480,10 +539,21 @@ export class ReviewSummationService {
         }
       }
 
-      const { metadata, ...rest } = body;
+      const { metadata, scorecardId: requestedScorecardId, ...rest } = body;
       const createData: Prisma.reviewSummationUncheckedCreateInput = {
         ...rest,
       };
+
+      if (requestedScorecardId !== undefined) {
+        const resolvedScorecard =
+          await this.resolveScorecardReference(requestedScorecardId);
+        if (resolvedScorecard.scorecardId !== undefined) {
+          createData.scorecardId = resolvedScorecard.scorecardId;
+          createData.scorecardLegacyId =
+            resolvedScorecard.scorecardLegacyId ?? null;
+        }
+      }
+
       const normalizedMetadata = this.prepareMetadata(metadata);
       if (normalizedMetadata !== undefined) {
         createData.metadata = normalizedMetadata;
@@ -994,10 +1064,19 @@ export class ReviewSummationService {
         }
       }
 
-      const { metadata, ...rest } = body;
+      const { metadata, scorecardId: requestedScorecardId, ...rest } = body;
       const updateData: Prisma.reviewSummationUncheckedUpdateInput = {
         ...rest,
       };
+
+      if (requestedScorecardId !== undefined) {
+        const resolvedScorecard =
+          await this.resolveScorecardReference(requestedScorecardId);
+        updateData.scorecardId = resolvedScorecard.scorecardId ?? null;
+        updateData.scorecardLegacyId =
+          resolvedScorecard.scorecardLegacyId ?? null;
+      }
+
       const normalizedMetadata = this.prepareMetadata(metadata);
       if (normalizedMetadata !== undefined) {
         updateData.metadata = normalizedMetadata;
