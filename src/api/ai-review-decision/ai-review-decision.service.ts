@@ -192,8 +192,7 @@ export class AiReviewDecisionService {
             this.logger.debug(`resources: ${JSON.stringify(resources)}`);
             isObserverForChallenge = resources.some(
               (r) =>
-                r.roleName?.toLowerCase() ===
-                UserRole.Observer.toLowerCase(),
+                r.roleName?.toLowerCase() === UserRole.Observer.toLowerCase(),
             );
           }
 
@@ -219,7 +218,9 @@ export class AiReviewDecisionService {
               challengeId,
               memberId,
             );
-          this.logger.debug(`resources no submission id: ${JSON.stringify(resources)}`);
+          this.logger.debug(
+            `resources no submission id: ${JSON.stringify(resources)}`,
+          );
           isObserverForChallenge = resources.some(
             (r) =>
               r.roleName?.toLowerCase() === UserRole.Observer.toLowerCase(),
@@ -244,7 +245,9 @@ export class AiReviewDecisionService {
 
     if (!isAllowed) {
       const memberId = authUser.userId?.toString()?.trim();
-      this.logger.debug(`memberId: ${memberId} isObserverForChallenge: ${isObserverForChallenge}`);
+      this.logger.debug(
+        `memberId: ${memberId} isObserverForChallenge: ${isObserverForChallenge}`,
+      );
       if (memberId && !isObserverForChallenge) {
         where.submission = { memberId };
       }
