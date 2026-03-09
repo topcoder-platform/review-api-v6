@@ -7,7 +7,6 @@ import {
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import {
   ListAiReviewDecisionQueryDto,
@@ -21,7 +20,6 @@ import {
 import { Prisma } from '@prisma/client';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
 
 const DECISION_INCLUDE = {
   config: {
@@ -42,7 +40,6 @@ export class AiReviewDecisionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly resourcePrisma: ResourcePrismaService,
-    private readonly resourceApiService: ResourceApiService,
     private readonly challengeApiService: ChallengeApiService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewDecisionService');
@@ -68,6 +65,27 @@ export class AiReviewDecisionService {
         'You must be assigned to this challenge to view its AI review decisions.',
       );
     }
+  }
+
+  /**
+   * Returns true if the member has Observer, Approver, or Manager resource role for the challenge (via resource DB).
+   * Such members can view AI review decisions for any submission on the challenge, even when not completed or not their own.
+   */
+  private async hasObserverApproverOrManagerForChallenge(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: {
+        challengeId,
+        memberId,
+        resourceRole: {
+          nameLower: { in: ['observer', 'approver', 'manager'] },
+        },
+      },
+      select: { id: true },
+    });
+    return !!resource;
   }
 
   private mapEscalation(e: {
@@ -149,7 +167,7 @@ export class AiReviewDecisionService {
     authUser: JwtUser,
   ): Promise<AiReviewDecisionResponseDto[]> {
     const isAllowed = authUser.isMachine || isAdmin(authUser);
-    let isObserverForChallenge = false;
+    let hasExtendedViewAccess = false;
     if (!isAllowed && !query.configId && !query.submissionId) {
       throw new BadRequestException(
         'For non-admin access, configId or submissionId is required to verify challenge access.',
@@ -182,17 +200,13 @@ export class AiReviewDecisionService {
         challengeId = sub.challengeId ?? null;
 
         if (challengeId) {
-          const memberId = authUser.userId;
+          const memberId = authUser.userId?.toString()?.trim();
           if (memberId) {
-            const resources =
-              await this.resourceApiService.getMemberResourcesRoles(
+            hasExtendedViewAccess =
+              await this.hasObserverApproverOrManagerForChallenge(
                 challengeId,
                 memberId,
               );
-            isObserverForChallenge = resources.some(
-              (r) =>
-                r.roleName?.toLowerCase() === UserRole.Observer.toLowerCase(),
-            );
           }
 
           const challenge =
@@ -200,7 +214,7 @@ export class AiReviewDecisionService {
           if (
             challenge.status !== ChallengeStatus.COMPLETED &&
             sub.memberId !== authUser.userId?.toString() &&
-            !isObserverForChallenge
+            !hasExtendedViewAccess
           ) {
             throw new ForbiddenException(
               `You are not allowed to view this submission's AI review decisions.`,
@@ -210,17 +224,13 @@ export class AiReviewDecisionService {
       }
 
       if (challengeId && !query.submissionId) {
-        const memberId = authUser.userId;
+        const memberId = authUser.userId?.toString()?.trim();
         if (memberId) {
-          const resources =
-            await this.resourceApiService.getMemberResourcesRoles(
+          hasExtendedViewAccess =
+            await this.hasObserverApproverOrManagerForChallenge(
               challengeId,
               memberId,
             );
-          isObserverForChallenge = resources.some(
-            (r) =>
-              r.roleName?.toLowerCase() === UserRole.Observer.toLowerCase(),
-          );
         }
       }
 
@@ -241,7 +251,7 @@ export class AiReviewDecisionService {
 
     if (!isAllowed) {
       const memberId = authUser.userId?.toString()?.trim();
-      if (memberId && !isObserverForChallenge) {
+      if (memberId && !hasExtendedViewAccess) {
         where.submission = { memberId };
       }
     }
