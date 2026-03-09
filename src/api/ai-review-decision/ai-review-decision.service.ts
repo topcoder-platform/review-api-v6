@@ -187,6 +187,28 @@ export class AiReviewDecisionService {
           );
         }
         challengeId = config.challengeId;
+
+        if (challengeId) {
+          const memberId = authUser.userId?.toString()?.trim();
+          if (memberId) {
+            hasExtendedViewAccess =
+              await this.hasObserverApproverOrManagerForChallenge(
+                challengeId,
+                memberId,
+              );
+          }
+
+          const challenge =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            !hasExtendedViewAccess
+          ) {
+            throw new ForbiddenException(
+              `You are not allowed to view this submission's AI review decisions.`,
+            );
+          }
+        }
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
           where: { id: query.submissionId },
