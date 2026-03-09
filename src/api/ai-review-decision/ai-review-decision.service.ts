@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import {
   ListAiReviewDecisionQueryDto,
@@ -20,6 +21,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 
 const DECISION_INCLUDE = {
   config: {
@@ -40,6 +42,7 @@ export class AiReviewDecisionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly resourcePrisma: ResourcePrismaService,
+    private readonly resourceApiService: ResourceApiService,
     private readonly challengeApiService: ChallengeApiService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewDecisionService');
@@ -146,6 +149,7 @@ export class AiReviewDecisionService {
     authUser: JwtUser,
   ): Promise<AiReviewDecisionResponseDto[]> {
     const isAllowed = authUser.isMachine || isAdmin(authUser);
+    let isObserverForChallenge = false;
     if (!isAllowed && !query.configId && !query.submissionId) {
       throw new BadRequestException(
         'For non-admin access, configId or submissionId is required to verify challenge access.',
@@ -178,16 +182,46 @@ export class AiReviewDecisionService {
         challengeId = sub.challengeId ?? null;
 
         if (challengeId) {
+          const memberId = authUser.userId;
+          if (memberId) {
+            const resources =
+              await this.resourceApiService.getMemberResourcesRoles(
+                challengeId,
+                memberId,
+              );
+            isObserverForChallenge = resources.some(
+              (r) =>
+                r.roleName?.toLowerCase() ===
+                UserRole.Observer.toLowerCase(),
+            );
+          }
+
           const challenge =
             await this.challengeApiService.getChallengeDetail(challengeId);
           if (
             challenge.status !== ChallengeStatus.COMPLETED &&
-            sub.memberId !== authUser.userId?.toString()
+            sub.memberId !== authUser.userId?.toString() &&
+            !isObserverForChallenge
           ) {
             throw new ForbiddenException(
               `You are not allowed to view this submission's AI review decisions.`,
             );
           }
+        }
+      }
+
+      if (challengeId && !query.submissionId) {
+        const memberId = authUser.userId;
+        if (memberId) {
+          const resources =
+            await this.resourceApiService.getMemberResourcesRoles(
+              challengeId,
+              memberId,
+            );
+          isObserverForChallenge = resources.some(
+            (r) =>
+              r.roleName?.toLowerCase() === UserRole.Observer.toLowerCase(),
+          );
         }
       }
       if (!challengeId) {
@@ -207,7 +241,7 @@ export class AiReviewDecisionService {
 
     if (!isAllowed) {
       const memberId = authUser.userId?.toString()?.trim();
-      if (memberId) {
+      if (memberId && !isObserverForChallenge) {
         where.submission = { memberId };
       }
     }

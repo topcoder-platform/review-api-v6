@@ -74,7 +74,7 @@ workflows:
                       branches:
                           only:
                               - develop
-                              - pm-4172
+                              - pm-3849_observer-fix
 
             - 'build-prod':
                   context: org-global
