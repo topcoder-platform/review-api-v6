@@ -134,6 +134,42 @@ export class AiReviewEscalationService {
     return !!resource;
   }
 
+  private async createPendingEscalationForRole(
+    aiReviewDecisionId: string,
+    dto: CreateAiReviewEscalationDto,
+    userId: string,
+    challengeId: string,
+    allowedPhases: string[],
+    phaseErrorMessage: string,
+    missingNotesErrorMessage: string,
+  ): Promise<AiReviewDecisionEscalationResponseDto> {
+    const phaseOpen = await this.challengeApiService.isPhaseOpen(
+      challengeId,
+      allowedPhases,
+    );
+    if (!phaseOpen) {
+      throw new ForbiddenException(phaseErrorMessage);
+    }
+
+    const escalationNotes = (dto.escalationNotes ?? '').trim();
+    if (!escalationNotes) {
+      throw new BadRequestException(missingNotesErrorMessage);
+    }
+
+    const escalation = await this.prisma.aiReviewDecisionEscalation.create({
+      data: {
+        aiReviewDecisionId,
+        escalationNotes,
+        approverNotes: (dto.approverNotes ?? '').trim() || null,
+        status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+        createdBy: userId,
+        updatedBy: userId,
+      },
+    });
+
+    return mapEscalationToResponse(escalation);
+  }
+
   private async createDirectUnlockEscalation(
     aiReviewDecisionId: string,
     dto: CreateAiReviewEscalationDto,
@@ -224,35 +260,15 @@ export class AiReviewEscalationService {
       userId,
     );
     if (isReviewer) {
-      const reviewPhaseOpen = await this.challengeApiService.isPhaseOpen(
+      return this.createPendingEscalationForRole(
+        aiReviewDecisionId,
+        dto,
+        userId,
         challengeId,
         ['Review', 'Iterative Review'],
+        'Override is only allowed when the challenge is in Review or Iterative Review phase.',
+        'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
       );
-      if (!reviewPhaseOpen) {
-        throw new ForbiddenException(
-          'Override is only allowed when the challenge is in Review or Iterative Review phase.',
-        );
-      }
-
-      const escalationNotes = (dto.escalationNotes ?? '').trim();
-      if (!escalationNotes) {
-        throw new BadRequestException(
-          'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
-        );
-      }
-
-      const escalation = await this.prisma.aiReviewDecisionEscalation.create({
-        data: {
-          aiReviewDecisionId,
-          escalationNotes,
-          approverNotes: (dto.approverNotes ?? '').trim() || null,
-          status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
-
-      return mapEscalationToResponse(escalation);
     }
 
     const isScreener = await this.isUserScreenerForChallenge(
@@ -260,35 +276,15 @@ export class AiReviewEscalationService {
       userId,
     );
     if (isScreener) {
-      const screeningPhaseOpen = await this.challengeApiService.isPhaseOpen(
+      return this.createPendingEscalationForRole(
+        aiReviewDecisionId,
+        dto,
+        userId,
         challengeId,
         ['Screening', 'Checkpoint Screening'],
+        'Override is only allowed when the challenge is in Screening or Checkpoint Screening phase.',
+        'escalationNotes is required when creating an escalation as a Screener (reason/evidence).',
       );
-      if (!screeningPhaseOpen) {
-        throw new ForbiddenException(
-          'Override is only allowed when the challenge is in Screening or Checkpoint Screening phase.',
-        );
-      }
-
-      const escalationNotes = (dto.escalationNotes ?? '').trim();
-      if (!escalationNotes) {
-        throw new BadRequestException(
-          'escalationNotes is required when creating an escalation as a Screener (reason/evidence).',
-        );
-      }
-
-      const escalation = await this.prisma.aiReviewDecisionEscalation.create({
-        data: {
-          aiReviewDecisionId,
-          escalationNotes,
-          approverNotes: (dto.approverNotes ?? '').trim() || null,
-          status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
-
-      return mapEscalationToResponse(escalation);
     }
 
     throw new ForbiddenException(
