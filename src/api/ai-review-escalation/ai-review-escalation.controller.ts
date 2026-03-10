@@ -34,11 +34,15 @@ export class AiReviewEscalationController {
   ) {}
 
   @Post()
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.Reviewer,
+  )
   @ApiOperation({
     summary: 'Create an AI review escalation',
     description:
-      'Roles: Admin, Copilot, Reviewer (all kinds). Reviewer: creates with PENDING_APPROVAL (escalationNotes required). Admin/Copilot: direct unlock with APPROVED (approverNotes required). Challenge must be in Review or Iterative Review phase; override not allowed for passing decisions.',
+      'Roles: Admin, Copilot, Reviewer, Screener, Checkpoint Screener. Reviewer: creates with PENDING_APPROVAL (escalationNotes required) when challenge is in Review or Iterative Review phase. Screener/Checkpoint Screener: same PENDING_APPROVAL flow when challenge is in Screening or Checkpoint Screening phase. Admin/Copilot: direct unlock with APPROVED (approverNotes required). Override not allowed for passing decisions.',
   })
   @ApiParam({
     name: 'id',
@@ -62,7 +66,7 @@ export class AiReviewEscalationController {
   @ApiResponse({
     status: 403,
     description:
-      'Forbidden. Challenge not in review phase, or caller not assigned to challenge.',
+      'Forbidden. Challenge not in the required phase (Review/Iterative Review for Reviewers; Screening/Checkpoint Screening for Screeners)',
   })
   @ApiResponse({
     status: 404,
