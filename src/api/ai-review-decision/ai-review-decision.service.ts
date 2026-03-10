@@ -195,6 +195,7 @@ export class AiReviewDecisionService {
           'You must be assigned to this challenge to view its AI review decisions.',
         );
       }
+      // TODO: need to actually check use has one of: review, copilot, pm, tm
       await this.validateCallerHasResourceForChallenge(challengeId, authUser);
     }
 

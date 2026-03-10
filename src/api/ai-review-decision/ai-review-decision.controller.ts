@@ -33,6 +33,7 @@ export class AiReviewDecisionController {
     UserRole.Admin,
     UserRole.Copilot,
     UserRole.User,
+    UserRole.Reviewer,
     UserRole.ProjectManager,
     UserRole.TopcoderTalent,
   )
