@@ -34,11 +34,7 @@ export class AiReviewEscalationController {
   ) {}
 
   @Post()
-  @Roles(
-    UserRole.Admin,
-    UserRole.Copilot,
-    UserRole.Reviewer,
-  )
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.Reviewer)
   @ApiOperation({
     summary: 'Create an AI review escalation',
     description:
