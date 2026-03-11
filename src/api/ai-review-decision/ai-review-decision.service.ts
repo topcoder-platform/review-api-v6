@@ -261,6 +261,7 @@ export class AiReviewDecisionService {
           'You must be assigned to this challenge to view its AI review decisions.',
         );
       }
+
       await this.validateCallerHasResourceForChallenge(challengeId, authUser);
     }
 
