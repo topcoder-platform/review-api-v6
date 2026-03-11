@@ -67,6 +67,27 @@ export class AiReviewDecisionService {
     }
   }
 
+  /**
+   * Returns true if the member has Observer, Approver, or Manager resource role for the challenge (via resource DB).
+   * Such members can view AI review decisions for any submission on the challenge, even when not completed or not their own.
+   */
+  private async hasObserverApproverOrManagerForChallenge(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: {
+        challengeId,
+        memberId,
+        resourceRole: {
+          nameLower: { in: ['observer', 'approver', 'manager'] },
+        },
+      },
+      select: { id: true },
+    });
+    return !!resource;
+  }
+
   private mapEscalation(e: {
     id: string;
     aiReviewDecisionId: string;
@@ -146,6 +167,7 @@ export class AiReviewDecisionService {
     authUser: JwtUser,
   ): Promise<AiReviewDecisionResponseDto[]> {
     const isAllowed = authUser.isMachine || isAdmin(authUser);
+    let hasExtendedViewAccess = false;
     if (!isAllowed && !query.configId && !query.submissionId) {
       throw new BadRequestException(
         'For non-admin access, configId or submissionId is required to verify challenge access.',
@@ -165,6 +187,28 @@ export class AiReviewDecisionService {
           );
         }
         challengeId = config.challengeId;
+
+        if (challengeId) {
+          const memberId = authUser.userId?.toString()?.trim();
+          if (memberId) {
+            hasExtendedViewAccess =
+              await this.hasObserverApproverOrManagerForChallenge(
+                challengeId,
+                memberId,
+              );
+          }
+
+          const challenge =
+            await this.challengeApiService.getChallengeDetail(challengeId);
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            !hasExtendedViewAccess
+          ) {
+            throw new ForbiddenException(
+              `You are not allowed to view this submission's AI review decisions.`,
+            );
+          }
+        }
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
           where: { id: query.submissionId },
@@ -178,11 +222,21 @@ export class AiReviewDecisionService {
         challengeId = sub.challengeId ?? null;
 
         if (challengeId) {
+          const memberId = authUser.userId?.toString()?.trim();
+          if (memberId) {
+            hasExtendedViewAccess =
+              await this.hasObserverApproverOrManagerForChallenge(
+                challengeId,
+                memberId,
+              );
+          }
+
           const challenge =
             await this.challengeApiService.getChallengeDetail(challengeId);
           if (
             challenge.status !== ChallengeStatus.COMPLETED &&
-            sub.memberId !== authUser.userId?.toString()
+            sub.memberId !== authUser.userId?.toString() &&
+            !hasExtendedViewAccess
           ) {
             throw new ForbiddenException(
               `You are not allowed to view this submission's AI review decisions.`,
@@ -190,11 +244,24 @@ export class AiReviewDecisionService {
           }
         }
       }
+
+      if (challengeId && !query.submissionId) {
+        const memberId = authUser.userId?.toString()?.trim();
+        if (memberId) {
+          hasExtendedViewAccess =
+            await this.hasObserverApproverOrManagerForChallenge(
+              challengeId,
+              memberId,
+            );
+        }
+      }
+
       if (!challengeId) {
         throw new ForbiddenException(
           'You must be assigned to this challenge to view its AI review decisions.',
         );
       }
+
       await this.validateCallerHasResourceForChallenge(challengeId, authUser);
     }
 
@@ -207,7 +274,7 @@ export class AiReviewDecisionService {
 
     if (!isAllowed) {
       const memberId = authUser.userId?.toString()?.trim();
-      if (memberId) {
+      if (memberId && !hasExtendedViewAccess) {
         where.submission = { memberId };
       }
     }
