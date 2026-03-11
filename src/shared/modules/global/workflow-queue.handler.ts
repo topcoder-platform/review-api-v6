@@ -487,36 +487,23 @@ export class WorkflowQueueHandler implements OnModuleInit {
     challengeId: string,
     aiWorkflowIds: string[],
   ): Promise<number> {
-    try {
-      if (!aiWorkflowIds || aiWorkflowIds.length === 0) {
-        return 0;
-      }
-
-      const inProgressStatuses = [
-        'INIT',
-        'QUEUED',
-        'DISPATCHED',
-        'IN_PROGRESS',
-      ];
-
-      const count = await this.prisma.aiWorkflowRun.count({
-        where: {
-          workflowId: { in: aiWorkflowIds },
-          status: { in: inProgressStatuses },
-          submission: {
-            challengeId,
-          },
-        },
-      });
-
-      return count;
-    } catch (error) {
-      this.logger.error(
-        `[getInProgressAiWorkflowRunCount] Failed to count in-progress AI workflow runs for challenge ${challengeId}`,
-        error,
-      );
+    if (!aiWorkflowIds || aiWorkflowIds.length === 0) {
       return 0;
     }
+
+    const inProgressStatuses = ['INIT', 'QUEUED', 'DISPATCHED', 'IN_PROGRESS'];
+
+    const count = await this.prisma.aiWorkflowRun.count({
+      where: {
+        workflowId: { in: aiWorkflowIds },
+        status: { in: inProgressStatuses },
+        submission: {
+          challengeId,
+        },
+      },
+    });
+
+    return count;
   }
 
   /**
