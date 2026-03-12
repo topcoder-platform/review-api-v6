@@ -74,24 +74,23 @@ export class AiReviewDecisionService {
   private async hasExtendedViewAccessForChallenge(
     challengeId: string,
     memberId: string,
+    allowedRoles: string[] = [
+      'observer',
+      'approver',
+      'manager',
+      'copilot',
+      'checkpoint reviewer',
+      'checkpoint screener',
+      'iterative reviewer',
+      'screener',
+    ],
   ): Promise<boolean> {
     const resource = await this.resourcePrisma.resource.findFirst({
       where: {
         challengeId,
         memberId,
         resourceRole: {
-          nameLower: {
-            in: [
-              'observer',
-              'approver',
-              'manager',
-              'copilot',
-              'checkpoint reviewer',
-              'checkpoint screener',
-              'iterative reviewer',
-              'screener',
-            ],
-          },
+          nameLower: { in: allowedRoles },
         },
       },
       select: { id: true },
@@ -198,28 +197,6 @@ export class AiReviewDecisionService {
           );
         }
         challengeId = config.challengeId;
-
-        if (challengeId) {
-          const memberId = authUser.userId?.toString()?.trim();
-          if (memberId) {
-            hasExtendedViewAccess =
-              await this.hasExtendedViewAccessForChallenge(
-                challengeId,
-                memberId,
-              );
-          }
-
-          const challenge =
-            await this.challengeApiService.getChallengeDetail(challengeId);
-          if (
-            challenge.status !== ChallengeStatus.COMPLETED &&
-            !hasExtendedViewAccess
-          ) {
-            throw new ForbiddenException(
-              `You are not allowed to view this submission's AI review decisions.`,
-            );
-          }
-        }
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
           where: { id: query.submissionId },
