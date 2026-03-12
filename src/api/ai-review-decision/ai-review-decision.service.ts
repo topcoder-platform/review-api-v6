@@ -80,7 +80,18 @@ export class AiReviewDecisionService {
         challengeId,
         memberId,
         resourceRole: {
-          nameLower: { in: ['observer', 'approver', 'manager', 'copilot', 'checkpoint reviewer', 'checkpoint screener', 'iterative reviewer', 'screener'] },
+          nameLower: {
+            in: [
+              'observer',
+              'approver',
+              'manager',
+              'copilot',
+              'checkpoint reviewer',
+              'checkpoint screener',
+              'iterative reviewer',
+              'screener',
+            ],
+          },
         },
       },
       select: { id: true },
@@ -248,11 +259,10 @@ export class AiReviewDecisionService {
       if (challengeId && !query.submissionId) {
         const memberId = authUser.userId?.toString()?.trim();
         if (memberId) {
-          hasExtendedViewAccess =
-            await this.hasExtendedViewAccessForChallenge(
-              challengeId,
-              memberId,
-            );
+          hasExtendedViewAccess = await this.hasExtendedViewAccessForChallenge(
+            challengeId,
+            memberId,
+          );
         }
       }
 
