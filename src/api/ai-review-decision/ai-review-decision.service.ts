@@ -177,7 +177,6 @@ export class AiReviewDecisionService {
     authUser: JwtUser,
   ): Promise<AiReviewDecisionResponseDto[]> {
     const isAllowed = authUser.isMachine || isAdmin(authUser);
-    let hasExtendedViewAccess = false;
     if (!isAllowed && !query.configId && !query.submissionId) {
       throw new BadRequestException(
         'For non-admin access, configId or submissionId is required to verify challenge access.',
@@ -201,9 +200,15 @@ export class AiReviewDecisionService {
         challengeId = config.challengeId;
         const challenge =
           await this.challengeApiService.getChallengeDetail(challengeId);
-        if (challenge.status !== ChallengeStatus.COMPLETED) {
-          where.submission = { memberId };
-        }
+          if (memberId) {
+            const isExtendedViewAccess = await this.hasExtendedViewAccessForChallenge(
+              challengeId,
+              memberId,
+            );
+            if (challenge.status !== ChallengeStatus.COMPLETED && !isExtendedViewAccess) {
+              where.submission = { memberId };
+            }
+          }
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
           where: { id: query.submissionId },
@@ -217,6 +222,7 @@ export class AiReviewDecisionService {
         challengeId = sub.challengeId ?? null;
 
         if (challengeId) {
+          let hasExtendedViewAccess = false;
           if (memberId) {
             hasExtendedViewAccess =
               await this.hasExtendedViewAccessForChallenge(
@@ -236,18 +242,9 @@ export class AiReviewDecisionService {
             );
           }
 
-          if (challenge.status !== ChallengeStatus.COMPLETED) {
+          if (challenge.status !== ChallengeStatus.COMPLETED && !hasExtendedViewAccess) {
             where.submission = { memberId };
           }
-        }
-      }
-
-      if (challengeId && !query.submissionId) {
-        if (memberId) {
-          hasExtendedViewAccess = await this.hasExtendedViewAccessForChallenge(
-            challengeId,
-            memberId,
-          );
         }
       }
 
