@@ -184,6 +184,10 @@ export class AiReviewDecisionService {
     }
 
     const memberId = authUser.userId?.toString()?.trim();
+
+    if (!memberId) {
+      throw new ForbiddenException('Cannot determine user identity.');
+    }
     const where: Prisma.aiReviewDecisionWhereInput = {};
     if (!isAllowed) {
       let challengeId: string | null = null;
@@ -200,15 +204,13 @@ export class AiReviewDecisionService {
         challengeId = config.challengeId;
         const challenge =
           await this.challengeApiService.getChallengeDetail(challengeId);
-        if (memberId) {
-          const isExtendedViewAccess =
-            await this.hasExtendedViewAccessForChallenge(challengeId, memberId);
-          if (
-            challenge.status !== ChallengeStatus.COMPLETED &&
-            !isExtendedViewAccess
-          ) {
-            where.submission = { memberId };
-          }
+        const isExtendedViewAccess =
+          await this.hasExtendedViewAccessForChallenge(challengeId, memberId);
+        if (
+          challenge.status !== ChallengeStatus.COMPLETED &&
+          !isExtendedViewAccess
+        ) {
+          where.submission = { memberId };
         }
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
@@ -223,14 +225,8 @@ export class AiReviewDecisionService {
         challengeId = sub.challengeId ?? null;
 
         if (challengeId) {
-          let hasExtendedViewAccess = false;
-          if (memberId) {
-            hasExtendedViewAccess =
-              await this.hasExtendedViewAccessForChallenge(
-                challengeId,
-                memberId,
-              );
-          }
+          const hasExtendedViewAccess =
+            await this.hasExtendedViewAccessForChallenge(challengeId, memberId);
           const challenge =
             await this.challengeApiService.getChallengeDetail(challengeId);
           if (
