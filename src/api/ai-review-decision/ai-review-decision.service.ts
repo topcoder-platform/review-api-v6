@@ -261,7 +261,7 @@ export class AiReviewDecisionService {
 
     if (!isAllowed) {
       const memberId = authUser.userId?.toString()?.trim();
-      if (memberId && !hasExtendedViewAccess) {
+      if (memberId && !hasExtendedViewAccess && !query.submissionId) {
         where.submission = { memberId };
       }
     }
