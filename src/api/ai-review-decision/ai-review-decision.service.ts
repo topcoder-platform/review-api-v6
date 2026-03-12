@@ -200,15 +200,16 @@ export class AiReviewDecisionService {
         challengeId = config.challengeId;
         const challenge =
           await this.challengeApiService.getChallengeDetail(challengeId);
-          if (memberId) {
-            const isExtendedViewAccess = await this.hasExtendedViewAccessForChallenge(
-              challengeId,
-              memberId,
-            );
-            if (challenge.status !== ChallengeStatus.COMPLETED && !isExtendedViewAccess) {
-              where.submission = { memberId };
-            }
+        if (memberId) {
+          const isExtendedViewAccess =
+            await this.hasExtendedViewAccessForChallenge(challengeId, memberId);
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            !isExtendedViewAccess
+          ) {
+            where.submission = { memberId };
           }
+        }
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
           where: { id: query.submissionId },
@@ -242,7 +243,10 @@ export class AiReviewDecisionService {
             );
           }
 
-          if (challenge.status !== ChallengeStatus.COMPLETED && !hasExtendedViewAccess) {
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            !hasExtendedViewAccess
+          ) {
             where.submission = { memberId };
           }
         }
