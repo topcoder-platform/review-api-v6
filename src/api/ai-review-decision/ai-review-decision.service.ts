@@ -71,7 +71,7 @@ export class AiReviewDecisionService {
    * Returns true if the member has Observer, Approver, or Manager resource role for the challenge (via resource DB).
    * Such members can view AI review decisions for any submission on the challenge, even when not completed or not their own.
    */
-  private async hasObserverApproverOrManagerForChallenge(
+  private async hasExtendedViewAccessForChallenge(
     challengeId: string,
     memberId: string,
   ): Promise<boolean> {
@@ -80,7 +80,7 @@ export class AiReviewDecisionService {
         challengeId,
         memberId,
         resourceRole: {
-          nameLower: { in: ['observer', 'approver', 'manager'] },
+          nameLower: { in: ['observer', 'approver', 'manager', 'copilot', 'checkpoint reviewer', 'checkpoint screener', 'iterative reviewer', 'screener'] },
         },
       },
       select: { id: true },
@@ -192,7 +192,7 @@ export class AiReviewDecisionService {
           const memberId = authUser.userId?.toString()?.trim();
           if (memberId) {
             hasExtendedViewAccess =
-              await this.hasObserverApproverOrManagerForChallenge(
+              await this.hasExtendedViewAccessForChallenge(
                 challengeId,
                 memberId,
               );
@@ -225,7 +225,7 @@ export class AiReviewDecisionService {
           const memberId = authUser.userId?.toString()?.trim();
           if (memberId) {
             hasExtendedViewAccess =
-              await this.hasObserverApproverOrManagerForChallenge(
+              await this.hasExtendedViewAccessForChallenge(
                 challengeId,
                 memberId,
               );
@@ -249,7 +249,7 @@ export class AiReviewDecisionService {
         const memberId = authUser.userId?.toString()?.trim();
         if (memberId) {
           hasExtendedViewAccess =
-            await this.hasObserverApproverOrManagerForChallenge(
+            await this.hasExtendedViewAccessForChallenge(
               challengeId,
               memberId,
             );
