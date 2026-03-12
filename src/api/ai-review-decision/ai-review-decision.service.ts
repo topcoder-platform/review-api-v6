@@ -71,16 +71,26 @@ export class AiReviewDecisionService {
    * Returns true if the member has Observer, Approver, or Manager resource role for the challenge (via resource DB).
    * Such members can view AI review decisions for any submission on the challenge, even when not completed or not their own.
    */
-  private async hasObserverApproverOrManagerForChallenge(
+  private async hasExtendedViewAccessForChallenge(
     challengeId: string,
     memberId: string,
+    allowedRoles: string[] = [
+      'observer',
+      'approver',
+      'manager',
+      'copilot',
+      'checkpoint reviewer',
+      'checkpoint screener',
+      'iterative reviewer',
+      'screener',
+    ],
   ): Promise<boolean> {
     const resource = await this.resourcePrisma.resource.findFirst({
       where: {
         challengeId,
         memberId,
         resourceRole: {
-          nameLower: { in: ['observer', 'approver', 'manager'] },
+          nameLower: { in: allowedRoles },
         },
       },
       select: { id: true },
@@ -167,13 +177,18 @@ export class AiReviewDecisionService {
     authUser: JwtUser,
   ): Promise<AiReviewDecisionResponseDto[]> {
     const isAllowed = authUser.isMachine || isAdmin(authUser);
-    let hasExtendedViewAccess = false;
     if (!isAllowed && !query.configId && !query.submissionId) {
       throw new BadRequestException(
         'For non-admin access, configId or submissionId is required to verify challenge access.',
       );
     }
 
+    const memberId = authUser.userId?.toString()?.trim();
+
+    if (!memberId) {
+      throw new ForbiddenException('Cannot determine user identity.');
+    }
+    const where: Prisma.aiReviewDecisionWhereInput = {};
     if (!isAllowed) {
       let challengeId: string | null = null;
       if (query.configId) {
@@ -187,27 +202,15 @@ export class AiReviewDecisionService {
           );
         }
         challengeId = config.challengeId;
-
-        if (challengeId) {
-          const memberId = authUser.userId?.toString()?.trim();
-          if (memberId) {
-            hasExtendedViewAccess =
-              await this.hasObserverApproverOrManagerForChallenge(
-                challengeId,
-                memberId,
-              );
-          }
-
-          const challenge =
-            await this.challengeApiService.getChallengeDetail(challengeId);
-          if (
-            challenge.status !== ChallengeStatus.COMPLETED &&
-            !hasExtendedViewAccess
-          ) {
-            throw new ForbiddenException(
-              `You are not allowed to view this submission's AI review decisions.`,
-            );
-          }
+        const challenge =
+          await this.challengeApiService.getChallengeDetail(challengeId);
+        const isExtendedViewAccess =
+          await this.hasExtendedViewAccessForChallenge(challengeId, memberId);
+        if (
+          challenge.status !== ChallengeStatus.COMPLETED &&
+          !isExtendedViewAccess
+        ) {
+          where.submission = { memberId };
         }
       } else if (query.submissionId) {
         const sub = await this.prisma.submission.findUnique({
@@ -222,37 +225,26 @@ export class AiReviewDecisionService {
         challengeId = sub.challengeId ?? null;
 
         if (challengeId) {
-          const memberId = authUser.userId?.toString()?.trim();
-          if (memberId) {
-            hasExtendedViewAccess =
-              await this.hasObserverApproverOrManagerForChallenge(
-                challengeId,
-                memberId,
-              );
-          }
-
+          const hasExtendedViewAccess =
+            await this.hasExtendedViewAccessForChallenge(challengeId, memberId);
           const challenge =
             await this.challengeApiService.getChallengeDetail(challengeId);
           if (
             challenge.status !== ChallengeStatus.COMPLETED &&
-            sub.memberId !== authUser.userId?.toString() &&
+            sub.memberId !== memberId &&
             !hasExtendedViewAccess
           ) {
             throw new ForbiddenException(
               `You are not allowed to view this submission's AI review decisions.`,
             );
           }
-        }
-      }
 
-      if (challengeId && !query.submissionId) {
-        const memberId = authUser.userId?.toString()?.trim();
-        if (memberId) {
-          hasExtendedViewAccess =
-            await this.hasObserverApproverOrManagerForChallenge(
-              challengeId,
-              memberId,
-            );
+          if (
+            challenge.status !== ChallengeStatus.COMPLETED &&
+            !hasExtendedViewAccess
+          ) {
+            where.submission = { memberId };
+          }
         }
       }
 
@@ -265,19 +257,11 @@ export class AiReviewDecisionService {
       await this.validateCallerHasResourceForChallenge(challengeId, authUser);
     }
 
-    const where: Prisma.aiReviewDecisionWhereInput = {};
     if (query.submissionId) where.submissionId = query.submissionId;
     if (query.configId) where.configId = query.configId;
     if (query.status)
       where.status =
         query.status as unknown as Prisma.EnumAiReviewDecisionStatusFilter;
-
-    if (!isAllowed) {
-      const memberId = authUser.userId?.toString()?.trim();
-      if (memberId && !hasExtendedViewAccess) {
-        where.submission = { memberId };
-      }
-    }
 
     const decisions = await this.prisma.aiReviewDecision.findMany({
       where,
