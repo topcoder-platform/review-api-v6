@@ -70,6 +70,7 @@ export class AiReviewEscalationService {
             { nameLower: { contains: 'reviewer' } },
             { nameLower: { contains: 'checkpoint reviewer' } },
             { nameLower: { contains: 'iterative reviewer' } },
+            { nameLower: { contains: 'screener' } },
           ],
         },
       },
@@ -77,7 +78,7 @@ export class AiReviewEscalationService {
     });
     if (!resource) {
       throw new ForbiddenException(
-        'You must be assigned to this challenge as Copilot or a Reviewer (e.g. Reviewer, Iterative Reviewer, Checkpoint Reviewer) to request or perform an AI review override.',
+        'You must be assigned to this challenge as Copilot, a Reviewer (e.g. Reviewer, Iterative Reviewer, Checkpoint Reviewer), or a Screener (e.g. Screener, Checkpoint Screener) to request or perform an AI review override.',
       );
     }
   }
@@ -116,6 +117,57 @@ export class AiReviewEscalationService {
       select: { id: true },
     });
     return !!resource;
+  }
+
+  private async isUserScreenerForChallenge(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    const resource = await this.resourcePrisma.resource.findFirst({
+      where: {
+        challengeId,
+        memberId,
+        resourceRole: { nameLower: { contains: 'screener' } },
+      },
+      select: { id: true },
+    });
+    return !!resource;
+  }
+
+  private async createPendingEscalationForRole(
+    aiReviewDecisionId: string,
+    dto: CreateAiReviewEscalationDto,
+    userId: string,
+    challengeId: string,
+    allowedPhases: string[],
+    phaseErrorMessage: string,
+    missingNotesErrorMessage: string,
+  ): Promise<AiReviewDecisionEscalationResponseDto> {
+    const phaseOpen = await this.challengeApiService.isPhaseOpen(
+      challengeId,
+      allowedPhases,
+    );
+    if (!phaseOpen) {
+      throw new ForbiddenException(phaseErrorMessage);
+    }
+
+    const escalationNotes = (dto.escalationNotes ?? '').trim();
+    if (!escalationNotes) {
+      throw new BadRequestException(missingNotesErrorMessage);
+    }
+
+    const escalation = await this.prisma.aiReviewDecisionEscalation.create({
+      data: {
+        aiReviewDecisionId,
+        escalationNotes,
+        approverNotes: (dto.approverNotes ?? '').trim() || null,
+        status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+        createdBy: userId,
+        updatedBy: userId,
+      },
+    });
+
+    return mapEscalationToResponse(escalation);
   }
 
   private async createDirectUnlockEscalation(
@@ -181,16 +233,6 @@ export class AiReviewEscalationService {
       );
     }
 
-    const reviewPhaseOpen = await this.challengeApiService.isPhaseOpen(
-      challengeId,
-      ['Review', 'Iterative Review'],
-    );
-    if (!reviewPhaseOpen) {
-      throw new ForbiddenException(
-        'Override is only allowed when the challenge is in Review or Iterative Review phase.',
-      );
-    }
-
     if (decision.status === AiReviewDecisionStatus.PASSED) {
       throw new BadRequestException(
         'Override is not allowed for a passing AI review decision.',
@@ -218,29 +260,35 @@ export class AiReviewEscalationService {
       userId,
     );
     if (isReviewer) {
-      const escalationNotes = (dto.escalationNotes ?? '').trim();
-      if (!escalationNotes) {
-        throw new BadRequestException(
-          'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
-        );
-      }
+      return this.createPendingEscalationForRole(
+        aiReviewDecisionId,
+        dto,
+        userId,
+        challengeId,
+        ['Review', 'Iterative Review'],
+        'Override is only allowed when the challenge is in Review or Iterative Review phase.',
+        'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
+      );
+    }
 
-      const escalation = await this.prisma.aiReviewDecisionEscalation.create({
-        data: {
-          aiReviewDecisionId,
-          escalationNotes,
-          approverNotes: (dto.approverNotes ?? '').trim() || null,
-          status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
-
-      return mapEscalationToResponse(escalation);
+    const isScreener = await this.isUserScreenerForChallenge(
+      challengeId,
+      userId,
+    );
+    if (isScreener) {
+      return this.createPendingEscalationForRole(
+        aiReviewDecisionId,
+        dto,
+        userId,
+        challengeId,
+        ['Screening', 'Checkpoint Screening'],
+        'Override is only allowed when the challenge is in Screening or Checkpoint Screening phase.',
+        'escalationNotes is required when creating an escalation as a Screener (reason/evidence).',
+      );
     }
 
     throw new ForbiddenException(
-      'Only Admin, or a Copilot/Reviewer assigned to this challenge, can create an AI review escalation.',
+      'Only Admin, or a Copilot, Reviewer, or Screener assigned to this challenge, can create an AI review escalation.',
     );
   }
 
