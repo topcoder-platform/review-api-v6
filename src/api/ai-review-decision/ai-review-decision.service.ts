@@ -200,7 +200,7 @@ export class AiReviewDecisionService {
         }
         challengeId = config.challengeId;
         const challenge =
-            await this.challengeApiService.getChallengeDetail(challengeId);
+          await this.challengeApiService.getChallengeDetail(challengeId);
         if (challenge.status !== ChallengeStatus.COMPLETED) {
           where.submission = { memberId };
         }
