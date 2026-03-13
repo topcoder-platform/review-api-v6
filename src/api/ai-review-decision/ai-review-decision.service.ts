@@ -82,6 +82,7 @@ export class AiReviewDecisionService {
       'checkpoint reviewer',
       'checkpoint screener',
       'iterative reviewer',
+      'reviewer',
       'screener',
     ],
   ): Promise<boolean> {
@@ -272,6 +273,16 @@ export class AiReviewDecisionService {
     return decisions.map((d) => this.mapToResponse(d));
   }
 
+  private async validateChallengeAccess(challengeId: string, userId: string, submissionMemberId: string): Promise<void> {
+    const hasExtendedViewAccess =
+        await this.hasExtendedViewAccessForChallenge(challengeId, userId);
+      const challenge =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+      if (challenge.status !== ChallengeStatus.COMPLETED && !hasExtendedViewAccess && submissionMemberId !== userId) {
+        throw new ForbiddenException('You are not allowed to view this submission\'s AI review decisions.');
+      }
+  }
+
   async getById(
     id: string,
     authUser: JwtUser,
@@ -291,6 +302,11 @@ export class AiReviewDecisionService {
       decision.config?.challengeId ?? decision.submission?.challengeId ?? null;
     if (challengeId) {
       await this.validateCallerHasResourceForChallenge(challengeId, authUser);
+    }
+
+    const isAllowed = authUser.isMachine || isAdmin(authUser);
+    if (!isAllowed && authUser.userId && decision.submission?.memberId) {
+      await this.validateChallengeAccess(challengeId, authUser.userId, decision.submission.memberId);
     }
 
     return this.mapToResponse(decision);
