@@ -17,6 +17,7 @@ import {
 } from '../../dto/aiReviewEscalation.dto';
 import {
   AiReviewDecisionStatus,
+  ChallengeTrack,
   AiReviewDecisionEscalationStatus as PrismaAiReviewDecisionEscalationStatus,
 } from '@prisma/client';
 
@@ -173,8 +174,10 @@ export class AiReviewEscalationService {
   private async createDirectUnlockEscalation(
     aiReviewDecisionId: string,
     dto: CreateAiReviewEscalationDto,
+    challengeId: string,
     userId: string | null,
   ): Promise<AiReviewDecisionEscalationResponseDto> {
+    await this.validatePhaseOpen(challengeId);
     const approverNotes = (dto.approverNotes ?? '').trim();
     if (!approverNotes) {
       throw new BadRequestException(
@@ -245,14 +248,24 @@ export class AiReviewEscalationService {
     }
 
     if (isAdmin(authUser)) {
-      return this.createDirectUnlockEscalation(aiReviewDecisionId, dto, userId);
+      return this.createDirectUnlockEscalation(
+        aiReviewDecisionId,
+        dto,
+        challengeId,
+        userId,
+      );
     }
 
     await this.validateCallerHasResourceForChallenge(challengeId, userId);
 
     const isCopilot = await this.isUserCopilotForChallenge(challengeId, userId);
     if (isCopilot) {
-      return this.createDirectUnlockEscalation(aiReviewDecisionId, dto, userId);
+      return this.createDirectUnlockEscalation(
+        aiReviewDecisionId,
+        dto,
+        challengeId,
+        userId,
+      );
     }
 
     const isReviewer = await this.isUserReviewerForChallenge(
@@ -290,6 +303,22 @@ export class AiReviewEscalationService {
     throw new ForbiddenException(
       'Only Admin, or a Copilot, Reviewer, or Screener assigned to this challenge, can create an AI review escalation.',
     );
+  }
+
+  private async validatePhaseOpen(challengeId: string): Promise<void> {
+    const challenge = await this.challengeApiService.getChallengeDetail(challengeId);
+    const isPhaseOpen = await this.challengeApiService.isPhaseOpen(
+      challengeId,
+      challenge.track === ChallengeTrack.DESIGN
+        ? ['Screening', 'Checkpoint Screening', 'Review', 'Iterative Review']
+        : ['Review', 'Iterative Review'],
+    );
+    if (!isPhaseOpen) {
+      const message = challenge.track === ChallengeTrack.DESIGN
+        ? 'Override is only allowed when the challenge is in Screening, Checkpoint Screening, Review, or Iterative Review phase.'
+        : 'Override is only allowed when the challenge is in Review or Iterative Review phase.';
+      throw new ForbiddenException(message);
+    }
   }
 
   async update(
@@ -345,6 +374,8 @@ export class AiReviewEscalationService {
         'Only Admin or a Copilot assigned to this challenge can update an escalation.',
       );
     }
+
+    await this.validatePhaseOpen(challengeId);
 
     if (dto.status === AiReviewDecisionEscalationStatus.APPROVED) {
       const updated = await this.prisma.$transaction([
