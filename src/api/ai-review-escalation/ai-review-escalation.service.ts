@@ -306,7 +306,8 @@ export class AiReviewEscalationService {
   }
 
   private async validatePhaseOpen(challengeId: string): Promise<void> {
-    const challenge = await this.challengeApiService.getChallengeDetail(challengeId);
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
     const isPhaseOpen = await this.challengeApiService.isPhaseOpen(
       challengeId,
       challenge.track === ChallengeTrack.DESIGN
@@ -314,9 +315,10 @@ export class AiReviewEscalationService {
         : ['Review', 'Iterative Review'],
     );
     if (!isPhaseOpen) {
-      const message = challenge.track === ChallengeTrack.DESIGN
-        ? 'Override is only allowed when the challenge is in Screening, Checkpoint Screening, Review, or Iterative Review phase.'
-        : 'Override is only allowed when the challenge is in Review or Iterative Review phase.';
+      const message =
+        challenge.track === ChallengeTrack.DESIGN
+          ? 'Override is only allowed when the challenge is in Screening, Checkpoint Screening, Review, or Iterative Review phase.'
+          : 'Override is only allowed when the challenge is in Review or Iterative Review phase.';
       throw new ForbiddenException(message);
     }
   }
