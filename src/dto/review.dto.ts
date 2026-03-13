@@ -344,6 +344,16 @@ export class ReviewPatchRequestDto {
   status?: ReviewStatus;
 
   @ApiProperty({
+    description: 'Final score for the review',
+    example: 95.5,
+    required: false,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  finalScore?: number | null;
+
+  @ApiProperty({
     description: 'Review date for the review',
     example: '2023-10-01T00:00:00Z',
   })
