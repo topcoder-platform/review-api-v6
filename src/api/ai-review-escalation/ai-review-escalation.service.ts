@@ -17,7 +17,6 @@ import {
 } from '../../dto/aiReviewEscalation.dto';
 import {
   AiReviewDecisionStatus,
-  ChallengeTrack,
   AiReviewDecisionEscalationStatus as PrismaAiReviewDecisionEscalationStatus,
 } from '@prisma/client';
 
@@ -308,17 +307,17 @@ export class AiReviewEscalationService {
   private async validatePhaseOpen(challengeId: string): Promise<void> {
     const challenge =
       await this.challengeApiService.getChallengeDetail(challengeId);
+    const isDesignTrack = challenge.track === 'Design';
     const isPhaseOpen = await this.challengeApiService.isPhaseOpen(
       challengeId,
-      challenge.track === ChallengeTrack.DESIGN
+      isDesignTrack
         ? ['Screening', 'Checkpoint Screening', 'Review', 'Iterative Review']
         : ['Review', 'Iterative Review'],
     );
     if (!isPhaseOpen) {
-      const message =
-        challenge.track === ChallengeTrack.DESIGN
-          ? 'Override is only allowed when the challenge is in Screening, Checkpoint Screening, Review, or Iterative Review phase.'
-          : 'Override is only allowed when the challenge is in Review or Iterative Review phase.';
+      const message = isDesignTrack
+        ? 'Override is only allowed when the challenge is in Screening, Checkpoint Screening, Review, or Iterative Review phase.'
+        : 'Override is only allowed when the challenge is in Review or Iterative Review phase.';
       throw new ForbiddenException(message);
     }
   }
