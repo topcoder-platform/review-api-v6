@@ -62,7 +62,7 @@ export class AiReviewDecisionService {
     });
     if (!resource) {
       throw new ForbiddenException(
-        `You must be assigned to this challenge to view its AI review decisions. Challenge ID: ${challengeId} User ID: ${memberId} Resource ID: ${JSON.stringify(resource)}`,
+        `You must be assigned to this challenge to view its AI review decisions.`,
       );
     }
   }
@@ -320,7 +320,7 @@ export class AiReviewDecisionService {
     if (!isAllowed && authUser.userId && decision.submission?.memberId) {
       await this.validateChallengeAccess(
         challengeId,
-        authUser.userId,
+        authUser.userId.toString().trim(),
         decision.submission.memberId,
       );
     }
