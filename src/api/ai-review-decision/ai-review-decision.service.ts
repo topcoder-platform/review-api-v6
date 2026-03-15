@@ -62,7 +62,7 @@ export class AiReviewDecisionService {
     });
     if (!resource) {
       throw new ForbiddenException(
-        'You must be assigned to this challenge to view its AI review decisions.',
+        `You must be assigned to this challenge to view its AI review decisions. Challenge ID: ${challengeId} User ID: ${memberId} Resource ID: ${JSON.stringify(resource)}`,
       );
     }
   }
