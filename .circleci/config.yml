@@ -75,7 +75,7 @@ workflows:
                           only:
                               - develop
                               - PM-3926_ai-screening-phase
-                              - pm-3848_fix
+                              - pm-3849_by_id
 
             - 'build-prod':
                   context: org-global
