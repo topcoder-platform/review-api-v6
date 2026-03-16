@@ -139,7 +139,6 @@ They are requesting a manual override or secondary look at the AI Review results
     };
 
     if (requesterEmail) {
-      payload.from = requesterEmail;
       payload.replyTo = requesterEmail;
     }
 
@@ -228,7 +227,6 @@ Deadline for Completion: ${reviewEndDate}<br />
 
     const approverEmail = memberInfoById.get(approverId)?.email;
     if (approverEmail) {
-      payload.from = approverEmail;
       payload.replyTo = approverEmail;
     }
 
@@ -301,7 +299,6 @@ Please access the review App and complete the scorecard for this submission to e
 
     const userEmail = memberInfoById.get(userId)?.email;
     if (userEmail) {
-      payload.from = userEmail;
       payload.replyTo = userEmail;
     }
 
