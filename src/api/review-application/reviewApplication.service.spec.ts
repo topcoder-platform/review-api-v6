@@ -90,7 +90,7 @@ describe('ReviewApplicationService', () => {
     });
 
     memberServiceMock.getUserEmails.mockResolvedValue([
-      { userId: '1001', email: 'reviewer@example.com' },
+      { userId: '1001', email: 'reviewer@example.com', handle: 'reviewer' },
     ]);
 
     challengePrismaMock.$queryRaw.mockResolvedValue([
@@ -169,7 +169,7 @@ describe('ReviewApplicationService', () => {
     });
 
     memberServiceMock.getUserEmails.mockResolvedValue([
-      { userId: '1002', email: 'reviewer2@example.com' },
+      { userId: '1002', email: 'reviewer2@example.com', handle: 'reviewer2' },
     ]);
 
     challengePrismaMock.$queryRaw.mockResolvedValue([]);

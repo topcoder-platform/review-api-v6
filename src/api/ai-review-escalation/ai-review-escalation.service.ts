@@ -10,6 +10,12 @@ import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import {
+  EventBusSendEmailPayload,
+  EventBusService,
+} from 'src/shared/modules/global/eventBus.service';
+import { MemberService } from 'src/shared/modules/global/member.service';
+import { CommonConfig } from 'src/shared/config/common.config';
+import {
   CreateAiReviewEscalationDto,
   UpdateAiReviewEscalationDto,
   AiReviewDecisionEscalationResponseDto,
@@ -55,8 +61,116 @@ export class AiReviewEscalationService {
     private readonly prisma: PrismaService,
     private readonly resourcePrisma: ResourcePrismaService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly eventBusService: EventBusService,
+    private readonly memberService: MemberService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewEscalationService');
+  }
+
+  private buildChallengeUrl(challengeId: string): string {
+    return `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`;
+  }
+
+  private buildEscalationNotificationMessage(params: {
+    challengeId: string;
+    submissionId: string;
+    aiReviewDecisionId: string;
+    escalation: AiReviewDecisionEscalationResponseDto;
+    requesterHandle?: string | null;
+  }): string {
+    const lines = [
+      `A new AI review escalation was created by ${params.requesterHandle?.trim() || 'a challenge resource'}.`,
+      `Submission ID: ${params.submissionId}`,
+      `AI review decision ID: ${params.aiReviewDecisionId}`,
+      `Escalation status: ${params.escalation.status}`,
+      `Challenge link: ${this.buildChallengeUrl(params.challengeId)}`,
+    ];
+
+    if (params.escalation.escalationNotes) {
+      lines.push(`Escalation notes: ${params.escalation.escalationNotes}`);
+    }
+
+    if (params.escalation.approverNotes) {
+      lines.push(`Approver notes: ${params.escalation.approverNotes}`);
+    }
+
+    return lines.join('\n');
+  }
+
+  private async notifyCopilotsOfNewEscalation(
+    challengeId: string,
+    submissionId: string,
+    escalation: AiReviewDecisionEscalationResponseDto,
+    authUser: JwtUser,
+    requesterId: string,
+  ): Promise<void> {
+    const copilotResources = await this.resourcePrisma.resource.findMany({
+      where: {
+        challengeId: challengeId,
+        memberId: { not: requesterId },
+        resourceRole: { nameLower: { contains: 'copilot' } },
+      },
+      select: { memberId: true },
+    });
+
+    const recipientIds = Array.from(
+      new Set(copilotResources.map((resource) => String(resource.memberId))),
+    );
+
+    if (recipientIds.length === 0) {
+      this.logger.warn(
+        `No copilot recipients found for AI review escalation on challenge ${challengeId}`,
+      );
+      return;
+    }
+
+    const lookupIds = Array.from(new Set([...recipientIds, requesterId]));
+    const memberInfos = await this.memberService.getUserEmails(lookupIds);
+    const memberInfoById = new Map(
+      memberInfos.map((info) => [String(info.userId), info]),
+    );
+
+    const recipients = Array.from(
+      new Set(
+        recipientIds
+          .map((memberId) => memberInfoById.get(memberId)?.email)
+          .filter((email): email is string => Boolean(email)),
+      ),
+    );
+
+    if (recipients.length === 0) {
+      this.logger.warn(
+        `No copilot email addresses found for AI review escalation on challenge ${challengeId}`,
+      );
+      return;
+    }
+
+    const requesterEmail = memberInfoById.get(requesterId)?.email;
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+
+    // Get the first copilot's handle for the email template
+    const firstCopilotId = recipientIds[0];
+    const copilotHandle = memberInfoById.get(firstCopilotId)?.handle || '';
+
+    const payload = new EventBusSendEmailPayload();
+    payload.sendgrid_template_id =
+      CommonConfig.sendgridConfig.aiReviewEscalationCreatedEmailTemplate;
+    payload.recipients = recipients;
+    payload.data = {
+      submissionId,
+      requesterHandle: authUser.handle ?? '',
+      copilotHandle,
+      challengeName: challenge.name,
+      challengeReviewUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
+    };
+
+    if (requesterEmail) {
+      payload.from = requesterEmail;
+      payload.replyTo = requesterEmail;
+    }
+
+    await this.eventBusService.sendEmail(payload);
   }
 
   async list(
@@ -371,86 +485,108 @@ export class AiReviewEscalationService {
       throw new ForbiddenException('Cannot determine user identity.');
     }
 
+    let escalationResponse: AiReviewDecisionEscalationResponseDto;
+
     if (isAdmin(authUser)) {
-      return this.createDirectUnlockEscalation(
+      escalationResponse = await this.createDirectUnlockEscalation(
         aiReviewDecisionId,
         dto,
         challengeId,
         userId,
       );
-    }
+    } else {
+      await this.validateCallerHasResourceForChallenge(challengeId, userId);
 
-    await this.validateCallerHasResourceForChallenge(challengeId, userId);
-
-    const isCopilot = await this.isUserCopilotForChallenge(challengeId, userId);
-    if (isCopilot) {
-      return this.createDirectUnlockEscalation(
-        aiReviewDecisionId,
-        dto,
+      const isCopilot = await this.isUserCopilotForChallenge(
         challengeId,
         userId,
       );
-    }
-
-    const isReviewer = await this.isUserReviewerForChallenge(
-      challengeId,
-      userId,
-    );
-    if (isReviewer) {
-      const existingEscalationByReviewer =
-        await this.prisma.aiReviewDecisionEscalation.findFirst({
-          where: {
-            createdBy: userId,
-            aiReviewDecision: {
-              submissionId: decision.submissionId,
-            },
-          },
-          select: { id: true },
-        });
-
-      if (existingEscalationByReviewer) {
-        throw new BadRequestException(
-          'Only one escalation request per reviewer is allowed for a submission.',
+      if (isCopilot) {
+        escalationResponse = await this.createDirectUnlockEscalation(
+          aiReviewDecisionId,
+          dto,
+          challengeId,
+          userId,
         );
-      }
-
-      const escalationNotes = (dto.escalationNotes ?? '').trim();
-      if (!escalationNotes) {
-        throw new BadRequestException(
-          'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
+      } else {
+        const isReviewer = await this.isUserReviewerForChallenge(
+          challengeId,
+          userId,
         );
+        if (isReviewer) {
+          const existingEscalationByReviewer =
+            await this.prisma.aiReviewDecisionEscalation.findFirst({
+              where: {
+                createdBy: userId,
+                aiReviewDecision: {
+                  submissionId: decision.submissionId,
+                },
+              },
+              select: { id: true },
+            });
+
+          if (existingEscalationByReviewer) {
+            throw new BadRequestException(
+              'Only one escalation request per reviewer is allowed for a submission.',
+            );
+          }
+
+          const escalationNotes = (dto.escalationNotes ?? '').trim();
+          if (!escalationNotes) {
+            throw new BadRequestException(
+              'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
+            );
+          }
+
+          escalationResponse = await this.createPendingEscalationForRole(
+            aiReviewDecisionId,
+            dto,
+            userId,
+            challengeId,
+            ['Review', 'Iterative Review'],
+            'Override is only allowed when the challenge is in Review or Iterative Review phase.',
+            'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
+          );
+        } else {
+          const isScreener = await this.isUserScreenerForChallenge(
+            challengeId,
+            userId,
+          );
+          if (isScreener) {
+            escalationResponse = await this.createPendingEscalationForRole(
+              aiReviewDecisionId,
+              dto,
+              userId,
+              challengeId,
+              ['Screening', 'Checkpoint Screening'],
+              'Override is only allowed when the challenge is in Screening or Checkpoint Screening phase.',
+              'escalationNotes is required when creating an escalation as a Screener (reason/evidence).',
+            );
+          } else {
+            throw new ForbiddenException(
+              'Only Admin, or a Copilot, Reviewer, or Screener assigned to this challenge, can create an AI review escalation.',
+            );
+          }
+        }
       }
+    }
 
-      return this.createPendingEscalationForRole(
-        aiReviewDecisionId,
-        dto,
-        userId,
+    try {
+      await this.notifyCopilotsOfNewEscalation(
         challengeId,
-        ['Review', 'Iterative Review'],
-        'Override is only allowed when the challenge is in Review or Iterative Review phase.',
-        'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
+        decision.submissionId,
+        escalationResponse,
+        authUser,
+        userId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to send AI review escalation notification for decision ${aiReviewDecisionId}: ${message}`,
       );
     }
 
-    const isScreener = await this.isUserScreenerForChallenge(
-      challengeId,
-      userId,
-    );
-    if (isScreener) {
-      return this.createPendingEscalationForRole(
-        aiReviewDecisionId,
-        dto,
-        userId,
-        challengeId,
-        ['Screening', 'Checkpoint Screening'],
-        'Override is only allowed when the challenge is in Screening or Checkpoint Screening phase.',
-        'escalationNotes is required when creating an escalation as a Screener (reason/evidence).',
-      );
-    }
-
-    throw new ForbiddenException(
-      'Only Admin, or a Copilot, Reviewer, or Screener assigned to this challenge, can create an AI review escalation.',
-    );
+    return escalationResponse;
   }
 
   private async validatePhaseOpen(challengeId: string): Promise<void> {
