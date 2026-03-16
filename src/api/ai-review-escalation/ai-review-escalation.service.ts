@@ -63,7 +63,11 @@ export class AiReviewEscalationService {
     query: ListAiReviewEscalationQueryDto,
     authUser: JwtUser,
   ): Promise<AiReviewDecisionEscalationDecisionResponseDto[]> {
-    if (!query.challengeId && !query.submissionId && !query.aiReviewDecisionId) {
+    if (
+      !query.challengeId &&
+      !query.submissionId &&
+      !query.aiReviewDecisionId
+    ) {
       throw new BadRequestException(
         'At least one of challengeId, submissionId, or aiReviewDecisionId is required.',
       );
@@ -100,7 +104,9 @@ export class AiReviewEscalationService {
           );
         }
         resolvedChallengeId =
-          decision.config?.challengeId ?? decision.submission?.challengeId ?? null;
+          decision.config?.challengeId ??
+          decision.submission?.challengeId ??
+          null;
       }
 
       if (!resolvedChallengeId) {
@@ -114,7 +120,10 @@ export class AiReviewEscalationService {
         throw new ForbiddenException('Cannot determine user identity.');
       }
 
-      await this.validateCallerHasResourceForChallenge(resolvedChallengeId, userId);
+      await this.validateCallerHasResourceForChallenge(
+        resolvedChallengeId,
+        userId,
+      );
     }
 
     const where: Prisma.aiReviewDecisionWhereInput = {
@@ -161,7 +170,9 @@ export class AiReviewEscalationService {
         aiReviewDecisionId: decision.id,
         submissionId: decision.submissionId,
         challengeId:
-          decision.config?.challengeId ?? decision.submission?.challengeId ?? null,
+          decision.config?.challengeId ??
+          decision.submission?.challengeId ??
+          null,
         decisionStatus: decision.status,
         submissionLocked: decision.submissionLocked,
         escalations: decision.escalations.map((escalation) =>

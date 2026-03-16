@@ -207,7 +207,9 @@ export class AiReviewDecisionEscalationDecisionResponseDto {
   @ApiProperty({ description: 'Decision status' })
   decisionStatus: string;
 
-  @ApiProperty({ description: 'Whether submission is locked for this decision' })
+  @ApiProperty({
+    description: 'Whether submission is locked for this decision',
+  })
   submissionLocked: boolean;
 
   @ApiProperty({
