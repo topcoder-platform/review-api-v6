@@ -69,10 +69,10 @@ export class AiReviewEscalationService {
       );
     }
 
-    const isAllowed = authUser.isMachine || isAdmin(authUser);
+    const isAdminUser = authUser.isMachine || isAdmin(authUser);
     let resolvedChallengeId: string | null = query.challengeId ?? null;
 
-    if (!isAllowed) {
+    if (!isAdminUser) {
       if (!resolvedChallengeId && query.submissionId) {
         const submission = await this.prisma.submission.findUnique({
           where: { id: query.submissionId },
