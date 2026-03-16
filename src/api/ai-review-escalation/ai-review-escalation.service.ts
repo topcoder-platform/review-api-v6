@@ -744,7 +744,8 @@ Please access the review App and complete the scorecard for this submission to e
     }
 
     if (
-      escalationResponse.status === AiReviewDecisionEscalationStatus.PENDING_APPROVAL
+      escalationResponse.status ===
+      AiReviewDecisionEscalationStatus.PENDING_APPROVAL
     ) {
       try {
         await this.notifyCopilotsOfNewEscalation(
