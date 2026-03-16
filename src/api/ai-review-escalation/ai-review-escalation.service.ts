@@ -125,7 +125,7 @@ export class AiReviewEscalationService {
 
     const payload = new EventBusSendEmailPayload();
     payload.sendgrid_template_id =
-      CommonConfig.sendgridConfig.aiReviewEscalationCreatedEmailTemplate;
+      CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
     payload.recipients = recipients;
     payload.data = {
       subject: `Escalation Requested: Submission #${submissionId} - AI Review Appeal`,
@@ -207,7 +207,7 @@ They are requesting a manual override or secondary look at the AI Review results
 
     const payload = new EventBusSendEmailPayload();
     payload.sendgrid_template_id =
-      CommonConfig.sendgridConfig.aiReviewEscalationCreatedEmailTemplate;
+      CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
     payload.recipients = recipients;
     payload.data = {
       subject: `Escalation Approved: Submission #${submissionId} Ready for Review`,
@@ -282,7 +282,7 @@ Deadline for Completion: ${reviewEndDate}<br />
 
     const payload = new EventBusSendEmailPayload();
     payload.sendgrid_template_id =
-      CommonConfig.sendgridConfig.aiReviewEscalationCreatedEmailTemplate;
+      CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
     payload.recipients = recipients;
     payload.data = {
       subject: `Manual Override: Submission #${submissionId} Ready for Review`,
