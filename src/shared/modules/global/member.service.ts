@@ -8,6 +8,7 @@ import { MemberPrismaService } from './member-prisma.service';
 export class MemberInfo {
   userId: string;
   email: string;
+  handle: string;
 }
 
 @Injectable()
@@ -28,10 +29,14 @@ export class MemberService {
       const ids = userIds.map((id) => BigInt(id));
       const members = await this.memberPrisma.member.findMany({
         where: { userId: { in: ids } },
-        select: { userId: true, email: true },
+        select: { userId: true, email: true, handle: true },
       });
 
-      return members.map((m) => ({ userId: String(m.userId), email: m.email }));
+      return members.map((m) => ({
+        userId: String(m.userId),
+        email: m.email,
+        handle: m.handle,
+      }));
     } catch (e) {
       this.logger.error(`Can't get member info from DB: ${e}`);
       throw new InternalServerErrorException('Cannot get data from Member DB.');
