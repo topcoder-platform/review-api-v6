@@ -201,10 +201,6 @@ They are requesting a manual override or secondary look at the AI Review results
       ? new Date(reviewPhase.scheduledEndTime as string).toLocaleString()
       : 'TBD';
 
-    // Get the first reviewer's handle for the email template
-    const firstReviewerId = recipientIds[0];
-    const reviewerHandle = memberInfoById.get(firstReviewerId)?.handle || '';
-
     const payload = new EventBusSendEmailPayload();
     payload.sendgrid_template_id =
       CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
@@ -212,7 +208,7 @@ They are requesting a manual override or secondary look at the AI Review results
     payload.data = {
       subject: `Escalation Approved: Submission #${submissionId} Ready for Review`,
       message: `
-Hi ${reviewerHandle},<br />
+Hi there!<br />
 <br />
 An escalation request for Submission #${submissionId} in <strong>${challenge.name}</strong> has been approved by the Copilot.<br />
 <br />
@@ -276,10 +272,6 @@ Deadline for Completion: ${reviewEndDate}<br />
     const challenge =
       await this.challengeApiService.getChallengeDetail(challengeId);
 
-    // Get the first reviewer's handle for the email template
-    const firstReviewerId = recipientIds[0];
-    const reviewerHandle = memberInfoById.get(firstReviewerId)?.handle || '';
-
     const payload = new EventBusSendEmailPayload();
     payload.sendgrid_template_id =
       CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
@@ -287,7 +279,7 @@ Deadline for Completion: ${reviewEndDate}<br />
     payload.data = {
       subject: `Manual Override: Submission #${submissionId} Ready for Review`,
       message: `
-Hi ${reviewerHandle},<br />
+Hi there!<br />
 A manual override has been applied by a Copilot/Admin for Submission #${submissionId} in <strong>${challenge.name}</strong>.<br />
 The AI Review results for this submission have been bypassed administratively. As a result, this submission is now open and requires your manual evaluation.<br />
 <strong>Action Required:</strong><br />
