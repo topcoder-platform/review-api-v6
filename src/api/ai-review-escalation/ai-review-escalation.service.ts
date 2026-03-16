@@ -743,19 +743,23 @@ Please access the review App and complete the scorecard for this submission to e
       }
     }
 
-    try {
-      await this.notifyCopilotsOfNewEscalation(
-        challengeId,
-        decision.submissionId,
-        escalationResponse,
-        authUser,
-        userId,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `Failed to send AI review escalation notification for decision ${aiReviewDecisionId}: ${message}`,
-      );
+    if (
+      escalationResponse.status === AiReviewDecisionEscalationStatus.PENDING_APPROVAL
+    ) {
+      try {
+        await this.notifyCopilotsOfNewEscalation(
+          challengeId,
+          decision.submissionId,
+          escalationResponse,
+          authUser,
+          userId,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Failed to send AI review escalation notification for decision ${aiReviewDecisionId}: ${message}`,
+        );
+      }
     }
 
     return escalationResponse;
