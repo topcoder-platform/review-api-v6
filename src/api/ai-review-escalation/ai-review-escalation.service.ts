@@ -130,9 +130,9 @@ export class AiReviewEscalationService {
     payload.data = {
       subject: `Escalation Requested: Submission #${submissionId} - AI Review Appeal`,
       message: `
-        Hi, ${copilotHandle} !<br />
-        A reviewer has initiated an escalation for Submission #${submissionId} in ${challenge.name}.
-        They are requesting a manual override or secondary look at the AI Review results.
+Hi, ${copilotHandle} !<br />
+A reviewer has initiated an escalation for Submission #${submissionId} in <strong>${challenge.name}</strong>.
+They are requesting a manual override or secondary look at the AI Review results.
       `,
       actionLabel: `View Submission & Escalation Details`,
       actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
@@ -141,6 +141,168 @@ export class AiReviewEscalationService {
     if (requesterEmail) {
       payload.from = requesterEmail;
       payload.replyTo = requesterEmail;
+    }
+
+    await this.eventBusService.sendEmail(payload);
+  }
+
+  private async notifyReviewersOfEscalationApproved(
+    challengeId: string,
+    submissionId: string,
+    escalation: AiReviewDecisionEscalationResponseDto,
+    authUser: JwtUser,
+    approverId: string,
+  ): Promise<void> {
+    const reviewerResources = await this.getReviewersForChallenge(challengeId);
+
+    const recipientIds = Array.from(
+      new Set(reviewerResources.map((resource) => String(resource.memberId))),
+    );
+
+    if (recipientIds.length === 0) {
+      this.logger.warn(
+        `No reviewer recipients found for escalation approval on challenge ${challengeId}`,
+      );
+      return;
+    }
+
+    const lookupIds = Array.from(new Set([...recipientIds, approverId]));
+    const memberInfos = await this.memberService.getUserEmails(lookupIds);
+    const memberInfoById = new Map(
+      memberInfos.map((info) => [String(info.userId), info]),
+    );
+
+    const recipients = Array.from(
+      new Set(
+        recipientIds
+          .map((memberId) => memberInfoById.get(memberId)?.email)
+          .filter((email): email is string => Boolean(email)),
+      ),
+    );
+
+    if (recipients.length === 0) {
+      this.logger.warn(
+        `No reviewer email addresses found for escalation approval on challenge ${challengeId}`,
+      );
+      return;
+    }
+
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+
+    // Get review end date
+    const isDesignTrack = challenge.track === 'Design';
+    const reviewPhaseNames = isDesignTrack
+      ? ['Review', 'Iterative Review', 'Checkpoint Screening']
+      : ['Review', 'Iterative Review'];
+    const reviewPhase = challenge.phases?.find((p) =>
+      reviewPhaseNames.includes(p.name),
+    );
+    const reviewEndDate = reviewPhase
+      ? new Date(reviewPhase.scheduledEndTime as string).toLocaleString()
+      : 'TBD';
+
+    // Get the first reviewer's handle for the email template
+    const firstReviewerId = recipientIds[0];
+    const reviewerHandle = memberInfoById.get(firstReviewerId)?.handle || '';
+
+    const payload = new EventBusSendEmailPayload();
+    payload.sendgrid_template_id =
+      CommonConfig.sendgridConfig.aiReviewEscalationCreatedEmailTemplate;
+    payload.recipients = recipients;
+    payload.data = {
+      subject: `Escalation Approved: Submission #${submissionId} Ready for Review`,
+      message: `
+Hi ${reviewerHandle},<br />
+<br />
+An escalation request for Submission #${submissionId} in <strong>${challenge.name}</strong> has been approved by the Copilot.<br />
+<br />
+<strong>Action Required:</strong><br />
+As the manual override is now active, please proceed with your full review of this submission.<br />
+<br />
+Deadline for Completion: ${reviewEndDate}<br />
+      `,
+      actionLabel: `Complete Manual Review Now`,
+      actionUrl: `${CommonConfig.ui.reviewUIUrl}/review/submission/${submissionId}`,
+    };
+
+    const approverEmail = memberInfoById.get(approverId)?.email;
+    if (approverEmail) {
+      payload.from = approverEmail;
+      payload.replyTo = approverEmail;
+    }
+
+    await this.eventBusService.sendEmail(payload);
+  }
+
+  private async notifyReviewersOfManualOverride(
+    challengeId: string,
+    submissionId: string,
+    authUser: JwtUser,
+    userId: string,
+  ): Promise<void> {
+    const reviewerResources = await this.getReviewersForChallenge(challengeId);
+
+    const recipientIds = Array.from(
+      new Set(reviewerResources.map((resource) => String(resource.memberId))),
+    );
+
+    if (recipientIds.length === 0) {
+      this.logger.warn(
+        `No reviewer recipients found for manual override on challenge ${challengeId}`,
+      );
+      return;
+    }
+
+    const lookupIds = Array.from(new Set([...recipientIds, userId]));
+    const memberInfos = await this.memberService.getUserEmails(lookupIds);
+    const memberInfoById = new Map(
+      memberInfos.map((info) => [String(info.userId), info]),
+    );
+
+    const recipients = Array.from(
+      new Set(
+        recipientIds
+          .map((memberId) => memberInfoById.get(memberId)?.email)
+          .filter((email): email is string => Boolean(email)),
+      ),
+    );
+
+    if (recipients.length === 0) {
+      this.logger.warn(
+        `No reviewer email addresses found for manual override on challenge ${challengeId}`,
+      );
+      return;
+    }
+
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+
+    // Get the first reviewer's handle for the email template
+    const firstReviewerId = recipientIds[0];
+    const reviewerHandle = memberInfoById.get(firstReviewerId)?.handle || '';
+
+    const payload = new EventBusSendEmailPayload();
+    payload.sendgrid_template_id =
+      CommonConfig.sendgridConfig.aiReviewEscalationCreatedEmailTemplate;
+    payload.recipients = recipients;
+    payload.data = {
+      subject: `Manual Override: Submission #${submissionId} Ready for Review`,
+      message: `
+Hi ${reviewerHandle},<br />
+A manual override has been applied by a Copilot/Admin for Submission #${submissionId} in <strong>${challenge.name}</strong>.<br />
+The AI Review results for this submission have been bypassed administratively. As a result, this submission is now open and requires your manual evaluation.<br />
+<strong>Action Required:</strong><br />
+Please access the review App and complete the scorecard for this submission to ensure the project timeline remains on track.<br /><br />
+      `,
+      actionLabel: `Open Scorecard & Start Review`,
+      actionUrl: `${CommonConfig.ui.reviewUIUrl}/review/submission/${submissionId}`,
+    };
+
+    const userEmail = memberInfoById.get(userId)?.email;
+    if (userEmail) {
+      payload.from = userEmail;
+      payload.replyTo = userEmail;
     }
 
     await this.eventBusService.sendEmail(payload);
@@ -346,6 +508,24 @@ export class AiReviewEscalationService {
     return !!resource;
   }
 
+  private async getReviewersForChallenge(
+    challengeId: string,
+  ): Promise<{ memberId: string }[]> {
+    return await this.resourcePrisma.resource.findMany({
+      where: {
+        challengeId,
+        resourceRole: {
+          OR: [
+            { nameLower: { contains: 'reviewer' } },
+            { nameLower: { contains: 'iterative reviewer' } },
+            { nameLower: { contains: 'checkpoint reviewer' } },
+          ],
+        },
+      },
+      select: { memberId: true },
+    });
+  }
+
   private async createPendingEscalationForRole(
     aiReviewDecisionId: string,
     dto: CreateAiReviewEscalationDto,
@@ -386,7 +566,9 @@ export class AiReviewEscalationService {
     aiReviewDecisionId: string,
     dto: CreateAiReviewEscalationDto,
     challengeId: string,
+    submissionId: string,
     userId: string | null,
+    authUser: JwtUser,
   ): Promise<AiReviewDecisionEscalationResponseDto> {
     await this.validatePhaseOpen(challengeId);
     const approverNotes = (dto.approverNotes ?? '').trim();
@@ -417,7 +599,23 @@ export class AiReviewEscalationService {
       }),
     ]);
 
-    return mapEscalationToResponse(escalation);
+    const escalationResponse = mapEscalationToResponse(escalation);
+
+    try {
+      await this.notifyReviewersOfManualOverride(
+        challengeId,
+        submissionId,
+        authUser,
+        userId as string,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to send manual override notification for decision ${aiReviewDecisionId}: ${message}`,
+      );
+    }
+
+    return escalationResponse;
   }
 
   async create(
@@ -465,7 +663,9 @@ export class AiReviewEscalationService {
         aiReviewDecisionId,
         dto,
         challengeId,
+        decision.submissionId,
         userId,
+        authUser,
       );
     } else {
       await this.validateCallerHasResourceForChallenge(challengeId, userId);
@@ -479,7 +679,9 @@ export class AiReviewEscalationService {
           aiReviewDecisionId,
           dto,
           challengeId,
+          decision.submissionId,
           userId,
+          authUser,
         );
       } else {
         const isReviewer = await this.isUserReviewerForChallenge(
@@ -595,7 +797,7 @@ export class AiReviewEscalationService {
             status: true,
             submissionLocked: true,
             config: { select: { challengeId: true } },
-            submission: { select: { challengeId: true } },
+            submission: { select: { id: true, challengeId: true } },
           },
         },
       },
@@ -663,7 +865,24 @@ export class AiReviewEscalationService {
           },
         }),
       ]);
-      return mapEscalationToResponse(updated[0]);
+      const response = mapEscalationToResponse(updated[0]);
+
+      try {
+        await this.notifyReviewersOfEscalationApproved(
+          challengeId,
+          escalation.aiReviewDecision.submission?.id || '',
+          response,
+          authUser,
+          userId,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Failed to send escalation approval notification for escalation ${escalationId}: ${message}`,
+        );
+      }
+
+      return response;
     }
 
     const updated = await this.prisma.aiReviewDecisionEscalation.update({
