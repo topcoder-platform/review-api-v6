@@ -32,7 +32,11 @@ export class MemberService {
         select: { userId: true, email: true, handle: true },
       });
 
-      return members.map((m) => ({ userId: String(m.userId), email: m.email, handle: m.handle }));
+      return members.map((m) => ({
+        userId: String(m.userId),
+        email: m.email,
+        handle: m.handle,
+      }));
     } catch (e) {
       this.logger.error(`Can't get member info from DB: ${e}`);
       throw new InternalServerErrorException('Cannot get data from Member DB.');
