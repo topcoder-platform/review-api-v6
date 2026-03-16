@@ -1,5 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsIn, IsNotEmpty } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsIn,
+  IsNotEmpty,
+  IsBoolean,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
@@ -9,6 +15,74 @@ export enum AiReviewDecisionEscalationStatus {
   PENDING_APPROVAL = 'PENDING_APPROVAL',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
+}
+
+export class ListAiReviewEscalationQueryDto {
+  @ApiProperty({
+    description: 'Filter by challenge ID',
+    required: false,
+    example: '300e80f0-1234-5678-90ab-1f2a3b4c5d6e',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(trimTransformer)
+  challengeId?: string;
+
+  @ApiProperty({
+    description: 'Filter by submission ID',
+    required: false,
+    example: '229c5PnhSKqsSu',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(trimTransformer)
+  submissionId?: string;
+
+  @ApiProperty({
+    description: 'Filter by decision ID',
+    required: false,
+    example: '229c5PnhSKqsSu',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(trimTransformer)
+  aiReviewDecisionId?: string;
+
+  @ApiProperty({
+    description: 'Filter by escalation status',
+    required: false,
+    enum: AiReviewDecisionEscalationStatus,
+  })
+  @IsOptional()
+  @IsIn(
+    [
+      AiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+      AiReviewDecisionEscalationStatus.APPROVED,
+      AiReviewDecisionEscalationStatus.REJECTED,
+    ],
+    {
+      message: 'status must be PENDING_APPROVAL, APPROVED, or REJECTED',
+    },
+  )
+  status?: AiReviewDecisionEscalationStatus;
+
+  @ApiProperty({
+    description: 'Filter by locked decisions only',
+    required: false,
+    example: true,
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+    }
+    return value;
+  })
+  @IsBoolean()
+  submissionLocked?: boolean;
 }
 
 export class CreateAiReviewEscalationDto {
@@ -114,4 +188,31 @@ export class AiReviewDecisionEscalationResponseDto {
     nullable: true,
   })
   updatedBy: string | null;
+}
+
+export class AiReviewDecisionEscalationDecisionResponseDto {
+  @ApiProperty({ description: 'AI review decision ID' })
+  aiReviewDecisionId: string;
+
+  @ApiProperty({ description: 'Submission ID' })
+  submissionId: string;
+
+  @ApiProperty({
+    description: 'Challenge ID associated with the decision',
+    required: false,
+    nullable: true,
+  })
+  challengeId: string | null;
+
+  @ApiProperty({ description: 'Decision status' })
+  decisionStatus: string;
+
+  @ApiProperty({ description: 'Whether submission is locked for this decision' })
+  submissionLocked: boolean;
+
+  @ApiProperty({
+    description: 'Escalations associated with this decision',
+    type: [AiReviewDecisionEscalationResponseDto],
+  })
+  escalations: AiReviewDecisionEscalationResponseDto[];
 }

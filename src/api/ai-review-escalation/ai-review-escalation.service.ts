@@ -14,10 +14,13 @@ import {
   UpdateAiReviewEscalationDto,
   AiReviewDecisionEscalationResponseDto,
   AiReviewDecisionEscalationStatus,
+  ListAiReviewEscalationQueryDto,
+  AiReviewDecisionEscalationDecisionResponseDto,
 } from '../../dto/aiReviewEscalation.dto';
 import {
   AiReviewDecisionStatus,
   AiReviewDecisionEscalationStatus as PrismaAiReviewDecisionEscalationStatus,
+  Prisma,
 } from '@prisma/client';
 
 function mapEscalationToResponse(row: {
@@ -54,6 +57,117 @@ export class AiReviewEscalationService {
     private readonly challengeApiService: ChallengeApiService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewEscalationService');
+  }
+
+  async list(
+    query: ListAiReviewEscalationQueryDto,
+    authUser: JwtUser,
+  ): Promise<AiReviewDecisionEscalationDecisionResponseDto[]> {
+    if (!query.challengeId && !query.submissionId && !query.aiReviewDecisionId) {
+      throw new BadRequestException(
+        'At least one of challengeId, submissionId, or aiReviewDecisionId is required.',
+      );
+    }
+
+    const isAdminUser = authUser.isMachine || isAdmin(authUser);
+    let resolvedChallengeId: string | null = query.challengeId ?? null;
+
+    if (!isAdminUser) {
+      if (!resolvedChallengeId && query.submissionId) {
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: query.submissionId },
+          select: { challengeId: true },
+        });
+        if (!submission) {
+          throw new NotFoundException(
+            `Submission with id ${query.submissionId} not found.`,
+          );
+        }
+        resolvedChallengeId = submission.challengeId ?? null;
+      }
+
+      if (!resolvedChallengeId && query.aiReviewDecisionId) {
+        const decision = await this.prisma.aiReviewDecision.findUnique({
+          where: { id: query.aiReviewDecisionId },
+          include: {
+            config: { select: { challengeId: true } },
+            submission: { select: { challengeId: true } },
+          },
+        });
+        if (!decision) {
+          throw new NotFoundException(
+            `AI review decision with id ${query.aiReviewDecisionId} not found.`,
+          );
+        }
+        resolvedChallengeId =
+          decision.config?.challengeId ?? decision.submission?.challengeId ?? null;
+      }
+
+      if (!resolvedChallengeId) {
+        throw new ForbiddenException(
+          'Cannot determine challenge for this escalation query.',
+        );
+      }
+
+      const userId = authUser.userId?.toString()?.trim();
+      if (!userId) {
+        throw new ForbiddenException('Cannot determine user identity.');
+      }
+
+      await this.validateCallerHasResourceForChallenge(resolvedChallengeId, userId);
+    }
+
+    const where: Prisma.aiReviewDecisionWhereInput = {
+      ...(query.aiReviewDecisionId ? { id: query.aiReviewDecisionId } : {}),
+      ...(query.submissionId ? { submissionId: query.submissionId } : {}),
+      ...(query.submissionLocked !== undefined
+        ? { submissionLocked: query.submissionLocked }
+        : {}),
+      ...(query.challengeId
+        ? {
+            OR: [
+              { config: { challengeId: query.challengeId } },
+              { submission: { challengeId: query.challengeId } },
+            ],
+          }
+        : {}),
+    };
+
+    const decisions = await this.prisma.aiReviewDecision.findMany({
+      where,
+      include: {
+        config: { select: { challengeId: true } },
+        submission: { select: { id: true, challengeId: true } },
+        escalations: {
+          ...(query.status
+            ? {
+                where: {
+                  status:
+                    query.status as unknown as PrismaAiReviewDecisionEscalationStatus,
+                },
+              }
+            : {}),
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return decisions
+      .filter((decision) =>
+        query.status ? decision.escalations.length > 0 : true,
+      )
+      .map((decision) => ({
+        aiReviewDecisionId: decision.id,
+        submissionId: decision.submissionId,
+        challengeId:
+          decision.config?.challengeId ?? decision.submission?.challengeId ?? null,
+        decisionStatus: decision.status,
+        submissionLocked: decision.submissionLocked,
+        escalations: decision.escalations.map((escalation) =>
+          mapEscalationToResponse(escalation),
+        ),
+      }));
   }
 
   private async validateCallerHasResourceForChallenge(
@@ -272,6 +386,30 @@ export class AiReviewEscalationService {
       userId,
     );
     if (isReviewer) {
+      const existingEscalationByReviewer =
+        await this.prisma.aiReviewDecisionEscalation.findFirst({
+          where: {
+            createdBy: userId,
+            aiReviewDecision: {
+              submissionId: decision.submissionId,
+            },
+          },
+          select: { id: true },
+        });
+
+      if (existingEscalationByReviewer) {
+        throw new BadRequestException(
+          'Only one escalation request per reviewer is allowed for a submission.',
+        );
+      }
+
+      const escalationNotes = (dto.escalationNotes ?? '').trim();
+      if (!escalationNotes) {
+        throw new BadRequestException(
+          'escalationNotes is required when creating an escalation as a Reviewer (reason/evidence).',
+        );
+      }
+
       return this.createPendingEscalationForRole(
         aiReviewDecisionId,
         dto,
@@ -375,8 +513,16 @@ export class AiReviewEscalationService {
         'Only Admin or a Copilot assigned to this challenge can update an escalation.',
       );
     }
-
     await this.validatePhaseOpen(challengeId);
+
+    if (
+      escalation.status !==
+      PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL
+    ) {
+      throw new BadRequestException(
+        'Only PENDING_APPROVAL escalations can be updated.',
+      );
+    }
 
     if (dto.status === AiReviewDecisionEscalationStatus.APPROVED) {
       const updated = await this.prisma.$transaction([
