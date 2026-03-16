@@ -67,36 +67,6 @@ export class AiReviewEscalationService {
     this.logger = LoggerService.forRoot('AiReviewEscalationService');
   }
 
-  private buildChallengeUrl(challengeId: string): string {
-    return `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`;
-  }
-
-  private buildEscalationNotificationMessage(params: {
-    challengeId: string;
-    submissionId: string;
-    aiReviewDecisionId: string;
-    escalation: AiReviewDecisionEscalationResponseDto;
-    requesterHandle?: string | null;
-  }): string {
-    const lines = [
-      `A new AI review escalation was created by ${params.requesterHandle?.trim() || 'a challenge resource'}.`,
-      `Submission ID: ${params.submissionId}`,
-      `AI review decision ID: ${params.aiReviewDecisionId}`,
-      `Escalation status: ${params.escalation.status}`,
-      `Challenge link: ${this.buildChallengeUrl(params.challengeId)}`,
-    ];
-
-    if (params.escalation.escalationNotes) {
-      lines.push(`Escalation notes: ${params.escalation.escalationNotes}`);
-    }
-
-    if (params.escalation.approverNotes) {
-      lines.push(`Approver notes: ${params.escalation.approverNotes}`);
-    }
-
-    return lines.join('\n');
-  }
-
   private async notifyCopilotsOfNewEscalation(
     challengeId: string,
     submissionId: string,
@@ -158,11 +128,14 @@ export class AiReviewEscalationService {
       CommonConfig.sendgridConfig.aiReviewEscalationCreatedEmailTemplate;
     payload.recipients = recipients;
     payload.data = {
-      submissionId,
-      requesterHandle: authUser.handle ?? '',
-      copilotHandle,
-      challengeName: challenge.name,
-      challengeReviewUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
+      subject: `Escalation Requested: Submission #${submissionId} - AI Review Appeal`,
+      message: `
+        Hi, ${copilotHandle} !<br />
+        A reviewer has initiated an escalation for Submission #${submissionId} in ${challenge.name}.
+        They are requesting a manual override or secondary look at the AI Review results.
+      `,
+      actionLabel: `View Submission & Escalation Details`,
+      actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
     };
 
     if (requesterEmail) {
