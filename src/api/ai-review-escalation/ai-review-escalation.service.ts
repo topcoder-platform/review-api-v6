@@ -7,7 +7,11 @@ import {
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import {
+  ChallengeApiService,
+  ChallengeData,
+} from 'src/shared/modules/global/challenge.service';
+import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import {
   EventBusSendEmailPayload,
@@ -27,7 +31,44 @@ import {
   AiReviewDecisionStatus,
   AiReviewDecisionEscalationStatus as PrismaAiReviewDecisionEscalationStatus,
   Prisma,
+  ReviewStatus,
 } from '@prisma/client';
+
+const MANUAL_OVERRIDE_PHASE_ROLE_MAP: Record<string, string[]> = {
+  Review: ['reviewer'],
+  'Iterative Review': ['iterative reviewer'],
+  Screening: ['screener'],
+  'Checkpoint Screening': ['checkpoint screener'],
+};
+
+interface NotificationRecipient {
+  email: string;
+  handle: string;
+  userId: string;
+}
+
+interface ManualOverrideChallengePhaseRow {
+  id: string;
+  phaseId: string;
+  name: string;
+  isOpen: boolean | null;
+  scheduledStartDate: Date | null;
+  scheduledEndDate: Date | null;
+  actualStartDate: Date | null;
+  actualEndDate: Date | null;
+}
+
+interface ManualOverrideReviewerConfigRow {
+  phaseId: string;
+  scorecardId: string;
+}
+
+interface PendingReviewRow {
+  id: string;
+  resourceId: string;
+  submissionId: string | null;
+  scorecardId: string;
+}
 
 function mapEscalationToResponse(row: {
   id: string;
@@ -61,10 +102,196 @@ export class AiReviewEscalationService {
     private readonly prisma: PrismaService,
     private readonly resourcePrisma: ResourcePrismaService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly challengePrisma: ChallengePrismaService,
     private readonly eventBusService: EventBusService,
     private readonly memberService: MemberService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewEscalationService');
+  }
+
+  private isChallengePhaseCurrentlyOpen(
+    phase: {
+      isOpen: boolean | null;
+      scheduledStartDate: Date | null;
+      scheduledEndDate: Date | null;
+      actualStartDate: Date | null;
+      actualEndDate: Date | null;
+    },
+    referenceDate = new Date(),
+  ): boolean {
+    if (phase.isOpen) {
+      return true;
+    }
+
+    const start = phase.actualStartDate ?? phase.scheduledStartDate;
+    if (!start || referenceDate < start) {
+      return false;
+    }
+
+    if (phase.actualStartDate && !phase.actualEndDate) {
+      return true;
+    }
+
+    const end = phase.actualEndDate ?? phase.scheduledEndDate;
+    if (!end) {
+      return true;
+    }
+
+    return referenceDate < end;
+  }
+
+  private async buildPendingReviewsForUnlockedSubmission(
+    challengeId: string,
+    submissionId: string,
+    userId: string,
+  ): Promise<Prisma.reviewCreateManyInput[]> {
+    const manualOverridePhaseNames = Object.keys(
+      MANUAL_OVERRIDE_PHASE_ROLE_MAP,
+    );
+
+    const challengePhases = await this.challengePrisma.$queryRaw<
+      ManualOverrideChallengePhaseRow[]
+    >(Prisma.sql`
+      SELECT
+        id,
+        "phaseId",
+        name,
+        "isOpen",
+        "scheduledStartDate",
+        "scheduledEndDate",
+        "actualStartDate",
+        "actualEndDate"
+      FROM "ChallengePhase"
+      WHERE "challengeId" = ${challengeId}
+        AND name IN (${Prisma.join(
+          manualOverridePhaseNames.map((phaseName) => Prisma.sql`${phaseName}`),
+        )})
+    `);
+
+    const openChallengePhases = challengePhases.filter((phase) =>
+      this.isChallengePhaseCurrentlyOpen(phase),
+    );
+
+    if (openChallengePhases.length === 0) {
+      this.logger.warn(
+        `No open manual review phases found for unlocked submission ${submissionId} on challenge ${challengeId}`,
+      );
+      return [];
+    }
+
+    const reviewerConfigs = await this.challengePrisma.$queryRaw<
+      ManualOverrideReviewerConfigRow[]
+    >(Prisma.sql`
+      SELECT "phaseId", "scorecardId"
+      FROM "ChallengeReviewer"
+      WHERE "challengeId" = ${challengeId}
+        AND "isMemberReview" = true
+        AND "phaseId" IN (${Prisma.join(
+          openChallengePhases.map((phase) => Prisma.sql`${phase.phaseId}`),
+        )})
+    `);
+
+    const scorecardIdsByTemplatePhaseId = new Map<string, Set<string>>();
+    for (const config of reviewerConfigs) {
+      const scorecardId = String(config.scorecardId || '').trim();
+      if (!scorecardId) {
+        continue;
+      }
+
+      const phaseScorecards =
+        scorecardIdsByTemplatePhaseId.get(config.phaseId) ?? new Set<string>();
+      phaseScorecards.add(scorecardId);
+      scorecardIdsByTemplatePhaseId.set(config.phaseId, phaseScorecards);
+    }
+
+    const pendingReviewMap = new Map<string, Prisma.reviewCreateManyInput>();
+
+    for (const phase of openChallengePhases) {
+      const roleNames = MANUAL_OVERRIDE_PHASE_ROLE_MAP[phase.name] ?? [];
+      if (roleNames.length === 0) {
+        continue;
+      }
+
+      const scorecardIds = Array.from(
+        scorecardIdsByTemplatePhaseId.get(phase.phaseId) ?? [],
+      );
+      if (scorecardIds.length === 0) {
+        this.logger.warn(
+          `No member review scorecard configured for phase ${phase.name} on challenge ${challengeId}`,
+        );
+        continue;
+      }
+
+      const reviewerResources = await this.resourcePrisma.resource.findMany({
+        where: {
+          challengeId,
+          resourceRole: {
+            nameLower: { in: roleNames },
+          },
+        },
+        select: { id: true },
+      });
+
+      if (reviewerResources.length === 0) {
+        this.logger.warn(
+          `No reviewer resources found for phase ${phase.name} on challenge ${challengeId}`,
+        );
+        continue;
+      }
+
+      for (const resource of reviewerResources) {
+        for (const scorecardId of scorecardIds) {
+          const key = `${resource.id}:${submissionId}:${scorecardId}`;
+          if (pendingReviewMap.has(key)) {
+            continue;
+          }
+
+          pendingReviewMap.set(key, {
+            resourceId: resource.id,
+            phaseId: phase.id,
+            submissionId,
+            scorecardId,
+            committed: false,
+            status: ReviewStatus.PENDING,
+            createdBy: userId,
+            updatedBy: userId,
+          });
+        }
+      }
+    }
+
+    if (pendingReviewMap.size === 0) {
+      return [];
+    }
+
+    const pendingReviewEntries = Array.from(pendingReviewMap.values());
+    const existingReviews = await this.prisma.review.findMany({
+      where: {
+        submissionId,
+        OR: pendingReviewEntries.map((entry) => ({
+          resourceId: entry.resourceId,
+          scorecardId: entry.scorecardId,
+        })),
+      },
+      select: {
+        resourceId: true,
+        scorecardId: true,
+      },
+    });
+
+    const existingKeys = new Set(
+      existingReviews.map(
+        (review) =>
+          `${review.resourceId}:${submissionId}:${review.scorecardId}`,
+      ),
+    );
+
+    return pendingReviewEntries.filter(
+      (entry) =>
+        !existingKeys.has(
+          `${entry.resourceId}:${submissionId}:${entry.scorecardId}`,
+        ),
+    );
   }
 
   private async notifyCopilotsOfNewEscalation(
@@ -145,14 +372,25 @@ They are requesting a manual override or secondary look at the AI Review results
     await this.eventBusService.sendEmail(payload);
   }
 
-  private async notifyReviewersOfEscalationApproved(
+  private async notifyReviewersOfSubmissionUnlocked(
     challengeId: string,
     submissionId: string,
-    escalation: AiReviewDecisionEscalationResponseDto,
-    authUser: JwtUser,
-    approverId: string,
-  ): Promise<void> {
+    pendingReviews: PendingReviewRow[],
+    payloadData: (
+      challenge: ChallengeData,
+      recipient: NotificationRecipient,
+      review?: PendingReviewRow,
+    ) => EventBusSendEmailPayload['data'],
+  ) {
     const reviewerResources = await this.getReviewersForChallenge(challengeId);
+    const resourceIdsByMemberId = new Map<string, string[]>();
+    for (const resource of reviewerResources) {
+      const memberId = String(resource.memberId);
+      const resourceId = String(resource.id);
+      const resourceIds = resourceIdsByMemberId.get(memberId) ?? [];
+      resourceIds.push(resourceId);
+      resourceIdsByMemberId.set(memberId, resourceIds);
+    }
 
     const recipientIds = Array.from(
       new Set(reviewerResources.map((resource) => String(resource.memberId))),
@@ -160,12 +398,12 @@ They are requesting a manual override or secondary look at the AI Review results
 
     if (recipientIds.length === 0) {
       this.logger.warn(
-        `No reviewer recipients found for escalation approval on challenge ${challengeId}`,
+        `No reviewer recipients found for manual override on challenge ${challengeId}`,
       );
       return;
     }
 
-    const lookupIds = Array.from(new Set([...recipientIds, approverId]));
+    const lookupIds = Array.from(new Set([...recipientIds]));
     const memberInfos = await this.memberService.getUserEmails(lookupIds);
     const memberInfoById = new Map(
       memberInfos.map((info) => [String(info.userId), info]),
@@ -177,15 +415,42 @@ They are requesting a manual override or secondary look at the AI Review results
           .map((memberId) => memberInfoById.get(memberId))
           .filter((recipient): boolean => Boolean(recipient?.email)),
       ),
-    ) as { email: string; handle: string }[];
+    ) as NotificationRecipient[];
 
     if (recipients.length === 0) {
       this.logger.warn(
-        `No reviewer email addresses found for escalation approval on challenge ${challengeId}`,
+        `No reviewer email addresses found for manual override on challenge ${challengeId}`,
       );
       return;
     }
 
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+
+    await Promise.all(
+      recipients.map(async (recipient) => {
+        const recipientResourceIds =
+          resourceIdsByMemberId.get(`${recipient.userId}`) ?? [];
+        const review = pendingReviews.find((reviewEntry) =>
+          recipientResourceIds.includes(reviewEntry.resourceId),
+        );
+
+        const payload = new EventBusSendEmailPayload();
+        payload.sendgrid_template_id =
+          CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
+        payload.recipients = [recipient.email];
+        payload.data = payloadData(challenge, recipient, review);
+
+        await this.eventBusService.sendEmail(payload);
+      }),
+    );
+  }
+
+  private async notifyReviewersOfEscalationApproved(
+    challengeId: string,
+    submissionId: string,
+    pendingReviews: PendingReviewRow[],
+  ): Promise<void> {
     const challenge =
       await this.challengeApiService.getChallengeDetail(challengeId);
 
@@ -201,111 +466,82 @@ They are requesting a manual override or secondary look at the AI Review results
       ? new Date(reviewPhase.scheduledEndTime as string).toLocaleString()
       : 'TBD';
 
-    await Promise.all(
-      recipients.map(async (recipient) => {
-        const payload = new EventBusSendEmailPayload();
-        payload.sendgrid_template_id =
-          CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
-        payload.recipients = [recipient.email];
-        payload.data = {
+    await this.notifyReviewersOfSubmissionUnlocked(
+      challengeId,
+      submissionId,
+      pendingReviews,
+      (_, recipient, review) => {
+        return {
           subject: `Escalation Approved: Submission #${submissionId} Ready for Review`,
           message: `
-  Hi ${recipient.handle}!<br />
-  <br />
-  An escalation request for Submission #${submissionId} in <strong>${challenge.name}</strong> has been approved by the Copilot.<br />
-  <br />
-  <strong>Action Required:</strong><br />
-  As the manual override is now active, please proceed with your full review of this submission.<br />
-  <br />
-  Deadline for Completion: ${reviewEndDate}<br />
+            Hi ${recipient.handle}!<br />
+            <br />
+            An escalation request for Submission #${submissionId} in <strong>${challenge.name}</strong> has been approved by the Copilot.<br />
+            <br />
+            <strong>Action Required:</strong><br />
+            As the manual override is now active, please proceed with your full review of this submission.<br />
+            <br />
+            Deadline for Completion: ${reviewEndDate}<br />
         `,
           actionLabel: `Complete Manual Review Now`,
-          actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
+          actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/reviews/${submissionId}?reviewId=${review?.id}`,
         };
-
-        const approverEmail = memberInfoById.get(approverId)?.email;
-        if (approverEmail) {
-          payload.replyTo = approverEmail;
-        }
-
-        await this.eventBusService.sendEmail(payload);
-      }),
+      },
     );
   }
 
   private async notifyReviewersOfManualOverride(
     challengeId: string,
     submissionId: string,
-    authUser: JwtUser,
-    userId: string,
+    pendingReviews: PendingReviewRow[],
   ): Promise<void> {
-    const reviewerResources = await this.getReviewersForChallenge(challengeId);
-
-    const recipientIds = Array.from(
-      new Set(reviewerResources.map((resource) => String(resource.memberId))),
-    );
-
-    if (recipientIds.length === 0) {
-      this.logger.warn(
-        `No reviewer recipients found for manual override on challenge ${challengeId}`,
-      );
-      return;
-    }
-
-    const lookupIds = Array.from(new Set([...recipientIds, userId]));
-    const memberInfos = await this.memberService.getUserEmails(lookupIds);
-    const memberInfoById = new Map(
-      memberInfos.map((info) => [String(info.userId), info]),
-    );
-
-    const recipients = Array.from(
-      new Set(
-        recipientIds
-          .map((memberId) => memberInfoById.get(memberId))
-          .filter((recipient): boolean => Boolean(recipient?.email)),
-      ),
-    ) as { email: string; handle: string }[];
-
-    if (recipients.length === 0) {
-      this.logger.warn(
-        `No reviewer email addresses found for manual override on challenge ${challengeId}`,
-      );
-      return;
-    }
-
-    const challenge =
-      await this.challengeApiService.getChallengeDetail(challengeId);
-
-    await Promise.all(
-      recipients.map(async (recipient) => {
-        const payload = new EventBusSendEmailPayload();
-        payload.sendgrid_template_id =
-          CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
-        payload.recipients = [recipient.email];
-        payload.data = {
+    await this.notifyReviewersOfSubmissionUnlocked(
+      challengeId,
+      submissionId,
+      pendingReviews,
+      (challenge, recipient, review) => {
+        return {
           subject: `Manual Override: Submission #${submissionId} Ready for Review`,
           message: `
-  Hi ${recipient.handle}!<br />
-  <br />
-  A manual override has been applied by a Copilot/Admin for Submission #${submissionId} in <strong>${challenge.name}</strong>.<br />
-  <br />
-  The AI Review results for this submission have been bypassed administratively. As a result, this submission is now open and requires your manual evaluation.<br />
-  <br />
-  <strong>Action Required:</strong><br />
-  Please access the review App and complete the scorecard for this submission to ensure the project timeline remains on track.<br /><br />
+            Hi ${recipient.handle}!<br />
+            <br />
+            A manual override has been applied by a Copilot/Admin for Submission #${submissionId} in <strong>${challenge.name}</strong>.<br />
+            <br />
+            The AI Review results for this submission have been bypassed administratively. As a result, this submission is now open and requires your manual evaluation.<br />
+            <br />
+            <strong>Action Required:</strong><br />
+            Please access the review App and complete the scorecard for this submission to ensure the project timeline remains on track.<br /><br />
         `,
           actionLabel: `Open Scorecard & Start Review`,
-          actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
+          actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/reviews/${submissionId}?reviewId=${review?.id}`,
         };
-
-        const userEmail = memberInfoById.get(userId)?.email;
-        if (userEmail) {
-          payload.replyTo = userEmail;
-        }
-
-        await this.eventBusService.sendEmail(payload);
-      }),
+      },
     );
+  }
+
+  private async loadSavedPendingReviews(
+    submissionId: string,
+    pendingReviewInputs: Prisma.reviewCreateManyInput[],
+  ): Promise<PendingReviewRow[]> {
+    if (pendingReviewInputs.length === 0) {
+      return [];
+    }
+
+    return this.prisma.review.findMany({
+      where: {
+        submissionId,
+        OR: pendingReviewInputs.map((entry) => ({
+          resourceId: entry.resourceId,
+          scorecardId: entry.scorecardId,
+        })),
+      },
+      select: {
+        id: true,
+        resourceId: true,
+        submissionId: true,
+        scorecardId: true,
+      },
+    });
   }
 
   async list(
@@ -510,7 +746,7 @@ They are requesting a manual override or secondary look at the AI Review results
 
   private async getReviewersForChallenge(
     challengeId: string,
-  ): Promise<{ memberId: string }[]> {
+  ): Promise<{ id: string; memberId: string }[]> {
     return await this.resourcePrisma.resource.findMany({
       where: {
         challengeId,
@@ -522,7 +758,7 @@ They are requesting a manual override or secondary look at the AI Review results
           ],
         },
       },
-      select: { memberId: true },
+      select: { id: true, memberId: true },
     });
   }
 
@@ -567,8 +803,7 @@ They are requesting a manual override or secondary look at the AI Review results
     dto: CreateAiReviewEscalationDto,
     challengeId: string,
     submissionId: string,
-    userId: string | null,
-    authUser: JwtUser,
+    userId: string,
   ): Promise<AiReviewDecisionEscalationResponseDto> {
     await this.validatePhaseOpen(challengeId);
     const approverNotes = (dto.approverNotes ?? '').trim();
@@ -578,8 +813,15 @@ They are requesting a manual override or secondary look at the AI Review results
       );
     }
 
-    const [escalation] = await this.prisma.$transaction([
-      this.prisma.aiReviewDecisionEscalation.create({
+    const pendingReviewInputs =
+      await this.buildPendingReviewsForUnlockedSubmission(
+        challengeId,
+        submissionId,
+        userId,
+      );
+
+    const escalation = await this.prisma.$transaction(async (tx) => {
+      const createdEscalation = await tx.aiReviewDecisionEscalation.create({
         data: {
           aiReviewDecisionId,
           escalationNotes: (dto.escalationNotes ?? '').trim() || null,
@@ -588,25 +830,38 @@ They are requesting a manual override or secondary look at the AI Review results
           createdBy: userId,
           updatedBy: userId,
         },
-      }),
-      this.prisma.aiReviewDecision.update({
+      });
+
+      await tx.aiReviewDecision.update({
         where: { id: aiReviewDecisionId },
         data: {
           status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
           submissionLocked: false,
           updatedAt: new Date(),
         },
-      }),
-    ]);
+      });
+
+      if (pendingReviewInputs.length > 0) {
+        await tx.review.createMany({
+          data: pendingReviewInputs,
+          skipDuplicates: true,
+        });
+      }
+
+      return createdEscalation;
+    });
 
     const escalationResponse = mapEscalationToResponse(escalation);
+    const savedPendingReviews = await this.loadSavedPendingReviews(
+      submissionId,
+      pendingReviewInputs,
+    );
 
     try {
       await this.notifyReviewersOfManualOverride(
         challengeId,
         submissionId,
-        authUser,
-        userId as string,
+        savedPendingReviews,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -665,7 +920,6 @@ They are requesting a manual override or secondary look at the AI Review results
         challengeId,
         decision.submissionId,
         userId,
-        authUser,
       );
     } else {
       await this.validateCallerHasResourceForChallenge(challengeId, userId);
@@ -681,7 +935,6 @@ They are requesting a manual override or secondary look at the AI Review results
           challengeId,
           decision.submissionId,
           userId,
-          authUser,
         );
       } else {
         const isReviewer = await this.isUserReviewerForChallenge(
@@ -852,33 +1105,53 @@ They are requesting a manual override or secondary look at the AI Review results
     }
 
     if (dto.status === AiReviewDecisionEscalationStatus.APPROVED) {
-      const updated = await this.prisma.$transaction([
-        this.prisma.aiReviewDecisionEscalation.update({
+      const submissionId = escalation.aiReviewDecision.submission?.id || '';
+      const pendingReviewInputs =
+        await this.buildPendingReviewsForUnlockedSubmission(
+          challengeId,
+          submissionId,
+          userId,
+        );
+
+      const updatedEscalation = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.aiReviewDecisionEscalation.update({
           where: { id: escalationId },
           data: {
             approverNotes: dto.approverNotes.trim(),
             status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
             updatedBy: userId,
           },
-        }),
-        this.prisma.aiReviewDecision.update({
+        });
+
+        await tx.aiReviewDecision.update({
           where: { id: aiReviewDecisionId },
           data: {
             status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
             submissionLocked: false,
             updatedAt: new Date(),
           },
-        }),
-      ]);
-      const response = mapEscalationToResponse(updated[0]);
+        });
+
+        if (pendingReviewInputs.length > 0) {
+          await tx.review.createMany({
+            data: pendingReviewInputs,
+            skipDuplicates: true,
+          });
+        }
+
+        return updated;
+      });
+      const response = mapEscalationToResponse(updatedEscalation);
+      const savedPendingReviews = await this.loadSavedPendingReviews(
+        submissionId,
+        pendingReviewInputs,
+      );
 
       try {
         await this.notifyReviewersOfEscalationApproved(
           challengeId,
-          escalation.aiReviewDecision.submission?.id || '',
-          response,
-          authUser,
-          userId,
+          submissionId,
+          savedPendingReviews,
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
