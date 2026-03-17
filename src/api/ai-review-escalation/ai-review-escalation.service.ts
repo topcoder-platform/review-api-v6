@@ -470,7 +470,7 @@ They are requesting a manual override or secondary look at the AI Review results
       challengeId,
       submissionId,
       pendingReviews,
-      (challenge, recipient, review) => {
+      (_, recipient, review) => {
         return {
           subject: `Escalation Approved: Submission #${submissionId} Ready for Review`,
           message: `
