@@ -218,7 +218,7 @@ As the manual override is now active, please proceed with your full review of th
 Deadline for Completion: ${reviewEndDate}<br />
       `,
       actionLabel: `Complete Manual Review Now`,
-      actionUrl: `${CommonConfig.ui.reviewUIUrl}/review/submission/${submissionId}`,
+      actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
     };
 
     const approverEmail = memberInfoById.get(approverId)?.email;
@@ -286,7 +286,7 @@ The AI Review results for this submission have been bypassed administratively. A
 Please access the review App and complete the scorecard for this submission to ensure the project timeline remains on track.<br /><br />
       `,
       actionLabel: `Open Scorecard & Start Review`,
-      actionUrl: `${CommonConfig.ui.reviewUIUrl}/review/submission/${submissionId}`,
+      actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
     };
 
     const userEmail = memberInfoById.get(userId)?.email;
