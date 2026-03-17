@@ -174,10 +174,10 @@ They are requesting a manual override or secondary look at the AI Review results
     const recipients = Array.from(
       new Set(
         recipientIds
-          .map((memberId) => memberInfoById.get(memberId)?.email)
-          .filter((email): email is string => Boolean(email)),
+          .map((memberId) => memberInfoById.get(memberId))
+          .filter((recipient): boolean => Boolean(recipient?.email)),
       ),
-    );
+    ) as { email: string; handle: string }[];
 
     if (recipients.length === 0) {
       this.logger.warn(
@@ -201,32 +201,36 @@ They are requesting a manual override or secondary look at the AI Review results
       ? new Date(reviewPhase.scheduledEndTime as string).toLocaleString()
       : 'TBD';
 
-    const payload = new EventBusSendEmailPayload();
-    payload.sendgrid_template_id =
-      CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
-    payload.recipients = recipients;
-    payload.data = {
-      subject: `Escalation Approved: Submission #${submissionId} Ready for Review`,
-      message: `
-Hi there!<br />
-<br />
-An escalation request for Submission #${submissionId} in <strong>${challenge.name}</strong> has been approved by the Copilot.<br />
-<br />
-<strong>Action Required:</strong><br />
-As the manual override is now active, please proceed with your full review of this submission.<br />
-<br />
-Deadline for Completion: ${reviewEndDate}<br />
-      `,
-      actionLabel: `Complete Manual Review Now`,
-      actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
-    };
+    await Promise.all(
+      recipients.map(async (recipient) => {
+        const payload = new EventBusSendEmailPayload();
+        payload.sendgrid_template_id =
+          CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
+        payload.recipients = [recipient.email];
+        payload.data = {
+          subject: `Escalation Approved: Submission #${submissionId} Ready for Review`,
+          message: `
+  Hi ${recipient.handle}!<br />
+  <br />
+  An escalation request for Submission #${submissionId} in <strong>${challenge.name}</strong> has been approved by the Copilot.<br />
+  <br />
+  <strong>Action Required:</strong><br />
+  As the manual override is now active, please proceed with your full review of this submission.<br />
+  <br />
+  Deadline for Completion: ${reviewEndDate}<br />
+        `,
+          actionLabel: `Complete Manual Review Now`,
+          actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
+        };
 
-    const approverEmail = memberInfoById.get(approverId)?.email;
-    if (approverEmail) {
-      payload.replyTo = approverEmail;
-    }
+        const approverEmail = memberInfoById.get(approverId)?.email;
+        if (approverEmail) {
+          payload.replyTo = approverEmail;
+        }
 
-    await this.eventBusService.sendEmail(payload);
+        await this.eventBusService.sendEmail(payload);
+      }),
+    );
   }
 
   private async notifyReviewersOfManualOverride(
@@ -257,10 +261,10 @@ Deadline for Completion: ${reviewEndDate}<br />
     const recipients = Array.from(
       new Set(
         recipientIds
-          .map((memberId) => memberInfoById.get(memberId)?.email)
-          .filter((email): email is string => Boolean(email)),
+          .map((memberId) => memberInfoById.get(memberId))
+          .filter((recipient): boolean => Boolean(recipient?.email)),
       ),
-    );
+    ) as { email: string; handle: string }[];
 
     if (recipients.length === 0) {
       this.logger.warn(
@@ -272,29 +276,36 @@ Deadline for Completion: ${reviewEndDate}<br />
     const challenge =
       await this.challengeApiService.getChallengeDetail(challengeId);
 
-    const payload = new EventBusSendEmailPayload();
-    payload.sendgrid_template_id =
-      CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
-    payload.recipients = recipients;
-    payload.data = {
-      subject: `Manual Override: Submission #${submissionId} Ready for Review`,
-      message: `
-Hi there!<br />
-A manual override has been applied by a Copilot/Admin for Submission #${submissionId} in <strong>${challenge.name}</strong>.<br />
-The AI Review results for this submission have been bypassed administratively. As a result, this submission is now open and requires your manual evaluation.<br />
-<strong>Action Required:</strong><br />
-Please access the review App and complete the scorecard for this submission to ensure the project timeline remains on track.<br /><br />
-      `,
-      actionLabel: `Open Scorecard & Start Review`,
-      actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
-    };
+    await Promise.all(
+      recipients.map(async (recipient) => {
+        const payload = new EventBusSendEmailPayload();
+        payload.sendgrid_template_id =
+          CommonConfig.sendgridConfig.aiReviewEscalationsEmailTemplate;
+        payload.recipients = [recipient.email];
+        payload.data = {
+          subject: `Manual Override: Submission #${submissionId} Ready for Review`,
+          message: `
+  Hi ${recipient.handle}!<br />
+  <br />
+  A manual override has been applied by a Copilot/Admin for Submission #${submissionId} in <strong>${challenge.name}</strong>.<br />
+  <br />
+  The AI Review results for this submission have been bypassed administratively. As a result, this submission is now open and requires your manual evaluation.<br />
+  <br />
+  <strong>Action Required:</strong><br />
+  Please access the review App and complete the scorecard for this submission to ensure the project timeline remains on track.<br /><br />
+        `,
+          actionLabel: `Open Scorecard & Start Review`,
+          actionUrl: `${CommonConfig.ui.reviewUIUrl}/active-challenges/${challengeId}/challenge-details`,
+        };
 
-    const userEmail = memberInfoById.get(userId)?.email;
-    if (userEmail) {
-      payload.replyTo = userEmail;
-    }
+        const userEmail = memberInfoById.get(userId)?.email;
+        if (userEmail) {
+          payload.replyTo = userEmail;
+        }
 
-    await this.eventBusService.sendEmail(payload);
+        await this.eventBusService.sendEmail(payload);
+      }),
+    );
   }
 
   async list(
