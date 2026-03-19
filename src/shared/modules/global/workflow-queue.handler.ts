@@ -9,7 +9,7 @@ import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
-import { ChallengeApiService } from './challenge.service';
+import { ChallengeApiService, PhaseData } from './challenge.service';
 
 // A helper to generate a 32-bit integer hash from a string
 function stringToHash(string: string): number {
@@ -541,12 +541,14 @@ export class WorkflowQueueHandler implements OnModuleInit {
         return;
       }
 
-      // Find AI Screening phase
-      const aiScreeningPhase = challenge.phases.find(
-        (p) => p.name === 'AI Screening',
-      );
+      // Find the latest AI Screening phase iteration
+      const latestAiScreeningPhase =
+        [...challenge.phases]
+          .filter((phase) => phase.name === 'AI Screening')
+          .sort((a, b) => this.getPhaseSortTime(a) - this.getPhaseSortTime(b))
+          .at(-1) ?? null;
 
-      if (!aiScreeningPhase) {
+      if (!latestAiScreeningPhase) {
         this.logger.debug(
           `[publishAiWorkflowPhaseCompletedEvent] No AI Screening phase found for challenge ${challengeId}`,
         );
@@ -554,9 +556,9 @@ export class WorkflowQueueHandler implements OnModuleInit {
       }
 
       // Check if AI Screening phase is still open
-      if (!aiScreeningPhase.isOpen) {
+      if (!latestAiScreeningPhase.isOpen) {
         this.logger.debug(
-          `[publishAiWorkflowPhaseCompletedEvent] AI Screening phase ${aiScreeningPhase.id} is not open for challenge ${challengeId}`,
+          `[publishAiWorkflowPhaseCompletedEvent] AI Screening phase ${latestAiScreeningPhase.id} is not open for challenge ${challengeId}`,
         );
         return;
       }
@@ -641,5 +643,13 @@ export class WorkflowQueueHandler implements OnModuleInit {
       );
       // Don't throw - this is a non-critical notification
     }
+  }
+
+  private getPhaseSortTime(phase: PhaseData): number {
+    const timestamp = new Date(
+      phase.actualStartTime ?? phase.scheduledStartTime ?? '',
+    ).getTime();
+
+    return Number.isFinite(timestamp) ? timestamp : 0;
   }
 }
