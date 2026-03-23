@@ -493,7 +493,7 @@ export class AiReviewConfigService {
 
   async delete(id: string, authUser: JwtUser): Promise<void> {
     const config = await this.getById(id);
-    await this.validateCopilotIsResourceForChallenge(
+    await this.validateCanManageConfigForChallenge(
       config.challengeId,
       authUser,
     );
