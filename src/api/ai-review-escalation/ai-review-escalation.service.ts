@@ -1115,8 +1115,6 @@ They are requesting a manual override or secondary look at the AI Review results
       );
     }
 
-    await this.ensureNoApprovedEscalationExists(aiReviewDecisionId);
-
     await this.validatePhaseOpen(challengeId);
 
     if (
