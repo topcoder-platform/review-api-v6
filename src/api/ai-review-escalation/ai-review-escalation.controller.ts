@@ -105,7 +105,7 @@ export class AiReviewEscalationController {
   @ApiOperation({
     summary: 'Create an AI review escalation',
     description:
-      'Roles: Admin, Copilot, Reviewer, Screener, Checkpoint Screener. Reviewer: creates with PENDING_APPROVAL (escalationNotes required) when challenge is in Review or Iterative Review phase. Screener/Checkpoint Screener: same PENDING_APPROVAL flow when challenge is in Screening or Checkpoint Screening phase. Admin/Copilot: direct unlock with APPROVED (approverNotes required). Override not allowed for passing decisions.',
+      'Roles: Admin, Copilot, Reviewer, Screener, Checkpoint Screener. Reviewer: creates with PENDING_APPROVAL (escalationNotes required) when challenge is in Review or Iterative Review phase. Screener/Checkpoint Screener: same PENDING_APPROVAL flow when challenge is in Screening or Checkpoint Screening phase. Admin/Copilot: direct unlock with APPROVED (approverNotes required). Override not allowed for passing decisions. Once an escalation is APPROVED for the decision, no further escalation or unlock actions are allowed.',
   })
   @ApiParam({
     name: 'id',
@@ -124,7 +124,7 @@ export class AiReviewEscalationController {
   @ApiResponse({
     status: 400,
     description:
-      'Bad Request. Missing required notes for role, or override not allowed for passing decision.',
+      'Bad Request. Missing required notes for role, override not allowed for passing decision, or an approved escalation already exists for this decision.',
   })
   @ApiResponse({
     status: 403,
@@ -149,7 +149,7 @@ export class AiReviewEscalationController {
   @ApiOperation({
     summary: 'Update an AI review escalation',
     description:
-      'Roles: Admin, Copilot. React to a PENDING_APPROVAL escalation: set approverNotes and status to APPROVED or REJECTED. If APPROVED, the decision is set to HUMAN_OVERRIDE and submissionLocked to false.',
+      'Roles: Admin, Copilot. React to a PENDING_APPROVAL escalation: set approverNotes and status to APPROVED or REJECTED. If APPROVED, the decision is set to HUMAN_OVERRIDE and submissionLocked to false. Once an escalation is APPROVED for the decision, no further escalation or unlock actions are allowed.',
   })
   @ApiParam({
     name: 'id',
@@ -173,7 +173,7 @@ export class AiReviewEscalationController {
   @ApiResponse({
     status: 400,
     description:
-      'Bad Request. Only PENDING_APPROVAL escalations can be updated.',
+      'Bad Request. Only PENDING_APPROVAL escalations can be updated, and updates are blocked if an approved escalation already exists for this decision.',
   })
   @ApiResponse({
     status: 404,
