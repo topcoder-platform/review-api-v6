@@ -76,6 +76,7 @@ workflows:
                               - develop
                               - PM-3906_escalations-notifications
                               - pm-4172_2
+                              - fix-workflow-completion-event
 
             - 'build-prod':
                   context: org-global
