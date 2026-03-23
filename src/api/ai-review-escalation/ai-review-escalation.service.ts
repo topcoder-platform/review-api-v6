@@ -762,6 +762,25 @@ They are requesting a manual override or secondary look at the AI Review results
     });
   }
 
+  private async ensureNoApprovedEscalationExists(
+    aiReviewDecisionId: string,
+  ): Promise<void> {
+    const approvedEscalation =
+      await this.prisma.aiReviewDecisionEscalation.findFirst({
+        where: {
+          aiReviewDecisionId,
+          status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+        },
+        select: { id: true },
+      });
+
+    if (approvedEscalation) {
+      throw new BadRequestException(
+        'This AI review decision already has an approved escalation. No further escalation or unlock actions are allowed.',
+      );
+    }
+  }
+
   private async createPendingEscalationForRole(
     aiReviewDecisionId: string,
     dto: CreateAiReviewEscalationDto,
@@ -905,6 +924,8 @@ They are requesting a manual override or secondary look at the AI Review results
         'Override is not allowed for a passing AI review decision.',
       );
     }
+
+    await this.ensureNoApprovedEscalationExists(aiReviewDecisionId);
 
     const userId = authUser.userId?.toString()?.trim() ?? null;
     if (!userId) {
@@ -1093,6 +1114,9 @@ They are requesting a manual override or secondary look at the AI Review results
         'Only Admin or a Copilot assigned to this challenge can update an escalation.',
       );
     }
+
+    await this.ensureNoApprovedEscalationExists(aiReviewDecisionId);
+
     await this.validatePhaseOpen(challengeId);
 
     if (
