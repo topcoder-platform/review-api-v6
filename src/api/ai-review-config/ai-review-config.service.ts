@@ -9,6 +9,7 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import {
@@ -54,9 +55,31 @@ export class AiReviewConfigService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly challengePrisma: ChallengePrismaService,
     private readonly resourcePrisma: ResourcePrismaService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewConfigService');
+  }
+
+  private async isChallengeCreator(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<boolean> {
+    const memberId = authUser.userId?.toString()?.trim();
+    if (!memberId) {
+      return false;
+    }
+
+    const [challenge] = await this.challengePrisma.$queryRaw<
+      { createdBy: string }[]
+    >`
+      SELECT "createdBy"
+      FROM "Challenge"
+      WHERE id = ${challengeId}
+      LIMIT 1
+    `;
+
+    return challenge?.createdBy?.toString()?.trim() === memberId;
   }
 
   private async validateCopilotIsResourceForChallenge(
@@ -94,6 +117,21 @@ export class AiReviewConfigService {
     }
   }
 
+  private async validateCanManageConfigForChallenge(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<void> {
+    if (
+      authUser.isMachine ||
+      isAdmin(authUser) ||
+      (await this.isChallengeCreator(challengeId, authUser))
+    ) {
+      return;
+    }
+
+    await this.validateCopilotIsResourceForChallenge(challengeId, authUser);
+  }
+
   private async validateCallerHasResourceForChallenge(
     challengeId: string,
     authUser: JwtUser,
@@ -114,6 +152,21 @@ export class AiReviewConfigService {
         'You must be assigned to this challenge to view its AI review config.',
       );
     }
+  }
+
+  private async validateCanViewConfigForChallenge(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<void> {
+    if (
+      authUser.isMachine ||
+      isAdmin(authUser) ||
+      (await this.isChallengeCreator(challengeId, authUser))
+    ) {
+      return;
+    }
+
+    await this.validateCallerHasResourceForChallenge(challengeId, authUser);
   }
 
   private async validateChallengeExists(challengeId: string): Promise<void> {
@@ -224,7 +277,7 @@ export class AiReviewConfigService {
     await this.validateChallengeExists(dto.challengeId);
     await this.validateNoSubmissionsExistForChallenge(dto.challengeId);
     await this.validateNoAiRunsExistForChallenge(dto.challengeId);
-    await this.validateCopilotIsResourceForChallenge(dto.challengeId, authUser);
+    await this.validateCanManageConfigForChallenge(dto.challengeId, authUser);
 
     let payload: {
       challengeId: string;
@@ -331,7 +384,7 @@ export class AiReviewConfigService {
   }
 
   async getByChallengeId(challengeId: string, authUser: JwtUser) {
-    await this.validateCallerHasResourceForChallenge(challengeId, authUser);
+    await this.validateCanViewConfigForChallenge(challengeId, authUser);
     const config = await this.prisma.aiReviewConfig.findFirst({
       where: { challengeId },
       orderBy: { version: 'desc' },
@@ -384,7 +437,7 @@ export class AiReviewConfigService {
     const config = await this.getById(id);
     const challengeId = config.challengeId;
 
-    await this.validateCopilotIsResourceForChallenge(challengeId, authUser);
+    await this.validateCanManageConfigForChallenge(challengeId, authUser);
     await this.validateChallengeNotCompleted(challengeId);
     await this.validateNoDecisionsForConfig(id);
     await this.validateNoAiRunsExistForChallenge(challengeId);
