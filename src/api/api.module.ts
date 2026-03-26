@@ -9,6 +9,11 @@ import { AppealService } from './appeal/appeal.service';
 import { ContactRequestsController } from './contact/contactRequests.controller';
 import { ReviewController } from './review/review.controller';
 import { ProjectResultModule } from './project-result/projectResult.module';
+import { AiReviewTemplateModule } from './ai-review-template/ai-review-template.module';
+import { AiReviewConfigModule } from './ai-review-config/ai-review-config.module';
+import { AiReviewDecisionModule } from './ai-review-decision/ai-review-decision.module';
+import { AiReviewEscalationModule } from './ai-review-escalation/ai-review-escalation.module';
+import { ChallengeReviewContextModule } from './challenge-review-context/challenge-review-context.module';
 
 import { ReviewTypeController } from './review-type/review-type.controller';
 import { ReviewTypeService } from './review-type/review-type.service';
@@ -35,6 +40,16 @@ import { ProjectResultService } from './project-result/projectResult.service';
 import { ProjectResultController } from './project-result/projectResult.controller';
 import { MyReviewController } from './my-review/myReview.controller';
 import { MyReviewService } from './my-review/myReview.service';
+import { AiReviewTemplateService } from './ai-review-template/ai-review-template.service';
+import { AiReviewTemplateController } from './ai-review-template/ai-review-template.controller';
+import { AiReviewConfigService } from './ai-review-config/ai-review-config.service';
+import { AiReviewConfigController } from './ai-review-config/ai-review-config.controller';
+import { AiReviewDecisionController } from './ai-review-decision/ai-review-decision.controller';
+import { AiReviewDecisionService } from './ai-review-decision/ai-review-decision.service';
+import { AiReviewEscalationController } from './ai-review-escalation/ai-review-escalation.controller';
+import { AiReviewEscalationService } from './ai-review-escalation/ai-review-escalation.service';
+import { ChallengeReviewContextController } from './challenge-review-context/challenge-review-context.controller';
+import { ChallengeReviewContextService } from './challenge-review-context/challenge-review-context.service';
 
 @Module({
   imports: [
@@ -42,6 +57,11 @@ import { MyReviewService } from './my-review/myReview.service';
     GlobalProvidersModule,
     FileUploadModule,
     ProjectResultModule,
+    AiReviewTemplateModule,
+    AiReviewConfigModule,
+    AiReviewDecisionModule,
+    AiReviewEscalationModule,
+    ChallengeReviewContextModule,
   ],
   controllers: [
     HealthCheckController,
@@ -59,6 +79,11 @@ import { MyReviewService } from './my-review/myReview.service';
     WebhookController,
     AiWorkflowController,
     ProjectResultController,
+    AiReviewTemplateController,
+    AiReviewConfigController,
+    AiReviewDecisionController,
+    AiReviewEscalationController,
+    ChallengeReviewContextController,
   ],
   providers: [
     ReviewService,
@@ -77,6 +102,11 @@ import { MyReviewService } from './my-review/myReview.service';
     ProjectResultService,
     ReviewTypeService,
     MyReviewService,
+    AiReviewTemplateService,
+    AiReviewConfigService,
+    AiReviewDecisionService,
+    AiReviewEscalationService,
+    ChallengeReviewContextService,
   ],
 })
 export class ApiModule {}

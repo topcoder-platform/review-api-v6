@@ -1390,6 +1390,9 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       resource: {
         findMany: jest.fn().mockResolvedValue([]),
       },
+      resourceRole: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
 
     memberPrismaMock = {
@@ -1569,6 +1572,42 @@ describe('ReviewService.getReviews reviewer visibility', () => {
 
     await service.getReviews(baseAuthUser, undefined, 'challenge-1');
 
+    const callArgs = prismaMock.review.findMany.mock.calls[0][0];
+    expect(callArgs.where.resourceId).toBeUndefined();
+  });
+
+  it('allows copilots with legacy role ids when Resource API role names are blank', async () => {
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+      {
+        ...buildResource(''),
+        roleId: 'legacy-copilot-role-id',
+      },
+    ]);
+    resourcePrismaMock.resourceRole.findMany.mockResolvedValue([
+      {
+        id: 'legacy-copilot-role-id',
+        nameLower: 'copilot',
+      },
+    ]);
+
+    prismaMock.submission.findMany.mockImplementation(({ where }: any = {}) => {
+      if (where?.challengeId && !where?.memberId) {
+        return Promise.resolve([baseSubmission]);
+      }
+      if (where?.memberId) {
+        return Promise.resolve([]);
+      }
+      return Promise.resolve([]);
+    });
+
+    await expect(
+      service.getReviews(baseAuthUser, undefined, 'challenge-1'),
+    ).resolves.toBeDefined();
+
+    expect(resourcePrismaMock.resourceRole.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['legacy-copilot-role-id'] } },
+      select: { id: true, nameLower: true },
+    });
     const callArgs = prismaMock.review.findMany.mock.calls[0][0];
     expect(callArgs.where.resourceId).toBeUndefined();
   });

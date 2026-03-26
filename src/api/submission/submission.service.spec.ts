@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SubmissionStatus, SubmissionType } from '@prisma/client';
 import { Readable } from 'stream';
 import { SubmissionService } from './submission.service';
@@ -497,6 +497,221 @@ describe('SubmissionService', () => {
         select: { id: true },
       });
       expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('createSubmission Final Fix', () => {
+    let prismaMock: {
+      submission: {
+        create: jest.Mock;
+      };
+    };
+    let challengeApiServiceMock: {
+      validateChallengeExists: jest.Mock;
+      validateSubmissionCreation: jest.Mock;
+      validateCheckpointSubmissionCreation: jest.Mock;
+      validateFinalFixSubmissionCreation: jest.Mock;
+    };
+    let resourceApiServiceMock: {
+      validateSubmitterRegistration: jest.Mock;
+    };
+    let challengeCatalogServiceMock: {
+      ensureSubmissionTypeAllowed: jest.Mock;
+    };
+    let challengePrismaMock: {
+      $executeRaw: jest.Mock;
+      $queryRaw: jest.Mock;
+    };
+    let createService: SubmissionService;
+
+    const buildCreatedSubmission = (type: SubmissionType) => ({
+      challengeId: 'challenge-final-fix',
+      createdAt: new Date('2026-02-01T12:00:00Z'),
+      createdBy: '1001',
+      eventRaised: false,
+      fileType: 'zip',
+      id: `submission-${type}`,
+      isFileSubmission: false,
+      legacyChallengeId: null,
+      legacySubmissionId: null,
+      legacyUploadId: null,
+      memberId: '1001',
+      prizeId: null,
+      status: SubmissionStatus.ACTIVE,
+      submissionPhaseId: 'phase-final-fix',
+      submittedDate: new Date('2026-02-01T12:00:00Z'),
+      systemFileName: 'submission.zip',
+      type,
+      updatedAt: new Date('2026-02-01T12:00:00Z'),
+      updatedBy: '1001',
+      url: 'https://example.com/submission.zip',
+      virusScan: false,
+      viewCount: 0,
+    });
+
+    const createBody = (
+      type: SubmissionType,
+    ): {
+      challengeId: string;
+      memberId: string;
+      type: SubmissionType;
+      url: string;
+    } => ({
+      challengeId: 'challenge-final-fix',
+      memberId: '1001',
+      type,
+      url: 'https://example.com/submission.zip',
+    });
+
+    beforeEach(() => {
+      prismaMock = {
+        submission: {
+          create: jest.fn(),
+        },
+      };
+      challengeApiServiceMock = {
+        validateChallengeExists: jest.fn().mockResolvedValue({
+          id: 'challenge-final-fix',
+          legacy: {},
+          status: ChallengeStatus.ACTIVE,
+          track: 'Design',
+          type: 'Challenge',
+        }),
+        validateSubmissionCreation: jest.fn().mockResolvedValue(undefined),
+        validateCheckpointSubmissionCreation: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        validateFinalFixSubmissionCreation: jest
+          .fn()
+          .mockResolvedValue(undefined),
+      };
+      resourceApiServiceMock = {
+        validateSubmitterRegistration: jest.fn().mockResolvedValue(undefined),
+      };
+      challengeCatalogServiceMock = {
+        ensureSubmissionTypeAllowed: jest.fn(),
+      };
+      challengePrismaMock = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+
+      createService = new SubmissionService(
+        prismaMock as any,
+        { handleError: jest.fn() } as any,
+        challengePrismaMock as any,
+        challengeApiServiceMock as any,
+        resourceApiServiceMock as any,
+        {} as any,
+        { publish: jest.fn() } as any,
+        challengeCatalogServiceMock as any,
+        {} as any,
+      );
+
+      jest
+        .spyOn(createService as any, 'publishSubmissionCreateEvent')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(createService as any, 'publishTopgearSubmissionEventIfEligible')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(createService as any, 'populateLatestSubmissionFlags')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(createService as any, 'stripIsLatestForUnlimitedChallenges')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(createService as any, 'publishSubmissionScanEvent')
+        .mockResolvedValue(undefined);
+    });
+
+    it('accepts Final Fix submission when Final Fix phase is open and member is a winner', async () => {
+      const created = buildCreatedSubmission(
+        SubmissionType.STUDIO_FINAL_FIX_SUBMISSION,
+      );
+      prismaMock.submission.create.mockResolvedValue(created);
+      challengePrismaMock.$queryRaw.mockResolvedValue([
+        { userId: 1001 },
+        { userId: 2002 },
+      ]);
+
+      const result = await createService.createSubmission(
+        {
+          isMachine: false,
+          roles: [],
+          userId: '1001',
+        } as any,
+        createBody(SubmissionType.STUDIO_FINAL_FIX_SUBMISSION),
+      );
+
+      expect(
+        challengeApiServiceMock.validateFinalFixSubmissionCreation,
+      ).toHaveBeenCalledWith('challenge-final-fix');
+      expect(challengePrismaMock.$queryRaw).toHaveBeenCalled();
+      expect(prismaMock.submission.create).toHaveBeenCalled();
+      expect(result.type).toBe(SubmissionType.STUDIO_FINAL_FIX_SUBMISSION);
+    });
+
+    it('rejects Final Fix submission for non-winner member', async () => {
+      challengePrismaMock.$queryRaw.mockResolvedValue([{ userId: 2002 }]);
+
+      await expect(
+        createService.createSubmission(
+          {
+            isMachine: false,
+            roles: [],
+            userId: '1001',
+          } as any,
+          createBody(SubmissionType.STUDIO_FINAL_FIX_SUBMISSION),
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'FORBIDDEN_FINAL_FIX_SUBMISSION',
+        }),
+      });
+      expect(prismaMock.submission.create).not.toHaveBeenCalled();
+    });
+
+    it('maps Final Fix closed phase to SUBMISSION_PHASE_CLOSED', async () => {
+      challengeApiServiceMock.validateFinalFixSubmissionCreation.mockRejectedValue(
+        new Error('Final Fix phase is not currently open'),
+      );
+
+      await expect(
+        createService.createSubmission(
+          {
+            isMachine: false,
+            roles: [],
+            userId: '1001',
+          } as any,
+          createBody(SubmissionType.STUDIO_FINAL_FIX_SUBMISSION),
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'SUBMISSION_PHASE_CLOSED',
+          details: expect.objectContaining({
+            requiredPhase: 'Final Fix',
+          }),
+        }),
+      });
+      expect(challengePrismaMock.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when Final Fix phase is closed', async () => {
+      challengeApiServiceMock.validateFinalFixSubmissionCreation.mockRejectedValue(
+        new Error('Final Fix phase is not currently open'),
+      );
+
+      await expect(
+        createService.createSubmission(
+          {
+            isMachine: false,
+            roles: [],
+            userId: '1001',
+          } as any,
+          createBody(SubmissionType.STUDIO_FINAL_FIX_SUBMISSION),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

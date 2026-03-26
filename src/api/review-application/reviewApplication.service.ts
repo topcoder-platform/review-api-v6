@@ -34,6 +34,19 @@ interface ReviewerMetricsRow {
   latestCompletedReviews: bigint;
 }
 
+interface RecentReviewAssignmentRow {
+  memberId: string;
+  challengeId: string;
+  challengeName: string;
+  assignedAt: Date;
+}
+
+interface RecentReviewAssignment {
+  challengeId: string;
+  challengeName: string;
+  challengeUrl: string;
+}
+
 @Injectable()
 export class ReviewApplicationService {
   constructor(
@@ -280,6 +293,79 @@ export class ReviewApplicationService {
       );
 
     return metrics;
+  }
+
+  /**
+   * Get reviewer challenge assignments created in the last 60 days.
+   * @param userIds reviewer member ids
+   * @returns user assignment map keyed by member id
+   */
+  private async getRecentReviewAssignments(
+    userIds: string[],
+  ): Promise<Map<string, RecentReviewAssignment[]>> {
+    const assignments = new Map<string, RecentReviewAssignment[]>();
+
+    const normalizedIds = Array.from(
+      new Set(
+        userIds
+          .map((id) => id?.trim())
+          .filter((id): id is string => Boolean(id && id.length > 0)),
+      ),
+    );
+
+    if (!normalizedIds.length) {
+      return assignments;
+    }
+
+    const memberIdList = Prisma.join(
+      normalizedIds.map((id) => Prisma.sql`${id}`),
+    );
+    const recentThreshold = new Date();
+    recentThreshold.setDate(
+      recentThreshold.getDate() - RECENT_REVIEW_WINDOW_DAYS,
+    );
+
+    const assignmentQuery = Prisma.sql`
+      SELECT
+        r."memberId" AS "memberId",
+        c.id AS "challengeId",
+        c.name AS "challengeName",
+        MAX(r."createdAt") AS "assignedAt"
+      FROM resources."Resource" r
+      INNER JOIN challenges."Challenge" c
+        ON c.id = r."challengeId"
+      INNER JOIN resources."ResourceRole" rr
+        ON rr.id = r."roleId"
+      WHERE r."memberId" IN (${memberIdList})
+        AND LOWER(rr.name) LIKE '%reviewer%'
+        AND r."createdAt" >= ${recentThreshold}
+      GROUP BY r."memberId", c.id, c.name
+      ORDER BY r."memberId", "assignedAt" DESC, c.id ASC
+    `;
+
+    const rows =
+      await this.challengePrisma.$queryRaw<RecentReviewAssignmentRow[]>(
+        assignmentQuery,
+      );
+
+    rows.forEach((row) => {
+      const memberId = String(row.memberId);
+      const existing = assignments.get(memberId) ?? [];
+
+      existing.push({
+        challengeId: row.challengeId,
+        challengeName: row.challengeName,
+        challengeUrl: this.buildChallengeUrl(row.challengeId),
+      });
+
+      assignments.set(memberId, existing);
+    });
+
+    normalizedIds
+      .filter((id) => !assignments.has(id))
+      .forEach((id) => assignments.set(id, []));
+
+    return assignments;
   }
 
   /**
@@ -530,10 +616,12 @@ export class ReviewApplicationService {
     // get member id list
     const userIds: string[] = entityList.map((e: any) => e.userId as string);
     // Get challenge data and member emails.
-    const [challengeData, memberInfoList] = await Promise.all([
-      this.challengeService.getChallengeDetail(challengeId),
-      this.memberService.getUserEmails(userIds),
-    ]);
+    const [challengeData, memberInfoList, recentAssignmentsByUser] =
+      await Promise.all([
+        this.challengeService.getChallengeDetail(challengeId),
+        this.memberService.getUserEmails(userIds),
+        this.getRecentReviewAssignments(userIds),
+      ]);
     // Get sendgrid template id
     const sendgridTemplateId =
       status === ReviewApplicationStatus.APPROVED
@@ -544,21 +632,23 @@ export class ReviewApplicationService {
     memberInfoList.forEach((e) => userEmailMap.set(e.userId, e.email));
     // prepare challenge data
     const challengeName = challengeData.name;
-    const challengeUrl =
-      CommonConfig.apis.onlineReviewUrlBase +
-      challengeData.id +
-      '/challenge-details';
+    const challengeUrl = this.buildChallengeUrl(challengeData.id);
     // build event bus message payload
     const eventBusPayloads: EventBusSendEmailPayload[] = [];
     for (const entity of entityList) {
       const payload: EventBusSendEmailPayload = new EventBusSendEmailPayload();
       payload.sendgrid_template_id = sendgridTemplateId;
       payload.recipients = [userEmailMap.get(entity.userId)];
+      const pastReviewAssignments =
+        recentAssignmentsByUser.get(String(entity.userId)) ?? [];
       payload.data = {
         handle: entity.handle,
         reviewPhaseStart: entity.startDate,
         challengeUrl,
         challengeName,
+        pastReviewAssignments,
+        hasPastReviewAssignments: pastReviewAssignments.length > 0,
+        pastReviewAssignmentsWindowDays: RECENT_REVIEW_WINDOW_DAYS,
       };
       eventBusPayloads.push(payload);
     }
@@ -566,6 +656,10 @@ export class ReviewApplicationService {
     await Promise.all(
       eventBusPayloads.map((e) => this.eventBusService.sendEmail(e)),
     );
+  }
+
+  private buildChallengeUrl(challengeId: string): string {
+    return `${CommonConfig.apis.onlineReviewUrlBase}${challengeId}/challenge-details`;
   }
 
   /**

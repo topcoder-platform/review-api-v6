@@ -77,6 +77,26 @@ export enum Scope {
   CreateWorkflowRun = 'create:workflow-run',
   ReadWorkflowRun = 'read:workflow-run',
   UpdateWorkflowRun = 'update:workflow-run',
+
+  // AI review template scopes
+  CreateAiReviewTemplate = 'create:ai-review-template',
+  ReadAiReviewTemplate = 'read:ai-review-template',
+  UpdateAiReviewTemplate = 'update:ai-review-template',
+  DeleteAiReviewTemplate = 'delete:ai-review-template',
+
+  // AI review config scopes
+  CreateAiReviewConfig = 'create:ai-review-config',
+  ReadAiReviewConfig = 'read:ai-review-config',
+  UpdateAiReviewConfig = 'update:ai-review-config',
+  DeleteAiReviewConfig = 'delete:ai-review-config',
+
+  // AI review decision scopes
+  ReadAiReviewDecision = 'read:ai-review-decision',
+
+  // Challenge review context scopes
+  CreateChallengeReviewContext = 'create:challenge-review-context',
+  ReadChallengeReviewContext = 'read:challenge-review-context',
+  UpdateChallengeReviewContext = 'update:challenge-review-context',
 }
 
 /**

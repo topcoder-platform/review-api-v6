@@ -687,6 +687,13 @@ enum AiReviewDecisionStatus {
   PASSED
   FAILED
   ERROR
+  HUMAN_OVERRIDE
+}
+
+enum AiReviewDecisionEscalationStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
 }
 
 model aiWorkflow {
@@ -814,8 +821,8 @@ model aiReviewTemplateConfig {
   workflows          aiReviewTemplateConfigWorkflow[]
   challengeConfigs   aiReviewConfig[]
 
-  @@unique([challengeTrack, challengeType, version])
   @@index([challengeTrack, challengeType])
+  @@index([challengeTrack, challengeType, version])
 }
 
 model aiReviewTemplateConfigWorkflow {
@@ -873,10 +880,49 @@ model aiReviewDecision {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  config     aiReviewConfig @relation(fields: [configId], references: [id], onDelete: Restrict)
-  submission submission     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  config      aiReviewConfig               @relation(fields: [configId], references: [id], onDelete: Restrict)
+  submission  submission                   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  escalations aiReviewDecisionEscalation[]
 
   @@unique([submissionId, configId])
   @@index([configId, status])
   @@index([submissionId])
+}
+
+model aiReviewDecisionEscalation {
+  id                 String                         @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  aiReviewDecisionId String                         @db.VarChar(14)
+  escalationNotes    String?                        @db.Text
+  approverNotes      String?                        @db.Text
+  status             AiReviewDecisionEscalationStatus
+
+  createdAt DateTime @default(now())
+  createdBy String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  aiReviewDecision aiReviewDecision @relation(fields: [aiReviewDecisionId], references: [id], onDelete: Cascade)
+
+  @@index([aiReviewDecisionId])
+}
+
+enum ChallengeReviewContextStatus {
+  AI_GENERATED
+  HUMAN_APPROVED
+  HUMAN_REJECTED
+}
+
+model challengeReviewContext {
+  id         String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
+  challengeId String
+  context   Json     @db.JsonB
+  status    ChallengeReviewContextStatus
+
+  createdAt DateTime  @default(now())
+  createdBy String?
+  updatedAt DateTime  @updatedAt
+  updatedBy String?
+
+  @@unique([challengeId])
+  @@index([challengeId])
 }

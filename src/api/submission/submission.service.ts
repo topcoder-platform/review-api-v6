@@ -77,6 +77,10 @@ type TopgearSubmissionRecord = {
   createdAt: Date;
 };
 
+type ChallengeWinnerRow = {
+  userId: number | string | bigint | null;
+};
+
 type SubmissionBusPayloadSource = Prisma.submissionGetPayload<{
   select: {
     id: true;
@@ -1512,6 +1516,69 @@ export class SubmissionService {
     return resource?.memberHandle ?? null;
   }
 
+  /**
+   * Loads winner member IDs for a challenge from challenge storage.
+   */
+  private async getChallengeWinnerMemberIds(
+    challengeId: string,
+  ): Promise<Set<string>> {
+    const rows = await this.challengePrisma.$queryRaw<ChallengeWinnerRow[]>`
+      SELECT "userId"
+      FROM "ChallengeWinner"
+      WHERE "challengeId" = ${challengeId}
+    `;
+
+    return new Set(
+      (rows ?? [])
+        .map((row) =>
+          row?.userId === undefined || row?.userId === null
+            ? ''
+            : String(row.userId).trim(),
+        )
+        .filter((value) => value.length > 0),
+    );
+  }
+
+  /**
+   * Ensures Final Fix submissions are only accepted from challenge winners.
+   */
+  private async validateFinalFixWinnerEligibility(
+    challengeId: string,
+    memberId: string,
+  ): Promise<void> {
+    let winnerMemberIds: Set<string>;
+
+    try {
+      winnerMemberIds = await this.getChallengeWinnerMemberIds(challengeId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to resolve challenge winners for challenge ${challengeId}: ${message}`,
+      );
+      throw new InternalServerErrorException({
+        message:
+          'Could not validate Final Fix submission eligibility for this challenge.',
+        code: 'FINAL_FIX_WINNER_LOOKUP_FAILED',
+        details: {
+          challengeId,
+        },
+      });
+    }
+
+    const normalizedMemberId = String(memberId ?? '').trim();
+    if (!normalizedMemberId || !winnerMemberIds.has(normalizedMemberId)) {
+      throw new ForbiddenException({
+        message: 'Only challenge winners can submit during Final Fix.',
+        code: 'FORBIDDEN_FINAL_FIX_SUBMISSION',
+        details: {
+          challengeId,
+          memberId: normalizedMemberId,
+          winnerCount: winnerMemberIds.size,
+        },
+      });
+    }
+  }
+
   async createSubmission(
     authUser: JwtUser,
     body: SubmissionRequestDto,
@@ -1600,11 +1667,12 @@ export class SubmissionService {
 
     // Validate that submission phase is open before allowing submission creation
     if (body.challengeId) {
-      try {
-        // Check if it's a checkpoint submission
-        const isCheckpointSubmission =
-          body.type === SubmissionType.CHECKPOINT_SUBMISSION;
+      const isCheckpointSubmission =
+        body.type === SubmissionType.CHECKPOINT_SUBMISSION;
+      const isFinalFixSubmission =
+        body.type === SubmissionType.STUDIO_FINAL_FIX_SUBMISSION;
 
+      try {
         if (isCheckpointSubmission) {
           // For checkpoint submissions, validate checkpoint submission phase
           await this.challengeApiService.validateCheckpointSubmissionCreation(
@@ -1612,6 +1680,13 @@ export class SubmissionService {
           );
           this.logger.log(
             `Checkpoint Submission phase is open for challenge ${body.challengeId}`,
+          );
+        } else if (isFinalFixSubmission) {
+          await this.challengeApiService.validateFinalFixSubmissionCreation(
+            body.challengeId,
+          );
+          this.logger.log(
+            `Final Fix phase is open for challenge ${body.challengeId}`,
           );
         } else {
           // For regular submissions, validate submission phase
@@ -1627,6 +1702,7 @@ export class SubmissionService {
         if (
           error.message &&
           (error.message.includes('Submission phase is not currently open') ||
+            error.message.includes('Final Fix phase is not currently open') ||
             error.message.includes(
               'Checkpoint Submission phase is not currently open',
             ))
@@ -1640,13 +1716,22 @@ export class SubmissionService {
               requiredPhase:
                 body.type === SubmissionType.CHECKPOINT_SUBMISSION
                   ? 'Checkpoint Submission'
-                  : 'Submission',
+                  : body.type === SubmissionType.STUDIO_FINAL_FIX_SUBMISSION
+                    ? 'Final Fix'
+                    : 'Submission',
             },
           });
         }
         // Log the error but allow submission to proceed if challenge API is unavailable
         this.logger.warn(
           `Could not validate submission phase for challenge ${body.challengeId}: ${error.message}. Proceeding with submission creation.`,
+        );
+      }
+
+      if (isFinalFixSubmission) {
+        await this.validateFinalFixWinnerEligibility(
+          body.challengeId,
+          body.memberId,
         );
       }
     }
@@ -1969,18 +2054,27 @@ export class SubmissionService {
                 : [];
             const map = new Map<
               string,
-              { handle: string; maxRating: number | null }
+              {
+                email: string | null;
+                handle: string | null;
+                maxRating: number | null;
+              }
             >();
             for (const m of members) {
               const idStr = String(m.userId);
               const rating = m.maxRating ? m.maxRating.rating : null;
-              map.set(idStr, { handle: m.handle, maxRating: rating });
+              map.set(idStr, {
+                email: m.email ?? null,
+                handle: m.handle ?? null,
+                maxRating: rating,
+              });
             }
             for (const s of submissions) {
               const key = s.memberId ? String(s.memberId) : undefined;
               if (key && map.has(key)) {
                 const info = map.get(key)!;
                 (s as any).submitterHandle = info.handle;
+                (s as any).submitterEmail = info.email;
                 (s as any).submitterMaxRating = info.maxRating;
               }
             }
