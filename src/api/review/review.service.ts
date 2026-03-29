@@ -2428,16 +2428,6 @@ export class ReviewService {
       const isCopilotWithManagerAccess =
         access.mode === 'copilot' && hasManagerResourceRole;
 
-      this.logger.debug(
-        `[updateReviewItem] Authorization flags for item ${itemId}: mode=${access.mode}, challengeId=${challengeId ?? 'unknown'}, hasManagerResourceRole=${hasManagerResourceRole}, isCopilotWithManagerAccess=${isCopilotWithManagerAccess}`,
-      );
-
-      if (access.mode === 'copilot' && isCopilotWithManagerAccess) {
-        this.logger.log(
-          `[updateReviewItem] Copilot manager access granted for item ${itemId} on challenge ${challengeId ?? 'unknown'}.`,
-        );
-      }
-
       if (access.mode === 'copilot' && !isCopilotWithManagerAccess) {
         const forbiddenFields: string[] = [];
 
@@ -2464,9 +2454,6 @@ export class ReviewService {
         }
 
         if (forbiddenFields.length > 0) {
-          this.logger.warn(
-            `[updateReviewItem] Copilot manager access denied for item ${itemId}. Forbidden fields: ${forbiddenFields.join(', ')}`,
-          );
           throw new ForbiddenException({
             message:
               'Copilot permissions allow updating only the score for this review item.',
