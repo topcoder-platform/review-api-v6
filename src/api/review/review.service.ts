@@ -1923,6 +1923,20 @@ export class ReviewService {
         !ownsReview &&
         (isStatusOnlyUpdate || isCopilotReopenPayload);
 
+      this.logger.debug(
+        `Review update authorization check: ${JSON.stringify({
+          requester: requester.userId,
+          hasCopilotRole,
+          ownsReview,
+          isStatusOnlyUpdate,
+          isCopilotReopenPayload,
+          isReopenTransition,
+          requestedStatus,
+          existingStatus: existingReview.status,
+          definedBodyKeys,
+        })}`,
+      );
+
       if (!ownsReview) {
         if (allowCopilotStatusPatch) {
           if (!challengeId) {
