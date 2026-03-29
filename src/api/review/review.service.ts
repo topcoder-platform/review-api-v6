@@ -67,6 +67,7 @@ interface ReviewItemAccessResult {
   hasCopilotRole: boolean;
   ownsReview: boolean;
   requiresManagerComment: boolean;
+  requesterResources?: ResourceInfo[];
 }
 
 @Injectable()
@@ -701,6 +702,7 @@ export class ReviewService {
         hasCopilotRole: false,
         ownsReview: false,
         requiresManagerComment: false,
+        requesterResources: [],
       };
     }
 
@@ -711,6 +713,7 @@ export class ReviewService {
         hasCopilotRole: false,
         ownsReview: false,
         requiresManagerComment: true,
+        requesterResources: [],
       };
     }
 
@@ -860,6 +863,7 @@ export class ReviewService {
       hasCopilotRole,
       ownsReview,
       requiresManagerComment,
+      requesterResources,
     };
   }
   private async ensureReviewDeleteAccess(
@@ -2410,7 +2414,31 @@ export class ReviewService {
         body.managerComment !== undefined &&
         body.managerComment !== (existingItem.managerComment ?? null);
 
-      if (access.mode === 'copilot') {
+      // Manager access for this flow comes from challenge resources, not JWT roles.
+      const challengeId = review.submission?.challengeId ?? undefined;
+      const hasManagerResourceRole =
+        access.requesterResources?.some((resource) => {
+          const normalizedRoleName = (resource.roleName || '').toLowerCase();
+          return (
+            normalizedRoleName.includes('manager') &&
+            (challengeId ? resource.challengeId === challengeId : false)
+          );
+        }) ?? false;
+
+      const isCopilotWithManagerAccess =
+        access.mode === 'copilot' && hasManagerResourceRole;
+
+      this.logger.debug(
+        `[updateReviewItem] Authorization flags for item ${itemId}: mode=${access.mode}, challengeId=${challengeId ?? 'unknown'}, hasManagerResourceRole=${hasManagerResourceRole}, isCopilotWithManagerAccess=${isCopilotWithManagerAccess}`,
+      );
+
+      if (access.mode === 'copilot' && isCopilotWithManagerAccess) {
+        this.logger.log(
+          `[updateReviewItem] Copilot manager access granted for item ${itemId} on challenge ${challengeId ?? 'unknown'}.`,
+        );
+      }
+
+      if (access.mode === 'copilot' && !isCopilotWithManagerAccess) {
         const forbiddenFields: string[] = [];
 
         if (!finalAnswerChanged && managerCommentChanged) {
@@ -2436,6 +2464,9 @@ export class ReviewService {
         }
 
         if (forbiddenFields.length > 0) {
+          this.logger.warn(
+            `[updateReviewItem] Copilot manager access denied for item ${itemId}. Forbidden fields: ${forbiddenFields.join(', ')}`,
+          );
           throw new ForbiddenException({
             message:
               'Copilot permissions allow updating only the score for this review item.',
