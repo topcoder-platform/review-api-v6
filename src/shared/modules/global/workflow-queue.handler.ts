@@ -10,6 +10,7 @@ import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
 import { ChallengeApiService } from './challenge.service';
+import { SubmissionService } from 'src/api/submission/submission.service';
 
 // A helper to generate a 32-bit integer hash from a string
 function stringToHash(string: string): number {
@@ -36,11 +37,28 @@ export class WorkflowQueueHandler implements OnModuleInit {
     private readonly giteaService: GiteaService,
     private readonly eventBusService: EventBusService,
     private readonly aiReviewerDecisionMaker: AiReviewerDecisionMakerService,
+    private readonly submissionService: SubmissionService,
   ) {}
 
   private async triggerEvaluateSubmission(submissionId: string): Promise<void> {
     try {
-      await this.aiReviewerDecisionMaker.evaluateSubmission(submissionId);
+      const decision =
+        await this.aiReviewerDecisionMaker.evaluateSubmission(submissionId);
+      const decisionStatus = String((decision as any)?.status ?? '')
+        .trim()
+        .toUpperCase();
+      if (
+        decisionStatus &&
+        ['PASSED', 'HUMAN_OVERRIDE'].includes(decisionStatus)
+      ) {
+        await this.submissionService.ensurePendingReviewsForSubmission(
+          submissionId,
+          {
+            requireAiDecisionPass: true,
+            triggerSource: 'ai-decision',
+          },
+        );
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
