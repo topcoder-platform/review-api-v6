@@ -69,6 +69,9 @@ export const CommonConfig = {
     contactManagersEmailTemplate:
       process.env.SENDGRID_CONTACT_MANAGERS_TEMPLATE ??
       'd-00000000000000000000000000000000',
+    aiReviewEscalationsEmailTemplate:
+      process.env.SENDGRID_AI_REVIEW_ESCALATION_CREATED_TEMPLATE ??
+      'd-ecd4ec1d0b924bfe8ebc7c963d214aae',
     aiWorkflowRunCompletedEmailTemplate:
       process.env.SENDGRID_AI_WORKFLOW_RUN_COMPLETED_TEMPLATE ??
       'd-7d14d986ba0a4317b449164b73939910',

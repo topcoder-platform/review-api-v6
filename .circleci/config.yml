@@ -74,8 +74,9 @@ workflows:
                       branches:
                           only:
                               - develop
-                              - PM-3926_ai-screening-phase
-                              - pm-3848_fix
+                              - PM-3906_escalations-notifications
+                              - pm-4172_2
+                              - PM-4347_allow-creators-to-edit-ai-configs
 
             - 'build-prod':
                   context: org-global

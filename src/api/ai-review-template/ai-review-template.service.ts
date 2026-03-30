@@ -9,8 +9,11 @@ import { ChallengePrismaService } from '../../shared/modules/global/challenge-pr
 import {
   CreateAiReviewTemplateConfigDto,
   UpdateAiReviewTemplateConfigDto,
+  AiReviewTemplateConfigResponseDto,
+  AiReviewTemplateConfigWorkflowResponseDto,
+  AiReviewMode as ResponseAiReviewMode,
 } from '../../dto/aiReviewTemplateConfig.dto';
-import { AiReviewMode, Prisma } from '@prisma/client';
+import { AiReviewMode as PrismaAiReviewMode, Prisma } from '@prisma/client';
 
 const TEMPLATE_INCLUDE = {
   workflows: {
@@ -41,6 +44,30 @@ const TEMPLATE_INCLUDE = {
   },
 } as const;
 
+type AiReviewTemplateWorkflowRecord = {
+  id: string;
+  workflowId: string;
+  weightPercent: Prisma.Decimal | number | string;
+  isGating: boolean;
+  workflow: Record<string, unknown>;
+};
+
+type AiReviewTemplateRecord = {
+  id: string;
+  challengeTrack: string;
+  challengeType: string;
+  version: number;
+  title: string;
+  description: string;
+  minPassingThreshold: Prisma.Decimal | number | string | null;
+  mode: PrismaAiReviewMode;
+  autoFinalize: boolean;
+  formula: Prisma.JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  workflows: AiReviewTemplateWorkflowRecord[];
+};
+
 @Injectable()
 export class AiReviewTemplateService {
   private readonly logger: LoggerService;
@@ -50,6 +77,56 @@ export class AiReviewTemplateService {
     private readonly challengePrisma: ChallengePrismaService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewTemplateService');
+  }
+
+  private mapWorkflowToResponse(
+    workflow: AiReviewTemplateWorkflowRecord,
+  ): AiReviewTemplateConfigWorkflowResponseDto {
+    return {
+      id: workflow.id,
+      workflowId: workflow.workflowId,
+      weightPercent: Number(workflow.weightPercent),
+      isGating: workflow.isGating,
+      workflow: workflow.workflow,
+    };
+  }
+
+  private mapTemplateToResponse(
+    template: AiReviewTemplateRecord,
+  ): AiReviewTemplateConfigResponseDto {
+    const formula =
+      template.formula &&
+      typeof template.formula === 'object' &&
+      !Array.isArray(template.formula)
+        ? (template.formula as Record<string, unknown>)
+        : undefined;
+
+    return {
+      id: template.id,
+      challengeTrack: template.challengeTrack,
+      challengeType: template.challengeType,
+      version: template.version,
+      title: template.title,
+      description: template.description,
+      minPassingThreshold:
+        template.minPassingThreshold != null
+          ? Number(template.minPassingThreshold)
+          : 0,
+      mode: this.mapModeToResponse(template.mode),
+      autoFinalize: template.autoFinalize,
+      formula,
+      createdAt: template.createdAt,
+      updatedAt: template.updatedAt,
+      workflows: template.workflows.map((workflow) =>
+        this.mapWorkflowToResponse(workflow),
+      ),
+    };
+  }
+
+  private mapModeToResponse(mode: PrismaAiReviewMode): ResponseAiReviewMode {
+    return mode === PrismaAiReviewMode.AI_ONLY
+      ? ResponseAiReviewMode.AI_ONLY
+      : ResponseAiReviewMode.AI_GATING;
   }
 
   private async validateChallengeTrackExists(value: string): Promise<void> {
@@ -121,7 +198,9 @@ export class AiReviewTemplateService {
     );
   }
 
-  async create(dto: CreateAiReviewTemplateConfigDto) {
+  async create(
+    dto: CreateAiReviewTemplateConfigDto,
+  ): Promise<AiReviewTemplateConfigResponseDto> {
     await this.validateChallengeTrackExists(dto.challengeTrack);
     await this.validateChallengeTypeExists(dto.challengeType);
     if (dto.formula !== undefined) {
@@ -168,7 +247,7 @@ export class AiReviewTemplateService {
         title: configData.title,
         description: configData.description,
         minPassingThreshold: configData.minPassingThreshold,
-        mode: configData.mode as AiReviewMode,
+        mode: configData.mode as PrismaAiReviewMode,
         autoFinalize: configData.autoFinalize,
         formula:
           configData.formula != null
@@ -189,31 +268,24 @@ export class AiReviewTemplateService {
     return this.findById(template.id);
   }
 
-  async findById(id: string) {
-    const template = await this.prisma.aiReviewTemplateConfig.findUnique({
+  async findById(id: string): Promise<AiReviewTemplateConfigResponseDto> {
+    const template = (await this.prisma.aiReviewTemplateConfig.findUnique({
       where: { id },
       include: TEMPLATE_INCLUDE,
-    });
+    })) as AiReviewTemplateRecord | null;
     if (!template) {
       this.logger.error(`AI review template with id ${id} not found.`);
       throw new NotFoundException(
         `AI review template with id ${id} not found.`,
       );
     }
-    return {
-      ...template,
-      minPassingThreshold:
-        template.minPassingThreshold != null
-          ? Number(template.minPassingThreshold)
-          : template.minPassingThreshold,
-      workflows: template.workflows.map((w) => ({
-        ...w,
-        weightPercent: Number(w.weightPercent),
-      })),
-    };
+    return this.mapTemplateToResponse(template);
   }
 
-  async findAll(filters: { challengeTrack?: string; challengeType?: string }) {
+  async findAll(filters: {
+    challengeTrack?: string;
+    challengeType?: string;
+  }): Promise<AiReviewTemplateConfigResponseDto[]> {
     const where: { challengeTrack?: string; challengeType?: string } = {};
     if (filters.challengeTrack?.trim()) {
       where.challengeTrack = filters.challengeTrack.trim();
@@ -222,25 +294,18 @@ export class AiReviewTemplateService {
       where.challengeType = filters.challengeType.trim();
     }
 
-    const results = await this.prisma.aiReviewTemplateConfig.findMany({
+    const results = (await this.prisma.aiReviewTemplateConfig.findMany({
       where,
       include: TEMPLATE_INCLUDE,
-    });
+    })) as AiReviewTemplateRecord[];
 
-    return results.map((template) => ({
-      ...template,
-      minPassingThreshold:
-        template.minPassingThreshold != null
-          ? Number(template.minPassingThreshold)
-          : template.minPassingThreshold,
-      workflows: template.workflows.map((w) => ({
-        ...w,
-        weightPercent: Number(w.weightPercent),
-      })),
-    }));
+    return results.map((template) => this.mapTemplateToResponse(template));
   }
 
-  async update(id: string, dto: UpdateAiReviewTemplateConfigDto) {
+  async update(
+    id: string,
+    dto: UpdateAiReviewTemplateConfigDto,
+  ): Promise<AiReviewTemplateConfigResponseDto> {
     await this.findById(id);
 
     if (dto.formula !== undefined) {
@@ -256,7 +321,8 @@ export class AiReviewTemplateService {
       configData.description = rest.description;
     if (rest.minPassingThreshold !== undefined)
       configData.minPassingThreshold = rest.minPassingThreshold;
-    if (rest.mode !== undefined) configData.mode = rest.mode as AiReviewMode;
+    if (rest.mode !== undefined)
+      configData.mode = rest.mode as PrismaAiReviewMode;
     if (rest.autoFinalize !== undefined)
       configData.autoFinalize = rest.autoFinalize;
     if (rest.formula !== undefined)
@@ -308,7 +374,7 @@ export class AiReviewTemplateService {
     return this.findById(id);
   }
 
-  async delete(id: string) {
+  async delete(id: string): Promise<void> {
     try {
       await this.prisma.aiReviewTemplateConfig.delete({
         where: { id },
