@@ -144,12 +144,12 @@ export class ReviewController {
   }
 
   @Patch('/items/:itemId')
-  @Roles(UserRole.Reviewer, UserRole.Admin)
+  @Roles(UserRole.Reviewer, UserRole.Admin, UserRole.Copilot)
   @Scopes(Scope.UpdateReviewItem)
   @ApiOperation({
     summary:
       'Update a specific review item, if copilot is patching, manager comment is required',
-    description: 'Roles: Reviewer, Admin | Scopes: update:review-item',
+    description: 'Roles: Reviewer, Admin, Copilot | Scopes: update:review-item',
   })
   @ApiParam({
     name: 'itemId',
