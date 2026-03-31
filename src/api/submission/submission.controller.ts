@@ -158,6 +158,9 @@ export class SubmissionController {
         challengeId: {
           type: 'string',
         },
+        memberHandle: {
+          type: 'string',
+        },
         type: {
           type: 'string',
         },

@@ -196,6 +196,16 @@ export class ManualSubmissionUploadRequestDto {
 
   @ApiProperty({
     description:
+      'Optional submitter handle. When provided, it must match a submitter resource on the challenge and the supplied member id.',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  memberHandle?: string;
+
+  @ApiProperty({
+    description:
       'Optional file name override used when storing the uploaded file in DMZ',
     required: false,
   })

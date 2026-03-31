@@ -210,6 +210,31 @@ export class SubmissionService {
       });
     }
 
+    const requestedMemberHandle =
+      typeof body.memberHandle === 'string' && body.memberHandle.trim().length
+        ? body.memberHandle.trim()
+        : null;
+
+    if (requestedMemberHandle) {
+      try {
+        await this.resourceApiService.validateSubmitterHandleRegistration(
+          body.challengeId,
+          requestedMemberHandle,
+          body.memberId,
+        );
+      } catch (error) {
+        throw new BadRequestException({
+          message: error instanceof Error ? error.message : String(error ?? ''),
+          code: 'INVALID_SUBMITTER_HANDLE',
+          details: {
+            challengeId: body.challengeId,
+            memberId: body.memberId,
+            memberHandle: requestedMemberHandle,
+          },
+        });
+      }
+    }
+
     const dmzUpload = await this.uploadSubmissionFileToDmz(
       authUser,
       body,

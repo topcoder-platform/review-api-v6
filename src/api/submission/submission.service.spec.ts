@@ -1523,14 +1523,23 @@ describe('SubmissionService', () => {
 
   describe('createManualSubmissionUpload', () => {
     let manualUploadService: SubmissionService;
+    let manualUploadResourceApiServiceMock: {
+      validateSubmitterHandleRegistration: jest.Mock;
+    };
 
     beforeEach(() => {
+      manualUploadResourceApiServiceMock = {
+        validateSubmitterHandleRegistration: jest.fn().mockResolvedValue({
+          id: 'submitter-resource',
+        }),
+      };
+
       manualUploadService = new SubmissionService(
         {} as any,
         {} as any,
         {} as any,
         {} as any,
-        {} as any,
+        manualUploadResourceApiServiceMock as any,
         {} as any,
         {} as any,
         {} as any,
@@ -1601,6 +1610,77 @@ describe('SubmissionService', () => {
         file,
         { allowPrivilegedPostSubmissionUpload: true },
       );
+    });
+
+    it('validates the provided submitter handle against challenge resources before uploading', async () => {
+      const uploadSpy = jest
+        .spyOn(manualUploadService as any, 'uploadSubmissionFileToDmz')
+        .mockResolvedValue({
+          url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/file.zip',
+          fileName: 'file.zip',
+          fileSize: 512,
+          fileType: 'zip',
+        });
+      jest
+        .spyOn(manualUploadService, 'createSubmission')
+        .mockResolvedValue({ id: 'submission-manual' } as any);
+
+      await manualUploadService.createManualSubmissionUpload(
+        { isMachine: true, scopes: ['create:submission'] } as any,
+        {
+          challengeId: 'challenge-manual',
+          memberId: '1001',
+          memberHandle: 'submitterOne',
+          type: SubmissionType.CONTEST_SUBMISSION,
+        } as any,
+        {
+          originalname: 'file.zip',
+          size: 512,
+          buffer: Buffer.from('zip-content'),
+        } as any,
+      );
+
+      expect(
+        manualUploadResourceApiServiceMock.validateSubmitterHandleRegistration,
+      ).toHaveBeenCalledWith('challenge-manual', 'submitterOne', '1001');
+      expect(uploadSpy).toHaveBeenCalled();
+    });
+
+    it('returns bad request when the provided submitter handle is not registered on the challenge', async () => {
+      manualUploadResourceApiServiceMock.validateSubmitterHandleRegistration.mockRejectedValue(
+        new Error(
+          'Handle unknownSubmitter is not registered as a submitter for challenge challenge-manual.',
+        ),
+      );
+      const uploadSpy = jest.spyOn(
+        manualUploadService as any,
+        'uploadSubmissionFileToDmz',
+      );
+
+      await expect(
+        manualUploadService.createManualSubmissionUpload(
+          { isMachine: true, scopes: ['create:submission'] } as any,
+          {
+            challengeId: 'challenge-manual',
+            memberId: '1001',
+            memberHandle: 'unknownSubmitter',
+            type: SubmissionType.CONTEST_SUBMISSION,
+          } as any,
+          {
+            originalname: 'file.zip',
+            size: 512,
+            buffer: Buffer.from('zip-content'),
+          } as any,
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'INVALID_SUBMITTER_HANDLE',
+          message:
+            'Handle unknownSubmitter is not registered as a submitter for challenge challenge-manual.',
+        }),
+      });
+
+      expect(uploadSpy).not.toHaveBeenCalled();
     });
   });
 

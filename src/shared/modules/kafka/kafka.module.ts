@@ -4,7 +4,6 @@ import {
   KafkaModuleOptions,
 } from './kafka-consumer.service';
 import { KafkaHandlerRegistry } from './kafka-handler.registry';
-import registeredHandlersConfig from './handlers/registered-handlers.config';
 
 @Module({})
 export class KafkaModule {
@@ -24,7 +23,6 @@ export class KafkaModule {
           },
           inject: [KafkaHandlerRegistry],
         },
-        ...registeredHandlersConfig,
       ],
       exports: [KafkaConsumerService, KafkaHandlerRegistry],
     };
