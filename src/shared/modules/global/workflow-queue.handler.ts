@@ -540,8 +540,9 @@ export class WorkflowQueueHandler implements OnModuleInit {
   }
 
   /**
-   * Publish an event when all AI workflow runs for a challenge have completed.
-   * This is similar to publishReviewCompletedEvent but for the entire AI screening phase.
+   * Publish an event when AI workflow runs for a submission have completed.
+   * For F2F challenges, publishes immediately per-submission.
+   * For non-F2F challenges, waits for all AI workflows to complete.
    */
   async publishAiWorkflowPhaseCompletedEvent(
     challengeId: string,
@@ -597,17 +598,23 @@ export class WorkflowQueueHandler implements OnModuleInit {
         return;
       }
 
-      // Check if all AI workflows are complete
-      const allComplete = await this.areAllAiWorkflowsComplete(
-        challengeId,
-        aiWorkflowIds,
-      );
+      // For F2F challenges, publish immediately per-submission without waiting for all workflows.
+      // The autopilot will close the AI Screening phase and process submissions one at a time.
+      const isF2F = this.isFirst2FinishChallenge(challenge.type);
 
-      if (!allComplete) {
-        this.logger.debug(
-          `[publishAiWorkflowPhaseCompletedEvent] Not all AI workflows complete for challenge ${challengeId}`,
+      if (!isF2F) {
+        // For non-F2F challenges, wait for all AI workflows to complete
+        const allComplete = await this.areAllAiWorkflowsComplete(
+          challengeId,
+          aiWorkflowIds,
         );
-        return;
+
+        if (!allComplete) {
+          this.logger.debug(
+            `[publishAiWorkflowPhaseCompletedEvent] Not all AI workflows complete for challenge ${challengeId}`,
+          );
+          return;
+        }
       }
 
       // Get the most recent completed workflow run for this submission to use as representative data
@@ -652,7 +659,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
         payload,
       );
       this.logger.log(
-        `[publishAiWorkflowPhaseCompletedEvent] Published AI workflow phase completion for challenge ${challengeId}, all AI workflows completed`,
+        `[publishAiWorkflowPhaseCompletedEvent] Published AI workflow completion for challenge ${challengeId}, submission ${submissionId}${isF2F ? ' (F2F)' : ', all AI workflows completed'}`,
       );
     } catch (error) {
       this.logger.error(
@@ -669,5 +676,10 @@ export class WorkflowQueueHandler implements OnModuleInit {
     ).getTime();
 
     return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+
+  private isFirst2FinishChallenge(typeName?: string): boolean {
+    const normalized = (typeName ?? '').trim().toLowerCase();
+    return normalized === 'first2finish' || normalized === 'first 2 finish';
   }
 }
