@@ -504,6 +504,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
   async getInProgressAiWorkflowRunCount(
     challengeId: string,
     aiWorkflowIds: string[],
+    submissionId?: string,
   ): Promise<number> {
     if (!aiWorkflowIds || aiWorkflowIds.length === 0) {
       return 0;
@@ -515,9 +516,12 @@ export class WorkflowQueueHandler implements OnModuleInit {
       where: {
         workflowId: { in: aiWorkflowIds },
         status: { in: inProgressStatuses },
-        submission: {
-          challengeId,
-        },
+        submissionId: submissionId || undefined,
+        submission: submissionId
+          ? undefined
+          : {
+              challengeId,
+            },
       },
     });
 
@@ -531,11 +535,18 @@ export class WorkflowQueueHandler implements OnModuleInit {
   private async areAllAiWorkflowsComplete(
     challengeId: string,
     aiWorkflowIds: string[],
+    submissionId?: string,
   ): Promise<boolean> {
+    if (!aiWorkflowIds || aiWorkflowIds.length === 0) {
+      return true;
+    }
+
     const inProgressCount = await this.getInProgressAiWorkflowRunCount(
       challengeId,
       aiWorkflowIds,
+      submissionId,
     );
+
     return inProgressCount === 0;
   }
 
@@ -600,9 +611,23 @@ export class WorkflowQueueHandler implements OnModuleInit {
 
       // For F2F challenges, publish immediately per-submission without waiting for all workflows.
       // The autopilot will close the AI Screening phase and process submissions one at a time.
+      // We still need to ensure all workflows for this submission have completed.
       const isF2F = this.isFirst2FinishChallenge(challenge.type);
 
-      if (!isF2F) {
+      if (isF2F) {
+        const submissionComplete = await this.areAllAiWorkflowsComplete(
+          challengeId,
+          aiWorkflowIds,
+          submissionId,
+        );
+
+        if (!submissionComplete) {
+          this.logger.debug(
+            `[publishAiWorkflowPhaseCompletedEvent] Not all AI workflows complete for submission ${submissionId} in challenge ${challengeId}`,
+          );
+          return;
+        }
+      } else {
         // For non-F2F challenges, wait for all AI workflows to complete
         const allComplete = await this.areAllAiWorkflowsComplete(
           challengeId,
