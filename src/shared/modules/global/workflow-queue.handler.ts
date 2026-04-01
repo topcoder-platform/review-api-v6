@@ -680,6 +680,6 @@ export class WorkflowQueueHandler implements OnModuleInit {
 
   private isFirst2FinishChallenge(typeName?: string): boolean {
     const normalized = (typeName ?? '').trim().toLowerCase();
-    return normalized === 'first2finish';
+    return normalized === 'first2finish' || normalized === 'first 2 finish';
   }
 }
