@@ -1997,5 +1997,104 @@ describe('SubmissionService', () => {
       expect(created).toBe(0);
       expect(prismaMock.review.createMany).not.toHaveBeenCalled();
     });
+
+    it('skips iterative review pending creation for first2finish challenges because autopilot owns sequencing', async () => {
+      const prismaMock = {
+        submission: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'submission-3',
+            challengeId: 'challenge-3',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            virusScan: true,
+          }),
+        },
+        scorecard: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'scorecard-iter-1',
+              type: ScorecardType.ITERATIVE_REVIEW,
+            },
+          ]),
+        },
+        reviewType: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'review-type-iter-1',
+              name: 'Iterative Review',
+            },
+          ]),
+        },
+        review: {
+          createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        aiReviewDecision: {
+          findFirst: jest.fn(),
+        },
+      };
+      const challengePrismaMock = {
+        $queryRaw: jest.fn().mockResolvedValue([
+          {
+            scorecardId: 'scorecard-iter-1',
+            templatePhaseId: 'phase-template-iterative',
+            challengePhaseId: 'challenge-phase-iterative',
+            phaseName: 'Iterative Review',
+          },
+        ]),
+      };
+      const challengeApiServiceMock = {
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-3',
+          type: 'first2finish',
+          phases: [
+            {
+              id: 'challenge-phase-iterative',
+              name: 'Iterative Review',
+              isOpen: true,
+            },
+          ],
+        }),
+      };
+      const resourceApiServiceMock = {
+        getResources: jest.fn().mockResolvedValue([
+          {
+            id: 'resource-iterative-reviewer-1',
+            challengeId: 'challenge-3',
+            memberId: '2002',
+            memberHandle: 'iterativeReviewer',
+            roleId: 'role-iterative-reviewer',
+            phaseId: 'challenge-phase-iterative',
+            createdBy: 'system',
+            created: new Date().toISOString(),
+          },
+        ]),
+        getResourceRoles: jest.fn().mockResolvedValue({
+          'role-iterative-reviewer': {
+            id: 'role-iterative-reviewer',
+            name: 'Iterative Reviewer',
+          },
+        }),
+      };
+
+      const pendingReviewService = new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        challengePrismaMock as any,
+        challengeApiServiceMock as any,
+        resourceApiServiceMock as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      const created =
+        await pendingReviewService.ensurePendingReviewsForSubmission(
+          'submission-3',
+          { triggerSource: 'unit-test' },
+        );
+
+      expect(created).toBe(0);
+      expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+    });
   });
 });

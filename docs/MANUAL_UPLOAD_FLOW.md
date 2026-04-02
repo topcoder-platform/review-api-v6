@@ -188,6 +188,18 @@ As AI workflows complete:
 
 If the AI decision is failed, human review rows are not auto-created by this path.
 
+### First2Finish and Topgear iterative reviews stay autopilot-managed
+
+For `first2finish` and `topgear task` challenges, `review-api-v6` does **not** create `Iterative Review` pending review rows directly from scan-complete or AI-decision processing.
+
+Instead:
+
+- the submission still publishes the rapid-submission event
+- `autopilot-v6` resumes the challenge flow after AI Screening is done
+- autopilot assigns exactly one open iterative review at a time, in submission order
+
+That preserves the expected behavior where the earliest eligible submission is reviewed first, later submissions wait their turn, and a passing iterative review ends the challenge without reviewing the remaining submissions.
+
 ## What "AI Reviews Will Be Handled" Means Here
 
 For a manually uploaded submission, AI handling works correctly when all of the following are true:

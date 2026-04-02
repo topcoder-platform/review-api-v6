@@ -321,6 +321,8 @@ export class SubmissionService {
     const challenge = await this.challengeApiService.getChallengeDetail(
       submission.challengeId,
     );
+    const autopilotManagedIterativeReview =
+      this.isFirst2FinishChallenge(challenge);
 
     const openPhaseIds = new Set<string>();
     for (const phase of challenge?.phases ?? []) {
@@ -432,6 +434,13 @@ export class SubmissionService {
       }
 
       if (!this.isReviewPhaseSupportedForPendingCreation(normalizedPhaseName)) {
+        continue;
+      }
+
+      if (
+        autopilotManagedIterativeReview &&
+        normalizedPhaseName === 'iterative review'
+      ) {
         continue;
       }
 
