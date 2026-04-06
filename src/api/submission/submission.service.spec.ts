@@ -2111,14 +2111,18 @@ describe('SubmissionService', () => {
           }),
         },
         scorecard: {
-          findMany: jest.fn().mockResolvedValue([
-            { id: 'scorecard-iter-1', type: ScorecardType.ITERATIVE_REVIEW },
-          ]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: 'scorecard-iter-1', type: ScorecardType.ITERATIVE_REVIEW },
+            ]),
         },
         reviewType: {
-          findMany: jest.fn().mockResolvedValue([
-            { id: 'review-type-iter-1', name: 'Iterative Review' },
-          ]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: 'review-type-iter-1', name: 'Iterative Review' },
+            ]),
         },
         review: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
         aiReviewDecision: { findFirst: jest.fn() },
@@ -2139,7 +2143,11 @@ describe('SubmissionService', () => {
           id: 'challenge-3',
           type: 'first2finish',
           phases: [
-            { id: 'challenge-phase-iterative', name: 'Iterative Review', isOpen: true },
+            {
+              id: 'challenge-phase-iterative',
+              name: 'Iterative Review',
+              isOpen: true,
+            },
           ],
         }),
       };
@@ -2157,7 +2165,10 @@ describe('SubmissionService', () => {
           },
         ]),
         getResourceRoles: jest.fn().mockResolvedValue({
-          'role-iterative-reviewer': { id: 'role-iterative-reviewer', name: 'Iterative Reviewer' },
+          'role-iterative-reviewer': {
+            id: 'role-iterative-reviewer',
+            name: 'Iterative Reviewer',
+          },
         }),
       };
 
@@ -2173,10 +2184,11 @@ describe('SubmissionService', () => {
         {} as any,
       );
 
-      const created = await pendingReviewService.ensurePendingReviewsForSubmission(
-        'submission-3',
-        { triggerSource: 'unit-test' },
-      );
+      const created =
+        await pendingReviewService.ensurePendingReviewsForSubmission(
+          'submission-3',
+          { triggerSource: 'unit-test' },
+        );
 
       expect(created).toBe(0);
       expect(prismaMock.review.createMany).not.toHaveBeenCalled();
@@ -2194,14 +2206,18 @@ describe('SubmissionService', () => {
           }),
         },
         scorecard: {
-          findMany: jest.fn().mockResolvedValue([
-            { id: 'scorecard-iter-1', type: ScorecardType.ITERATIVE_REVIEW },
-          ]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: 'scorecard-iter-1', type: ScorecardType.ITERATIVE_REVIEW },
+            ]),
         },
         reviewType: {
-          findMany: jest.fn().mockResolvedValue([
-            { id: 'review-type-iter-1', name: 'Iterative Review' },
-          ]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: 'review-type-iter-1', name: 'Iterative Review' },
+            ]),
         },
         review: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
         aiReviewDecision: { findFirst: jest.fn() },
@@ -2222,7 +2238,11 @@ describe('SubmissionService', () => {
           id: 'challenge-3',
           type: 'first2finish',
           phases: [
-            { id: 'challenge-phase-iterative', name: 'Iterative Review', isOpen: true },
+            {
+              id: 'challenge-phase-iterative',
+              name: 'Iterative Review',
+              isOpen: true,
+            },
           ],
         }),
       };
@@ -2240,7 +2260,10 @@ describe('SubmissionService', () => {
           },
         ]),
         getResourceRoles: jest.fn().mockResolvedValue({
-          'role-iterative-reviewer': { id: 'role-iterative-reviewer', name: 'Iterative Reviewer' },
+          'role-iterative-reviewer': {
+            id: 'role-iterative-reviewer',
+            name: 'Iterative Reviewer',
+          },
         }),
       };
 
@@ -2256,10 +2279,11 @@ describe('SubmissionService', () => {
         {} as any,
       );
 
-      const created = await pendingReviewService.ensurePendingReviewsForSubmission(
-        'submission-3',
-        { triggerSource: 'unit-test' },
-      );
+      const created =
+        await pendingReviewService.ensurePendingReviewsForSubmission(
+          'submission-3',
+          { triggerSource: 'unit-test' },
+        );
 
       expect(created).toBe(1);
       expect(prismaMock.review.createMany).toHaveBeenCalledWith(
