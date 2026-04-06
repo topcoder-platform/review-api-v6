@@ -164,6 +164,7 @@ type ChallengeReviewerConfigRow = {
   templatePhaseId: string;
   challengePhaseId: string;
   phaseName: string;
+  predecessor: string | null;
 };
 
 type SubmissionReviewResource = ResourceInfo & {
@@ -276,6 +277,7 @@ export class SubmissionService {
         challengeId: true,
         type: true,
         virusScan: true,
+        submissionPhaseId: true,
       },
     });
 
@@ -351,7 +353,8 @@ export class SubmissionService {
         cr."scorecardId" AS "scorecardId",
         cr."phaseId" AS "templatePhaseId",
         cp.id AS "challengePhaseId",
-        cp.name AS "phaseName"
+        cp.name AS "phaseName",
+        cp.predecessor AS "predecessor"
       FROM "ChallengeReviewer" cr
       JOIN "ChallengePhase" cp
         ON cp."challengeId" = cr."challengeId"
@@ -441,7 +444,21 @@ export class SubmissionService {
         autopilotManagedIterativeReview &&
         normalizedPhaseName === 'iterative review'
       ) {
-        continue;
+        const predecessor = String(config.predecessor ?? '').trim();
+        const submissionPhaseId = String(
+          submission.submissionPhaseId ?? '',
+        ).trim();
+        if (
+          !predecessor ||
+          !submissionPhaseId ||
+          submissionPhaseId !== predecessor
+        ) {
+          this.logger.debug(
+            `[ensurePendingReviewsForSubmission] Skipping iterative review for submission ${submission.id}: ` +
+              `submissionPhaseId=${submissionPhaseId || 'none'} does not match iterative review predecessor=${predecessor || 'none'}. source=${source}`,
+          );
+          continue;
+        }
       }
 
       if (
