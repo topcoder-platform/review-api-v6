@@ -76,7 +76,8 @@ export class AiReviewTemplateController {
   @Scopes(Scope.ReadAiReviewTemplate)
   @ApiOperation({
     summary: 'List AI review templates',
-    description: 'Roles: Admin, Copilot, TalentManager | Scopes: read:ai-review-template',
+    description:
+      'Roles: Admin, Copilot, TalentManager | Scopes: read:ai-review-template',
   })
   @ApiQuery({
     name: 'challengeTrack',
