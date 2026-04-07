@@ -10,7 +10,11 @@ import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import {
+  JwtUser,
+  isAdmin,
+  isTalentManager,
+} from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import {
   CreateAiReviewConfigDto,
@@ -212,6 +216,7 @@ export class AiReviewConfigService {
     if (
       authUser.isMachine ||
       isAdmin(authUser) ||
+      isTalentManager(authUser) ||
       (await this.isChallengeCreator(challengeId, authUser))
     ) {
       return;
