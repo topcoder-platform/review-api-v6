@@ -293,7 +293,11 @@ export class SubmissionService {
       return 0;
     }
 
-    if (options?.requireAiDecisionPass) {
+    const requireAiDecisionPass =
+      options?.requireAiDecisionPass ??
+      (await this.hasConfiguredAiReviewForChallenge(submission.challengeId));
+
+    if (requireAiDecisionPass) {
       const decisionRows = await this.prisma.$queryRaw<
         Array<{ status: string | null }>
       >(Prisma.sql`
@@ -517,6 +521,34 @@ export class SubmissionService {
       `[ensurePendingReviewsForSubmission] Created ${result.count} pending review rows for submission ${submission.id}. source=${source}`,
     );
     return result.count;
+  }
+
+  /**
+   * Determine whether a challenge has an active AI review config that should
+   * gate automatic human-review assignment.
+   *
+   * @param challengeId - Challenge identifier associated with the submission.
+   * @returns True when the latest AI review config contains at least one workflow.
+   */
+  private async hasConfiguredAiReviewForChallenge(
+    challengeId: string,
+  ): Promise<boolean> {
+    if (!challengeId) {
+      return false;
+    }
+
+    const config = await this.prisma.aiReviewConfig?.findFirst({
+      where: { challengeId },
+      orderBy: { version: 'desc' },
+      select: {
+        workflows: {
+          select: { workflowId: true },
+          take: 1,
+        },
+      },
+    });
+
+    return Boolean(config?.workflows?.length);
   }
 
   /**

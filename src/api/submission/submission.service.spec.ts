@@ -1998,6 +1998,50 @@ describe('SubmissionService', () => {
       expect(prismaMock.review.createMany).not.toHaveBeenCalled();
     });
 
+    it('skips pending review creation until an AI-configured challenge has a passing decision', async () => {
+      const prismaMock = {
+        submission: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'submission-2b',
+            challengeId: 'challenge-2b',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            virusScan: true,
+          }),
+        },
+        aiReviewConfig: {
+          findFirst: jest.fn().mockResolvedValue({
+            workflows: [{ workflowId: 'workflow-1' }],
+          }),
+        },
+        review: {
+          createMany: jest.fn(),
+        },
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+
+      const pendingReviewService = new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        { $queryRaw: jest.fn() } as any,
+        { getChallengeDetail: jest.fn() } as any,
+        { getResources: jest.fn(), getResourceRoles: jest.fn() } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      const created =
+        await pendingReviewService.ensurePendingReviewsForSubmission(
+          'submission-2b',
+          { triggerSource: 'unit-test' },
+        );
+
+      expect(created).toBe(0);
+      expect(prismaMock.$queryRaw).toHaveBeenCalled();
+      expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+    });
+
     it('skips iterative review pending creation for first2finish challenges because autopilot owns sequencing', async () => {
       const prismaMock = {
         submission: {
