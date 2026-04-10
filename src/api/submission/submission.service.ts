@@ -1779,23 +1779,28 @@ export class SubmissionService {
     challengeId: string,
     submissionType: SubmissionType,
   ): Promise<void> {
+    const requiredClosedSubmissionPhases =
+      submissionType === SubmissionType.CHECKPOINT_SUBMISSION
+        ? ['Checkpoint Submission']
+        : ['Submission', 'Topgear Submission'];
     const allowedTargetPhases =
       this.getAllowedManualUploadPhaseNames(submissionType);
 
     try {
       const submissionPhaseOpen = await this.challengeApiService.isPhaseOpen(
         challengeId,
-        ['Submission', 'Topgear Submission'],
+        requiredClosedSubmissionPhases,
       );
 
       if (submissionPhaseOpen) {
         throw new BadRequestException({
           message:
-            'Manual upload endpoint can only be used after submission phase has closed.',
+            'Manual upload endpoint can only be used after the relevant submission phase has closed.',
           code: 'MANUAL_UPLOAD_PHASE_INVALID',
           details: {
             challengeId,
-            requiredState: 'Submission phase closed',
+            requiredState: `${requiredClosedSubmissionPhases.join(' or ')} phase closed`,
+            requiredClosedPhases: requiredClosedSubmissionPhases,
           },
         });
       }
@@ -1840,7 +1845,13 @@ export class SubmissionService {
       return ['Checkpoint Screening', 'Checkpoint Review'];
     }
 
-    return ['Screening', 'Review', 'Iterative Review', 'Approval'];
+    return [
+      'AI Screening',
+      'Screening',
+      'Review',
+      'Iterative Review',
+      'Approval',
+    ];
   }
 
   private sanitizeArtifactFileName(name?: string): string | undefined {

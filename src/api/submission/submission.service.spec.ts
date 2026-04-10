@@ -1822,7 +1822,68 @@ describe('SubmissionService', () => {
       expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
         2,
         'challenge-manual',
-        ['Screening', 'Review', 'Iterative Review', 'Approval'],
+        ['AI Screening', 'Screening', 'Review', 'Iterative Review', 'Approval'],
+      );
+      expect(prismaMock.submission.create).toHaveBeenCalled();
+    });
+
+    it('allows privileged manual upload when submission phase is closed and AI screening phase is open', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        1,
+        'challenge-manual',
+        ['Submission', 'Topgear Submission'],
+      );
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        2,
+        'challenge-manual',
+        ['AI Screening', 'Screening', 'Review', 'Iterative Review', 'Approval'],
+      );
+      expect(prismaMock.submission.create).toHaveBeenCalled();
+    });
+
+    it('allows privileged manual upload during checkpoint screening after checkpoint submission closes', async () => {
+      prismaMock.submission.create.mockResolvedValue({
+        ...buildCreatedSubmission(),
+        type: SubmissionType.CHECKPOINT_SUBMISSION,
+      });
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        {
+          ...createBody(),
+          type: SubmissionType.CHECKPOINT_SUBMISSION,
+        } as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(
+        challengeApiServiceMock.validateCheckpointSubmissionCreation,
+      ).not.toHaveBeenCalled();
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        1,
+        'challenge-manual',
+        ['Checkpoint Submission'],
+      );
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        2,
+        'challenge-manual',
+        ['Checkpoint Screening', 'Checkpoint Review'],
       );
       expect(prismaMock.submission.create).toHaveBeenCalled();
     });

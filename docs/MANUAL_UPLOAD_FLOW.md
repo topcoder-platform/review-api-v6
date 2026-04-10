@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`POST /submissions/manual-upload` exists so an admin or M2M client can upload a submission artifact after the normal submission window has already closed, while the challenge is already in a review-related phase.
+`POST /submissions/manual-upload` exists so an admin or M2M client can upload a submission artifact after the relevant submission window for that submission type has already closed, while the challenge is already in a downstream screening or review-related phase.
 
 The important point is that this endpoint does not create a special review path. It uploads the file to the DMZ bucket, then delegates into the normal submission creation, antivirus scan, and downstream review-processing flow.
 
@@ -104,17 +104,17 @@ The only difference is phase validation.
 
 Manual upload is only allowed when:
 
-- `Submission` / `Topgear Submission` is already closed
-- a review-related target phase is currently open
+- the relevant submission window is already closed
+- a downstream screening/review target phase is currently open
 
-Allowed open phases by submission type:
+Allowed phase windows by submission type:
 
-| Submission type | Required open phase |
-| --- | --- |
-| `CHECKPOINT_SUBMISSION` | `Checkpoint Screening` or `Checkpoint Review` |
-| Everything else | `Screening`, `Review`, `Iterative Review`, or `Approval` |
+| Submission type | Required closed phase | Required open phase |
+| --- | --- | --- |
+| `CHECKPOINT_SUBMISSION` | `Checkpoint Submission` | `Checkpoint Screening` or `Checkpoint Review` |
+| Everything else | `Submission` or `Topgear Submission` | `AI Screening`, `Screening`, `Review`, `Iterative Review`, or `Approval` |
 
-So this endpoint is intentionally for late/manual intake during downstream review, not for bypassing the normal live submission window.
+So this endpoint is intentionally for late/manual intake after the live window for that submission type has closed, not for bypassing an active submission phase.
 
 ### 5. Submission row creation
 
