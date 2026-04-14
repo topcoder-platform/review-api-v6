@@ -899,6 +899,25 @@ They are requesting a manual override or secondary look at the AI Review results
           },
         });
 
+        const approvedPendingEscalations =
+          await tx.aiReviewDecisionEscalation.updateMany({
+            where: {
+              aiReviewDecisionId,
+              status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+            },
+            data: {
+              status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+              approverNotes,
+              updatedBy: userId,
+            },
+          });
+
+        if (approvedPendingEscalations.count > 0) {
+          this.logger.log(
+            `Direct unlock escalation ${aiReviewDecisionId}: marked ${approvedPendingEscalations.count} existing pending escalations as approved`,
+          );
+        }
+
         await tx.aiReviewDecision.update({
           where: { id: aiReviewDecisionId },
           data: {
@@ -1196,7 +1215,7 @@ They are requesting a manual override or secondary look at the AI Review results
 
     if (dto.status === AiReviewDecisionEscalationStatus.APPROVED) {
       const submissionId = escalation.aiReviewDecision.submission?.id || '';
-
+      const approverNotes = dto.approverNotes.trim();
       this.logger.log(
         `Escalation ${escalationId} approval path started for submission ${submissionId}`,
       );
@@ -1208,16 +1227,39 @@ They are requesting a manual override or secondary look at the AI Review results
           userId,
         );
 
+      this.logger.log(
+        `Escalation ${escalationId} approval path prepared ${pendingReviewInputs.length} pending review rows before transaction`,
+      );
+
       const updatedEscalation = await this.prisma.$transaction(
         async (tx): Promise<AiReviewDecisionEscalationRecord> => {
           const updated = await tx.aiReviewDecisionEscalation.update({
             where: { id: escalationId },
             data: {
-              approverNotes: dto.approverNotes.trim(),
+              approverNotes,
               status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
               updatedBy: userId,
             },
           });
+
+          const approvedPendingEscalations =
+            await tx.aiReviewDecisionEscalation.updateMany({
+              where: {
+                aiReviewDecisionId,
+                status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+              },
+              data: {
+                status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+                approverNotes,
+                updatedBy: userId,
+              },
+            });
+
+          if (approvedPendingEscalations.count > 0) {
+            this.logger.log(
+              `Escalation ${escalationId} approval path marked ${approvedPendingEscalations.count} sibling pending escalations as approved for decision ${aiReviewDecisionId}`,
+            );
+          }
 
           await tx.aiReviewDecision.update({
             where: { id: aiReviewDecisionId },
