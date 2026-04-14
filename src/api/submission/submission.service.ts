@@ -293,7 +293,11 @@ export class SubmissionService {
       return 0;
     }
 
-    if (options?.requireAiDecisionPass) {
+    const requireAiDecisionPass =
+      options?.requireAiDecisionPass ??
+      (await this.hasConfiguredAiReviewForChallenge(submission.challengeId));
+
+    if (requireAiDecisionPass) {
       const decisionRows = await this.prisma.$queryRaw<
         Array<{ status: string | null }>
       >(Prisma.sql`
@@ -517,6 +521,34 @@ export class SubmissionService {
       `[ensurePendingReviewsForSubmission] Created ${result.count} pending review rows for submission ${submission.id}. source=${source}`,
     );
     return result.count;
+  }
+
+  /**
+   * Determine whether a challenge has an active AI review config that should
+   * gate automatic human-review assignment.
+   *
+   * @param challengeId - Challenge identifier associated with the submission.
+   * @returns True when the latest AI review config contains at least one workflow.
+   */
+  private async hasConfiguredAiReviewForChallenge(
+    challengeId: string,
+  ): Promise<boolean> {
+    if (!challengeId) {
+      return false;
+    }
+
+    const config = await this.prisma.aiReviewConfig?.findFirst({
+      where: { challengeId },
+      orderBy: { version: 'desc' },
+      select: {
+        workflows: {
+          select: { workflowId: true },
+          take: 1,
+        },
+      },
+    });
+
+    return Boolean(config?.workflows?.length);
   }
 
   /**
@@ -1747,23 +1779,28 @@ export class SubmissionService {
     challengeId: string,
     submissionType: SubmissionType,
   ): Promise<void> {
+    const requiredClosedSubmissionPhases =
+      submissionType === SubmissionType.CHECKPOINT_SUBMISSION
+        ? ['Checkpoint Submission']
+        : ['Submission', 'Topgear Submission'];
     const allowedTargetPhases =
       this.getAllowedManualUploadPhaseNames(submissionType);
 
     try {
       const submissionPhaseOpen = await this.challengeApiService.isPhaseOpen(
         challengeId,
-        ['Submission', 'Topgear Submission'],
+        requiredClosedSubmissionPhases,
       );
 
       if (submissionPhaseOpen) {
         throw new BadRequestException({
           message:
-            'Manual upload endpoint can only be used after submission phase has closed.',
+            'Manual upload endpoint can only be used after the relevant submission phase has closed.',
           code: 'MANUAL_UPLOAD_PHASE_INVALID',
           details: {
             challengeId,
-            requiredState: 'Submission phase closed',
+            requiredState: `${requiredClosedSubmissionPhases.join(' or ')} phase closed`,
+            requiredClosedPhases: requiredClosedSubmissionPhases,
           },
         });
       }
@@ -1808,7 +1845,13 @@ export class SubmissionService {
       return ['Checkpoint Screening', 'Checkpoint Review'];
     }
 
-    return ['Screening', 'Review', 'Iterative Review', 'Approval'];
+    return [
+      'AI Screening',
+      'Screening',
+      'Review',
+      'Iterative Review',
+      'Approval',
+    ];
   }
 
   private sanitizeArtifactFileName(name?: string): string | undefined {

@@ -1822,7 +1822,68 @@ describe('SubmissionService', () => {
       expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
         2,
         'challenge-manual',
-        ['Screening', 'Review', 'Iterative Review', 'Approval'],
+        ['AI Screening', 'Screening', 'Review', 'Iterative Review', 'Approval'],
+      );
+      expect(prismaMock.submission.create).toHaveBeenCalled();
+    });
+
+    it('allows privileged manual upload when submission phase is closed and AI screening phase is open', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        1,
+        'challenge-manual',
+        ['Submission', 'Topgear Submission'],
+      );
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        2,
+        'challenge-manual',
+        ['AI Screening', 'Screening', 'Review', 'Iterative Review', 'Approval'],
+      );
+      expect(prismaMock.submission.create).toHaveBeenCalled();
+    });
+
+    it('allows privileged manual upload during checkpoint screening after checkpoint submission closes', async () => {
+      prismaMock.submission.create.mockResolvedValue({
+        ...buildCreatedSubmission(),
+        type: SubmissionType.CHECKPOINT_SUBMISSION,
+      });
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        {
+          ...createBody(),
+          type: SubmissionType.CHECKPOINT_SUBMISSION,
+        } as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(
+        challengeApiServiceMock.validateCheckpointSubmissionCreation,
+      ).not.toHaveBeenCalled();
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        1,
+        'challenge-manual',
+        ['Checkpoint Submission'],
+      );
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        2,
+        'challenge-manual',
+        ['Checkpoint Screening', 'Checkpoint Review'],
       );
       expect(prismaMock.submission.create).toHaveBeenCalled();
     });
@@ -1995,6 +2056,50 @@ describe('SubmissionService', () => {
         );
 
       expect(created).toBe(0);
+      expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+    });
+
+    it('skips pending review creation until an AI-configured challenge has a passing decision', async () => {
+      const prismaMock = {
+        submission: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'submission-2b',
+            challengeId: 'challenge-2b',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            virusScan: true,
+          }),
+        },
+        aiReviewConfig: {
+          findFirst: jest.fn().mockResolvedValue({
+            workflows: [{ workflowId: 'workflow-1' }],
+          }),
+        },
+        review: {
+          createMany: jest.fn(),
+        },
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+
+      const pendingReviewService = new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        { $queryRaw: jest.fn() } as any,
+        { getChallengeDetail: jest.fn() } as any,
+        { getResources: jest.fn(), getResourceRoles: jest.fn() } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      const created =
+        await pendingReviewService.ensurePendingReviewsForSubmission(
+          'submission-2b',
+          { triggerSource: 'unit-test' },
+        );
+
+      expect(created).toBe(0);
+      expect(prismaMock.$queryRaw).toHaveBeenCalled();
       expect(prismaMock.review.createMany).not.toHaveBeenCalled();
     });
 

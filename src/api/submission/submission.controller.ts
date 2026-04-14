@@ -127,9 +127,9 @@ export class SubmissionController {
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
     summary:
-      'Upload and create a submission as Admin/M2M after submission phase closure',
+      'Upload and create a submission as Admin/M2M after the relevant submission phase closes',
     description:
-      'Roles: Admin (M2M allowed via scope). Uploads file contents to DMZ before creating the submission and triggering normal scan/event flow. | Scopes: create:submission',
+      'Roles: Admin (M2M allowed via scope). Uploads file contents to DMZ before creating the submission and triggering normal scan/event flow after the relevant submission window has closed and a downstream screening/review phase is open. | Scopes: create:submission',
   })
   @ApiResponse({
     status: 201,
