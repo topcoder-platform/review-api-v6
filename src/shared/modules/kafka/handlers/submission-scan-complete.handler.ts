@@ -7,6 +7,7 @@ import { SubmissionScanCompleteOrchestrator } from '../../global/submission-scan
 import { ChallengeApiService } from '../../global/challenge.service';
 import { EventBusService } from '../../global/eventBus.service';
 import { ResourcePrismaService } from '../../global/resource-prisma.service';
+import { SubmissionService } from 'src/api/submission/submission.service';
 
 interface First2FinishSubmissionEventPayload {
   submissionId: string;
@@ -40,6 +41,7 @@ export class SubmissionScanCompleteHandler
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourcePrisma: ResourcePrismaService,
     private readonly eventBusService: EventBusService,
+    private readonly submissionService: SubmissionService,
   ) {
     super(LoggerService.forRoot('SubmissionScanCompleteHandler'));
   }
@@ -89,6 +91,7 @@ export class SubmissionScanCompleteHandler
         }
 
         if (submission) {
+          await this.ensurePendingReviewsForScannedSubmission(submission);
           await this.publishFirst2FinishEvent(submission);
           await this.publishTopgearTaskEvent(submission);
           await this.publishMarathonMatchEvent(submission);
@@ -106,6 +109,47 @@ export class SubmissionScanCompleteHandler
         error,
       );
       throw error;
+    }
+  }
+
+  private async ensurePendingReviewsForScannedSubmission(
+    submission: SubmissionRecord,
+  ): Promise<void> {
+    const aiDispatchEnabled =
+      process.env.DISPATCH_AI_REVIEW_WORKFLOWS === 'true';
+    if (aiDispatchEnabled && submission.challengeId) {
+      try {
+        const challenge = await this.challengeApiService.getChallengeDetail(
+          submission.challengeId,
+        );
+        const hasAiWorkflows =
+          Array.isArray(challenge?.workflows) && challenge.workflows.length > 0;
+        if (hasAiWorkflows) {
+          this.logger.log(
+            `Skipping pending review creation in scan handler for submission ${submission.id}; waiting for AI workflow completion.`,
+          );
+          return;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Unable to determine AI workflow configuration for submission ${submission.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
+    }
+
+    try {
+      await this.submissionService.ensurePendingReviewsForSubmission(
+        submission.id,
+        {
+          triggerSource: 'scan-complete',
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to ensure pending reviews for submission ${submission.id}`,
+        error,
+      );
     }
   }
 

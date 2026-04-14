@@ -23,6 +23,7 @@ import { MemberPrismaService } from './member-prisma.service';
 import { QueueSchedulerService } from './queue-scheduler.service';
 import { WorkflowQueueHandler } from './workflow-queue.handler';
 import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
+import { SubmissionScanCompleteHandler } from '../kafka/handlers/submission-scan-complete.handler';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -59,6 +60,7 @@ import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.ser
     QueueSchedulerService,
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
+    SubmissionScanCompleteHandler,
   ],
   exports: [
     KafkaModule,
@@ -81,6 +83,7 @@ import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.ser
     QueueSchedulerService,
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
+    SubmissionScanCompleteHandler,
   ],
 })
 export class GlobalProvidersModule {}

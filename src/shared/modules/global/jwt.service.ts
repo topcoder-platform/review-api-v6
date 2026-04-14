@@ -44,6 +44,20 @@ export const isAdmin = (user: JwtUser): boolean => {
   return normalizedRoles.includes(adminRole);
 };
 
+export const isTalentManager = (user: JwtUser): boolean => {
+  if (!user || !Array.isArray(user.roles)) {
+    return false;
+  }
+
+  const normalizedRoles = user.roles
+    .map((role) => String(role).trim().toLowerCase())
+    .filter((role) => role.length > 0);
+
+  const tmRole = String(UserRole.TalentManager).trim().toLowerCase();
+
+  return normalizedRoles.includes(tmRole);
+};
+
 @Injectable()
 export class JwtService implements OnModuleInit {
   private static readonly SLOW_VALIDATION_WARNING_INTERVAL_MS = 5000;

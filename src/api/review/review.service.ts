@@ -67,6 +67,7 @@ interface ReviewItemAccessResult {
   hasCopilotRole: boolean;
   ownsReview: boolean;
   requiresManagerComment: boolean;
+  requesterResources?: ResourceInfo[];
 }
 
 @Injectable()
@@ -701,6 +702,7 @@ export class ReviewService {
         hasCopilotRole: false,
         ownsReview: false,
         requiresManagerComment: false,
+        requesterResources: [],
       };
     }
 
@@ -711,6 +713,7 @@ export class ReviewService {
         hasCopilotRole: false,
         ownsReview: false,
         requiresManagerComment: true,
+        requesterResources: [],
       };
     }
 
@@ -860,6 +863,7 @@ export class ReviewService {
       hasCopilotRole,
       ownsReview,
       requiresManagerComment,
+      requesterResources,
     };
   }
   private async ensureReviewDeleteAccess(
@@ -1919,6 +1923,20 @@ export class ReviewService {
         !ownsReview &&
         (isStatusOnlyUpdate || isCopilotReopenPayload);
 
+      this.logger.debug(
+        `Review update authorization check: ${JSON.stringify({
+          requester: requester.userId,
+          hasCopilotRole,
+          ownsReview,
+          isStatusOnlyUpdate,
+          isCopilotReopenPayload,
+          isReopenTransition,
+          requestedStatus,
+          existingStatus: existingReview.status,
+          definedBodyKeys,
+        })}`,
+      );
+
       if (!ownsReview) {
         if (allowCopilotStatusPatch) {
           if (!challengeId) {
@@ -2410,7 +2428,21 @@ export class ReviewService {
         body.managerComment !== undefined &&
         body.managerComment !== (existingItem.managerComment ?? null);
 
-      if (access.mode === 'copilot') {
+      // Manager access for this flow comes from challenge resources, not JWT roles.
+      const challengeId = review.submission?.challengeId ?? undefined;
+      const hasManagerResourceRole =
+        access.requesterResources?.some((resource) => {
+          const normalizedRoleName = (resource.roleName || '').toLowerCase();
+          return (
+            normalizedRoleName.includes('manager') &&
+            (challengeId ? resource.challengeId === challengeId : false)
+          );
+        }) ?? false;
+
+      const isCopilotWithManagerAccess =
+        access.mode === 'copilot' && hasManagerResourceRole;
+
+      if (access.mode === 'copilot' && !isCopilotWithManagerAccess) {
         const forbiddenFields: string[] = [];
 
         if (!finalAnswerChanged && managerCommentChanged) {

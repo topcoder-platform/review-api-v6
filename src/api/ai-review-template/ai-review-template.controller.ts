@@ -67,16 +67,17 @@ export class AiReviewTemplateController {
   async create(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: CreateAiReviewTemplateConfigDto,
-  ) {
+  ): Promise<AiReviewTemplateConfigResponseDto> {
     return this.aiReviewTemplateService.create(dto);
   }
 
   @Get()
-  @Roles(UserRole.Admin, UserRole.Copilot)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.TalentManager)
   @Scopes(Scope.ReadAiReviewTemplate)
   @ApiOperation({
     summary: 'List AI review templates',
-    description: 'Roles: Admin, Copilot | Scopes: read:ai-review-template',
+    description:
+      'Roles: Admin, Copilot, TalentManager | Scopes: read:ai-review-template',
   })
   @ApiQuery({
     name: 'challengeTrack',
@@ -99,7 +100,7 @@ export class AiReviewTemplateController {
   async findAll(
     @Query(new ValidationPipe({ whitelist: true, transform: true }))
     query: ListAiReviewTemplateQueryDto,
-  ) {
+  ): Promise<AiReviewTemplateConfigResponseDto[]> {
     return this.aiReviewTemplateService.findAll({
       challengeTrack: query.challengeTrack,
       challengeType: query.challengeType,
@@ -125,7 +126,9 @@ export class AiReviewTemplateController {
   })
   @ApiResponse({ status: 404, description: 'AI review template not found.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
-  async findOne(@Param('id') id: string) {
+  async findOne(
+    @Param('id') id: string,
+  ): Promise<AiReviewTemplateConfigResponseDto> {
     return this.aiReviewTemplateService.findById(id);
   }
 
@@ -161,7 +164,7 @@ export class AiReviewTemplateController {
     @Param('id') id: string,
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: UpdateAiReviewTemplateConfigDto,
-  ) {
+  ): Promise<AiReviewTemplateConfigResponseDto> {
     return this.aiReviewTemplateService.update(id, dto);
   }
 
@@ -183,7 +186,7 @@ export class AiReviewTemplateController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'AI review template not found.' })
-  async delete(@Param('id') id: string) {
+  async delete(@Param('id') id: string): Promise<void> {
     await this.aiReviewTemplateService.delete(id);
   }
 }

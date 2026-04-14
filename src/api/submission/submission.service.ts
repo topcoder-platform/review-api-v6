@@ -10,12 +10,14 @@ import {
   SubmissionStatus,
   SubmissionType,
   ScorecardType,
+  ReviewStatus,
 } from '@prisma/client';
 import { PaginationDto } from 'src/dto/pagination.dto';
 import { ReviewResponseDto } from 'src/dto/review.dto';
 import { SortDto } from 'src/dto/sort.dto';
 import {
   SubmissionQueryDto,
+  ManualSubmissionUploadRequestDto,
   SubmissionRequestDto,
   SubmissionResponseDto,
   SubmissionUpdateRequestDto,
@@ -146,6 +148,28 @@ const REVIEW_ITEM_COMMENTS_INCLUDE = {
   },
 } as const;
 
+type CreateSubmissionOptions = {
+  allowPrivilegedPostSubmissionUpload?: boolean;
+};
+
+type SubmissionDmzUploadResult = {
+  url: string;
+  fileName: string;
+  fileSize: number | null;
+  fileType: string | null;
+};
+
+type ChallengeReviewerConfigRow = {
+  scorecardId: string;
+  templatePhaseId: string;
+  challengePhaseId: string;
+  phaseName: string;
+};
+
+type SubmissionReviewResource = ResourceInfo & {
+  roleName: string;
+};
+
 @Injectable()
 export class SubmissionService {
   private readonly logger = new Logger(SubmissionService.name);
@@ -161,6 +185,371 @@ export class SubmissionService {
     private readonly challengeCatalogService: ChallengeCatalogService,
     private readonly memberPrisma: MemberPrismaService,
   ) {}
+
+  async createManualSubmissionUpload(
+    authUser: JwtUser,
+    body: ManualSubmissionUploadRequestDto,
+    file: Express.Multer.File,
+  ): Promise<SubmissionResponseDto> {
+    if (!isAdmin(authUser)) {
+      throw new ForbiddenException({
+        message: 'Only admins or M2M tokens can use manual submission upload.',
+        code: 'FORBIDDEN_MANUAL_SUBMISSION_UPLOAD',
+      });
+    }
+
+    const hasUploadedFile =
+      !!file &&
+      ((typeof file.size === 'number' && file.size > 0) ||
+        (file.buffer && file.buffer.length > 0));
+
+    if (!hasUploadedFile) {
+      throw new BadRequestException({
+        message: 'File contents are required for manual submission upload.',
+        code: 'MANUAL_SUBMISSION_FILE_REQUIRED',
+      });
+    }
+
+    const requestedMemberHandle =
+      typeof body.memberHandle === 'string' && body.memberHandle.trim().length
+        ? body.memberHandle.trim()
+        : null;
+
+    if (requestedMemberHandle) {
+      try {
+        await this.resourceApiService.validateSubmitterHandleRegistration(
+          body.challengeId,
+          requestedMemberHandle,
+          body.memberId,
+        );
+      } catch (error) {
+        throw new BadRequestException({
+          message: error instanceof Error ? error.message : String(error ?? ''),
+          code: 'INVALID_SUBMITTER_HANDLE',
+          details: {
+            challengeId: body.challengeId,
+            memberId: body.memberId,
+            memberHandle: requestedMemberHandle,
+          },
+        });
+      }
+    }
+
+    const dmzUpload = await this.uploadSubmissionFileToDmz(
+      authUser,
+      body,
+      file,
+    );
+
+    const submissionPayload: SubmissionRequestDto = {
+      type: body.type,
+      memberId: body.memberId,
+      challengeId: body.challengeId,
+      url: dmzUpload.url,
+      legacySubmissionId: body.legacySubmissionId,
+      legacyUploadId: body.legacyUploadId,
+      submissionPhaseId: body.submissionPhaseId,
+      submittedDate: body.submittedDate,
+    };
+
+    this.logger.log(
+      `Manual submission upload stored file in DMZ for challenge ${body.challengeId}, member ${body.memberId}, file ${dmzUpload.fileName}`,
+    );
+
+    return this.createSubmission(authUser, submissionPayload, file, {
+      allowPrivilegedPostSubmissionUpload: true,
+    });
+  }
+
+  async ensurePendingReviewsForSubmission(
+    submissionId: string,
+    options?: {
+      requireAiDecisionPass?: boolean;
+      triggerSource?: string;
+    },
+  ): Promise<number> {
+    const source = options?.triggerSource ?? 'unknown';
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: submissionId },
+      select: {
+        id: true,
+        challengeId: true,
+        type: true,
+        virusScan: true,
+      },
+    });
+
+    if (!submission?.id || !submission.challengeId) {
+      this.logger.debug(
+        `[ensurePendingReviewsForSubmission] Submission ${submissionId} not found or missing challengeId. source=${source}`,
+      );
+      return 0;
+    }
+
+    if (!submission.virusScan) {
+      this.logger.debug(
+        `[ensurePendingReviewsForSubmission] Submission ${submissionId} has not passed virus scan yet. source=${source}`,
+      );
+      return 0;
+    }
+
+    const requireAiDecisionPass =
+      options?.requireAiDecisionPass ??
+      (await this.hasConfiguredAiReviewForChallenge(submission.challengeId));
+
+    if (requireAiDecisionPass) {
+      const decisionRows = await this.prisma.$queryRaw<
+        Array<{ status: string | null }>
+      >(Prisma.sql`
+        SELECT status::text AS "status"
+        FROM "aiReviewDecision"
+        WHERE "submissionId" = ${submission.id}
+        ORDER BY "updatedAt" DESC
+        LIMIT 1
+      `);
+      const decisionStatus = String(decisionRows[0]?.status ?? '')
+        .trim()
+        .toUpperCase();
+
+      if (
+        !decisionStatus ||
+        !['PASSED', 'HUMAN_OVERRIDE'].includes(decisionStatus)
+      ) {
+        this.logger.debug(
+          `[ensurePendingReviewsForSubmission] AI decision is not passed for submission ${submission.id}. source=${source}`,
+        );
+        return 0;
+      }
+    }
+
+    const challenge = await this.challengeApiService.getChallengeDetail(
+      submission.challengeId,
+    );
+    const autopilotManagedIterativeReview =
+      this.isFirst2FinishChallenge(challenge);
+
+    const openPhaseIds = new Set<string>();
+    for (const phase of challenge?.phases ?? []) {
+      if (!phase || (phase as any).isOpen !== true) {
+        continue;
+      }
+
+      const identifiers = [
+        String((phase as any).id ?? '').trim(),
+        String((phase as any).phaseId ?? '').trim(),
+      ].filter((value) => value.length > 0);
+      identifiers.forEach((identifier) => openPhaseIds.add(identifier));
+    }
+
+    if (!openPhaseIds.size) {
+      this.logger.debug(
+        `[ensurePendingReviewsForSubmission] No open review-related phases for challenge ${submission.challengeId}. source=${source}`,
+      );
+      return 0;
+    }
+
+    const reviewerConfigs = await this.challengePrisma.$queryRaw<
+      ChallengeReviewerConfigRow[]
+    >(Prisma.sql`
+      SELECT DISTINCT
+        cr."scorecardId" AS "scorecardId",
+        cr."phaseId" AS "templatePhaseId",
+        cp.id AS "challengePhaseId",
+        cp.name AS "phaseName"
+      FROM "ChallengeReviewer" cr
+      JOIN "ChallengePhase" cp
+        ON cp."challengeId" = cr."challengeId"
+       AND cp."phaseId" = cr."phaseId"
+      WHERE cr."challengeId" = ${submission.challengeId}
+        AND cr."isMemberReview" = true
+    `);
+
+    if (!reviewerConfigs.length) {
+      this.logger.debug(
+        `[ensurePendingReviewsForSubmission] No member reviewer configs found for challenge ${submission.challengeId}. source=${source}`,
+      );
+      return 0;
+    }
+
+    const scorecardIds = Array.from(
+      new Set(
+        reviewerConfigs
+          .map((config) => String(config.scorecardId ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    if (!scorecardIds.length) {
+      return 0;
+    }
+
+    const [scorecards, reviewTypes, resources, resourceRoles] =
+      await Promise.all([
+        this.prisma.scorecard.findMany({
+          where: { id: { in: scorecardIds } },
+          select: { id: true, type: true },
+        }),
+        this.prisma.reviewType.findMany({
+          where: { isActive: true },
+          select: { id: true, name: true },
+        }),
+        this.resourceApiService.getResources({
+          challengeId: submission.challengeId,
+        }),
+        this.resourceApiService.getResourceRoles(),
+      ]);
+
+    const scorecardTypeById = new Map(
+      scorecards.map((scorecard) => [scorecard.id, scorecard.type]),
+    );
+    const reviewTypeIdByNormalizedName = new Map<string, string>();
+    for (const reviewType of reviewTypes) {
+      const key = this.normalizeLookupKey(reviewType.name);
+      if (key && !reviewTypeIdByNormalizedName.has(key)) {
+        reviewTypeIdByNormalizedName.set(key, reviewType.id);
+      }
+    }
+
+    const resourcesWithRole: SubmissionReviewResource[] = (resources ?? []).map(
+      (resource) => ({
+        ...resource,
+        roleName:
+          resourceRoles?.[resource.roleId]?.name ?? resource.roleName ?? '',
+      }),
+    );
+
+    const createdBy = `submission-service:${source}`;
+    const reviewRows: Prisma.reviewCreateManyInput[] = [];
+    const dedupe = new Set<string>();
+
+    for (const config of reviewerConfigs) {
+      const scorecardId = String(config.scorecardId ?? '').trim();
+      const challengePhaseId = String(config.challengePhaseId ?? '').trim();
+      const phaseName = String(config.phaseName ?? '').trim();
+      const normalizedPhaseName = this.normalizePhaseName(phaseName);
+
+      if (
+        !scorecardId ||
+        !challengePhaseId ||
+        !phaseName ||
+        !openPhaseIds.has(challengePhaseId)
+      ) {
+        continue;
+      }
+
+      if (!this.isReviewPhaseSupportedForPendingCreation(normalizedPhaseName)) {
+        continue;
+      }
+
+      if (
+        autopilotManagedIterativeReview &&
+        normalizedPhaseName === 'iterative review'
+      ) {
+        continue;
+      }
+
+      if (
+        !this.isSubmissionTypeCompatibleWithReviewPhase(
+          submission.type,
+          normalizedPhaseName,
+        )
+      ) {
+        continue;
+      }
+
+      const scorecardType = scorecardTypeById.get(scorecardId);
+      if (!scorecardType) {
+        this.logger.warn(
+          `[ensurePendingReviewsForSubmission] Scorecard ${scorecardId} not found in review DB. challenge=${submission.challengeId}`,
+        );
+        continue;
+      }
+
+      const reviewTypeId = this.resolveReviewTypeIdForScorecardType(
+        scorecardType,
+        reviewTypeIdByNormalizedName,
+      );
+
+      if (!reviewTypeId) {
+        this.logger.warn(
+          `[ensurePendingReviewsForSubmission] No active review type found for scorecard type ${scorecardType}. scorecard=${config.scorecardId}`,
+        );
+        continue;
+      }
+
+      const eligibleResources = this.resolveReviewerResourcesForConfig(
+        resourcesWithRole,
+        challengePhaseId,
+        normalizedPhaseName,
+      );
+
+      for (const resource of eligibleResources) {
+        const dedupeKey = `${resource.id}::${submission.id}::${scorecardId}`;
+        if (dedupe.has(dedupeKey)) {
+          continue;
+        }
+        dedupe.add(dedupeKey);
+
+        reviewRows.push({
+          resourceId: resource.id,
+          phaseId: challengePhaseId,
+          submissionId: submission.id,
+          scorecardId,
+          typeId: reviewTypeId,
+          status: ReviewStatus.PENDING,
+          committed: false,
+          reviewDate: new Date(),
+          createdBy,
+          updatedBy: createdBy,
+        });
+      }
+    }
+
+    if (!reviewRows.length) {
+      this.logger.debug(
+        `[ensurePendingReviewsForSubmission] No pending review rows resolved for submission ${submission.id}. source=${source}`,
+      );
+      return 0;
+    }
+
+    const result = await this.prisma.review.createMany({
+      data: reviewRows,
+      skipDuplicates: true,
+    });
+
+    this.logger.log(
+      `[ensurePendingReviewsForSubmission] Created ${result.count} pending review rows for submission ${submission.id}. source=${source}`,
+    );
+    return result.count;
+  }
+
+  /**
+   * Determine whether a challenge has an active AI review config that should
+   * gate automatic human-review assignment.
+   *
+   * @param challengeId - Challenge identifier associated with the submission.
+   * @returns True when the latest AI review config contains at least one workflow.
+   */
+  private async hasConfiguredAiReviewForChallenge(
+    challengeId: string,
+  ): Promise<boolean> {
+    if (!challengeId) {
+      return false;
+    }
+
+    const config = await this.prisma.aiReviewConfig?.findFirst({
+      where: { challengeId },
+      orderBy: { version: 'desc' },
+      select: {
+        workflows: {
+          select: { workflowId: true },
+          take: 1,
+        },
+      },
+    });
+
+    return Boolean(config?.workflows?.length);
+  }
 
   /**
    * Upload an artifact file to S3 under a submission-specific path and
@@ -1253,6 +1642,218 @@ export class SubmissionService {
     return new S3Client({});
   }
 
+  private async uploadSubmissionFileToDmz(
+    authUser: JwtUser,
+    body: ManualSubmissionUploadRequestDto,
+    file: Express.Multer.File,
+  ): Promise<SubmissionDmzUploadResult> {
+    const dmzBucket = process.env.SUBMISSION_DMZ_S3_BUCKET;
+    if (!dmzBucket) {
+      this.logger.error('SUBMISSION_DMZ_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'DMZ_BUCKET_MISSING',
+      });
+    }
+
+    const requestedName =
+      body.fileName || file.originalname || file.filename || 'submission';
+    let safeFileName =
+      this.sanitizeArtifactFileName(requestedName) ??
+      `submission-${randomUUID()}`;
+    if (!/\.[A-Za-z0-9]+$/.test(safeFileName)) {
+      const ext = this.guessExtFromMime(file.mimetype) ?? 'bin';
+      safeFileName = `${safeFileName}.${ext}`;
+    }
+
+    const challengeSegment = this.sanitizeS3PathSegment(
+      body.challengeId,
+      'challenge',
+    );
+    const memberSegment = this.sanitizeS3PathSegment(body.memberId, 'member');
+    const key = `manual/${challengeSegment}/${memberSegment}/${randomUUID()}-${safeFileName}`;
+
+    const bodyStream = await this.resolveUploadedFileBody(file);
+    const s3 = this.getS3Client();
+    const actor =
+      authUser.userId != null && String(authUser.userId).trim().length > 0
+        ? String(authUser.userId).trim()
+        : 'machine-token';
+
+    const upload = new Upload({
+      client: s3,
+      params: {
+        Bucket: dmzBucket,
+        Key: key,
+        Body: bodyStream,
+        ContentType: file.mimetype || 'application/octet-stream',
+        Metadata: {
+          challengeId: String(body.challengeId),
+          memberId: String(body.memberId),
+          uploadedBy: actor,
+          originalFileName: safeFileName,
+        },
+      },
+      queueSize: 4,
+      partSize: 5 * 1024 * 1024,
+      leavePartsOnError: false,
+    });
+
+    try {
+      await upload.done();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to upload submission file to DMZ bucket ${dmzBucket}: ${message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to upload submission file to DMZ storage',
+        code: 'DMZ_UPLOAD_FAILED',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+        },
+      });
+    }
+
+    const fileTypeMatch = safeFileName.match(/\.([A-Za-z0-9]+)$/);
+    const fileType = fileTypeMatch?.[1]?.toLowerCase() ?? null;
+
+    return {
+      url: this.buildS3HttpUrl(dmzBucket, key),
+      fileName: safeFileName,
+      fileSize:
+        typeof file.size === 'number'
+          ? file.size
+          : file.buffer
+            ? file.buffer.length
+            : null,
+      fileType,
+    };
+  }
+
+  private async resolveUploadedFileBody(
+    file: Express.Multer.File,
+  ): Promise<Buffer | Readable> {
+    if (file?.buffer && file.buffer.length > 0) {
+      return file.buffer;
+    }
+
+    const streamCandidate = (file as any)?.stream;
+    if (streamCandidate && typeof streamCandidate.pipe === 'function') {
+      return streamCandidate as Readable;
+    }
+
+    const diskDestination = (file as any)?.destination;
+    const diskFileName = (file as any)?.filename;
+    if (diskDestination && diskFileName) {
+      const fs = await import('fs');
+      const path = await import('path');
+      return fs.createReadStream(path.join(diskDestination, diskFileName));
+    }
+
+    throw new BadRequestException({
+      message: 'File data missing in request',
+      code: 'FILE_DATA_MISSING',
+    });
+  }
+
+  private buildS3HttpUrl(bucket: string, key: string): string {
+    const encodedKey = key
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    return `https://s3.amazonaws.com/${bucket}/${encodedKey}`;
+  }
+
+  private sanitizeS3PathSegment(value: string, fallback: string): string {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return fallback;
+    }
+    const sanitized = raw.replace(/[^A-Za-z0-9_.-]/g, '_');
+    return sanitized.length > 0 ? sanitized : fallback;
+  }
+
+  private async validatePrivilegedManualUploadPhaseWindow(
+    challengeId: string,
+    submissionType: SubmissionType,
+  ): Promise<void> {
+    const requiredClosedSubmissionPhases =
+      submissionType === SubmissionType.CHECKPOINT_SUBMISSION
+        ? ['Checkpoint Submission']
+        : ['Submission', 'Topgear Submission'];
+    const allowedTargetPhases =
+      this.getAllowedManualUploadPhaseNames(submissionType);
+
+    try {
+      const submissionPhaseOpen = await this.challengeApiService.isPhaseOpen(
+        challengeId,
+        requiredClosedSubmissionPhases,
+      );
+
+      if (submissionPhaseOpen) {
+        throw new BadRequestException({
+          message:
+            'Manual upload endpoint can only be used after the relevant submission phase has closed.',
+          code: 'MANUAL_UPLOAD_PHASE_INVALID',
+          details: {
+            challengeId,
+            requiredState: `${requiredClosedSubmissionPhases.join(' or ')} phase closed`,
+            requiredClosedPhases: requiredClosedSubmissionPhases,
+          },
+        });
+      }
+
+      const targetPhaseOpen = await this.challengeApiService.isPhaseOpen(
+        challengeId,
+        allowedTargetPhases,
+      );
+
+      if (!targetPhaseOpen) {
+        throw new BadRequestException({
+          message:
+            'Manual upload endpoint is only available during screening/review phases.',
+          code: 'MANUAL_UPLOAD_PHASE_INVALID',
+          details: {
+            challengeId,
+            submissionType,
+            requiredOpenPhases: allowedTargetPhases,
+          },
+        });
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException({
+        message: `Could not validate manual upload phase window for challenge ${challengeId}: ${message}`,
+        code: 'MANUAL_UPLOAD_PHASE_VALIDATION_FAILED',
+        details: {
+          challengeId,
+          submissionType,
+        },
+      });
+    }
+  }
+
+  private getAllowedManualUploadPhaseNames(
+    submissionType: SubmissionType,
+  ): string[] {
+    if (submissionType === SubmissionType.CHECKPOINT_SUBMISSION) {
+      return ['Checkpoint Screening', 'Checkpoint Review'];
+    }
+
+    return [
+      'AI Screening',
+      'Screening',
+      'Review',
+      'Iterative Review',
+      'Approval',
+    ];
+  }
+
   private sanitizeArtifactFileName(name?: string): string | undefined {
     if (!name) return undefined;
     const trimmed = name.trim();
@@ -1268,6 +1869,153 @@ export class SubmissionService {
       return undefined;
     }
     return sanitized;
+  }
+
+  private normalizeLookupKey(value: string | null | undefined): string {
+    return String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  private isReviewPhaseSupportedForPendingCreation(
+    normalizedPhaseName: string,
+  ): boolean {
+    return new Set([
+      'screening',
+      'checkpoint screening',
+      'review',
+      'checkpoint review',
+      'iterative review',
+      'approval',
+    ]).has(normalizedPhaseName);
+  }
+
+  private isSubmissionTypeCompatibleWithReviewPhase(
+    submissionType: SubmissionType,
+    normalizedPhaseName: string,
+  ): boolean {
+    const isCheckpointPhase = normalizedPhaseName.startsWith('checkpoint');
+    const isCheckpointSubmission =
+      submissionType === SubmissionType.CHECKPOINT_SUBMISSION;
+    return isCheckpointSubmission ? isCheckpointPhase : !isCheckpointPhase;
+  }
+
+  private resolveReviewTypeIdForScorecardType(
+    scorecardType: ScorecardType,
+    reviewTypeIdByNormalizedName: Map<string, string>,
+  ): string | null {
+    const candidates =
+      this.getReviewTypeCandidatesForScorecardType(scorecardType);
+    for (const candidate of candidates) {
+      const key = this.normalizeLookupKey(candidate);
+      const reviewTypeId = reviewTypeIdByNormalizedName.get(key);
+      if (reviewTypeId) {
+        return reviewTypeId;
+      }
+    }
+    return null;
+  }
+
+  private getReviewTypeCandidatesForScorecardType(
+    scorecardType: ScorecardType,
+  ): string[] {
+    switch (scorecardType) {
+      case ScorecardType.SCREENING:
+        return ['Screening'];
+      case ScorecardType.CHECKPOINT_SCREENING:
+        return ['Checkpoint Screening'];
+      case ScorecardType.REVIEW:
+        return ['Review'];
+      case ScorecardType.CHECKPOINT_REVIEW:
+        return ['Checkpoint Review'];
+      case ScorecardType.ITERATIVE_REVIEW:
+        return ['Iterative Review'];
+      case ScorecardType.APPROVAL:
+        return ['Approval'];
+      case ScorecardType.SPECIFICATION_REVIEW:
+        return ['Specification Review'];
+      case ScorecardType.POST_MORTEM:
+        return ['Post Mortem', 'Post-Mortem'];
+      default:
+        return [];
+    }
+  }
+
+  private resolveReviewerResourcesForConfig(
+    resources: SubmissionReviewResource[],
+    challengePhaseId: string,
+    normalizedPhaseName: string,
+  ): SubmissionReviewResource[] {
+    const normalizedChallengePhaseId = String(challengePhaseId ?? '').trim();
+    const byPhase = (resources ?? []).filter((resource) => {
+      const resourcePhaseId = String(resource.phaseId ?? '').trim();
+      return (
+        normalizedChallengePhaseId.length > 0 &&
+        resourcePhaseId.length > 0 &&
+        resourcePhaseId === normalizedChallengePhaseId
+      );
+    });
+
+    const dedupeById = (
+      entries: SubmissionReviewResource[],
+    ): SubmissionReviewResource[] => {
+      const seen = new Set<string>();
+      const unique: SubmissionReviewResource[] = [];
+      for (const entry of entries) {
+        const id = String(entry.id ?? '').trim();
+        if (!id || seen.has(id)) {
+          continue;
+        }
+        seen.add(id);
+        unique.push(entry);
+      }
+      return unique;
+    };
+
+    if (byPhase.length) {
+      return dedupeById(byPhase);
+    }
+
+    const expectedRoleTypes =
+      this.getExpectedReviewerRoleTypesForPhase(normalizedPhaseName);
+    if (!expectedRoleTypes.length) {
+      return [];
+    }
+
+    return dedupeById(
+      (resources ?? []).filter((resource) => {
+        const roleType = this.identifyReviewerRoleType(resource.roleName || '');
+        return roleType !== 'unknown' && expectedRoleTypes.includes(roleType);
+      }),
+    );
+  }
+
+  private getExpectedReviewerRoleTypesForPhase(
+    normalizedPhaseName: string,
+  ): Array<
+    | 'screener'
+    | 'checkpoint-screener'
+    | 'checkpoint-reviewer'
+    | 'reviewer'
+    | 'approver'
+    | 'iterative-reviewer'
+  > {
+    switch (normalizedPhaseName) {
+      case 'checkpoint screening':
+        return ['checkpoint-screener'];
+      case 'checkpoint review':
+        return ['checkpoint-reviewer'];
+      case 'screening':
+        return ['screener'];
+      case 'iterative review':
+        return ['iterative-reviewer'];
+      case 'approval':
+        return ['approver'];
+      case 'review':
+      default:
+        return ['reviewer'];
+    }
   }
 
   private guessExtFromMime(mime?: string): string | undefined {
@@ -1583,6 +2331,7 @@ export class SubmissionService {
     authUser: JwtUser,
     body: SubmissionRequestDto,
     file?: Express.Multer.File,
+    options?: CreateSubmissionOptions,
   ) {
     console.log(`BODY: ${JSON.stringify(body)}`);
 
@@ -1665,6 +2414,9 @@ export class SubmissionService {
       });
     }
 
+    const allowPrivilegedPostSubmissionUpload =
+      options?.allowPrivilegedPostSubmissionUpload === true;
+
     // Validate that submission phase is open before allowing submission creation
     if (body.challengeId) {
       const isCheckpointSubmission =
@@ -1672,60 +2424,81 @@ export class SubmissionService {
       const isFinalFixSubmission =
         body.type === SubmissionType.STUDIO_FINAL_FIX_SUBMISSION;
 
-      try {
-        if (isCheckpointSubmission) {
-          // For checkpoint submissions, validate checkpoint submission phase
-          await this.challengeApiService.validateCheckpointSubmissionCreation(
-            body.challengeId,
-          );
-          this.logger.log(
-            `Checkpoint Submission phase is open for challenge ${body.challengeId}`,
-          );
-        } else if (isFinalFixSubmission) {
-          await this.challengeApiService.validateFinalFixSubmissionCreation(
-            body.challengeId,
-          );
-          this.logger.log(
-            `Final Fix phase is open for challenge ${body.challengeId}`,
-          );
-        } else {
-          // For regular submissions, validate submission phase
-          await this.challengeApiService.validateSubmissionCreation(
-            body.challengeId,
-          );
-          this.logger.log(
-            `Submission phase is open for challenge ${body.challengeId}`,
-          );
-        }
-      } catch (error) {
-        // Convert the error from ChallengeApiService to BadRequestException
-        if (
-          error.message &&
-          (error.message.includes('Submission phase is not currently open') ||
-            error.message.includes('Final Fix phase is not currently open') ||
-            error.message.includes(
-              'Checkpoint Submission phase is not currently open',
-            ))
-        ) {
-          throw new BadRequestException({
-            message: error.message,
-            code: 'SUBMISSION_PHASE_CLOSED',
+      if (allowPrivilegedPostSubmissionUpload) {
+        if (!isAdmin(authUser)) {
+          throw new ForbiddenException({
+            message:
+              'Only admins or M2M tokens can bypass submission phase checks.',
+            code: 'FORBIDDEN_PHASE_BYPASS',
             details: {
               challengeId: body.challengeId,
-              submissionType: body.type,
-              requiredPhase:
-                body.type === SubmissionType.CHECKPOINT_SUBMISSION
-                  ? 'Checkpoint Submission'
-                  : body.type === SubmissionType.STUDIO_FINAL_FIX_SUBMISSION
-                    ? 'Final Fix'
-                    : 'Submission',
             },
           });
         }
-        // Log the error but allow submission to proceed if challenge API is unavailable
-        this.logger.warn(
-          `Could not validate submission phase for challenge ${body.challengeId}: ${error.message}. Proceeding with submission creation.`,
+
+        await this.validatePrivilegedManualUploadPhaseWindow(
+          body.challengeId,
+          body.type as SubmissionType,
         );
+        this.logger.log(
+          `Privileged manual upload phase validation passed for challenge ${body.challengeId}`,
+        );
+      } else {
+        try {
+          if (isCheckpointSubmission) {
+            // For checkpoint submissions, validate checkpoint submission phase
+            await this.challengeApiService.validateCheckpointSubmissionCreation(
+              body.challengeId,
+            );
+            this.logger.log(
+              `Checkpoint Submission phase is open for challenge ${body.challengeId}`,
+            );
+          } else if (isFinalFixSubmission) {
+            await this.challengeApiService.validateFinalFixSubmissionCreation(
+              body.challengeId,
+            );
+            this.logger.log(
+              `Final Fix phase is open for challenge ${body.challengeId}`,
+            );
+          } else {
+            // For regular submissions, validate submission phase
+            await this.challengeApiService.validateSubmissionCreation(
+              body.challengeId,
+            );
+            this.logger.log(
+              `Submission phase is open for challenge ${body.challengeId}`,
+            );
+          }
+        } catch (error) {
+          // Convert the error from ChallengeApiService to BadRequestException
+          if (
+            error.message &&
+            (error.message.includes('Submission phase is not currently open') ||
+              error.message.includes('Final Fix phase is not currently open') ||
+              error.message.includes(
+                'Checkpoint Submission phase is not currently open',
+              ))
+          ) {
+            throw new BadRequestException({
+              message: error.message,
+              code: 'SUBMISSION_PHASE_CLOSED',
+              details: {
+                challengeId: body.challengeId,
+                submissionType: body.type,
+                requiredPhase:
+                  body.type === SubmissionType.CHECKPOINT_SUBMISSION
+                    ? 'Checkpoint Submission'
+                    : body.type === SubmissionType.STUDIO_FINAL_FIX_SUBMISSION
+                      ? 'Final Fix'
+                      : 'Submission',
+              },
+            });
+          }
+          // Log the error but allow submission to proceed if challenge API is unavailable
+          this.logger.warn(
+            `Could not validate submission phase for challenge ${body.challengeId}: ${error.message}. Proceeding with submission creation.`,
+          );
+        }
       }
 
       if (isFinalFixSubmission) {

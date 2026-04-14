@@ -167,6 +167,90 @@ export class SubmissionRequestBaseDto {
   submittedDate?: string;
 }
 
+export class ManualSubmissionUploadRequestDto {
+  @ApiProperty({
+    description: 'The submission type',
+    example: 'ContestSubmission',
+    enum: Object.values(SubmissionType),
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(Object.values(SubmissionType))
+  type: string;
+
+  @ApiProperty({
+    description: 'The member id',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  memberId: string;
+
+  @ApiProperty({
+    description: 'The challenge id',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  challengeId: string;
+
+  @ApiProperty({
+    description:
+      'Optional submitter handle. When provided, it must match a submitter resource on the challenge and the supplied member id.',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  memberHandle?: string;
+
+  @ApiProperty({
+    description:
+      'Optional file name override used when storing the uploaded file in DMZ',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  fileName?: string;
+
+  @ApiProperty({
+    description: 'The legacy submission id',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  legacySubmissionId?: string;
+
+  @ApiProperty({
+    description: 'The legacy upload id',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  legacyUploadId?: string;
+
+  @ApiProperty({
+    description: 'The submission phase id',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  submissionPhaseId?: string;
+
+  @ApiProperty({
+    description: 'The submitted date',
+    example: '2024-10-01T00:00:00Z',
+    required: false,
+  })
+  @IsOptional()
+  @IsDateString()
+  submittedDate?: string;
+}
+
 export class SubmissionRequestDto extends SubmissionRequestBaseDto {}
 
 export class SubmissionPutRequestDto extends SubmissionRequestBaseDto {}

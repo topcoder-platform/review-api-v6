@@ -33,6 +33,40 @@ const DECISION_INCLUDE = {
   },
 } as const;
 
+type AiReviewDecisionEscalationRecord = {
+  id: string;
+  aiReviewDecisionId: string;
+  escalationNotes: string | null;
+  approverNotes: string | null;
+  status: string;
+  createdAt: Date;
+  createdBy: string | null;
+  updatedAt: Date;
+  updatedBy: string | null;
+};
+
+type AiReviewDecisionRecord = {
+  id: string;
+  submissionId: string;
+  configId: string;
+  status: string;
+  totalScore: Prisma.Decimal | number | string | null;
+  submissionLocked: boolean;
+  reason: string | null;
+  breakdown: Prisma.JsonValue | null;
+  isFinal: boolean;
+  finalizedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  config?: { id: string; challengeId: string; version: number };
+  submission?: {
+    id: string;
+    challengeId: string | null;
+    memberId: string | null;
+  };
+  escalations?: AiReviewDecisionEscalationRecord[];
+};
+
 @Injectable()
 export class AiReviewDecisionService {
   private readonly logger: LoggerService;
@@ -99,17 +133,9 @@ export class AiReviewDecisionService {
     return !!resource;
   }
 
-  private mapEscalation(e: {
-    id: string;
-    aiReviewDecisionId: string;
-    escalationNotes: string | null;
-    approverNotes: string | null;
-    status: string;
-    createdAt: Date;
-    createdBy: string | null;
-    updatedAt: Date;
-    updatedBy: string | null;
-  }): AiReviewDecisionEscalationResponseDto {
+  private mapEscalation(
+    e: AiReviewDecisionEscalationRecord,
+  ): AiReviewDecisionEscalationResponseDto {
     return {
       id: e.id,
       aiReviewDecisionId: e.aiReviewDecisionId,
@@ -123,37 +149,9 @@ export class AiReviewDecisionService {
     };
   }
 
-  private mapToResponse(row: {
-    id: string;
-    submissionId: string;
-    configId: string;
-    status: string;
-    totalScore: unknown;
-    submissionLocked: boolean;
-    reason: string | null;
-    breakdown: unknown;
-    isFinal: boolean;
-    finalizedAt: Date | null;
-    createdAt: Date;
-    updatedAt: Date;
-    config?: { id: string; challengeId: string; version: number };
-    submission?: {
-      id: string;
-      challengeId: string | null;
-      memberId: string | null;
-    };
-    escalations?: Array<{
-      id: string;
-      aiReviewDecisionId: string;
-      escalationNotes: string | null;
-      approverNotes: string | null;
-      status: string;
-      createdAt: Date;
-      createdBy: string | null;
-      updatedAt: Date;
-      updatedBy: string | null;
-    }>;
-  }): AiReviewDecisionResponseDto {
+  private mapToResponse(
+    row: AiReviewDecisionRecord,
+  ): AiReviewDecisionResponseDto {
     return {
       id: row.id,
       submissionId: row.submissionId,
@@ -264,11 +262,11 @@ export class AiReviewDecisionService {
       where.status =
         query.status as unknown as Prisma.EnumAiReviewDecisionStatusFilter;
 
-    const decisions = await this.prisma.aiReviewDecision.findMany({
+    const decisions = (await this.prisma.aiReviewDecision.findMany({
       where,
       include: DECISION_INCLUDE,
       orderBy: { createdAt: 'desc' },
-    });
+    })) as AiReviewDecisionRecord[];
 
     return decisions.map((d) => this.mapToResponse(d));
   }

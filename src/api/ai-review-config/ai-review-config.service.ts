@@ -10,13 +10,20 @@ import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import {
+  JwtUser,
+  isAdmin,
+  isTalentManager,
+} from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import {
   CreateAiReviewConfigDto,
   UpdateAiReviewConfigDto,
+  AiReviewConfigResponseDto,
+  AiReviewConfigWorkflowResponseDto,
 } from '../../dto/aiReviewConfig.dto';
-import { AiReviewMode, Prisma } from '@prisma/client';
+import { AiReviewMode as ResponseAiReviewMode } from '../../dto/aiReviewTemplateConfig.dto';
+import { AiReviewMode as PrismaAiReviewMode, Prisma } from '@prisma/client';
 
 const CONFIG_INCLUDE = {
   workflows: {
@@ -48,6 +55,42 @@ const CONFIG_INCLUDE = {
   decisions: true,
 } as const;
 
+type AiReviewConfigTemplateSource = {
+  id: string;
+  minPassingThreshold: Prisma.Decimal | number | string | null;
+  mode: PrismaAiReviewMode;
+  autoFinalize: boolean;
+  formula: Prisma.JsonValue | null;
+  workflows: Array<{
+    workflowId: string;
+    weightPercent: Prisma.Decimal | number | string;
+    isGating: boolean;
+  }>;
+};
+
+type AiReviewConfigWorkflowRecord = {
+  id: string;
+  workflowId: string;
+  weightPercent: Prisma.Decimal | number | string;
+  isGating: boolean;
+  workflow: Record<string, unknown>;
+};
+
+type AiReviewConfigRecord = {
+  id: string;
+  challengeId: string;
+  version: number;
+  minPassingThreshold: Prisma.Decimal | number | string | null;
+  mode: PrismaAiReviewMode;
+  autoFinalize: boolean;
+  formula: Prisma.JsonValue | null;
+  templateId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  workflows: AiReviewConfigWorkflowRecord[];
+  decisions: Record<string, unknown>[];
+};
+
 @Injectable()
 export class AiReviewConfigService {
   private readonly logger: LoggerService;
@@ -59,6 +102,55 @@ export class AiReviewConfigService {
     private readonly resourcePrisma: ResourcePrismaService,
   ) {
     this.logger = LoggerService.forRoot('AiReviewConfigService');
+  }
+
+  private mapWorkflowToResponse(
+    workflow: AiReviewConfigWorkflowRecord,
+  ): AiReviewConfigWorkflowResponseDto {
+    return {
+      id: workflow.id,
+      workflowId: workflow.workflowId,
+      weightPercent: Number(workflow.weightPercent),
+      isGating: workflow.isGating,
+      workflow: workflow.workflow,
+    };
+  }
+
+  private mapConfigToResponse(
+    config: AiReviewConfigRecord,
+  ): AiReviewConfigResponseDto {
+    const formula =
+      config.formula &&
+      typeof config.formula === 'object' &&
+      !Array.isArray(config.formula)
+        ? (config.formula as Record<string, unknown>)
+        : undefined;
+
+    return {
+      id: config.id,
+      challengeId: config.challengeId,
+      version: config.version,
+      minPassingThreshold:
+        config.minPassingThreshold != null
+          ? Number(config.minPassingThreshold)
+          : 0,
+      mode: this.mapModeToResponse(config.mode),
+      autoFinalize: config.autoFinalize,
+      formula,
+      templateId: config.templateId,
+      createdAt: config.createdAt,
+      updatedAt: config.updatedAt,
+      workflows: config.workflows.map((workflow) =>
+        this.mapWorkflowToResponse(workflow),
+      ),
+      decisions: config.decisions,
+    };
+  }
+
+  private mapModeToResponse(mode: PrismaAiReviewMode): ResponseAiReviewMode {
+    return mode === PrismaAiReviewMode.AI_ONLY
+      ? ResponseAiReviewMode.AI_ONLY
+      : ResponseAiReviewMode.AI_GATING;
   }
 
   private async isChallengeCreator(
@@ -124,6 +216,7 @@ export class AiReviewConfigService {
     if (
       authUser.isMachine ||
       isAdmin(authUser) ||
+      isTalentManager(authUser) ||
       (await this.isChallengeCreator(challengeId, authUser))
     ) {
       return;
@@ -273,7 +366,10 @@ export class AiReviewConfigService {
     }
   }
 
-  async create(dto: CreateAiReviewConfigDto, authUser: JwtUser) {
+  async create(
+    dto: CreateAiReviewConfigDto,
+    authUser: JwtUser,
+  ): Promise<AiReviewConfigResponseDto> {
     await this.validateChallengeExists(dto.challengeId);
     await this.validateNoSubmissionsExistForChallenge(dto.challengeId);
     await this.validateNoAiRunsExistForChallenge(dto.challengeId);
@@ -282,7 +378,7 @@ export class AiReviewConfigService {
     let payload: {
       challengeId: string;
       minPassingThreshold: number;
-      mode: AiReviewMode;
+      mode: PrismaAiReviewMode;
       autoFinalize: boolean;
       formula?: Prisma.InputJsonValue;
       templateId?: string;
@@ -290,7 +386,7 @@ export class AiReviewConfigService {
     } = {
       challengeId: dto.challengeId,
       minPassingThreshold: dto.minPassingThreshold,
-      mode: dto.mode as AiReviewMode,
+      mode: dto.mode as PrismaAiReviewMode,
       autoFinalize: dto.autoFinalize,
       formula:
         dto.formula != null
@@ -301,12 +397,12 @@ export class AiReviewConfigService {
     };
 
     if (dto.templateId?.trim()) {
-      const template = await this.prisma.aiReviewTemplateConfig.findUnique({
+      const template = (await this.prisma.aiReviewTemplateConfig.findUnique({
         where: { id: dto.templateId.trim() },
         include: {
           workflows: true,
         },
-      });
+      })) as AiReviewConfigTemplateSource | null;
       if (!template) {
         throw new NotFoundException(
           `Template with id ${dto.templateId} not found.`,
@@ -318,7 +414,7 @@ export class AiReviewConfigService {
         challengeId: dto.challengeId,
         minPassingThreshold:
           dto.minPassingThreshold ?? Number(template.minPassingThreshold),
-        mode: (dto.mode ?? template.mode) as AiReviewMode,
+        mode: (dto.mode ?? template.mode) as PrismaAiReviewMode,
         autoFinalize: dto.autoFinalize ?? template.autoFinalize,
         formula:
           dto.formula != null
@@ -383,13 +479,16 @@ export class AiReviewConfigService {
     return this.getById(config.id);
   }
 
-  async getByChallengeId(challengeId: string, authUser: JwtUser) {
+  async getByChallengeId(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<AiReviewConfigResponseDto> {
     await this.validateCanViewConfigForChallenge(challengeId, authUser);
-    const config = await this.prisma.aiReviewConfig.findFirst({
+    const config = (await this.prisma.aiReviewConfig.findFirst({
       where: { challengeId },
       orderBy: { version: 'desc' },
       include: CONFIG_INCLUDE,
-    });
+    })) as AiReviewConfigRecord | null;
     if (!config) {
       this.logger.error(
         `AI review config for challenge ${challengeId} not found.`,
@@ -398,42 +497,26 @@ export class AiReviewConfigService {
         `AI review config for challenge ${challengeId} not found.`,
       );
     }
-    return {
-      ...config,
-      minPassingThreshold:
-        config.minPassingThreshold != null
-          ? Number(config.minPassingThreshold)
-          : config.minPassingThreshold,
-      workflows: config.workflows.map((w) => ({
-        ...w,
-        weightPercent: Number(w.weightPercent),
-      })),
-    };
+    return this.mapConfigToResponse(config);
   }
 
-  async getById(id: string) {
-    const config = await this.prisma.aiReviewConfig.findUnique({
+  async getById(id: string): Promise<AiReviewConfigResponseDto> {
+    const config = (await this.prisma.aiReviewConfig.findUnique({
       where: { id },
       include: CONFIG_INCLUDE,
-    });
+    })) as AiReviewConfigRecord | null;
     if (!config) {
       this.logger.error(`AI review config with id ${id} not found.`);
       throw new NotFoundException(`AI review config with id ${id} not found.`);
     }
-    return {
-      ...config,
-      minPassingThreshold:
-        config.minPassingThreshold != null
-          ? Number(config.minPassingThreshold)
-          : config.minPassingThreshold,
-      workflows: config.workflows.map((w) => ({
-        ...w,
-        weightPercent: Number(w.weightPercent),
-      })),
-    };
+    return this.mapConfigToResponse(config);
   }
 
-  async update(id: string, dto: UpdateAiReviewConfigDto, authUser: JwtUser) {
+  async update(
+    id: string,
+    dto: UpdateAiReviewConfigDto,
+    authUser: JwtUser,
+  ): Promise<AiReviewConfigResponseDto> {
     const config = await this.getById(id);
     const challengeId = config.challengeId;
 
@@ -448,7 +531,8 @@ export class AiReviewConfigService {
     >[0]['data'] = {};
     if (rest.minPassingThreshold !== undefined)
       configData.minPassingThreshold = rest.minPassingThreshold;
-    if (rest.mode !== undefined) configData.mode = rest.mode as AiReviewMode;
+    if (rest.mode !== undefined)
+      configData.mode = rest.mode as PrismaAiReviewMode;
     if (rest.autoFinalize !== undefined)
       configData.autoFinalize = rest.autoFinalize;
     if (rest.formula !== undefined)

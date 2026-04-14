@@ -36,12 +36,12 @@ export class AiReviewConfigController {
   constructor(private readonly aiReviewConfigService: AiReviewConfigService) {}
 
   @Post()
-  @Roles(UserRole.Admin, UserRole.Copilot)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.TalentManager)
   @Scopes(Scope.CreateAiReviewConfig)
   @ApiOperation({
     summary: 'Create an AI review config',
     description:
-      'Roles: Admin, Copilot | Scopes: create:ai-review-config. Challenge creators with the Copilot role (or Admins) may create configs for their own challenges. Blocked if challenge has any submissions.',
+      'Roles: Admin, Copilot, TalentManager | Scopes: create:ai-review-config. Challenge creators with the Copilot role (or Admins) may create configs for their own challenges. Blocked if challenge has any submissions.',
   })
   @ApiBody({
     description: 'AI review config for a challenge',
@@ -70,7 +70,7 @@ export class AiReviewConfigController {
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: CreateAiReviewConfigDto,
     @User() authUser: JwtUser,
-  ) {
+  ): Promise<AiReviewConfigResponseDto> {
     return this.aiReviewConfigService.create(dto, authUser);
   }
 
@@ -106,17 +106,17 @@ export class AiReviewConfigController {
   async getByChallengeId(
     @Param('challengeId') challengeId: string,
     @User() authUser: JwtUser,
-  ) {
+  ): Promise<AiReviewConfigResponseDto> {
     return this.aiReviewConfigService.getByChallengeId(challengeId, authUser);
   }
 
   @Put(':id')
-  @Roles(UserRole.Admin, UserRole.Copilot)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.TalentManager)
   @Scopes(Scope.UpdateAiReviewConfig)
   @ApiOperation({
     summary: 'Update an AI review config',
     description:
-      'Roles: Admin, Copilot | Scopes: update:ai-review-config. Challenge creators with the Copilot role (or Admins) may update configs for their own challenges. Blocked if challenge is completed or config has decisions. challengeId cannot be updated.',
+      'Roles: Admin, Copilot, TalentManager | Scopes: update:ai-review-config. Challenge creators with the Copilot role (or Admins) may update configs for their own challenges. Blocked if challenge is completed or config has decisions. challengeId cannot be updated.',
   })
   @ApiParam({
     name: 'id',
@@ -151,7 +151,7 @@ export class AiReviewConfigController {
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: UpdateAiReviewConfigDto,
     @User() authUser: JwtUser,
-  ) {
+  ): Promise<AiReviewConfigResponseDto> {
     return this.aiReviewConfigService.update(id, dto, authUser);
   }
 
@@ -181,7 +181,10 @@ export class AiReviewConfigController {
     status: 409,
     description: 'Conflict. Config has decisions.',
   })
-  async delete(@Param('id') id: string, @User() authUser: JwtUser) {
+  async delete(
+    @Param('id') id: string,
+    @User() authUser: JwtUser,
+  ): Promise<void> {
     await this.aiReviewConfigService.delete(id, authUser);
   }
 }

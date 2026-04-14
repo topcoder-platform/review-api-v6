@@ -4,6 +4,7 @@ import { M2MService } from './m2m.service';
 import { of } from 'rxjs';
 import { AxiosResponse } from 'axios';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
+import { CommonConfig } from 'src/shared/config/common.config';
 
 describe('ResourceApiService', () => {
   let httpService: { get: jest.Mock };
@@ -68,5 +69,77 @@ describe('ResourceApiService', () => {
 
     expect(result).toEqual(singlePage);
     expect(httpService.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('validates a submitter handle against challenge resources', async () => {
+    const submitterResource = {
+      ...buildResource('submitter'),
+      challengeId: 'challenge-1',
+      memberId: '456',
+      memberHandle: 'SubmitterOne',
+      roleId: CommonConfig.roles.submitterRoleId,
+    };
+
+    jest.spyOn(service, 'getResources').mockResolvedValue([
+      {
+        ...buildResource('reviewer'),
+        challengeId: 'challenge-1',
+        memberId: '999',
+        memberHandle: 'ReviewerOne',
+        roleId: 'reviewer-role',
+      },
+      submitterResource,
+    ]);
+
+    const result = await service.validateSubmitterHandleRegistration(
+      'challenge-1',
+      'submitterone',
+      '456',
+    );
+
+    expect(result).toEqual(submitterResource);
+  });
+
+  it('rejects submitter handle validation when the handle is not a submitter resource', async () => {
+    jest.spyOn(service, 'getResources').mockResolvedValue([
+      {
+        ...buildResource('submitter'),
+        challengeId: 'challenge-1',
+        memberId: '456',
+        memberHandle: 'AnotherSubmitter',
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+    ]);
+
+    await expect(
+      service.validateSubmitterHandleRegistration(
+        'challenge-1',
+        'missingSubmitter',
+      ),
+    ).rejects.toThrow(
+      'Handle missingSubmitter is not registered as a submitter for challenge challenge-1.',
+    );
+  });
+
+  it('rejects submitter handle validation when the handle does not match the member id', async () => {
+    jest.spyOn(service, 'getResources').mockResolvedValue([
+      {
+        ...buildResource('submitter'),
+        challengeId: 'challenge-1',
+        memberId: '456',
+        memberHandle: 'SubmitterOne',
+        roleId: CommonConfig.roles.submitterRoleId,
+      },
+    ]);
+
+    await expect(
+      service.validateSubmitterHandleRegistration(
+        'challenge-1',
+        'SubmitterOne',
+        '123',
+      ),
+    ).rejects.toThrow(
+      'Handle SubmitterOne does not match memberId 123 for challenge challenge-1.',
+    );
   });
 });

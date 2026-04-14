@@ -37,6 +37,7 @@ import {
   SubmissionQueryDto,
   SubmissionResponseDto,
   SubmissionRequestDto,
+  ManualSubmissionUploadRequestDto,
   SubmissionPutRequestDto,
   SubmissionUpdateRequestDto,
 } from 'src/dto/submission.dto';
@@ -119,6 +120,77 @@ export class SubmissionController {
     );
     const authUser: JwtUser = req['user'] as JwtUser;
     return this.service.createSubmission(authUser, body, file);
+  }
+
+  @Post('/manual-upload')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.CreateSubmission)
+  @ApiOperation({
+    summary:
+      'Upload and create a submission as Admin/M2M after the relevant submission phase closes',
+    description:
+      'Roles: Admin (M2M allowed via scope). Uploads file contents to DMZ before creating the submission and triggering normal scan/event flow after the relevant submission window has closed and a downstream screening/review phase is open. | Scopes: create:submission',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Manual submission uploaded and created successfully.',
+    type: SubmissionResponseDto,
+  })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+    }),
+  )
+  @ApiBody({
+    required: true,
+    type: 'multipart/form-data',
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+        fileName: {
+          type: 'string',
+        },
+        challengeId: {
+          type: 'string',
+        },
+        memberHandle: {
+          type: 'string',
+        },
+        type: {
+          type: 'string',
+        },
+        memberId: {
+          type: 'number',
+        },
+        legacySubmissionId: {
+          type: 'string',
+        },
+        legacyUploadId: {
+          type: 'string',
+        },
+        submissionPhaseId: {
+          type: 'string',
+        },
+        submittedDate: {
+          type: 'string',
+          format: 'date-time',
+        },
+      },
+      required: ['file', 'challengeId', 'type', 'memberId'],
+    },
+  })
+  async manualUploadSubmission(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: ManualSubmissionUploadRequestDto,
+  ): Promise<SubmissionResponseDto> {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.createManualSubmissionUpload(authUser, body, file);
   }
 
   @Patch('/:submissionId')

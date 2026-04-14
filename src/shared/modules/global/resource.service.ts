@@ -284,4 +284,73 @@ export class ResourceApiService {
       throw error;
     }
   }
+
+  /**
+   * Validate if a member handle is registered as a submitter for a challenge.
+   *
+   * @param challengeId challenge id
+   * @param memberHandle member handle to validate
+   * @param memberId optional member id that must match the submitter resource
+   * @returns resolves to the matching submitter resource
+   */
+  async validateSubmitterHandleRegistration(
+    challengeId: string,
+    memberHandle: string,
+    memberId?: string,
+  ): Promise<ResourceInfo> {
+    const normalizedHandle = String(memberHandle ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedHandle) {
+      throw new Error('Submitter handle is required.');
+    }
+
+    try {
+      const resources = await this.getResources({
+        challengeId: challengeId,
+      });
+
+      const submitterResources = (resources ?? []).filter(
+        (resource) => resource.roleId === CommonConfig.roles.submitterRoleId,
+      );
+
+      if (!submitterResources.length) {
+        throw new Error(
+          `Challenge ${challengeId} has no registered submitter resources.`,
+        );
+      }
+
+      const submitterResource = submitterResources.find(
+        (resource) =>
+          String(resource.memberHandle ?? '')
+            .trim()
+            .toLowerCase() === normalizedHandle,
+      );
+
+      if (!submitterResource) {
+        throw new Error(
+          `Handle ${memberHandle} is not registered as a submitter for challenge ${challengeId}.`,
+        );
+      }
+
+      const normalizedMemberId = String(memberId ?? '').trim();
+      if (
+        normalizedMemberId.length > 0 &&
+        String(submitterResource.memberId) !== normalizedMemberId
+      ) {
+        throw new Error(
+          `Handle ${memberHandle} does not match memberId ${normalizedMemberId} for challenge ${challengeId}.`,
+        );
+      }
+
+      return submitterResource;
+    } catch (error) {
+      this.logger.error(
+        `Error validating submitter handle registration for handle ${memberHandle} on challenge ${challengeId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
 }

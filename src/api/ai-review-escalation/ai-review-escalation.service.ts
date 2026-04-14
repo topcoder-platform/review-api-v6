@@ -94,6 +94,20 @@ function mapEscalationToResponse(row: {
   };
 }
 
+type AiReviewDecisionEscalationRecord = Parameters<
+  typeof mapEscalationToResponse
+>[0];
+
+type AiReviewDecisionEscalationDecisionRecord = {
+  id: string;
+  submissionId: string;
+  status: string;
+  submissionLocked: boolean;
+  config?: { challengeId: string };
+  submission?: { id: string; challengeId: string | null };
+  escalations: AiReviewDecisionEscalationRecord[];
+};
+
 @Injectable()
 export class AiReviewEscalationService {
   private readonly logger: LoggerService;
@@ -145,6 +159,10 @@ export class AiReviewEscalationService {
     submissionId: string,
     userId: string,
   ): Promise<Prisma.reviewCreateManyInput[]> {
+    this.logger.log(
+      `Building pending reviews for unlocked submission ${submissionId} on challenge ${challengeId}`,
+    );
+
     const manualOverridePhaseNames = Object.keys(
       MANUAL_OVERRIDE_PHASE_ROLE_MAP,
     );
@@ -172,6 +190,10 @@ export class AiReviewEscalationService {
       this.isChallengePhaseCurrentlyOpen(phase),
     );
 
+    this.logger.log(
+      `Manual override phase scan for challenge ${challengeId}: ${challengePhases.length} candidate phases, ${openChallengePhases.length} currently open`,
+    );
+
     if (openChallengePhases.length === 0) {
       this.logger.warn(
         `No open manual review phases found for unlocked submission ${submissionId} on challenge ${challengeId}`,
@@ -190,6 +212,10 @@ export class AiReviewEscalationService {
           openChallengePhases.map((phase) => Prisma.sql`${phase.phaseId}`),
         )})
     `);
+
+    this.logger.log(
+      `Loaded ${reviewerConfigs.length} member review configurations for open phases on challenge ${challengeId}`,
+    );
 
     const scorecardIdsByTemplatePhaseId = new Map<string, Set<string>>();
     for (const config of reviewerConfigs) {
@@ -232,6 +258,10 @@ export class AiReviewEscalationService {
         select: { id: true },
       });
 
+      this.logger.log(
+        `Phase ${phase.name} (${phase.id}) has ${reviewerResources.length} reviewer resources and ${scorecardIds.length} scorecards for submission ${submissionId}`,
+      );
+
       if (reviewerResources.length === 0) {
         this.logger.warn(
           `No reviewer resources found for phase ${phase.name} on challenge ${challengeId}`,
@@ -261,6 +291,9 @@ export class AiReviewEscalationService {
     }
 
     if (pendingReviewMap.size === 0) {
+      this.logger.log(
+        `No pending reviews generated for submission ${submissionId} on challenge ${challengeId}`,
+      );
       return [];
     }
 
@@ -286,12 +319,18 @@ export class AiReviewEscalationService {
       ),
     );
 
-    return pendingReviewEntries.filter(
+    const newPendingReviews = pendingReviewEntries.filter(
       (entry) =>
         !existingKeys.has(
           `${entry.resourceId}:${submissionId}:${entry.scorecardId}`,
         ),
     );
+
+    this.logger.log(
+      `Pending review build completed for submission ${submissionId}: ${pendingReviewEntries.length} candidates, ${existingReviews.length} already exist, ${newPendingReviews.length} will be created`,
+    );
+
+    return newPendingReviews;
   }
 
   private async notifyCopilotsOfNewEscalation(
@@ -627,7 +666,7 @@ They are requesting a manual override or secondary look at the AI Review results
         : {}),
     };
 
-    const decisions = await this.prisma.aiReviewDecision.findMany({
+    const decisions = (await this.prisma.aiReviewDecision.findMany({
       where,
       include: {
         config: { select: { challengeId: true } },
@@ -645,7 +684,7 @@ They are requesting a manual override or secondary look at the AI Review results
         },
       },
       orderBy: { createdAt: 'desc' },
-    });
+    })) as AiReviewDecisionEscalationDecisionRecord[];
 
     return decisions
       .filter((decision) =>
@@ -824,6 +863,10 @@ They are requesting a manual override or secondary look at the AI Review results
     submissionId: string,
     userId: string,
   ): Promise<AiReviewDecisionEscalationResponseDto> {
+    this.logger.log(
+      `Creating direct unlock escalation for decision ${aiReviewDecisionId}, submission ${submissionId}, challenge ${challengeId}`,
+    );
+
     await this.validatePhaseOpen(challengeId);
     const approverNotes = (dto.approverNotes ?? '').trim();
     if (!approverNotes) {
@@ -839,36 +882,65 @@ They are requesting a manual override or secondary look at the AI Review results
         userId,
       );
 
-    const escalation = await this.prisma.$transaction(async (tx) => {
-      const createdEscalation = await tx.aiReviewDecisionEscalation.create({
-        data: {
-          aiReviewDecisionId,
-          escalationNotes: (dto.escalationNotes ?? '').trim() || null,
-          approverNotes,
-          status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
+    this.logger.log(
+      `Direct unlock escalation ${aiReviewDecisionId}: ${pendingReviewInputs.length} pending review rows prepared before transaction`,
+    );
 
-      await tx.aiReviewDecision.update({
-        where: { id: aiReviewDecisionId },
-        data: {
-          status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
-          submissionLocked: false,
-          updatedAt: new Date(),
-        },
-      });
-
-      if (pendingReviewInputs.length > 0) {
-        await tx.review.createMany({
-          data: pendingReviewInputs,
-          skipDuplicates: true,
+    const escalation = await this.prisma.$transaction(
+      async (tx): Promise<AiReviewDecisionEscalationRecord> => {
+        const createdEscalation = await tx.aiReviewDecisionEscalation.create({
+          data: {
+            aiReviewDecisionId,
+            escalationNotes: (dto.escalationNotes ?? '').trim() || null,
+            approverNotes,
+            status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+            createdBy: userId,
+            updatedBy: userId,
+          },
         });
-      }
 
-      return createdEscalation;
-    });
+        const approvedPendingEscalations =
+          await tx.aiReviewDecisionEscalation.updateMany({
+            where: {
+              aiReviewDecisionId,
+              status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+            },
+            data: {
+              status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+              approverNotes,
+              updatedBy: userId,
+            },
+          });
+
+        if (approvedPendingEscalations.count > 0) {
+          this.logger.log(
+            `Direct unlock escalation ${aiReviewDecisionId}: marked ${approvedPendingEscalations.count} existing pending escalations as approved`,
+          );
+        }
+
+        await tx.aiReviewDecision.update({
+          where: { id: aiReviewDecisionId },
+          data: {
+            status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
+            submissionLocked: false,
+            updatedAt: new Date(),
+          },
+        });
+
+        if (pendingReviewInputs.length > 0) {
+          await tx.review.createMany({
+            data: pendingReviewInputs,
+            skipDuplicates: true,
+          });
+        }
+
+        return createdEscalation as AiReviewDecisionEscalationRecord;
+      },
+    );
+
+    this.logger.log(
+      `Direct unlock escalation ${aiReviewDecisionId} transaction completed successfully`,
+    );
 
     const escalationResponse = mapEscalationToResponse(escalation);
     const savedPendingReviews = await this.loadSavedPendingReviews(
@@ -876,11 +948,18 @@ They are requesting a manual override or secondary look at the AI Review results
       pendingReviewInputs,
     );
 
+    this.logger.log(
+      `Direct unlock escalation ${aiReviewDecisionId}: ${savedPendingReviews.length} pending reviews persisted for notification`,
+    );
+
     try {
       await this.notifyReviewersOfManualOverride(
         challengeId,
         submissionId,
         savedPendingReviews,
+      );
+      this.logger.log(
+        `Manual override notifications sent for direct unlock escalation ${aiReviewDecisionId}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1067,6 +1146,10 @@ They are requesting a manual override or secondary look at the AI Review results
     dto: UpdateAiReviewEscalationDto,
     authUser: JwtUser,
   ): Promise<AiReviewDecisionEscalationResponseDto> {
+    this.logger.log(
+      `Updating escalation ${escalationId} for decision ${aiReviewDecisionId} with requested status ${dto.status}`,
+    );
+
     const escalation = await this.prisma.aiReviewDecisionEscalation.findUnique({
       where: { id: escalationId },
       include: {
@@ -1115,6 +1198,10 @@ They are requesting a manual override or secondary look at the AI Review results
       );
     }
 
+    this.logger.log(
+      `Escalation ${escalationId} authorization passed for user ${userId} on challenge ${challengeId}`,
+    );
+
     await this.validatePhaseOpen(challengeId);
 
     if (
@@ -1128,6 +1215,11 @@ They are requesting a manual override or secondary look at the AI Review results
 
     if (dto.status === AiReviewDecisionEscalationStatus.APPROVED) {
       const submissionId = escalation.aiReviewDecision.submission?.id || '';
+      const approverNotes = dto.approverNotes.trim();
+      this.logger.log(
+        `Escalation ${escalationId} approval path started for submission ${submissionId}`,
+      );
+
       const pendingReviewInputs =
         await this.buildPendingReviewsForUnlockedSubmission(
           challengeId,
@@ -1135,38 +1227,71 @@ They are requesting a manual override or secondary look at the AI Review results
           userId,
         );
 
-      const updatedEscalation = await this.prisma.$transaction(async (tx) => {
-        const updated = await tx.aiReviewDecisionEscalation.update({
-          where: { id: escalationId },
-          data: {
-            approverNotes: dto.approverNotes.trim(),
-            status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
-            updatedBy: userId,
-          },
-        });
+      this.logger.log(
+        `Escalation ${escalationId} approval path prepared ${pendingReviewInputs.length} pending review rows before transaction`,
+      );
 
-        await tx.aiReviewDecision.update({
-          where: { id: aiReviewDecisionId },
-          data: {
-            status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
-            submissionLocked: false,
-            updatedAt: new Date(),
-          },
-        });
-
-        if (pendingReviewInputs.length > 0) {
-          await tx.review.createMany({
-            data: pendingReviewInputs,
-            skipDuplicates: true,
+      const updatedEscalation = await this.prisma.$transaction(
+        async (tx): Promise<AiReviewDecisionEscalationRecord> => {
+          const updated = await tx.aiReviewDecisionEscalation.update({
+            where: { id: escalationId },
+            data: {
+              approverNotes,
+              status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+              updatedBy: userId,
+            },
           });
-        }
 
-        return updated;
-      });
+          const approvedPendingEscalations =
+            await tx.aiReviewDecisionEscalation.updateMany({
+              where: {
+                aiReviewDecisionId,
+                status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+              },
+              data: {
+                status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+                approverNotes,
+                updatedBy: userId,
+              },
+            });
+
+          if (approvedPendingEscalations.count > 0) {
+            this.logger.log(
+              `Escalation ${escalationId} approval path marked ${approvedPendingEscalations.count} sibling pending escalations as approved for decision ${aiReviewDecisionId}`,
+            );
+          }
+
+          await tx.aiReviewDecision.update({
+            where: { id: aiReviewDecisionId },
+            data: {
+              status: AiReviewDecisionStatus.HUMAN_OVERRIDE,
+              submissionLocked: false,
+              updatedAt: new Date(),
+            },
+          });
+
+          if (pendingReviewInputs.length > 0) {
+            await tx.review.createMany({
+              data: pendingReviewInputs,
+              skipDuplicates: true,
+            });
+          }
+
+          return updated as AiReviewDecisionEscalationRecord;
+        },
+      );
+      this.logger.log(
+        `Escalation ${escalationId} approval transaction completed successfully`,
+      );
+
       const response = mapEscalationToResponse(updatedEscalation);
       const savedPendingReviews = await this.loadSavedPendingReviews(
         submissionId,
         pendingReviewInputs,
+      );
+
+      this.logger.log(
+        `Escalation ${escalationId} approval path loaded ${savedPendingReviews.length} persisted pending reviews for notification`,
       );
 
       try {
@@ -1174,6 +1299,9 @@ They are requesting a manual override or secondary look at the AI Review results
           challengeId,
           submissionId,
           savedPendingReviews,
+        );
+        this.logger.log(
+          `Escalation approval notifications sent for escalation ${escalationId}`,
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1193,6 +1321,8 @@ They are requesting a manual override or secondary look at the AI Review results
         updatedBy: userId,
       },
     });
+    this.logger.log(`Escalation ${escalationId} rejected successfully`);
+
     return mapEscalationToResponse(updated);
   }
 }

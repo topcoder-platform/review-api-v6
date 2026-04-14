@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AiReviewDecisionStatus, AiReviewMode } from '@prisma/client';
+import { AiReviewDecisionStatus, AiReviewMode, Prisma } from '@prisma/client';
 import { LoggerService } from './logger.service';
 import { PrismaService } from './prisma.service';
 
@@ -30,6 +30,47 @@ type DecisionContext = {
   workflows: DecisionContextWorkflow[];
 };
 
+type AiReviewDecisionRecord = {
+  id: string;
+  submissionId: string;
+  configId: string;
+  status: AiReviewDecisionStatus;
+  totalScore: number | null;
+  submissionLocked: boolean;
+  reason: string | null;
+  breakdown: Prisma.JsonValue | null;
+  isFinal: boolean;
+  finalizedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type DecisionConfigRow = {
+  id: string;
+  minPassingThreshold: Prisma.Decimal | number | string | null;
+  autoFinalize: boolean;
+  mode: AiReviewMode;
+  workflows: Array<{
+    workflowId: string;
+    weightPercent: Prisma.Decimal | number | string;
+    isGating: boolean;
+    workflow: {
+      scorecard: {
+        minimumPassingScore: number | null;
+      };
+    };
+  }>;
+};
+
+type WorkflowRunRow = {
+  id: string;
+  workflowId: string;
+  status: string;
+  score: number | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+};
+
 const roundTo2 = (value: number): number => {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 };
@@ -42,7 +83,9 @@ export class AiReviewerDecisionMakerService {
     this.logger = LoggerService.forRoot(AiReviewerDecisionMakerService.name);
   }
 
-  async evaluateSubmission(submissionId: string) {
+  async evaluateSubmission(
+    submissionId: string,
+  ): Promise<AiReviewDecisionRecord | null> {
     const context = await this.buildDecisionContext(submissionId);
     if (!context) {
       this.logger.log(
@@ -64,7 +107,7 @@ export class AiReviewerDecisionMakerService {
     );
 
     if (!isReady) {
-      return this.prisma.aiReviewDecision.update({
+      const pendingDecision = (await this.prisma.aiReviewDecision.update({
         where: {
           submissionId_configId: {
             submissionId: context.submissionId,
@@ -75,7 +118,8 @@ export class AiReviewerDecisionMakerService {
           status: AiReviewDecisionStatus.PENDING,
           reason: 'Awaiting completion of all configured AI workflow runs.',
         },
-      });
+      })) as AiReviewDecisionRecord;
+      return pendingDecision;
     }
 
     const weightedTotal = roundTo2(
@@ -99,7 +143,7 @@ export class AiReviewerDecisionMakerService {
       ? AiReviewDecisionStatus.PASSED
       : AiReviewDecisionStatus.FAILED;
 
-    return this.prisma.aiReviewDecision.update({
+    const updatedDecision = (await this.prisma.aiReviewDecision.update({
       where: { id: decision.id },
       data: {
         status,
@@ -121,7 +165,9 @@ export class AiReviewerDecisionMakerService {
         finalizedAt: new Date(),
         submissionLocked: context.mode === AiReviewMode.AI_GATING && !passed,
       },
-    });
+    })) as AiReviewDecisionRecord;
+
+    return updatedDecision;
   }
 
   async markDecisionError(submissionId: string, reason: string): Promise<void> {
@@ -144,7 +190,10 @@ export class AiReviewerDecisionMakerService {
     });
   }
 
-  private async ensurePendingDecision(submissionId: string, configId: string) {
+  private ensurePendingDecision(
+    submissionId: string,
+    configId: string,
+  ): Promise<AiReviewDecisionRecord> {
     return this.prisma.aiReviewDecision.upsert({
       where: {
         submissionId_configId: {
@@ -159,7 +208,7 @@ export class AiReviewerDecisionMakerService {
         status: AiReviewDecisionStatus.PENDING,
         reason: 'Awaiting completion of all configured AI workflow runs.',
       },
-    });
+    }) as Promise<AiReviewDecisionRecord>;
   }
 
   private async buildDecisionContext(
@@ -174,13 +223,20 @@ export class AiReviewerDecisionMakerService {
       return null;
     }
 
-    const config = await this.prisma.aiReviewConfig.findFirst({
+    const config = (await this.prisma.aiReviewConfig.findFirst({
       where: { challengeId: submission.challengeId },
-      include: {
+      select: {
+        id: true,
+        minPassingThreshold: true,
+        autoFinalize: true,
+        mode: true,
         workflows: {
-          include: {
+          select: {
+            workflowId: true,
+            weightPercent: true,
+            isGating: true,
             workflow: {
-              include: {
+              select: {
                 scorecard: {
                   select: {
                     minimumPassingScore: true,
@@ -192,7 +248,7 @@ export class AiReviewerDecisionMakerService {
         },
       },
       orderBy: { version: 'desc' },
-    });
+    })) as DecisionConfigRow | null;
 
     if (!config) {
       return null;
@@ -200,13 +256,21 @@ export class AiReviewerDecisionMakerService {
 
     const workflowIds = config.workflows.map((workflow) => workflow.workflowId);
     const runs = workflowIds.length
-      ? await this.prisma.aiWorkflowRun.findMany({
+      ? ((await this.prisma.aiWorkflowRun.findMany({
           where: {
             submissionId,
             workflowId: { in: workflowIds },
           },
+          select: {
+            id: true,
+            workflowId: true,
+            status: true,
+            score: true,
+            startedAt: true,
+            completedAt: true,
+          },
           orderBy: [{ startedAt: 'desc' }, { completedAt: 'desc' }],
-        })
+        })) as WorkflowRunRow[])
       : [];
 
     const latestRunByWorkflowId = new Map<string, (typeof runs)[number]>();
