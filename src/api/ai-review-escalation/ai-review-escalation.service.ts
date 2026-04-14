@@ -1196,7 +1196,7 @@ They are requesting a manual override or secondary look at the AI Review results
 
     if (dto.status === AiReviewDecisionEscalationStatus.APPROVED) {
       const submissionId = escalation.aiReviewDecision.submission?.id || '';
-      const approverNotes = dto.approverNotes.trim();
+
       this.logger.log(
         `Escalation ${escalationId} approval path started for submission ${submissionId}`,
       );
