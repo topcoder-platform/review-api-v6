@@ -159,6 +159,10 @@ export class AiReviewEscalationService {
     submissionId: string,
     userId: string,
   ): Promise<Prisma.reviewCreateManyInput[]> {
+    this.logger.log(
+      `Building pending reviews for unlocked submission ${submissionId} on challenge ${challengeId}`,
+    );
+
     const manualOverridePhaseNames = Object.keys(
       MANUAL_OVERRIDE_PHASE_ROLE_MAP,
     );
@@ -186,6 +190,10 @@ export class AiReviewEscalationService {
       this.isChallengePhaseCurrentlyOpen(phase),
     );
 
+    this.logger.log(
+      `Manual override phase scan for challenge ${challengeId}: ${challengePhases.length} candidate phases, ${openChallengePhases.length} currently open`,
+    );
+
     if (openChallengePhases.length === 0) {
       this.logger.warn(
         `No open manual review phases found for unlocked submission ${submissionId} on challenge ${challengeId}`,
@@ -204,6 +212,10 @@ export class AiReviewEscalationService {
           openChallengePhases.map((phase) => Prisma.sql`${phase.phaseId}`),
         )})
     `);
+
+    this.logger.log(
+      `Loaded ${reviewerConfigs.length} member review configurations for open phases on challenge ${challengeId}`,
+    );
 
     const scorecardIdsByTemplatePhaseId = new Map<string, Set<string>>();
     for (const config of reviewerConfigs) {
@@ -246,6 +258,10 @@ export class AiReviewEscalationService {
         select: { id: true },
       });
 
+      this.logger.log(
+        `Phase ${phase.name} (${phase.id}) has ${reviewerResources.length} reviewer resources and ${scorecardIds.length} scorecards for submission ${submissionId}`,
+      );
+
       if (reviewerResources.length === 0) {
         this.logger.warn(
           `No reviewer resources found for phase ${phase.name} on challenge ${challengeId}`,
@@ -275,6 +291,9 @@ export class AiReviewEscalationService {
     }
 
     if (pendingReviewMap.size === 0) {
+      this.logger.log(
+        `No pending reviews generated for submission ${submissionId} on challenge ${challengeId}`,
+      );
       return [];
     }
 
@@ -300,12 +319,18 @@ export class AiReviewEscalationService {
       ),
     );
 
-    return pendingReviewEntries.filter(
+    const newPendingReviews = pendingReviewEntries.filter(
       (entry) =>
         !existingKeys.has(
           `${entry.resourceId}:${submissionId}:${entry.scorecardId}`,
         ),
     );
+
+    this.logger.log(
+      `Pending review build completed for submission ${submissionId}: ${pendingReviewEntries.length} candidates, ${existingReviews.length} already exist, ${newPendingReviews.length} will be created`,
+    );
+
+    return newPendingReviews;
   }
 
   private async notifyCopilotsOfNewEscalation(
@@ -838,6 +863,10 @@ They are requesting a manual override or secondary look at the AI Review results
     submissionId: string,
     userId: string,
   ): Promise<AiReviewDecisionEscalationResponseDto> {
+    this.logger.log(
+      `Creating direct unlock escalation for decision ${aiReviewDecisionId}, submission ${submissionId}, challenge ${challengeId}`,
+    );
+
     await this.validatePhaseOpen(challengeId);
     const approverNotes = (dto.approverNotes ?? '').trim();
     if (!approverNotes) {
@@ -853,6 +882,10 @@ They are requesting a manual override or secondary look at the AI Review results
         userId,
       );
 
+    this.logger.log(
+      `Direct unlock escalation ${aiReviewDecisionId}: ${pendingReviewInputs.length} pending review rows prepared before transaction`,
+    );
+
     const escalation = await this.prisma.$transaction(
       async (tx): Promise<AiReviewDecisionEscalationRecord> => {
         const createdEscalation = await tx.aiReviewDecisionEscalation.create({
@@ -865,6 +898,25 @@ They are requesting a manual override or secondary look at the AI Review results
             updatedBy: userId,
           },
         });
+
+        const approvedPendingEscalations =
+          await tx.aiReviewDecisionEscalation.updateMany({
+            where: {
+              aiReviewDecisionId,
+              status: PrismaAiReviewDecisionEscalationStatus.PENDING_APPROVAL,
+            },
+            data: {
+              status: PrismaAiReviewDecisionEscalationStatus.APPROVED,
+              approverNotes,
+              updatedBy: userId,
+            },
+          });
+
+        if (approvedPendingEscalations.count > 0) {
+          this.logger.log(
+            `Direct unlock escalation ${aiReviewDecisionId}: marked ${approvedPendingEscalations.count} existing pending escalations as approved`,
+          );
+        }
 
         await tx.aiReviewDecision.update({
           where: { id: aiReviewDecisionId },
@@ -886,10 +938,18 @@ They are requesting a manual override or secondary look at the AI Review results
       },
     );
 
+    this.logger.log(
+      `Direct unlock escalation ${aiReviewDecisionId} transaction completed successfully`,
+    );
+
     const escalationResponse = mapEscalationToResponse(escalation);
     const savedPendingReviews = await this.loadSavedPendingReviews(
       submissionId,
       pendingReviewInputs,
+    );
+
+    this.logger.log(
+      `Direct unlock escalation ${aiReviewDecisionId}: ${savedPendingReviews.length} pending reviews persisted for notification`,
     );
 
     try {
@@ -897,6 +957,9 @@ They are requesting a manual override or secondary look at the AI Review results
         challengeId,
         submissionId,
         savedPendingReviews,
+      );
+      this.logger.log(
+        `Manual override notifications sent for direct unlock escalation ${aiReviewDecisionId}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1083,6 +1146,10 @@ They are requesting a manual override or secondary look at the AI Review results
     dto: UpdateAiReviewEscalationDto,
     authUser: JwtUser,
   ): Promise<AiReviewDecisionEscalationResponseDto> {
+    this.logger.log(
+      `Updating escalation ${escalationId} for decision ${aiReviewDecisionId} with requested status ${dto.status}`,
+    );
+
     const escalation = await this.prisma.aiReviewDecisionEscalation.findUnique({
       where: { id: escalationId },
       include: {
@@ -1131,6 +1198,10 @@ They are requesting a manual override or secondary look at the AI Review results
       );
     }
 
+    this.logger.log(
+      `Escalation ${escalationId} authorization passed for user ${userId} on challenge ${challengeId}`,
+    );
+
     await this.validatePhaseOpen(challengeId);
 
     if (
@@ -1144,12 +1215,20 @@ They are requesting a manual override or secondary look at the AI Review results
 
     if (dto.status === AiReviewDecisionEscalationStatus.APPROVED) {
       const submissionId = escalation.aiReviewDecision.submission?.id || '';
+      this.logger.log(
+        `Escalation ${escalationId} approval path started for submission ${submissionId}`,
+      );
+
       const pendingReviewInputs =
         await this.buildPendingReviewsForUnlockedSubmission(
           challengeId,
           submissionId,
           userId,
         );
+
+      this.logger.log(
+        `Escalation ${escalationId} approval path prepared ${pendingReviewInputs.length} pending review rows before transaction`,
+      );
 
       const updatedEscalation = await this.prisma.$transaction(
         async (tx): Promise<AiReviewDecisionEscalationRecord> => {
@@ -1181,10 +1260,18 @@ They are requesting a manual override or secondary look at the AI Review results
           return updated as AiReviewDecisionEscalationRecord;
         },
       );
+      this.logger.log(
+        `Escalation ${escalationId} approval transaction completed successfully`,
+      );
+
       const response = mapEscalationToResponse(updatedEscalation);
       const savedPendingReviews = await this.loadSavedPendingReviews(
         submissionId,
         pendingReviewInputs,
+      );
+
+      this.logger.log(
+        `Escalation ${escalationId} approval path loaded ${savedPendingReviews.length} persisted pending reviews for notification`,
       );
 
       try {
@@ -1192,6 +1279,9 @@ They are requesting a manual override or secondary look at the AI Review results
           challengeId,
           submissionId,
           savedPendingReviews,
+        );
+        this.logger.log(
+          `Escalation approval notifications sent for escalation ${escalationId}`,
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1211,6 +1301,8 @@ They are requesting a manual override or secondary look at the AI Review results
         updatedBy: userId,
       },
     });
+    this.logger.log(`Escalation ${escalationId} rejected successfully`);
+
     return mapEscalationToResponse(updated);
   }
 }
