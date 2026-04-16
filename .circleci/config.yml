@@ -78,7 +78,7 @@ workflows:
                               - pm-4172_2
                               - PM-4347_allow-creators-to-edit-ai-configs
                               - PM-4507
-                              - PM-4865_approve-pending-escalations
+                              - improve-appeals-endpoint
 
             - 'build-prod':
                   context: org-global
