@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Resource } from '@prisma/client-resource';
 import {
   AppealRequestDto,
@@ -821,24 +822,41 @@ export class AppealService {
 
   async getAppeals(
     resourceId?: string,
-    reviewId?: string,
+    reviewIds: string[] = [],
+    challengeId?: string,
     paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<AppealResponseDto>> {
     this.logger.log(
-      `Getting appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,
+      `Getting appeals with filters - resourceId: ${resourceId}, reviewIds: ${reviewIds.join(',')}, challengeId: ${challengeId}`,
     );
 
     const { page = 1, perPage = 10 } = paginationDto || {};
     const skip = (page - 1) * perPage;
 
     try {
-      const whereClause: any = {};
-      if (resourceId) whereClause.resourceId = resourceId;
-      if (reviewId) {
-        whereClause.reviewItemComment = {
-          reviewItem: {
-            reviewId: reviewId,
+      const whereClause: Prisma.appealWhereInput = {};
+      if (resourceId) {
+        whereClause.resourceId = resourceId;
+      }
+
+      const reviewItemWhere: Prisma.reviewItemWhereInput = {};
+      if (reviewIds.length === 1) {
+        reviewItemWhere.reviewId = reviewIds[0];
+      } else if (reviewIds.length > 1) {
+        reviewItemWhere.reviewId = { in: reviewIds };
+      }
+
+      if (challengeId) {
+        reviewItemWhere.review = {
+          submission: {
+            challengeId,
           },
+        };
+      }
+
+      if (Object.keys(reviewItemWhere).length > 0) {
+        whereClause.reviewItemComment = {
+          reviewItem: reviewItemWhere,
         };
       }
 
@@ -873,6 +891,15 @@ export class AppealService {
                 updatedBy: true,
               },
             },
+            reviewItemComment: {
+              select: {
+                reviewItem: {
+                  select: {
+                    reviewId: true,
+                  },
+                },
+              },
+            },
           },
         }),
         this.prisma.appeal.count({
@@ -895,6 +922,7 @@ export class AppealService {
           updatedAt: appeal.updatedAt,
           updatedBy: appeal.updatedBy,
           legacyId: appeal.legacyId,
+          reviewId: appeal.reviewItemComment.reviewItem.reviewId,
           // Include appealResponse so clients can tell whether an appeal
           // has been responded to. This field was previously omitted,
           // which caused Remaining counts to be incorrect in Platform UI.
@@ -922,7 +950,7 @@ export class AppealService {
     } catch (error) {
       const errorResponse = this.prismaErrorService.handleError(
         error,
-        `fetching appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,
+        `fetching appeals with filters - resourceId: ${resourceId}, reviewIds: ${reviewIds.join(',')}, challengeId: ${challengeId}`,
       );
 
       throw new InternalServerErrorException({

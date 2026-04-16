@@ -104,6 +104,13 @@ export class AppealResponseDto extends AppealBaseDto {
   id: string;
 
   @ApiProperty({
+    description: 'The review ID associated with this appeal',
+    example: 'review123',
+    required: false,
+  })
+  reviewId?: string;
+
+  @ApiProperty({
     description: 'The associated appeal response (optional)',
     type: AppealResponseResponseDto,
     required: false,
