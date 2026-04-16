@@ -847,13 +847,32 @@ export class AppealService {
           where: whereClause,
           skip,
           take: perPage,
-          include: {
-            reviewItemComment: {
-              include: {
-                reviewItem: true,
+          orderBy: {
+            createdAt: 'desc',
+          },
+          select: {
+            id: true,
+            resourceId: true,
+            reviewItemCommentId: true,
+            content: true,
+            createdAt: true,
+            createdBy: true,
+            updatedAt: true,
+            updatedBy: true,
+            legacyId: true,
+            appealResponse: {
+              select: {
+                id: true,
+                appealId: true,
+                resourceId: true,
+                content: true,
+                success: true,
+                createdAt: true,
+                createdBy: true,
+                updatedAt: true,
+                updatedBy: true,
               },
             },
-            appealResponse: true,
           },
         }),
         this.prisma.appeal.count({
