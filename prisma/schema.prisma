@@ -210,6 +210,7 @@ model reviewItem {
   reviewItemComments reviewItemComment[]
 
   @@index([reviewId]) // Index for joining with review table
+  @@index([reviewId, id], map: "reviewItem_reviewId_id_idx") // Supports joins that filter by reviewId then resolve related comment/appeal rows
   @@index([id]) // Index for direct ID lookups
   @@index([scorecardQuestionId]) // Index for joining with scorecardQuestion table
 }
@@ -283,6 +284,8 @@ model appeal {
   appealResponse    appealResponse?
 
   @@index([resourceId]) // Index for resource ID
+  @@index([resourceId, createdAt], map: "appeal_resourceId_createdAt_idx") // Speeds paginated resource-filtered appeal listings
+  @@index([createdAt], map: "appeal_createdAt_idx") // Supports default ordering for appeal pagination
   @@index([id]) // Index for direct ID lookups
   @@index([reviewItemCommentId]) // Index for joining with reviewItemComment table
   @@index([reviewItemCommentId, resourceId], map: "appeal_comment_resource_idx") // Supports filtered appeal lookups by comment and resource
