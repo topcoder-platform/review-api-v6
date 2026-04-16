@@ -33,6 +33,17 @@ import { Roles } from 'src/shared/guards/tokenRoles.guard';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { AppealService } from './appeal.service';
 
+function parseCsvIds(value?: string): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 @ApiTags('Appeal')
 @ApiBearerAuth()
 @Controller('/appeals')
@@ -188,6 +199,16 @@ export class AppealController {
     description: 'The ID of the review to filter by',
     required: false,
   })
+  @ApiQuery({
+    name: 'reviewIds',
+    description: 'Comma-separated list of review IDs to filter by',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'challengeId',
+    description: 'The challenge ID to filter by',
+    required: false,
+  })
   @ApiResponse({
     status: 200,
     description: 'List of matching appeals',
@@ -197,8 +218,19 @@ export class AppealController {
   async getAppeals(
     @Query('resourceId') resourceId?: string,
     @Query('reviewId') reviewId?: string,
+    @Query('reviewIds') reviewIds?: string,
+    @Query('challengeId') challengeId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<AppealResponseDto>> {
-    return this.appealService.getAppeals(resourceId, reviewId, paginationDto);
+    const normalizedReviewIds = Array.from(
+      new Set([reviewId, ...parseCsvIds(reviewIds)].filter(Boolean)),
+    ) as string[];
+
+    return this.appealService.getAppeals(
+      resourceId,
+      normalizedReviewIds,
+      challengeId,
+      paginationDto,
+    );
   }
 }
