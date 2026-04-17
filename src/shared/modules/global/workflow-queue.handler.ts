@@ -86,9 +86,6 @@ export class WorkflowQueueHandler implements OnModuleInit {
     const queues = (
       await this.prisma.aiWorkflow.groupBy({
         by: ['gitWorkflowId'],
-        where: {
-          disabled: false,
-        },
       })
     ).map((d) => d.gitWorkflowId);
 
