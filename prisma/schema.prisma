@@ -708,6 +708,7 @@ model aiWorkflow {
   gitWorkflowId String   @db.VarChar
   gitOwnerRepo  String   @db.VarChar
   scorecardId String   @db.VarChar(14)
+  disabled    Boolean  @default(false)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
   createdBy   String?  @db.Text
   updatedAt   DateTime @updatedAt
@@ -815,6 +816,7 @@ model aiReviewTemplateConfig {
   mode               AiReviewMode  @default(AI_GATING)
   autoFinalize       Boolean       @default(false)
   formula            Json?
+  disabled           Boolean       @default(false)
 
   createdAt          DateTime      @default(now())
   createdBy          String?

@@ -86,6 +86,9 @@ export class WorkflowQueueHandler implements OnModuleInit {
     const queues = (
       await this.prisma.aiWorkflow.groupBy({
         by: ['gitWorkflowId'],
+        where: {
+          disabled: false,
+        },
       })
     ).map((d) => d.gitWorkflowId);
 
@@ -100,6 +103,27 @@ export class WorkflowQueueHandler implements OnModuleInit {
     challengeId: string,
     submissionId: string,
   ) {
+    const requestedWorkflowIds = aiWorkflows
+      .map((workflow) => workflow.id)
+      .filter((id): id is string => Boolean(id));
+
+    const activeWorkflows = await this.prisma.aiWorkflow.findMany({
+      where: {
+        id: { in: requestedWorkflowIds },
+        disabled: false,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!activeWorkflows.length) {
+      this.logger.log(
+        `No active AI workflows to queue for challenge ${challengeId}, submission ${submissionId}.`,
+      );
+      return;
+    }
+
     await this.prisma.$transaction(async (tx) => {
       // get a lock for the challengeId, submissionId pair
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${stringToHash(`queueWorkflowRuns, ${challengeId}:${submissionId}`)})`;
@@ -115,7 +139,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       }
 
       const workflowRuns = await tx.aiWorkflowRun.createManyAndReturn({
-        data: aiWorkflows.map((workflow) => ({
+        data: activeWorkflows.map((workflow) => ({
           workflowId: workflow.id,
           submissionId,
           status: 'INIT',
@@ -170,6 +194,25 @@ export class WorkflowQueueHandler implements OnModuleInit {
     const workflow = await this.prisma.aiWorkflow.findUniqueOrThrow({
       where: { id: (job.data as { workflowId: string })?.workflowId },
     });
+
+    if (workflow.disabled) {
+      const queuedRunId = (job.data as { jobId?: string })?.jobId;
+      if (queuedRunId) {
+        await this.prisma.aiWorkflowRun.update({
+          where: { id: queuedRunId },
+          data: {
+            status: 'CANCELLED',
+            completedAt: new Date(),
+          },
+        });
+      }
+
+      this.logger.warn(
+        `Skipping dispatch for disabled workflow ${workflow.id}. job=${job.id}`,
+      );
+      return;
+    }
+
     const workflowRun = await this.prisma.aiWorkflowRun.findUniqueOrThrow({
       where: { id: (job.data as { jobId: string })?.jobId },
     });
