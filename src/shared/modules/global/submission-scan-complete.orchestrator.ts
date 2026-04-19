@@ -129,11 +129,28 @@ export class SubmissionScanCompleteOrchestrator {
       where: { challengeId },
       orderBy: { version: 'desc' },
       select: {
+        template: {
+          select: {
+            disabled: true,
+          },
+        },
         workflows: {
+          where: {
+            workflow: {
+              disabled: false,
+            },
+          },
           select: { workflowId: true },
         },
       },
     });
+
+    if (config?.template?.disabled) {
+      this.logger.warn(
+        `Skipping AI workflow queueing for challenge ${challengeId} because linked template is disabled.`,
+      );
+      return [];
+    }
 
     return Array.from(
       new Set(

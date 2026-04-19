@@ -57,6 +57,7 @@ const CONFIG_INCLUDE = {
 
 type AiReviewConfigTemplateSource = {
   id: string;
+  disabled: boolean;
   minPassingThreshold: Prisma.Decimal | number | string | null;
   mode: PrismaAiReviewMode;
   autoFinalize: boolean;
@@ -285,16 +286,28 @@ export class AiReviewConfigService {
     }
   }
 
-  private async validateWorkflowIdsExist(workflowIds: string[]): Promise<void> {
+  private async validateWorkflowIdsExistAndActive(
+    workflowIds: string[],
+  ): Promise<void> {
     const found = await this.prisma.aiWorkflow.findMany({
       where: { id: { in: workflowIds } },
-      select: { id: true },
+      select: { id: true, disabled: true },
     });
-    const foundIds = new Set(found.map((w) => w.id));
-    const missing = workflowIds.filter((id) => !foundIds.has(id));
+
+    const foundById = new Map(found.map((workflow) => [workflow.id, workflow]));
+    const missing = workflowIds.filter((id) => !foundById.has(id));
     if (missing.length > 0) {
       throw new BadRequestException(
         `Workflow(s) not found: ${missing.join(', ')}`,
+      );
+    }
+
+    const disabled = workflowIds.filter(
+      (id) => foundById.get(id)?.disabled === true,
+    );
+    if (disabled.length > 0) {
+      throw new BadRequestException(
+        `Workflow(s) are disabled and cannot be used: ${disabled.join(', ')}`,
       );
     }
   }
@@ -408,8 +421,13 @@ export class AiReviewConfigService {
           `Template with id ${dto.templateId} not found.`,
         );
       }
+      if (template.disabled) {
+        throw new BadRequestException(
+          `Template with id ${dto.templateId} is disabled and cannot be used.`,
+        );
+      }
       const templateWorkflowIds = template.workflows.map((w) => w.workflowId);
-      await this.validateWorkflowIdsExist(templateWorkflowIds);
+      await this.validateWorkflowIdsExistAndActive(templateWorkflowIds);
       payload = {
         challengeId: dto.challengeId,
         minPassingThreshold:
@@ -435,7 +453,7 @@ export class AiReviewConfigService {
       throw new BadRequestException('At least one workflow is required.');
     }
     this.validateNoDuplicateWorkflowIds(payload.workflows);
-    await this.validateWorkflowIdsExist(
+    await this.validateWorkflowIdsExistAndActive(
       payload.workflows.map((w) => w.workflowId),
     );
     this.validateWeightsSumTo100(payload.workflows);
@@ -541,9 +559,28 @@ export class AiReviewConfigService {
     if (rest.templateId !== undefined)
       configData.templateId = rest.templateId || null;
 
+    if (rest.templateId?.trim()) {
+      const template = await this.prisma.aiReviewTemplateConfig.findUnique({
+        where: { id: rest.templateId.trim() },
+        select: { id: true, disabled: true },
+      });
+      if (!template) {
+        throw new NotFoundException(
+          `Template with id ${rest.templateId} not found.`,
+        );
+      }
+      if (template.disabled) {
+        throw new BadRequestException(
+          `Template with id ${rest.templateId} is disabled and cannot be used.`,
+        );
+      }
+    }
+
     if (workflows !== undefined && workflows.length > 0) {
       this.validateNoDuplicateWorkflowIds(workflows);
-      await this.validateWorkflowIdsExist(workflows.map((w) => w.workflowId));
+      await this.validateWorkflowIdsExistAndActive(
+        workflows.map((w) => w.workflowId),
+      );
       this.validateWeightsSumTo100(workflows);
 
       await this.prisma.$transaction(async (tx) => {
