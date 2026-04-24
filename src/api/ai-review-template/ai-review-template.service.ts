@@ -63,6 +63,7 @@ type AiReviewTemplateRecord = {
   mode: PrismaAiReviewMode;
   autoFinalize: boolean;
   formula: Prisma.JsonValue | null;
+  disabled: boolean;
   createdAt: Date;
   updatedAt: Date;
   workflows: AiReviewTemplateWorkflowRecord[];
@@ -115,6 +116,7 @@ export class AiReviewTemplateService {
       mode: this.mapModeToResponse(template.mode),
       autoFinalize: template.autoFinalize,
       formula,
+      disabled: template.disabled,
       createdAt: template.createdAt,
       updatedAt: template.updatedAt,
       workflows: template.workflows.map((workflow) =>
@@ -198,6 +200,46 @@ export class AiReviewTemplateService {
     );
   }
 
+  private async validateWorkflowIdsExistAndActive(
+    workflowIds: string[],
+  ): Promise<void> {
+    const found = await this.prisma.aiWorkflow.findMany({
+      where: { id: { in: workflowIds } },
+      select: { id: true, disabled: true },
+    });
+
+    const foundById = new Map(found.map((workflow) => [workflow.id, workflow]));
+    const missing = workflowIds.filter((id) => !foundById.has(id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Workflow(s) not found: ${missing.join(', ')}`,
+      );
+    }
+
+    const disabled = workflowIds.filter(
+      (id) => foundById.get(id)?.disabled === true,
+    );
+    if (disabled.length > 0) {
+      throw new BadRequestException(
+        `Workflow(s) are disabled and cannot be used: ${disabled.join(', ')}`,
+      );
+    }
+  }
+
+  private async removeDefaultChallengeReviewersForTemplateIds(
+    templateIds: string[],
+  ): Promise<void> {
+    if (!templateIds.length) {
+      return;
+    }
+
+    await this.challengePrisma.$executeRaw`
+      DELETE FROM "DefaultChallengeReviewer"
+      WHERE "isMemberReview" = false
+        AND "aiConfigTemplateId" IN (${Prisma.join(templateIds)})
+    `;
+  }
+
   async create(
     dto: CreateAiReviewTemplateConfigDto,
   ): Promise<AiReviewTemplateConfigResponseDto> {
@@ -214,17 +256,7 @@ export class AiReviewTemplateService {
 
     this.validateNoDuplicateWorkflowIds(dto.workflows);
 
-    const found = await this.prisma.aiWorkflow.findMany({
-      where: { id: { in: workflowIds } },
-      select: { id: true },
-    });
-    const foundIds = new Set(found.map((w) => w.id));
-    const missing = workflowIds.filter((id) => !foundIds.has(id));
-    if (missing.length > 0) {
-      throw new BadRequestException(
-        `Workflow(s) not found: ${missing.join(', ')}`,
-      );
-    }
+    await this.validateWorkflowIdsExistAndActive(workflowIds);
 
     this.validateWeightsSumTo100(dto.workflows);
 
@@ -253,6 +285,7 @@ export class AiReviewTemplateService {
           configData.formula != null
             ? (configData.formula as Prisma.InputJsonValue)
             : undefined,
+        disabled: configData.disabled ?? false,
       },
     });
 
@@ -306,7 +339,16 @@ export class AiReviewTemplateService {
     id: string,
     dto: UpdateAiReviewTemplateConfigDto,
   ): Promise<AiReviewTemplateConfigResponseDto> {
-    await this.findById(id);
+    const existing = await this.prisma.aiReviewTemplateConfig.findUnique({
+      where: { id },
+      select: { id: true, disabled: true },
+    });
+    if (!existing) {
+      this.logger.error(`AI review template with id ${id} not found.`);
+      throw new NotFoundException(
+        `AI review template with id ${id} not found.`,
+      );
+    }
 
     if (dto.formula !== undefined) {
       this.validateFormulaNotEmpty(dto.formula);
@@ -327,21 +369,12 @@ export class AiReviewTemplateService {
       configData.autoFinalize = rest.autoFinalize;
     if (rest.formula !== undefined)
       configData.formula = rest.formula as Prisma.InputJsonValue;
+    if (rest.disabled !== undefined) configData.disabled = rest.disabled;
 
     if (workflows !== undefined) {
       this.validateNoDuplicateWorkflowIds(workflows);
       const workflowIds = workflows.map((w) => w.workflowId);
-      const found = await this.prisma.aiWorkflow.findMany({
-        where: { id: { in: workflowIds } },
-        select: { id: true },
-      });
-      const foundIds = new Set(found.map((w) => w.id));
-      const missing = workflowIds.filter((id) => !foundIds.has(id));
-      if (missing.length > 0) {
-        throw new BadRequestException(
-          `Workflow(s) not found: ${missing.join(', ')}`,
-        );
-      }
+      await this.validateWorkflowIdsExistAndActive(workflowIds);
 
       this.validateWeightsSumTo100(workflows);
 
@@ -369,6 +402,10 @@ export class AiReviewTemplateService {
         where: { id },
         data: configData,
       });
+    }
+
+    if (!existing.disabled && dto.disabled === true) {
+      await this.removeDefaultChallengeReviewersForTemplateIds([id]);
     }
 
     return this.findById(id);

@@ -29,7 +29,8 @@ import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { QueueSchedulerService } from 'src/shared/modules/global/queue-scheduler.service';
-import { VoteType } from '@prisma/client';
+import { Prisma, VoteType } from '@prisma/client';
+import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 
 @Injectable()
 export class AiWorkflowService {
@@ -42,8 +43,23 @@ export class AiWorkflowService {
     private readonly resourceApiService: ResourceApiService,
     private readonly giteaService: GiteaService,
     private readonly scheduler: QueueSchedulerService,
+    private readonly challengePrisma: ChallengePrismaService,
   ) {
     this.logger = LoggerService.forRoot('AiWorkflowService');
+  }
+
+  private async removeDefaultChallengeReviewersForTemplateIds(
+    templateIds: string[],
+  ): Promise<void> {
+    if (!templateIds.length) {
+      return;
+    }
+
+    await this.challengePrisma.$executeRaw`
+      DELETE FROM "DefaultChallengeReviewer"
+      WHERE "isMemberReview" = false
+        AND "aiConfigTemplateId" IN (${Prisma.join(templateIds)})
+    `;
   }
 
   async retriggerWorkflowRun(workflowRunId: string) {
@@ -75,6 +91,12 @@ export class AiWorkflowService {
     if (!existingRun.submission?.challengeId) {
       throw new InternalServerErrorException(
         `Challenge ID not found for submission ${existingRun.submissionId}.`,
+      );
+    }
+
+    if (existingRun.workflow?.disabled) {
+      throw new BadRequestException(
+        `Workflow ${existingRun.workflowId} is disabled and cannot be retriggered.`,
       );
     }
 
@@ -363,6 +385,7 @@ export class AiWorkflowService {
           name,
           scorecardId,
           llmId,
+          disabled: createAiWorkflowDto.disabled ?? false,
         },
       })
       .catch((e) => {
@@ -456,10 +479,53 @@ export class AiWorkflowService {
       }
     }
 
-    return this.prisma.aiWorkflow.update({
-      where: { id },
-      data: updateDto,
+    let disabledTemplateIds: string[] = [];
+
+    const updatedWorkflow = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.aiWorkflow.update({
+        where: { id },
+        data: updateDto,
+      });
+
+      if (!existingWorkflow.disabled && updateDto.disabled === true) {
+        const affectedTemplates = await tx.aiReviewTemplateConfig.findMany({
+          where: {
+            disabled: false,
+            workflows: {
+              some: {
+                workflowId: id,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        disabledTemplateIds = affectedTemplates.map((template) => template.id);
+
+        await tx.aiReviewTemplateConfig.updateMany({
+          where: {
+            id: {
+              in: disabledTemplateIds,
+            },
+          },
+          data: {
+            disabled: true,
+          },
+        });
+      }
+
+      return updated;
     });
+
+    if (!existingWorkflow.disabled && updateDto.disabled === true) {
+      await this.removeDefaultChallengeReviewersForTemplateIds(
+        disabledTemplateIds,
+      );
+    }
+
+    return updatedWorkflow;
   }
 
   async createRunItemsBatch(workflowId: string, runId: string, items: any[]) {
@@ -523,6 +589,21 @@ export class AiWorkflowService {
 
   async createWorkflowRun(workflowId: string, runData: CreateAiWorkflowRunDto) {
     try {
+      const workflow = await this.prisma.aiWorkflow.findUnique({
+        where: { id: workflowId },
+        select: { id: true, disabled: true },
+      });
+      if (!workflow) {
+        throw new BadRequestException(
+          `Invalid workflow id provided! Workflow with id ${workflowId} does not exist!`,
+        );
+      }
+      if (workflow.disabled) {
+        throw new BadRequestException(
+          `Workflow with id ${workflowId} is disabled and cannot be used.`,
+        );
+      }
+
       const submission = runData.submissionId
         ? await this.prisma.submission.findUnique({
             where: { id: runData.submissionId },

@@ -62,6 +62,11 @@ export class CreateAiWorkflowDto {
   @IsString()
   @IsNotEmpty()
   scorecardId: string;
+
+  @ApiProperty({ required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  disabled?: boolean;
 }
 
 export class UpdateAiWorkflowDto extends PartialType(CreateAiWorkflowDto) {}
