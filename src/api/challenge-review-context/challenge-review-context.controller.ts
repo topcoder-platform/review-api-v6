@@ -60,7 +60,7 @@ export class ChallengeReviewContextController {
   @ApiResponse({
     status: 403,
     description:
-      'Forbidden. Challenge is not in DRAFT status or REGISTRATION phase.',
+      'Forbidden. Caller is not whitelisted for the challenge, or challenge is not in DRAFT status or REGISTRATION phase.',
   })
   @ApiResponse({ status: 404, description: 'Challenge not found.' })
   @ApiResponse({
@@ -93,9 +93,19 @@ export class ChallengeReviewContextController {
     description: 'The challenge review context.',
     type: ChallengeReviewContextResponseDto,
   })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden. Caller is not whitelisted for the challenge.',
+  })
   @ApiResponse({ status: 404, description: 'Challenge or context not found.' })
-  async getByChallengeId(@Param('challengeId') challengeId: string) {
-    return this.challengeReviewContextService.getByChallengeId(challengeId);
+  async getByChallengeId(
+    @Param('challengeId') challengeId: string,
+    @User() authUser: JwtUser,
+  ) {
+    return this.challengeReviewContextService.getByChallengeId(
+      challengeId,
+      authUser,
+    );
   }
 
   @Put(':challengeId')
@@ -127,7 +137,7 @@ export class ChallengeReviewContextController {
   @ApiResponse({
     status: 403,
     description:
-      'Forbidden. Challenge is not in DRAFT status or REGISTRATION phase.',
+      'Forbidden. Caller is not whitelisted for the challenge, or challenge is not in DRAFT status or REGISTRATION phase.',
   })
   @ApiResponse({ status: 404, description: 'Challenge or context not found.' })
   async update(

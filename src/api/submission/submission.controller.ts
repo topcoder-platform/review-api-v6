@@ -298,10 +298,12 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
   async getSubmission(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
   ): Promise<SubmissionResponseDto> {
     this.logger.log(`Getting submission with ID: ${submissionId}`);
-    return this.service.getSubmission(submissionId);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.getSubmission(authUser, submissionId);
   }
 
   @Delete('/:submissionId')
@@ -548,10 +550,12 @@ export class SubmissionController {
     description: 'Count of submissions',
   })
   async countSubmissions(
+    @Req() req: Request,
     @Param('challengeId') challengeId: string,
   ): Promise<number> {
     // Return the actual count of submissions for the challenge
-    return this.service.countSubmissionsForChallenge(challengeId);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.countSubmissionsForChallenge(authUser, challengeId);
   }
 
   @Get('/download/:challengeId')

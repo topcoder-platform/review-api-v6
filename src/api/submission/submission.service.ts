@@ -210,6 +210,8 @@ export class SubmissionService {
       });
     }
 
+    await this.ensureChallengeWhitelistAccess(authUser, body.challengeId);
+
     const requestedMemberHandle =
       typeof body.memberHandle === 'string' && body.memberHandle.trim().length
         ? body.memberHandle.trim()
@@ -563,7 +565,7 @@ export class SubmissionService {
     requestedFilename?: string,
   ): Promise<ArtifactsCreateResponseDto> {
     // Ensure the submission exists (keeps behavior predictable)
-    const submission = await this.checkSubmission(submissionId);
+    const submission = await this.checkSubmission(submissionId, authUser);
 
     // If token is a member (non-admin), they must own the submission
     if (!isAdmin(authUser)) {
@@ -682,7 +684,7 @@ export class SubmissionService {
     authUser: JwtUser,
     submissionId: string,
   ): Promise<{ artifacts: string[] }> {
-    const submission = await this.checkSubmission(submissionId);
+    const submission = await this.checkSubmission(submissionId, authUser);
 
     const isMachineToken = !!authUser.isMachine;
     const isAdminUser = isAdmin(authUser);
@@ -786,7 +788,7 @@ export class SubmissionService {
     submissionId: string,
     artifactId: string,
   ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
-    const submission = await this.checkSubmission(submissionId);
+    const submission = await this.checkSubmission(submissionId, authUser);
 
     const isMachineToken = !!authUser.isMachine;
     const isAdminUser = isAdmin(authUser);
@@ -950,7 +952,7 @@ export class SubmissionService {
     authUser: JwtUser,
     submissionId: string,
   ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
-    const submission = await this.checkSubmission(submissionId);
+    const submission = await this.checkSubmission(submissionId, authUser);
 
     // Authorization
     if (authUser.isMachine) {
@@ -1209,6 +1211,8 @@ export class SubmissionService {
     challengeId: string,
     opts?: { status?: string },
   ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
+    await this.ensureChallengeWhitelistAccess(authUser, challengeId);
+
     // Authorization
     let isAdminOrCopilot = false;
     let isReviewer = false;
@@ -1470,6 +1474,8 @@ export class SubmissionService {
       }
     }
 
+    await this.checkSubmission(submissionId, authUser);
+
     const rows = await this.prisma.submissionAccessAudit.findMany({
       where: { submissionId },
       orderBy: { downloadedAt: 'desc' },
@@ -1544,7 +1550,7 @@ export class SubmissionService {
     submissionId: string,
     artifactId: string,
   ): Promise<void> {
-    const submission = await this.checkSubmission(submissionId);
+    const submission = await this.checkSubmission(submissionId, authUser);
 
     // If token is a member (non-admin), they must own the submission
     if (!isAdmin(authUser)) {
@@ -2356,6 +2362,8 @@ export class SubmissionService {
       }
     }
 
+    await this.ensureChallengeWhitelistAccess(authUser, body.challengeId);
+
     // Validate challenge exists and is active; capture challenge details for type/track validation
     let challengeDetails;
     try {
@@ -2699,6 +2707,10 @@ export class SubmissionService {
         submissionWhereClause.url = queryDto.url;
       }
       if (queryDto.challengeId) {
+        await this.ensureChallengeWhitelistAccess(
+          authUser,
+          queryDto.challengeId,
+        );
         submissionWhereClause.challengeId = queryDto.challengeId;
       }
       if (requestedMemberId) {
@@ -2770,6 +2782,41 @@ export class SubmissionService {
         }
       }
 
+      if (!queryDto.challengeId && this.supportsChallengeWhitelistFiltering()) {
+        const candidateChallengeRows = await this.prisma.submission.findMany({
+          where: whereClause,
+          distinct: ['challengeId'],
+          select: { challengeId: true },
+        });
+        const candidateChallengeIds = candidateChallengeRows
+          .map((row) => row.challengeId)
+          .filter((challengeId): challengeId is string => !!challengeId);
+        const visibleChallengeIds = await this.filterChallengeIdsByWhitelist(
+          authUser,
+          candidateChallengeIds,
+        );
+
+        if (visibleChallengeIds.length !== candidateChallengeIds.length) {
+          const whitelistCriteria: Prisma.submissionWhereInput =
+            visibleChallengeIds.length > 0
+              ? {
+                  OR: [
+                    { challengeId: { in: visibleChallengeIds } },
+                    { challengeId: null },
+                  ],
+                }
+              : { challengeId: null };
+
+          if (Array.isArray(whereClause.AND)) {
+            whereClause.AND = [...whereClause.AND, whitelistCriteria];
+          } else if (whereClause.AND) {
+            whereClause.AND = [whereClause.AND, whitelistCriteria];
+          } else {
+            whereClause.AND = [whitelistCriteria];
+          }
+        }
+      }
+
       // find entities by filters
       let submissions = await this.prisma.submission.findMany({
         where: whereClause,
@@ -2787,6 +2834,10 @@ export class SubmissionService {
         take: perPage,
         orderBy,
       });
+
+      const whitelistFiltered =
+        await this.filterSubmissionsByChallengeWhitelist(authUser, submissions);
+      submissions = whitelistFiltered.submissions;
 
       // Enrich with submitter handle and max rating (always for challenge listings)
       const shouldEnrichSubmitter =
@@ -2877,7 +2928,7 @@ export class SubmissionService {
       let totalCount = await this.prisma.submission.count({
         where: whereClause,
       });
-      if (filtered.filteredOut) {
+      if (filtered.filteredOut || whitelistFiltered.filteredOut) {
         totalCount = submissions.length;
       }
 
@@ -2903,6 +2954,13 @@ export class SubmissionService {
         },
       };
     } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `listing submissions with filters: ${JSON.stringify(queryDto)}`,
@@ -2947,8 +3005,12 @@ export class SubmissionService {
     return false;
   }
 
-  async countSubmissionsForChallenge(challengeId: string): Promise<number> {
+  async countSubmissionsForChallenge(
+    authUser: JwtUser,
+    challengeId: string,
+  ): Promise<number> {
     try {
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
       const count = await this.prisma.submission.count({
         where: {
           challengeId,
@@ -2959,6 +3021,13 @@ export class SubmissionService {
       );
       return count;
     } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `counting submissions for challengeId: ${challengeId}`,
@@ -2971,8 +3040,27 @@ export class SubmissionService {
     }
   }
 
-  async getSubmission(submissionId: string): Promise<SubmissionResponseDto> {
-    const data = await this.checkSubmission(submissionId);
+  async getSubmission(
+    authUserOrSubmissionId: JwtUser | string,
+    submissionId?: string,
+  ): Promise<SubmissionResponseDto> {
+    const authUser =
+      typeof authUserOrSubmissionId === 'string'
+        ? undefined
+        : authUserOrSubmissionId;
+    const id =
+      typeof authUserOrSubmissionId === 'string'
+        ? authUserOrSubmissionId
+        : submissionId;
+
+    if (!id) {
+      throw new BadRequestException({
+        message: 'Submission ID is required',
+        code: 'SUBMISSION_ID_REQUIRED',
+      });
+    }
+
+    const data = await this.checkSubmission(id, authUser);
     await this.populateLatestSubmissionFlags([data]);
     await this.stripIsLatestForUnlimitedChallenges([data]);
     return this.buildResponse(data);
@@ -2984,7 +3072,7 @@ export class SubmissionService {
     body: SubmissionUpdateRequestDto,
   ) {
     try {
-      const existing = await this.checkSubmission(submissionId);
+      const existing = await this.checkSubmission(submissionId, authUser);
 
       // Validate submittedDate is not in the future (if provided)
       if (body.submittedDate) {
@@ -3144,7 +3232,7 @@ export class SubmissionService {
 
   async deleteSubmission(authUser: JwtUser, id: string) {
     try {
-      const existing = await this.checkSubmission(id);
+      const existing = await this.checkSubmission(id, authUser);
       // Authorization checks
       if (authUser.isMachine) {
         const scopes = authUser.scopes || [];
@@ -3255,7 +3343,7 @@ export class SubmissionService {
     }
   }
 
-  private async checkSubmission(id: string) {
+  private async checkSubmission(id: string, authUser?: JwtUser) {
     const data = await this.prisma.submission.findUnique({
       where: { id },
       include: { review: true, reviewSummation: true },
@@ -3266,9 +3354,141 @@ export class SubmissionService {
         details: { submissionId: id },
       });
     }
+    if (authUser && data.challengeId) {
+      await this.ensureChallengeWhitelistAccess(authUser, data.challengeId);
+    }
     await this.populateReviewPhaseNames([data]);
     await this.populateReviewTypeNames([data]);
     return data;
+  }
+
+  /**
+   * Determine whether the injected challenge service can evaluate challenge
+   * whitelist visibility for list queries.
+   *
+   * @returns True when challenge whitelist list filtering is available.
+   */
+  private supportsChallengeWhitelistFiltering(): boolean {
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      filterChallengeIdsByWhitelist?: (
+        authUser: JwtUser,
+        challengeIds: string[],
+      ) => Promise<string[]>;
+    };
+
+    return typeof challengeService.filterChallengeIdsByWhitelist === 'function';
+  }
+
+  /**
+   * Enforce challenge whitelist access when the injected challenge service
+   * exposes the evaluator. Older unit-test doubles may omit this method.
+   *
+   * @param authUser - The authenticated request user.
+   * @param challengeId - Challenge id to evaluate.
+   */
+  private async ensureChallengeWhitelistAccess(
+    authUser: JwtUser,
+    challengeId: string,
+  ): Promise<void> {
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      ensureChallengeWhitelistAccess?: (
+        authUser: JwtUser,
+        challengeId: string,
+      ) => Promise<void>;
+    };
+
+    if (typeof challengeService.ensureChallengeWhitelistAccess === 'function') {
+      await challengeService.ensureChallengeWhitelistAccess(
+        authUser,
+        challengeId,
+      );
+    }
+  }
+
+  /**
+   * Filter challenge ids using the whitelist evaluator when available.
+   *
+   * @param authUser - The authenticated request user.
+   * @param challengeIds - Challenge ids to filter.
+   * @returns Challenge ids visible to the caller.
+   */
+  private async filterChallengeIdsByWhitelist(
+    authUser: JwtUser,
+    challengeIds: string[],
+  ): Promise<string[]> {
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      filterChallengeIdsByWhitelist?: (
+        authUser: JwtUser,
+        challengeIds: string[],
+      ) => Promise<string[]>;
+    };
+
+    if (typeof challengeService.filterChallengeIdsByWhitelist === 'function') {
+      return challengeService.filterChallengeIdsByWhitelist(
+        authUser,
+        challengeIds,
+      );
+    }
+
+    return challengeIds;
+  }
+
+  /**
+   * Remove submissions whose challenges are hidden by the challenge user whitelist.
+   *
+   * @param authUser - The authenticated request user.
+   * @param submissions - Submission records to filter.
+   * @returns The visible submissions and whether any record was removed.
+   */
+  private async filterSubmissionsByChallengeWhitelist<
+    T extends { challengeId?: string | null },
+  >(
+    authUser: JwtUser,
+    submissions: T[],
+  ): Promise<{ submissions: T[]; filteredOut: boolean }> {
+    if (!submissions.length) {
+      return { submissions, filteredOut: false };
+    }
+
+    const challengeIds = Array.from(
+      new Set(
+        submissions
+          .map((submission) => {
+            if (
+              submission.challengeId === null ||
+              submission.challengeId === undefined
+            ) {
+              return null;
+            }
+            const challengeId = String(submission.challengeId).trim();
+            return challengeId.length ? challengeId : null;
+          })
+          .filter((challengeId): challengeId is string => !!challengeId),
+      ),
+    );
+
+    if (!challengeIds.length) {
+      return { submissions, filteredOut: false };
+    }
+
+    const visibleChallengeIds = new Set(
+      await this.filterChallengeIdsByWhitelist(authUser, challengeIds),
+    );
+
+    const filtered = submissions.filter((submission) => {
+      if (
+        submission.challengeId === null ||
+        submission.challengeId === undefined
+      ) {
+        return true;
+      }
+      return visibleChallengeIds.has(String(submission.challengeId).trim());
+    });
+
+    return {
+      submissions: filtered,
+      filteredOut: filtered.length !== submissions.length,
+    };
   }
 
   private async applyReviewVisibilityFilters(

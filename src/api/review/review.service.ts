@@ -87,6 +87,201 @@ export class ReviewService {
   }
 
   /**
+   * Enforce challenge whitelist visibility for review-facing interactive
+   * requests. M2M/background callers bypass inside ChallengeApiService.
+   *
+   * @param authUser - The authenticated request user.
+   * @param challengeId - Challenge id associated with the review operation.
+   * @throws ForbiddenException when the whitelist blocks the caller or evaluation fails.
+   */
+  private async ensureChallengeWhitelistAccess(
+    authUser: JwtUser | undefined,
+    challengeId?: string | null,
+  ): Promise<void> {
+    const normalizedChallengeId = String(challengeId ?? '').trim();
+    if (!normalizedChallengeId) {
+      return;
+    }
+
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      ensureChallengeWhitelistAccess?: (
+        authUser: JwtUser | undefined,
+        challengeId: string,
+      ) => Promise<void>;
+    };
+
+    if (typeof challengeService.ensureChallengeWhitelistAccess === 'function') {
+      await challengeService.ensureChallengeWhitelistAccess(
+        authUser,
+        normalizedChallengeId,
+      );
+    }
+  }
+
+  /**
+   * Add challenge whitelist criteria to a review query before pagination.
+   * Review rows are challenge-scoped through their submission, with
+   * resource-based no-submission reviews handled through the resource DB.
+   *
+   * @param authUser - The authenticated request user.
+   * @param where - Existing Prisma review filters.
+   * @returns A Prisma review filter with whitelist constraints applied.
+   * @throws Error when resource lookup needed for whitelist shaping fails.
+   */
+  private async applyChallengeWhitelistToReviewWhere(
+    authUser: JwtUser,
+    where: Prisma.reviewWhereInput,
+  ): Promise<Prisma.reviewWhereInput> {
+    if (authUser?.isMachine) {
+      return where;
+    }
+
+    const candidateReviews = await this.prisma.review.findMany({
+      where,
+      select: {
+        resourceId: true,
+        submission: {
+          select: {
+            challengeId: true,
+          },
+        },
+      },
+    });
+
+    if (!candidateReviews.length) {
+      return where;
+    }
+
+    const candidateChallengeIds = new Set<string>();
+    const resourceIdsWithoutSubmissionChallenge = new Set<string>();
+
+    for (const review of candidateReviews) {
+      const submissionChallengeId = String(
+        review.submission?.challengeId ?? '',
+      ).trim();
+      if (submissionChallengeId) {
+        candidateChallengeIds.add(submissionChallengeId);
+        continue;
+      }
+
+      const resourceId = String(review.resourceId ?? '').trim();
+      if (resourceId) {
+        resourceIdsWithoutSubmissionChallenge.add(resourceId);
+      }
+    }
+
+    const resourceChallengeById = new Map<string, string>();
+    if (resourceIdsWithoutSubmissionChallenge.size) {
+      const resources = await this.resourcePrisma.resource.findMany({
+        where: {
+          id: {
+            in: Array.from(resourceIdsWithoutSubmissionChallenge),
+          },
+        },
+        select: {
+          id: true,
+          challengeId: true,
+        },
+      });
+
+      for (const resource of resources) {
+        const resourceId = String(resource.id ?? '').trim();
+        const resourceChallengeId = String(resource.challengeId ?? '').trim();
+        if (resourceId && resourceChallengeId) {
+          resourceChallengeById.set(resourceId, resourceChallengeId);
+          candidateChallengeIds.add(resourceChallengeId);
+        }
+      }
+    }
+
+    if (!candidateChallengeIds.size) {
+      return where;
+    }
+
+    const candidateChallengeIdList = Array.from(candidateChallengeIds);
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      filterChallengeIdsByWhitelist?: (
+        authUser: JwtUser,
+        challengeIds: string[],
+      ) => Promise<string[]>;
+    };
+
+    const visibleChallengeIds = new Set(
+      typeof challengeService.filterChallengeIdsByWhitelist === 'function'
+        ? await challengeService.filterChallengeIdsByWhitelist(
+            authUser,
+            candidateChallengeIdList,
+          )
+        : candidateChallengeIdList,
+    );
+
+    if (visibleChallengeIds.size === candidateChallengeIdList.length) {
+      return where;
+    }
+
+    const visibleResourceIds: string[] = [];
+    for (const [resourceId, challengeId] of resourceChallengeById.entries()) {
+      if (visibleChallengeIds.has(challengeId)) {
+        visibleResourceIds.push(resourceId);
+      }
+    }
+
+    const whitelistOr: Prisma.reviewWhereInput[] = [
+      {
+        submission: {
+          is: {
+            challengeId: null,
+          },
+        },
+      },
+    ];
+
+    if (visibleChallengeIds.size) {
+      whitelistOr.push({
+        submission: {
+          is: {
+            challengeId: {
+              in: Array.from(visibleChallengeIds),
+            },
+          },
+        },
+      });
+    }
+
+    if (visibleResourceIds.length) {
+      whitelistOr.push({
+        AND: [
+          {
+            submission: {
+              is: null,
+            },
+          },
+          {
+            resourceId: {
+              in: visibleResourceIds,
+            },
+          },
+        ],
+      });
+    }
+
+    const whitelistCriteria: Prisma.reviewWhereInput = whitelistOr.length
+      ? { OR: whitelistOr }
+      : { id: { in: ['__none__'] } };
+
+    const existingAnd = Array.isArray(where.AND)
+      ? where.AND
+      : where.AND
+        ? [where.AND]
+        : [];
+
+    return {
+      ...where,
+      AND: [...existingAnd, whitelistCriteria],
+    };
+  }
+
+  /**
    * Compute initial and final scores for a review, based on its scorecard and answers.
    * - YES_NO: YES -> 100, NO -> 0
    * - SCALE/TEST_CASE: linear map from [scaleMin, scaleMax] to [0, 100]
@@ -694,6 +889,9 @@ export class ReviewService {
     },
   ): Promise<ReviewItemAccessResult> {
     const requester = authUser ?? ({ isMachine: false } as JwtUser);
+    const challengeId = review.submission?.challengeId ?? undefined;
+
+    await this.ensureChallengeWhitelistAccess(requester, challengeId);
 
     if (requester.isMachine) {
       return {
@@ -761,8 +959,6 @@ export class ReviewService {
         },
       });
     }
-
-    const challengeId = review.submission?.challengeId ?? undefined;
 
     let requesterResources: ResourceInfo[] = [];
     try {
@@ -874,6 +1070,9 @@ export class ReviewService {
     },
   ) {
     const requester = authUser ?? ({ isMachine: false } as JwtUser);
+    const challengeId = review.submission?.challengeId ?? undefined;
+
+    await this.ensureChallengeWhitelistAccess(requester, challengeId);
 
     if (requester.isMachine || isAdmin(requester)) {
       return;
@@ -910,8 +1109,6 @@ export class ReviewService {
         },
       });
     }
-
-    const challengeId = review.submission?.challengeId ?? undefined;
 
     if (!challengeId) {
       throw new ForbiddenException({
@@ -1148,6 +1345,8 @@ export class ReviewService {
           code: 'MISSING_CHALLENGE_ID',
         });
       }
+
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
 
       if (isPostMortemReview) {
         const postMortemOpen = await this.challengeApiService.isPhaseOpen(
@@ -1830,6 +2029,8 @@ export class ReviewService {
     const requester = authUser ?? ({ isMachine: false } as JwtUser);
     const isPrivileged = isAdmin(requester);
     const challengeId = existingReview.submission?.challengeId;
+    await this.ensureChallengeWhitelistAccess(requester, challengeId);
+
     const challengeCache = new Map<string, ChallengeData | null>();
     let challengeDetailForPhase: ChallengeData | null = null;
     const isMemberRequester = !requester?.isMachine;
@@ -2676,6 +2877,22 @@ export class ReviewService {
       }
 
       if (challengeId) {
+        await this.ensureChallengeWhitelistAccess(authUser, challengeId);
+      } else if (submissionId) {
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: submissionId },
+          select: { challengeId: true },
+        });
+
+        if (submission?.challengeId) {
+          await this.ensureChallengeWhitelistAccess(
+            authUser,
+            submission.challengeId,
+          );
+        }
+      }
+
+      if (challengeId) {
         this.logger.debug(`Fetching reviews by challengeId: ${challengeId}`);
 
         const hasDirectSubmissionFilter = Boolean(submissionId);
@@ -3047,7 +3264,10 @@ export class ReviewService {
 
               // Fetch challenge details in bulk
               const challenges =
-                await this.challengeApiService.getChallenges(myChallengeIds);
+                await this.challengeApiService.getChallengesForUser(
+                  authUser,
+                  myChallengeIds,
+                );
               const completedIds = challenges
                 .filter((challenge) => {
                   const status = challenge.status;
@@ -3151,12 +3371,19 @@ export class ReviewService {
       if (challengeScopedFilter) {
         whereAndClauses.push(challengeScopedFilter);
       }
-      const finalWhereClause: Prisma.reviewWhereInput =
+      const baseFinalWhereClause: Prisma.reviewWhereInput =
         whereAndClauses.length === 0
           ? {}
           : whereAndClauses.length === 1
             ? whereAndClauses[0]
             : { AND: whereAndClauses };
+      const finalWhereClause =
+        !challengeId && !submissionId
+          ? await this.applyChallengeWhitelistToReviewWhere(
+              authUser,
+              baseFinalWhereClause,
+            )
+          : baseFinalWhereClause;
 
       this.logger.debug(`Fetching reviews with where clause:`);
       this.logger.debug(finalWhereClause);
@@ -3725,6 +3952,8 @@ export class ReviewService {
           );
         }
       }
+
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
 
       const challengeCache = new Map<string, ChallengeData | null>();
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
@@ -4906,6 +5135,7 @@ export class ReviewService {
   }
 
   async getReviewProgress(
+    authUser: JwtUser,
     challengeId: string,
   ): Promise<ReviewProgressResponseDto> {
     try {
@@ -4920,6 +5150,8 @@ export class ReviewService {
       ) {
         throw new Error('Invalid challengeId parameter');
       }
+
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
 
       this.logger.debug('Fetching reviewers from Resource API');
       const resources = await this.resourceApiService.getResources({
@@ -4997,6 +5229,10 @@ export class ReviewService {
         `Error calculating review progress for challenge ${challengeId}:`,
         error,
       );
+
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
 
       if (error?.message === 'Invalid challengeId parameter') {
         throw new Error('Invalid challengeId parameter');

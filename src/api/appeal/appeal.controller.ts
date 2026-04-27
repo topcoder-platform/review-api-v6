@@ -195,10 +195,17 @@ export class AppealController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async getAppeals(
+    @Req() req: Request,
     @Query('resourceId') resourceId?: string,
     @Query('reviewId') reviewId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<AppealResponseDto>> {
-    return this.appealService.getAppeals(resourceId, reviewId, paginationDto);
+    const authUser = req['user'] as JwtUser;
+    return this.appealService.getAppeals(
+      authUser,
+      resourceId,
+      reviewId,
+      paginationDto,
+    );
   }
 }

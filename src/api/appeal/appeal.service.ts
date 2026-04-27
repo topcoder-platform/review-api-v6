@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Resource } from '@prisma/client-resource';
 import {
   AppealRequestDto,
@@ -35,6 +36,145 @@ export class AppealService {
     private readonly resourcePrisma: ResourcePrismaService,
     private readonly eventBusService: EventBusService,
   ) {}
+
+  /**
+   * Enforce challenge whitelist visibility for appeal-facing interactive
+   * requests. M2M/background callers bypass inside ChallengeApiService.
+   *
+   * @param authUser - The authenticated request user.
+   * @param challengeId - Challenge id associated with the appeal operation.
+   * @throws ForbiddenException when the whitelist blocks the caller or evaluation fails.
+   */
+  private async ensureChallengeWhitelistAccess(
+    authUser: JwtUser | undefined,
+    challengeId?: string | null,
+  ): Promise<void> {
+    const normalizedChallengeId = String(challengeId ?? '').trim();
+    if (!normalizedChallengeId) {
+      return;
+    }
+
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      ensureChallengeWhitelistAccess?: (
+        authUser: JwtUser | undefined,
+        challengeId: string,
+      ) => Promise<void>;
+    };
+
+    if (typeof challengeService.ensureChallengeWhitelistAccess === 'function') {
+      await challengeService.ensureChallengeWhitelistAccess(
+        authUser,
+        normalizedChallengeId,
+      );
+    }
+  }
+
+  /**
+   * Add challenge whitelist criteria to an appeal query before pagination.
+   * Appeal rows are challenge-scoped through the review item's review
+   * submission chain.
+   *
+   * @param authUser - The authenticated request user.
+   * @param where - Existing Prisma appeal filters.
+   * @returns A Prisma appeal filter with whitelist constraints applied.
+   */
+  private async applyChallengeWhitelistToAppealWhere(
+    authUser: JwtUser,
+    where: Prisma.appealWhereInput,
+  ): Promise<Prisma.appealWhereInput> {
+    if (authUser?.isMachine) {
+      return where;
+    }
+
+    const candidateAppeals = await this.prisma.appeal.findMany({
+      where,
+      select: {
+        reviewItemComment: {
+          select: {
+            reviewItem: {
+              select: {
+                review: {
+                  select: {
+                    submission: {
+                      select: {
+                        challengeId: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const candidateChallengeIds = Array.from(
+      new Set(
+        candidateAppeals
+          .map((appeal) =>
+            String(
+              appeal.reviewItemComment?.reviewItem?.review?.submission
+                ?.challengeId ?? '',
+            ).trim(),
+          )
+          .filter((challengeId) => challengeId.length > 0),
+      ),
+    );
+
+    if (!candidateChallengeIds.length) {
+      return where;
+    }
+
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      filterChallengeIdsByWhitelist?: (
+        authUser: JwtUser,
+        challengeIds: string[],
+      ) => Promise<string[]>;
+    };
+
+    const visibleChallengeIds =
+      typeof challengeService.filterChallengeIdsByWhitelist === 'function'
+        ? await challengeService.filterChallengeIdsByWhitelist(
+            authUser,
+            candidateChallengeIds,
+          )
+        : candidateChallengeIds;
+
+    if (visibleChallengeIds.length === candidateChallengeIds.length) {
+      return where;
+    }
+
+    const whitelistCriteria: Prisma.appealWhereInput =
+      visibleChallengeIds.length > 0
+        ? {
+            reviewItemComment: {
+              reviewItem: {
+                review: {
+                  submission: {
+                    is: {
+                      challengeId: {
+                        in: visibleChallengeIds,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          }
+        : { id: { in: ['__none__'] } };
+
+    const existingAnd = Array.isArray(where.AND)
+      ? where.AND
+      : where.AND
+        ? [where.AND]
+        : [];
+
+    return {
+      ...where,
+      AND: [...existingAnd, whitelistCriteria],
+    };
+  }
 
   async createAppeal(
     authUser: JwtUser,
@@ -89,6 +229,8 @@ export class AppealService {
           code: 'MISSING_SUBMISSION_OWNER',
         });
       }
+
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
 
       let resourceId = body.resourceId ? String(body.resourceId) : undefined;
 
@@ -259,6 +401,8 @@ export class AppealService {
           ?.challengeId;
       const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
 
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
+
       if (!isPrivileged) {
         await this.ensureAppealResourceOwnership(
           authUser,
@@ -386,6 +530,8 @@ export class AppealService {
         existingAppeal.reviewItemComment.reviewItem.review.submission
           ?.challengeId;
       const isPrivileged = Boolean(authUser?.isMachine || isAdmin(authUser));
+
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
 
       if (!isPrivileged) {
         await this.ensureAppealResourceOwnership(
@@ -529,6 +675,8 @@ export class AppealService {
           code: 'MISSING_CHALLENGE_ID',
         });
       }
+
+      await this.ensureChallengeWhitelistAccess(authUser, challengeId);
 
       await this.challengeApiService.validateAppealResponseSubmission(
         challengeId,
@@ -769,15 +917,19 @@ export class AppealService {
             code: 'MISSING_CHALLENGE_ID',
           });
         }
-      } else if (!isPrivileged) {
-        await this.ensureChallengeAllowsAppealChange(challengeId, {
-          logContext: 'updateAppealResponse',
-          appealId,
-          appealResponseId,
-          errorCode: 'APPEAL_RESPONSE_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
-          errorMessage:
-            'Appeal responses for challenges in COMPLETED status cannot be updated. Only an admin or M2M token can update an appeal response once the challenge is complete.',
-        });
+      } else {
+        await this.ensureChallengeWhitelistAccess(authUser, challengeId);
+
+        if (!isPrivileged) {
+          await this.ensureChallengeAllowsAppealChange(challengeId, {
+            logContext: 'updateAppealResponse',
+            appealId,
+            appealResponseId,
+            errorCode: 'APPEAL_RESPONSE_UPDATE_FORBIDDEN_CHALLENGE_COMPLETED',
+            errorMessage:
+              'Appeal responses for challenges in COMPLETED status cannot be updated. Only an admin or M2M token can update an appeal response once the challenge is complete.',
+          });
+        }
       }
 
       const data = await this.prisma.appealResponse.update({
@@ -820,6 +972,7 @@ export class AppealService {
   }
 
   async getAppeals(
+    authUser: JwtUser,
     resourceId?: string,
     reviewId?: string,
     paginationDto?: PaginationDto,
@@ -842,9 +995,36 @@ export class AppealService {
         };
       }
 
+      if (reviewId) {
+        const review = await this.prisma.review.findUnique({
+          where: { id: reviewId },
+          select: {
+            submission: {
+              select: {
+                challengeId: true,
+              },
+            },
+          },
+        });
+
+        if (review?.submission?.challengeId) {
+          await this.ensureChallengeWhitelistAccess(
+            authUser,
+            review.submission.challengeId,
+          );
+        }
+      }
+
+      const finalWhereClause = reviewId
+        ? whereClause
+        : await this.applyChallengeWhitelistToAppealWhere(
+            authUser,
+            whereClause,
+          );
+
       const [appeals, totalCount] = await Promise.all([
         this.prisma.appeal.findMany({
-          where: whereClause,
+          where: finalWhereClause,
           skip,
           take: perPage,
           include: {
@@ -857,7 +1037,7 @@ export class AppealService {
           },
         }),
         this.prisma.appeal.count({
-          where: whereClause,
+          where: finalWhereClause,
         }),
       ]);
 
@@ -901,6 +1081,14 @@ export class AppealService {
         },
       };
     } catch (error) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `fetching appeals with filters - resourceId: ${resourceId}, reviewId: ${reviewId}`,

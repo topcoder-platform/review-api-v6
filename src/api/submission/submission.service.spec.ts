@@ -1612,6 +1612,53 @@ describe('SubmissionService', () => {
       );
     });
 
+    it('preserves checkpoint submission type through manual upload delegation', async () => {
+      jest
+        .spyOn(manualUploadService as any, 'uploadSubmissionFileToDmz')
+        .mockResolvedValue({
+          url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/checkpoint.zip',
+          fileName: 'checkpoint.zip',
+          fileSize: 512,
+          fileType: 'zip',
+        });
+      const createSubmissionSpy = jest
+        .spyOn(manualUploadService, 'createSubmission')
+        .mockResolvedValue({ id: 'submission-checkpoint-manual' } as any);
+
+      const authUser = {
+        isMachine: true,
+        scopes: ['create:submission'],
+      } as any;
+      const body = {
+        challengeId: 'challenge-manual',
+        memberId: '1001',
+        type: SubmissionType.CHECKPOINT_SUBMISSION,
+      } as any;
+      const file = {
+        originalname: 'checkpoint.zip',
+        size: 512,
+        buffer: Buffer.from('zip-content'),
+      } as any;
+
+      await manualUploadService.createManualSubmissionUpload(
+        authUser,
+        body,
+        file,
+      );
+
+      expect(createSubmissionSpy).toHaveBeenCalledWith(
+        authUser,
+        expect.objectContaining({
+          challengeId: 'challenge-manual',
+          memberId: '1001',
+          type: SubmissionType.CHECKPOINT_SUBMISSION,
+          url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/checkpoint.zip',
+        }),
+        file,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+    });
+
     it('validates the provided submitter handle against challenge resources before uploading', async () => {
       const uploadSpy = jest
         .spyOn(manualUploadService as any, 'uploadSubmissionFileToDmz')
