@@ -643,7 +643,7 @@ model DefaultChallengeReviewer {
   baseCoefficient           Float?
   incrementalCoefficient    Float?
   opportunityType     ReviewOpportunityTypeEnum?
-  aiWorkflowId        String?
+  aiConfigTemplateId        String?
 
   // Relations
   challengeType  ChallengeType  @relation(fields: [typeId], references: [id])

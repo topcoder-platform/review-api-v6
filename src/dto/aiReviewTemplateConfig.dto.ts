@@ -122,6 +122,15 @@ export class CreateAiReviewTemplateConfigDto {
   formula?: Record<string, unknown>;
 
   @ApiProperty({
+    description: 'Whether this template is disabled',
+    required: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  disabled?: boolean;
+
+  @ApiProperty({
     description: 'Workflows linked to this template with weights and gating',
     type: [CreateAiReviewTemplateConfigWorkflowItemDto],
   })
@@ -205,6 +214,9 @@ export class AiReviewTemplateConfigResponseDto {
 
   @ApiProperty({ description: 'Formula configuration', required: false })
   formula?: Record<string, unknown>;
+
+  @ApiProperty({ description: 'Whether this template is disabled' })
+  disabled: boolean;
 
   @ApiProperty({ description: 'Created at' })
   createdAt: Date;

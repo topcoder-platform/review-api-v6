@@ -355,6 +355,7 @@ export class ChallengeApiService {
           SELECT "aiWorkflowId" FROM "ChallengeReviewer"
           WHERE "isMemberReview"=false AND "challengeId" = ${challengeId}
         )
+        AND "disabled" = false
       `;
 
       const metadata = await this.challengePrisma.$queryRaw<

@@ -10,6 +10,8 @@ import { CommonConfig } from 'src/shared/config/common.config';
 
 const prismaMock = {
   appeal: {
+    count: jest.fn(),
+    findMany: jest.fn(),
     findUnique: jest.fn(),
     findUniqueOrThrow: jest.fn(),
     update: jest.fn(),
@@ -22,6 +24,7 @@ const prismaMock = {
   },
   review: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
   },
   reviewItemComment: {
     findUnique: jest.fn(),
@@ -877,5 +880,128 @@ describe('AppealService.createAppealResponse', () => {
       `creating response for appeal ${baseAppeal.id}`,
     );
     expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppealService.getAppeals', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+    prismaErrorServiceMock.handleError.mockImplementation((error: any) => {
+      throw error;
+    });
+  });
+
+  it('supports filtering by multiple reviewIds and challengeId', async () => {
+    prismaMock.appeal.findMany.mockResolvedValue([
+      {
+        id: 'appeal-1',
+        resourceId: 'resource-1',
+        reviewItemCommentId: 'comment-1',
+        content: 'Appeal content',
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        createdBy: 'user-1',
+        updatedAt: new Date('2024-01-02T00:00:00.000Z'),
+        updatedBy: 'user-2',
+        legacyId: null,
+        appealResponse: null,
+        reviewItemComment: {
+          reviewItem: {
+            reviewId: 'review-1',
+          },
+        },
+      },
+    ]);
+    prismaMock.appeal.count.mockResolvedValue(1);
+
+    const result = await service.getAppeals(
+      { isMachine: true } as any,
+      undefined,
+      ['review-1', 'review-2'],
+      'challenge-1',
+      { page: 2, perPage: 20 },
+    );
+
+    expect(prismaMock.appeal.findMany).toHaveBeenCalledWith({
+      where: {
+        reviewItemComment: {
+          reviewItem: {
+            reviewId: { in: ['review-1', 'review-2'] },
+            review: {
+              submission: {
+                challengeId: 'challenge-1',
+              },
+            },
+          },
+        },
+      },
+      skip: 20,
+      take: 20,
+      orderBy: {
+        createdAt: 'desc',
+      },
+      select: expect.objectContaining({
+        reviewItemComment: {
+          select: {
+            reviewItem: {
+              select: {
+                reviewId: true,
+              },
+            },
+          },
+        },
+      }),
+    });
+    expect(prismaMock.appeal.count).toHaveBeenCalledWith({
+      where: {
+        reviewItemComment: {
+          reviewItem: {
+            reviewId: { in: ['review-1', 'review-2'] },
+            review: {
+              submission: {
+                challengeId: 'challenge-1',
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      data: [
+        {
+          id: 'appeal-1',
+          reviewId: 'review-1',
+        },
+      ],
+      meta: {
+        page: 2,
+        perPage: 20,
+        totalCount: 1,
+        totalPages: 1,
+      },
+    });
+  });
+
+  it('keeps the simpler resourceId filter path when no review filters are provided', async () => {
+    prismaMock.appeal.findMany.mockResolvedValue([]);
+    prismaMock.appeal.count.mockResolvedValue(0);
+
+    await service.getAppeals(
+      { isMachine: true } as any,
+      'resource-1',
+      [],
+      undefined,
+      {
+        page: 1,
+        perPage: 10,
+      },
+    );
+
+    expect(prismaMock.appeal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          resourceId: 'resource-1',
+        },
+      }),
+    );
   });
 });
