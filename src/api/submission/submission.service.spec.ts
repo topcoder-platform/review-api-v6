@@ -1749,6 +1749,7 @@ describe('SubmissionService', () => {
       $queryRaw: jest.Mock;
     };
     let createService: SubmissionService;
+    let originalManualUploadAllowOpenSubmissionPhase: string | undefined;
 
     const buildCreatedSubmission = () => ({
       challengeId: 'challenge-manual',
@@ -1783,6 +1784,10 @@ describe('SubmissionService', () => {
     });
 
     beforeEach(() => {
+      originalManualUploadAllowOpenSubmissionPhase =
+        process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE;
+      delete process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE;
+
       prismaMock = {
         submission: {
           create: jest.fn(),
@@ -1843,6 +1848,15 @@ describe('SubmissionService', () => {
       jest
         .spyOn(createService as any, 'stripIsLatestForUnlimitedChallenges')
         .mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      if (originalManualUploadAllowOpenSubmissionPhase === undefined) {
+        delete process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE;
+      } else {
+        process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE =
+          originalManualUploadAllowOpenSubmissionPhase;
+      }
     });
 
     it('allows privileged manual upload when submission phase is closed and review phase is open', async () => {
@@ -1931,6 +1945,30 @@ describe('SubmissionService', () => {
         2,
         'challenge-manual',
         ['Checkpoint Screening', 'Checkpoint Review'],
+      );
+      expect(prismaMock.submission.create).toHaveBeenCalled();
+    });
+
+    it('allows privileged manual upload while submission phase is open when explicitly configured', async () => {
+      process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE = 'true';
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen.mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(
+        challengeApiServiceMock.validateSubmissionCreation,
+      ).not.toHaveBeenCalled();
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenCalledTimes(1);
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        1,
+        'challenge-manual',
+        ['Submission', 'Topgear Submission'],
       );
       expect(prismaMock.submission.create).toHaveBeenCalled();
     });

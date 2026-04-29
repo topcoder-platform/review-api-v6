@@ -1799,6 +1799,13 @@ export class SubmissionService {
       );
 
       if (submissionPhaseOpen) {
+        if (this.isManualUploadDuringOpenSubmissionPhaseEnabled()) {
+          this.logger.warn(
+            `Manual upload phase override enabled for challenge ${challengeId}; allowing ${submissionType} while ${requiredClosedSubmissionPhases.join(' or ')} phase is open.`,
+          );
+          return;
+        }
+
         throw new BadRequestException({
           message:
             'Manual upload endpoint can only be used after the relevant submission phase has closed.',
@@ -1842,6 +1849,32 @@ export class SubmissionService {
         },
       });
     }
+  }
+
+  /**
+   * Checks whether privileged manual uploads may be accepted while the relevant
+   * submission phase is still open.
+   *
+   * Input parameters: none; reads the MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE
+   * environment flag at request time so operational config changes are picked up
+   * without recreating this service.
+   *
+   * Return value: true only when the flag is explicitly set to "true"
+   * case-insensitively; any other value preserves the default closed-phase-only
+   * manual upload behavior.
+   *
+   * Usage in the project: validatePrivilegedManualUploadPhaseWindow calls this
+   * before rejecting Admin/M2M manual uploads during Submission, Topgear
+   * Submission, or Checkpoint Submission.
+   *
+   * Exceptions raised: none.
+   */
+  private isManualUploadDuringOpenSubmissionPhaseEnabled(): boolean {
+    return (
+      String(process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE ?? '')
+        .trim()
+        .toLowerCase() === 'true'
+    );
   }
 
   private getAllowedManualUploadPhaseNames(

@@ -107,6 +107,8 @@ Manual upload is only allowed when:
 - the relevant submission window is already closed
 - a downstream screening/review target phase is currently open
 
+Set `MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE=true` to allow Admin/M2M manual uploads while the relevant submission phase is still open. This override is intended for controlled test or operational recovery flows. When the override is enabled and `Submission`, `Topgear Submission`, or `Checkpoint Submission` is open, review-api accepts the manual upload immediately and does not require a downstream screening/review phase to be open.
+
 Allowed phase windows by submission type:
 
 | Submission type | Required closed phase | Required open phase |
@@ -114,7 +116,7 @@ Allowed phase windows by submission type:
 | `CHECKPOINT_SUBMISSION` | `Checkpoint Submission` | `Checkpoint Screening` or `Checkpoint Review` |
 | Everything else | `Submission` or `Topgear Submission` | `AI Screening`, `Screening`, `Review`, `Iterative Review`, or `Approval` |
 
-So this endpoint is intentionally for late/manual intake after the live window for that submission type has closed, not for bypassing an active submission phase.
+By default, this endpoint is intentionally for late/manual intake after the live window for that submission type has closed, not for bypassing an active submission phase.
 
 ### 5. Submission row creation
 
