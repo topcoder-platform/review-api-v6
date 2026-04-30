@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { ChallengePrismaService } from './challenge-prisma.service';
+import { JwtUser } from './jwt.service';
 
 export class PhaseData {
   id: string;
@@ -10,6 +12,17 @@ export class PhaseData {
   scheduledEndTime?: string;
   actualStartTime?: string;
   actualEndTime?: string;
+}
+
+/**
+ * Winner data loaded from challenge storage for consumers that need challenge
+ * result information.
+ */
+export class ChallengeWinnerData {
+  userId: number;
+  handle: string;
+  placement: number;
+  type?: string | undefined;
 }
 
 export class ChallengeData {
@@ -32,6 +45,11 @@ export class ChallengeData {
   workflows?: WorkflowData[] | undefined;
   phases?: PhaseData[] | undefined;
   metadata?: Record<string, string | null> | undefined;
+  winners?: ChallengeWinnerData[] | undefined;
+  createdAt?: Date | undefined;
+  createdBy?: string | undefined;
+  updatedAt?: Date | undefined;
+  updatedBy?: string | undefined;
 }
 
 export class WorkflowData {
@@ -53,6 +71,10 @@ interface ChallengeRow {
   numOfSubmissions: number | null;
   tags: string[] | null;
   legacyId: number | null;
+  createdAt: Date;
+  createdBy: string | null;
+  updatedAt: Date;
+  updatedBy: string | null;
 }
 
 interface ChallengeLegacyRow {
@@ -86,6 +108,18 @@ interface ChallengeMetadataRow {
   value: string | null;
 }
 
+interface ChallengeWinnerRow {
+  userId: number;
+  handle: string;
+  placement: number;
+  type: string | null;
+}
+
+interface ChallengeUserWhitelistRow {
+  challengeId: string;
+  userId: string;
+}
+
 interface ChallengeAggregate {
   challenge: ChallengeRow;
   legacy?: ChallengeLegacyRow;
@@ -94,6 +128,7 @@ interface ChallengeAggregate {
   phases: ChallengePhaseRow[];
   metadata: ChallengeMetadataRow[];
   workflows: WorkflowData[];
+  winners: ChallengeWinnerRow[];
 }
 
 @Injectable()
@@ -101,6 +136,133 @@ export class ChallengeApiService {
   private readonly logger: Logger = new Logger(ChallengeApiService.name);
 
   constructor(private readonly challengePrisma: ChallengePrismaService) {}
+
+  /**
+   * Determine whether challenge whitelist checks apply for a request.
+   * Interactive users, including admins and anonymous callers, must be
+   * evaluated; M2M callers bypass this user-facing access control.
+   *
+   * @param authUser the authenticated request user, if any
+   * @returns true when whitelist rules should be applied
+   */
+  shouldApplyChallengeWhitelist(authUser?: JwtUser | null): boolean {
+    return !authUser?.isMachine;
+  }
+
+  /**
+   * Filter challenge ids by the current challenge user whitelist state.
+   * Challenges with no whitelist rows stay visible. Evaluation failures fail
+   * closed and return an empty list for interactive callers.
+   *
+   * @param authUser the authenticated request user, if any
+   * @param challengeIds challenge ids to filter
+   * @returns challenge ids visible to the caller
+   */
+  async filterChallengeIdsByWhitelist(
+    authUser: JwtUser | null | undefined,
+    challengeIds: string[],
+  ): Promise<string[]> {
+    const ids = Array.from(
+      new Set(
+        (challengeIds ?? [])
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+
+    if (!ids.length || !this.shouldApplyChallengeWhitelist(authUser)) {
+      return ids;
+    }
+
+    const userId =
+      authUser?.userId !== undefined && authUser.userId !== null
+        ? String(authUser.userId).trim()
+        : '';
+
+    try {
+      const rows = await this.challengePrisma.$queryRaw<
+        ChallengeUserWhitelistRow[]
+      >(Prisma.sql`
+        SELECT "challengeId", "userId"
+        FROM "ChallengeUserWhitelist"
+        WHERE "challengeId" IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}`))})
+      `);
+
+      const restrictedIds = new Set(rows.map((row) => row.challengeId));
+      const allowedRestrictedIds = new Set(
+        rows
+          .filter((row) => userId && String(row.userId) === userId)
+          .map((row) => row.challengeId),
+      );
+
+      return ids.filter(
+        (id) => !restrictedIds.has(id) || allowedRestrictedIds.has(id),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Challenge whitelist evaluation failed: ${message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Ensure an interactive caller is allowed by the challenge whitelist.
+   * Removing a participant from the whitelist cuts off review-api access
+   * immediately; active review assignments may still require manual
+   * reassignment or cleanup outside this first-pass access gate.
+   *
+   * @param authUser the authenticated request user, if any
+   * @param challengeId challenge id to evaluate
+   * @throws ForbiddenException when the whitelist blocks the caller or evaluation fails
+   */
+  async ensureChallengeWhitelistAccess(
+    authUser: JwtUser | null | undefined,
+    challengeId: string,
+  ): Promise<void> {
+    const visibleIds = await this.filterChallengeIdsByWhitelist(authUser, [
+      challengeId,
+    ]);
+    if (!visibleIds.includes(challengeId)) {
+      throw new ForbiddenException({
+        message: "You don't have access to view this challenge",
+        code: 'FORBIDDEN_CHALLENGE_WHITELIST',
+        details: { challengeId },
+      });
+    }
+  }
+
+  /**
+   * Get challenge details after enforcing challenge whitelist access for the caller.
+   *
+   * @param authUser the authenticated request user, if any
+   * @param challengeId challenge id to load
+   * @returns challenge details visible to the caller
+   */
+  async getChallengeDetailForUser(
+    authUser: JwtUser | null | undefined,
+    challengeId: string,
+  ): Promise<ChallengeData> {
+    await this.ensureChallengeWhitelistAccess(authUser, challengeId);
+    return this.getChallengeDetail(challengeId);
+  }
+
+  /**
+   * Get challenge details for ids visible to the caller.
+   *
+   * @param authUser the authenticated request user, if any
+   * @param challengeIds challenge ids to load
+   * @returns challenge details visible to the caller
+   */
+  async getChallengesForUser(
+    authUser: JwtUser | null | undefined,
+    challengeIds: string[],
+  ): Promise<ChallengeData[]> {
+    const visibleIds = await this.filterChallengeIdsByWhitelist(
+      authUser,
+      challengeIds,
+    );
+    return this.getChallenges(visibleIds);
+  }
 
   async getChallenges(challengeIds: string[]): Promise<ChallengeData[]> {
     // Get all challenge details at once.
@@ -121,7 +283,11 @@ export class ChallengeApiService {
           "trackId",
           "numOfSubmissions",
           tags,
-          "legacyId"
+          "legacyId",
+          "createdAt",
+          "createdBy",
+          "updatedAt",
+          "updatedBy"
         FROM "Challenge"
         WHERE id = ${challengeId}
         LIMIT 1
@@ -200,6 +366,19 @@ export class ChallengeApiService {
         WHERE "challengeId" = ${challengeId}
       `;
 
+      const winners = await this.challengePrisma.$queryRaw<
+        ChallengeWinnerRow[]
+      >`
+        SELECT
+          "userId",
+          handle,
+          placement,
+          type::text AS type
+        FROM "ChallengeWinner"
+        WHERE "challengeId" = ${challengeId}
+        ORDER BY placement ASC
+      `;
+
       return this.mapChallenge({
         challenge,
         legacy,
@@ -208,6 +387,7 @@ export class ChallengeApiService {
         phases,
         metadata,
         workflows,
+        winners,
       });
     } catch (error) {
       this.logger.error(
@@ -219,8 +399,16 @@ export class ChallengeApiService {
   }
 
   private mapChallenge(aggregate: ChallengeAggregate): ChallengeData {
-    const { challenge, legacy, type, track, phases, workflows, metadata } =
-      aggregate;
+    const {
+      challenge,
+      legacy,
+      type,
+      track,
+      phases,
+      workflows,
+      metadata,
+      winners,
+    } = aggregate;
 
     const mappedPhases = phases?.map((phase) => ({
       id: phase.id,
@@ -279,6 +467,16 @@ export class ChallengeApiService {
       workflows,
       phases: mappedPhases,
       metadata: metadataRecord,
+      winners: winners?.map((winner) => ({
+        userId: winner.userId,
+        handle: winner.handle,
+        placement: winner.placement,
+        type: winner.type ?? undefined,
+      })),
+      createdAt: challenge.createdAt,
+      createdBy: challenge.createdBy ?? undefined,
+      updatedAt: challenge.updatedAt,
+      updatedBy: challenge.updatedBy ?? undefined,
     };
   }
 

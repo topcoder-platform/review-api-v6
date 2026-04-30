@@ -5,7 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
+import {
+  ChallengeApiService,
+  ChallengeData,
+} from 'src/shared/modules/global/challenge.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import {
   CreateChallengeReviewContextDto,
@@ -51,21 +54,52 @@ export class ChallengeReviewContextService {
     private readonly challengeApiService: ChallengeApiService,
   ) {}
 
-  private async validateChallengeExists(challengeId: string): Promise<void> {
+  /**
+   * Loads a challenge through the auth-aware challenge reader so whitelist
+   * restrictions are enforced before any review-context read or write.
+   *
+   * @param challengeId - Challenge id to validate.
+   * @param authUser - Authenticated request user used for whitelist checks.
+   * @returns Challenge details visible to the caller.
+   * @throws ForbiddenException when the caller is blocked by challenge whitelist.
+   * @throws NotFoundException when the challenge cannot be loaded.
+   */
+  private async validateChallengeExists(
+    challengeId: string,
+    authUser: JwtUser,
+  ): Promise<ChallengeData> {
     try {
-      await this.challengeApiService.getChallengeDetail(challengeId);
-    } catch {
+      return await this.challengeApiService.getChallengeDetailForUser(
+        authUser,
+        challengeId,
+      );
+    } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       throw new NotFoundException(
         `Challenge with id ${challengeId} not found.`,
       );
     }
   }
 
+  /**
+   * Validates that a challenge is currently writable for review context.
+   *
+   * @param challengeId - Challenge id being written.
+   * @param authUser - Authenticated request user used for whitelist checks.
+   * @param loadedChallenge - Optional previously loaded challenge details.
+   * @throws ForbiddenException when whitelist or challenge phase rules block writing.
+   * @throws NotFoundException when the challenge cannot be loaded.
+   */
   private async validateChallengeAllowedForWrite(
     challengeId: string,
+    authUser: JwtUser,
+    loadedChallenge?: ChallengeData,
   ): Promise<void> {
     const challenge =
-      await this.challengeApiService.getChallengeDetail(challengeId);
+      loadedChallenge ??
+      (await this.validateChallengeExists(challengeId, authUser));
     const isDraft = challenge.status === ChallengeStatus.DRAFT;
     const hasRegistrationPhase =
       challenge.phases?.some(
@@ -82,8 +116,15 @@ export class ChallengeReviewContextService {
     dto: CreateChallengeReviewContextDto,
     authUser: JwtUser,
   ): Promise<ChallengeReviewContextResponseDto> {
-    await this.validateChallengeExists(dto.challengeId);
-    await this.validateChallengeAllowedForWrite(dto.challengeId);
+    const challenge = await this.validateChallengeExists(
+      dto.challengeId,
+      authUser,
+    );
+    await this.validateChallengeAllowedForWrite(
+      dto.challengeId,
+      authUser,
+      challenge,
+    );
 
     const existing = await this.prisma.challengeReviewContext.findUnique({
       where: { challengeId: dto.challengeId },
@@ -110,8 +151,9 @@ export class ChallengeReviewContextService {
 
   async getByChallengeId(
     challengeId: string,
+    authUser: JwtUser,
   ): Promise<ChallengeReviewContextResponseDto> {
-    await this.validateChallengeExists(challengeId);
+    await this.validateChallengeExists(challengeId, authUser);
 
     const record = await this.prisma.challengeReviewContext.findUnique({
       where: { challengeId },
@@ -130,8 +172,12 @@ export class ChallengeReviewContextService {
     dto: UpdateChallengeReviewContextDto,
     authUser: JwtUser,
   ): Promise<ChallengeReviewContextResponseDto> {
-    await this.validateChallengeExists(challengeId);
-    await this.validateChallengeAllowedForWrite(challengeId);
+    const challenge = await this.validateChallengeExists(challengeId, authUser);
+    await this.validateChallengeAllowedForWrite(
+      challengeId,
+      authUser,
+      challenge,
+    );
 
     const existing = await this.prisma.challengeReviewContext.findUnique({
       where: { challengeId },

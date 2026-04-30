@@ -155,7 +155,11 @@ export class SubmissionScanCompleteOrchestrator {
     return Array.from(
       new Set(
         (config?.workflows ?? [])
-          .map((workflow) => workflow.workflowId)
+          .map((workflow: { workflowId?: unknown }) =>
+            typeof workflow.workflowId === 'string'
+              ? workflow.workflowId
+              : undefined,
+          )
           .filter((workflowId): workflowId is string => Boolean(workflowId)),
       ),
     );

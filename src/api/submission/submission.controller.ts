@@ -127,9 +127,9 @@ export class SubmissionController {
   @Scopes(Scope.CreateSubmission)
   @ApiOperation({
     summary:
-      'Upload and create a submission as Admin/M2M after the relevant submission phase closes',
+      'Upload and create a submission as Admin/M2M through the manual upload flow',
     description:
-      'Roles: Admin (M2M allowed via scope). Uploads file contents to DMZ before creating the submission and triggering normal scan/event flow after the relevant submission window has closed and a downstream screening/review phase is open. | Scopes: create:submission',
+      'Roles: Admin (M2M allowed via scope). Uploads file contents to DMZ before creating the submission and triggering normal scan/event flow. By default, the relevant submission window must be closed and a downstream screening/review phase must be open. Set MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE=true to allow this endpoint during the active submission window. | Scopes: create:submission',
   })
   @ApiResponse({
     status: 201,
@@ -298,10 +298,12 @@ export class SubmissionController {
   })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
   async getSubmission(
+    @Req() req: Request,
     @Param('submissionId') submissionId: string,
   ): Promise<SubmissionResponseDto> {
     this.logger.log(`Getting submission with ID: ${submissionId}`);
-    return this.service.getSubmission(submissionId);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.getSubmission(authUser, submissionId);
   }
 
   @Delete('/:submissionId')
@@ -548,10 +550,12 @@ export class SubmissionController {
     description: 'Count of submissions',
   })
   async countSubmissions(
+    @Req() req: Request,
     @Param('challengeId') challengeId: string,
   ): Promise<number> {
     // Return the actual count of submissions for the challenge
-    return this.service.countSubmissionsForChallenge(challengeId);
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.countSubmissionsForChallenge(authUser, challengeId);
   }
 
   @Get('/download/:challengeId')

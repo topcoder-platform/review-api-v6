@@ -3,6 +3,8 @@ import {
   Get,
   Query,
   InternalServerErrorException,
+  Req,
+  HttpException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,6 +21,8 @@ import { ProjectResultResponseDto } from 'src/dto/projectResult.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { ProjectResultService } from './projectResult.service';
+import { Request } from 'express';
+import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()
@@ -49,6 +53,7 @@ export class ProjectResultController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async getProjectResults(
+    @Req() req: Request,
     @Query('challengeId') challengeId: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<ProjectResultResponseDto>> {
@@ -60,6 +65,7 @@ export class ProjectResultController {
     try {
       const allResults =
         await this.projectResultService.getProjectResultsFromChallenge(
+          req['user'] as JwtUser,
           challengeId,
         );
 
@@ -80,6 +86,10 @@ export class ProjectResultController {
         },
       };
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
       this.logger.error(
         `Error fetching project results for challenge ${challengeId}:`,
         error,

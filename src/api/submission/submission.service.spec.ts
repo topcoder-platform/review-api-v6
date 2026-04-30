@@ -1612,6 +1612,53 @@ describe('SubmissionService', () => {
       );
     });
 
+    it('preserves checkpoint submission type through manual upload delegation', async () => {
+      jest
+        .spyOn(manualUploadService as any, 'uploadSubmissionFileToDmz')
+        .mockResolvedValue({
+          url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/checkpoint.zip',
+          fileName: 'checkpoint.zip',
+          fileSize: 512,
+          fileType: 'zip',
+        });
+      const createSubmissionSpy = jest
+        .spyOn(manualUploadService, 'createSubmission')
+        .mockResolvedValue({ id: 'submission-checkpoint-manual' } as any);
+
+      const authUser = {
+        isMachine: true,
+        scopes: ['create:submission'],
+      } as any;
+      const body = {
+        challengeId: 'challenge-manual',
+        memberId: '1001',
+        type: SubmissionType.CHECKPOINT_SUBMISSION,
+      } as any;
+      const file = {
+        originalname: 'checkpoint.zip',
+        size: 512,
+        buffer: Buffer.from('zip-content'),
+      } as any;
+
+      await manualUploadService.createManualSubmissionUpload(
+        authUser,
+        body,
+        file,
+      );
+
+      expect(createSubmissionSpy).toHaveBeenCalledWith(
+        authUser,
+        expect.objectContaining({
+          challengeId: 'challenge-manual',
+          memberId: '1001',
+          type: SubmissionType.CHECKPOINT_SUBMISSION,
+          url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/checkpoint.zip',
+        }),
+        file,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+    });
+
     it('validates the provided submitter handle against challenge resources before uploading', async () => {
       const uploadSpy = jest
         .spyOn(manualUploadService as any, 'uploadSubmissionFileToDmz')
@@ -1702,6 +1749,7 @@ describe('SubmissionService', () => {
       $queryRaw: jest.Mock;
     };
     let createService: SubmissionService;
+    let originalManualUploadAllowOpenSubmissionPhase: string | undefined;
 
     const buildCreatedSubmission = () => ({
       challengeId: 'challenge-manual',
@@ -1736,6 +1784,10 @@ describe('SubmissionService', () => {
     });
 
     beforeEach(() => {
+      originalManualUploadAllowOpenSubmissionPhase =
+        process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE;
+      delete process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE;
+
       prismaMock = {
         submission: {
           create: jest.fn(),
@@ -1796,6 +1848,15 @@ describe('SubmissionService', () => {
       jest
         .spyOn(createService as any, 'stripIsLatestForUnlimitedChallenges')
         .mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      if (originalManualUploadAllowOpenSubmissionPhase === undefined) {
+        delete process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE;
+      } else {
+        process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE =
+          originalManualUploadAllowOpenSubmissionPhase;
+      }
     });
 
     it('allows privileged manual upload when submission phase is closed and review phase is open', async () => {
@@ -1884,6 +1945,30 @@ describe('SubmissionService', () => {
         2,
         'challenge-manual',
         ['Checkpoint Screening', 'Checkpoint Review'],
+      );
+      expect(prismaMock.submission.create).toHaveBeenCalled();
+    });
+
+    it('allows privileged manual upload while submission phase is open when explicitly configured', async () => {
+      process.env.MANUAL_UPLOAD_ALLOW_OPEN_SUBMISSION_PHASE = 'true';
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen.mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(
+        challengeApiServiceMock.validateSubmissionCreation,
+      ).not.toHaveBeenCalled();
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenCalledTimes(1);
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenNthCalledWith(
+        1,
+        'challenge-manual',
+        ['Submission', 'Topgear Submission'],
       );
       expect(prismaMock.submission.create).toHaveBeenCalled();
     });

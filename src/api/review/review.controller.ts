@@ -333,8 +333,10 @@ export class ReviewController {
     description: 'Server error during calculation.',
   })
   async getReviewProgress(
+    @Req() req: Request,
     @Param('challengeId') challengeId: string,
   ): Promise<ReviewProgressResponseDto> {
-    return this.reviewService.getReviewProgress(challengeId);
+    const authUser = req['user'];
+    return this.reviewService.getReviewProgress(authUser as any, challengeId);
   }
 }

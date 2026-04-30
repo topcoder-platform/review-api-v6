@@ -24,6 +24,7 @@ const prismaMock = {
   },
   review: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
   },
   reviewItemComment: {
     findUnique: jest.fn(),
@@ -913,6 +914,7 @@ describe('AppealService.getAppeals', () => {
     prismaMock.appeal.count.mockResolvedValue(1);
 
     const result = await service.getAppeals(
+      { isMachine: true } as any,
       undefined,
       ['review-1', 'review-2'],
       'challenge-1',
@@ -983,10 +985,16 @@ describe('AppealService.getAppeals', () => {
     prismaMock.appeal.findMany.mockResolvedValue([]);
     prismaMock.appeal.count.mockResolvedValue(0);
 
-    await service.getAppeals('resource-1', [], undefined, {
-      page: 1,
-      perPage: 10,
-    });
+    await service.getAppeals(
+      { isMachine: true } as any,
+      'resource-1',
+      [],
+      undefined,
+      {
+        page: 1,
+        perPage: 10,
+      },
+    );
 
     expect(prismaMock.appeal.findMany).toHaveBeenCalledWith(
       expect.objectContaining({

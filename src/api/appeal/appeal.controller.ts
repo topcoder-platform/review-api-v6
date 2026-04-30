@@ -216,17 +216,20 @@ export class AppealController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   async getAppeals(
+    @Req() req: Request,
     @Query('resourceId') resourceId?: string,
     @Query('reviewId') reviewId?: string,
     @Query('reviewIds') reviewIds?: string,
     @Query('challengeId') challengeId?: string,
     @Query() paginationDto?: PaginationDto,
   ): Promise<PaginatedResponse<AppealResponseDto>> {
+    const authUser = req['user'] as JwtUser;
     const normalizedReviewIds = Array.from(
       new Set([reviewId, ...parseCsvIds(reviewIds)].filter(Boolean)),
     ) as string[];
 
     return this.appealService.getAppeals(
+      authUser,
       resourceId,
       normalizedReviewIds,
       challengeId,

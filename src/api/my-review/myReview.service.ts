@@ -156,6 +156,34 @@ export class MyReviewService {
       whereFragments.push(Prisma.sql`c.status = 'ACTIVE'`);
     }
 
+    if (!authUser.isMachine) {
+      if (normalizedUserId) {
+        whereFragments.push(Prisma.sql`
+          (
+            NOT EXISTS (
+              SELECT 1
+              FROM challenges."ChallengeUserWhitelist" cwl
+              WHERE cwl."challengeId" = c.id
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM challenges."ChallengeUserWhitelist" cwl
+              WHERE cwl."challengeId" = c.id
+                AND cwl."userId" = ${normalizedUserId}
+            )
+          )
+        `);
+      } else {
+        whereFragments.push(Prisma.sql`
+          NOT EXISTS (
+            SELECT 1
+            FROM challenges."ChallengeUserWhitelist" cwl
+            WHERE cwl."challengeId" = c.id
+          )
+        `);
+      }
+    }
+
     const cteFragments: Prisma.Sql[] = [];
     const baseJoins: Prisma.Sql[] = [];
     const countJoins: Prisma.Sql[] = [];
