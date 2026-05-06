@@ -26,6 +26,7 @@ import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.ser
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Prisma } from '@prisma/client';
+import { buildSafeReviewSummationMetadata } from 'src/shared/utils/review-summation-metadata.util';
 
 @Injectable()
 export class ReviewSummationService {
@@ -691,6 +692,7 @@ export class ReviewSummationService {
             },
           });
         }
+        enforcedMemberId = userId;
 
         if (!challengeIdFilter) {
           throw new ForbiddenException({
@@ -784,8 +786,6 @@ export class ReviewSummationService {
               },
             });
           }
-
-          enforcedMemberId = userId;
         }
       }
 
@@ -972,7 +972,9 @@ export class ReviewSummationService {
         } as ReviewSummationResponseDto;
 
         if (includeMetadata) {
-          base.metadata = metadata ?? null;
+          base.metadata = isSubmitterOnly
+            ? buildSafeReviewSummationMetadata(metadata)
+            : (metadata ?? null);
         }
 
         return base;
