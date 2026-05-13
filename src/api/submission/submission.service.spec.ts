@@ -1519,6 +1519,82 @@ describe('SubmissionService', () => {
       expect(submissionResult).not.toHaveProperty('reviewSummation');
       expect(submissionResult.url).toBeNull();
     });
+
+    it('sanitizes review summation metadata for submitter-owned submissions', async () => {
+      const now = new Date('2026-05-01T12:00:00Z');
+      const submissions = [
+        {
+          id: 'submission-own',
+          challengeId: 'challenge-1',
+          memberId: '101',
+          submittedDate: now,
+          createdAt: now,
+          updatedAt: now,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [
+            {
+              id: 'summation-own',
+              metadata: {
+                testProcess: 'system',
+                testProgress: 0.75,
+                testStatus: 'IN PROGRESS',
+                testScores: [
+                  {
+                    score: 42,
+                    seed: 987654321,
+                  },
+                ],
+                testProgressDetails: {
+                  completedTests: 15,
+                  failedTests: [{ seed: 987654321 }],
+                  message: 'Completed seed 987654321',
+                  progress: 0.75,
+                  status: 'IN PROGRESS',
+                  totalTests: 20,
+                },
+              },
+            },
+          ],
+          url: 'https://example.com/submission.zip',
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-own',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: '101',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 10 } as any,
+      );
+
+      const metadata = result.data[0].reviewSummation?.[0].metadata;
+      expect(metadata).toEqual({
+        testProcess: 'system',
+        testProgress: 0.75,
+        testStatus: 'IN PROGRESS',
+        testProgressDetails: {
+          completedTests: 15,
+          progress: 0.75,
+          status: 'IN PROGRESS',
+          totalTests: 20,
+        },
+      });
+      expect(JSON.stringify(metadata)).not.toContain('987654321');
+    });
   });
 
   describe('createManualSubmissionUpload', () => {

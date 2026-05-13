@@ -35,6 +35,7 @@ import {
   ChallengeApiService,
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
+import { buildSafeReviewSummationMetadata } from 'src/shared/utils/review-summation-metadata.util';
 import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
@@ -2971,6 +2972,11 @@ export class SubmissionService {
         submissions,
         reviewVisibilityContext,
       );
+      this.sanitizeMemberVisibleReviewSummationMetadata(
+        authUser,
+        submissions,
+        reviewVisibilityContext,
+      );
       await this.stripIsLatestForUnlimitedChallenges(submissions);
 
       this.logger.log(
@@ -4720,6 +4726,62 @@ export class SubmissionService {
       if (Object.prototype.hasOwnProperty.call(submission, 'url')) {
         (submission as any).url = null;
       }
+    }
+  }
+
+  /**
+   * Replaces review summation metadata with member-safe progress metadata for non-privileged callers.
+   * @param authUser Authenticated requester from the JWT.
+   * @param submissions Submission records being returned by list endpoints.
+   * @param visibilityContext Challenge role information for the requester.
+   * Used by `listSubmission` so competitors can see their own test progress without per-seed scores.
+   */
+  private sanitizeMemberVisibleReviewSummationMetadata(
+    authUser: JwtUser,
+    submissions: Array<
+      {
+        challengeId?: string | null;
+        reviewSummation?: unknown;
+      } & Record<string, unknown>
+    >,
+    visibilityContext: ReviewVisibilityContext,
+  ): void {
+    if (!submissions.length) {
+      return;
+    }
+    if (authUser?.isMachine || isAdmin(authUser)) {
+      return;
+    }
+
+    for (const submission of submissions) {
+      if (!Array.isArray((submission as any).reviewSummation)) {
+        continue;
+      }
+
+      const challengeId =
+        submission.challengeId !== undefined && submission.challengeId !== null
+          ? String(submission.challengeId).trim()
+          : '';
+      const roleSummary = challengeId
+        ? visibilityContext.roleSummaryByChallenge.get(challengeId)
+        : undefined;
+
+      if (roleSummary?.hasCopilot || roleSummary?.hasReviewer) {
+        continue;
+      }
+
+      (submission as any).reviewSummation = (
+        (submission as any).reviewSummation as Array<Record<string, unknown>>
+      ).map((summation) => {
+        if (!summation || typeof summation !== 'object') {
+          return summation;
+        }
+
+        return {
+          ...summation,
+          metadata: buildSafeReviewSummationMetadata(summation.metadata),
+        };
+      });
     }
   }
 

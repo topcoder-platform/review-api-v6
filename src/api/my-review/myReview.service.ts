@@ -34,6 +34,7 @@ interface ChallengeSummaryRow {
   hasPendingAppealResponses: boolean;
   isAppealsResponsePhaseOpen: boolean | null;
   appealsResponsePhaseName: string | null;
+  totalCount?: bigint | null;
 }
 
 const PAST_CHALLENGE_STATUSES = [
@@ -292,12 +293,6 @@ export class MyReviewService {
             ON r."challengeId" = c.id
         `,
       );
-      countJoins.push(
-        Prisma.sql`
-          LEFT JOIN resources."ResourceRole" rr
-            ON rr.id = r."roleId"
-        `,
-      );
     } else {
       baseJoins.push(
         Prisma.sql`
@@ -315,11 +310,13 @@ export class MyReviewService {
         LEFT JOIN challenges."ChallengeType" ct ON ct.id = c."typeId"
       `,
     );
-    countJoins.push(
-      Prisma.sql`
-        LEFT JOIN challenges."ChallengeType" ct ON ct.id = c."typeId"
-      `,
-    );
+    if (challengeTypeName) {
+      countJoins.push(
+        Prisma.sql`
+          LEFT JOIN challenges."ChallengeType" ct ON ct.id = c."typeId"
+        `,
+      );
+    }
 
     const metricJoins: Prisma.Sql[] = [];
 
@@ -585,70 +582,259 @@ export class MyReviewService {
       WHERE ${countWhereClause}
     `;
 
-    const countQueryDetails = countQuery.inspect();
-    this.logger.debug({
-      message: 'Executing challenge count query',
-      sql: countQueryDetails.sql,
-      parameters: countQueryDetails.values,
-    });
+    let challengeRows: ChallengeSummaryRow[] = [];
+    let totalCount = 0;
+    let totalPages = 0;
 
-    const countResult =
-      await this.challengePrisma.$queryRaw<{ total: bigint }[]>(countQuery);
-    const totalCountBigInt = countResult?.[0]?.total ?? 0n;
-    const totalCount = Number(totalCountBigInt);
-    const totalPages = totalCount ? Math.ceil(totalCount / perPage) : 0;
+    if (shouldFetchPastChallenges && !adminUser) {
+      const pastSortFragments: Prisma.Sql[] = [];
+      const pastFinalSortFragments: Prisma.Sql[] = [];
 
-    if (!totalCount) {
-      return {
-        data: [],
-        meta: {
-          page,
-          perPage,
-          totalCount: 0,
-          totalPages: 0,
-        },
-      };
+      switch (sortBy) {
+        case 'challengeName':
+          pastSortFragments.push(
+            Prisma.sql`"challengeName" ${directionSql} NULLS LAST`,
+          );
+          pastFinalSortFragments.push(
+            Prisma.sql`bp."challengeName" ${directionSql} NULLS LAST`,
+          );
+          break;
+        case 'challengeEndDate':
+          pastSortFragments.push(
+            Prisma.sql`"challengeEndDate" ${directionSql} NULLS LAST`,
+          );
+          pastFinalSortFragments.push(
+            Prisma.sql`bp."challengeEndDate" ${directionSql} NULLS LAST`,
+          );
+          break;
+        default:
+          break;
+      }
+
+      const pastFallbackOrderFragments = [
+        Prisma.sql`"challengeEndDate" DESC NULLS LAST`,
+        Prisma.sql`"challengeCreatedAt" DESC NULLS LAST`,
+        Prisma.sql`"challengeName" ASC`,
+      ];
+      const pastFinalFallbackOrderFragments = [
+        Prisma.sql`bp."challengeEndDate" DESC NULLS LAST`,
+        Prisma.sql`bp."challengeCreatedAt" DESC NULLS LAST`,
+        Prisma.sql`bp."challengeName" ASC`,
+      ];
+      const pastOrderClause = joinSqlFragments(
+        pastSortFragments.length
+          ? [...pastSortFragments, ...pastFallbackOrderFragments]
+          : pastFallbackOrderFragments,
+        Prisma.sql`, `,
+      );
+      const pastFinalOrderClause = joinSqlFragments(
+        pastFinalSortFragments.length
+          ? [...pastFinalSortFragments, ...pastFinalFallbackOrderFragments]
+          : pastFinalFallbackOrderFragments,
+        Prisma.sql`, `,
+      );
+
+      const rowQuery = Prisma.sql`
+        WITH
+          member_resources AS MATERIALIZED (
+            SELECT
+              r.id,
+              r."challengeId",
+              r."roleId"
+            FROM resources."Resource" r
+            WHERE r."memberId" = ${normalizedUserId}
+          ),
+          base_matches AS MATERIALIZED (
+            SELECT
+              c.id AS "challengeId",
+              c.name AS "challengeName",
+              c."typeId" AS "challengeTypeId",
+              ct.name AS "challengeTypeName",
+              r.id AS "resourceId",
+              rr.name AS "resourceRoleName",
+              c."endDate" AS "challengeEndDate",
+              c."createdAt" AS "challengeCreatedAt",
+              c.status AS "status"
+            FROM member_resources r
+            JOIN challenges."Challenge" c
+              ON c.id = r."challengeId"
+            LEFT JOIN resources."ResourceRole" rr
+              ON rr.id = r."roleId"
+            LEFT JOIN challenges."ChallengeType" ct
+              ON ct.id = c."typeId"
+            WHERE ${rowWhereClause}
+          ),
+          base_page AS MATERIALIZED (
+            SELECT
+              *,
+              COUNT(*) OVER() AS "totalCount"
+            FROM base_matches
+            ORDER BY ${pastOrderClause}
+            LIMIT ${perPage}
+            OFFSET ${offset}
+          )
+        SELECT
+          bp."challengeId" AS "challengeId",
+          bp."challengeName" AS "challengeName",
+          bp."challengeTypeId" AS "challengeTypeId",
+          bp."challengeTypeName" AS "challengeTypeName",
+          cp.name AS "currentPhaseName",
+          cr."hasAIReview" as "hasAIReview",
+          cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
+          cp."actualEndDate" AS "currentPhaseActualEnd",
+          bp."resourceRoleName" AS "resourceRoleName",
+          bp."challengeEndDate" AS "challengeEndDate",
+          review_totals."totalReviews" AS "totalReviews",
+          review_totals."completedReviews" AS "completedReviews",
+          cw.winners AS "winners",
+          FALSE AS "hasIncompleteReviews",
+          NULL::text AS "incompletePhaseName",
+          FALSE AS "hasPendingAppealResponses",
+          NULL::boolean AS "isAppealsResponsePhaseOpen",
+          NULL::text AS "appealsResponsePhaseName",
+          bp.status AS "status",
+          bp."totalCount" AS "totalCount"
+        FROM base_page bp
+        LEFT JOIN LATERAL (
+          SELECT
+            p.name,
+            p."scheduledEndDate",
+            p."actualEndDate"
+          FROM challenges."ChallengePhase" p
+          WHERE p."challengeId" = bp."challengeId"
+          ORDER BY
+            CASE WHEN p."isOpen" IS TRUE THEN 0 ELSE 1 END,
+            p."scheduledEndDate" NULLS LAST,
+            p."actualEndDate" NULLS LAST
+          LIMIT 1
+        ) cp ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::bigint AS "totalReviews",
+            COALESCE(
+              SUM(CASE WHEN rv.status = 'COMPLETED' THEN 1 ELSE 0 END),
+              0
+            )::bigint AS "completedReviews"
+          FROM reviews.review rv
+          WHERE rv."resourceId" = bp."resourceId"
+        ) review_totals ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            jsonb_agg(
+              jsonb_build_object(
+                'userId', w."userId",
+                'handle', w.handle,
+                'placement', w."placement",
+                'type', w.type
+              )
+              ORDER BY w."placement" ASC
+            ) AS winners
+          FROM challenges."ChallengeWinner" w
+          WHERE w."challengeId" = bp."challengeId"
+        ) cw ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            TRUE AS "hasAIReview"
+          FROM challenges."ChallengeReviewer" cr
+          WHERE cr."challengeId" = bp."challengeId"
+            AND cr."aiWorkflowId" IS NOT NULL
+          LIMIT 1
+        ) cr ON TRUE
+        ORDER BY ${pastFinalOrderClause}
+      `;
+
+      const challengeQueryDetails = rowQuery.inspect();
+      this.logger.debug({
+        message: 'Executing paged past challenge summary query',
+        sql: challengeQueryDetails.sql,
+        parameters: challengeQueryDetails.values,
+      });
+
+      challengeRows =
+        await this.challengePrisma.$queryRaw<ChallengeSummaryRow[]>(rowQuery);
+
+      if (!challengeRows.length && page > 1) {
+        const countQueryDetails = countQuery.inspect();
+        this.logger.debug({
+          message: 'Executing fallback past challenge count query',
+          sql: countQueryDetails.sql,
+          parameters: countQueryDetails.values,
+        });
+
+        const countResult =
+          await this.challengePrisma.$queryRaw<{ total: bigint }[]>(countQuery);
+        totalCount = Number(countResult?.[0]?.total ?? 0n);
+      } else {
+        totalCount = Number(challengeRows?.[0]?.totalCount ?? 0n);
+      }
+
+      totalPages = totalCount ? Math.ceil(totalCount / perPage) : 0;
+    } else {
+      const countQueryDetails = countQuery.inspect();
+      this.logger.debug({
+        message: 'Executing challenge count query',
+        sql: countQueryDetails.sql,
+        parameters: countQueryDetails.values,
+      });
+
+      const countResult =
+        await this.challengePrisma.$queryRaw<{ total: bigint }[]>(countQuery);
+      const totalCountBigInt = countResult?.[0]?.total ?? 0n;
+      totalCount = Number(totalCountBigInt);
+      totalPages = totalCount ? Math.ceil(totalCount / perPage) : 0;
+
+      if (!totalCount) {
+        return {
+          data: [],
+          meta: {
+            page,
+            perPage,
+            totalCount: 0,
+            totalPages: 0,
+          },
+        };
+      }
+
+      const rowQuery = Prisma.sql`
+        ${withClause}
+        SELECT
+          c.id AS "challengeId",
+          c.name AS "challengeName",
+          c."typeId" AS "challengeTypeId",
+          ct.name AS "challengeTypeName",
+          cp.name AS "currentPhaseName",
+          cr."hasAIReview" as "hasAIReview",
+          cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
+          cp."actualEndDate" AS "currentPhaseActualEnd",
+          rr.name AS "resourceRoleName",
+          c."endDate" AS "challengeEndDate",
+          review_totals."totalReviews" AS "totalReviews",
+          review_totals."completedReviews" AS "completedReviews",
+          cw.winners AS "winners",
+          deliverable_reviews."hasIncompleteReviews" AS "hasIncompleteReviews",
+          deliverable_reviews."incompletePhaseName" AS "incompletePhaseName",
+          COALESCE(pending_appeals."pendingAppealCount" > 0, FALSE) AS "hasPendingAppealResponses",
+          appeals_response_phase."isAppealsResponsePhaseOpen" AS "isAppealsResponsePhaseOpen",
+          appeals_response_phase."appealsResponsePhaseName" AS "appealsResponsePhaseName",
+          c.status AS "status"
+        FROM challenges."Challenge" c
+        ${joinClause}
+        WHERE ${rowWhereClause}
+        ORDER BY ${orderClause}
+        LIMIT ${perPage}
+        OFFSET ${offset}
+      `;
+
+      const challengeQueryDetails = rowQuery.inspect();
+      this.logger.debug({
+        message: 'Executing challenge summary query',
+        sql: challengeQueryDetails.sql,
+        parameters: challengeQueryDetails.values,
+      });
+
+      challengeRows =
+        await this.challengePrisma.$queryRaw<ChallengeSummaryRow[]>(rowQuery);
     }
-
-    const rowQuery = Prisma.sql`
-      ${withClause}
-      SELECT
-        c.id AS "challengeId",
-        c.name AS "challengeName",
-        c."typeId" AS "challengeTypeId",
-        ct.name AS "challengeTypeName",
-        cp.name AS "currentPhaseName",
-        cr."hasAIReview" as "hasAIReview",
-        cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
-        cp."actualEndDate" AS "currentPhaseActualEnd",
-        rr.name AS "resourceRoleName",
-        c."endDate" AS "challengeEndDate",
-        review_totals."totalReviews" AS "totalReviews",
-        review_totals."completedReviews" AS "completedReviews",
-        cw.winners AS "winners",
-        deliverable_reviews."hasIncompleteReviews" AS "hasIncompleteReviews",
-        deliverable_reviews."incompletePhaseName" AS "incompletePhaseName",
-        COALESCE(pending_appeals."pendingAppealCount" > 0, FALSE) AS "hasPendingAppealResponses",
-        appeals_response_phase."isAppealsResponsePhaseOpen" AS "isAppealsResponsePhaseOpen",
-        appeals_response_phase."appealsResponsePhaseName" AS "appealsResponsePhaseName",
-        c.status AS "status"
-      FROM challenges."Challenge" c
-      ${joinClause}
-      WHERE ${rowWhereClause}
-      ORDER BY ${orderClause}
-      LIMIT ${perPage}
-      OFFSET ${offset}
-    `;
-
-    const challengeQueryDetails = rowQuery.inspect();
-    this.logger.debug({
-      message: 'Executing challenge summary query',
-      sql: challengeQueryDetails.sql,
-      parameters: challengeQueryDetails.values,
-    });
-
-    const challengeRows =
-      await this.challengePrisma.$queryRaw<ChallengeSummaryRow[]>(rowQuery);
 
     if (!challengeRows.length) {
       return {

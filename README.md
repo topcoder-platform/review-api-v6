@@ -96,3 +96,7 @@ $ pnpm run test:e2e
 # test coverage
 $ pnpm run test:cov
 ```
+
+## Review summation metadata
+
+`GET /v6/reviewSummations?metadata=true` returns full metadata for admins, copilots, and machine clients. Member/submitter requests are limited to their own Marathon Match submissions and receive only progress metadata: `testProcess`, `testProgress`, `testStatus`, and safe count/timestamp fields in `testProgressDetails`. Per-seed scores and runner messages are not returned to competitors.
