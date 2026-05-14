@@ -83,31 +83,32 @@ describe('MyReviewService', () => {
       },
     ]);
 
-    challengePrismaMock.$queryRaw.mockResolvedValueOnce([
-      {
-        challengeId: 'challenge-2',
-        challengeName: 'Completed Challenge',
-        challengeTypeId: null,
-        challengeTypeName: null,
-        currentPhaseName: null,
-        currentPhaseScheduledEnd: null,
-        currentPhaseActualEnd: null,
-        resourceRoleName: 'Reviewer',
-        challengeEndDate: pastDate,
-        totalReviews: 1n,
-        completedReviews: 1n,
-        winners: [
-          {
-            userId: 12345,
-            handle: 'topcoder',
-            placement: 1,
-            type: 'CHALLENGE_PRIZES',
-          },
-        ],
-        status: 'COMPLETED',
-        totalCount: 1n,
-      },
-    ]);
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-2',
+          challengeName: 'Completed Challenge',
+          challengeTypeId: null,
+          challengeTypeName: null,
+          currentPhaseName: null,
+          currentPhaseScheduledEnd: null,
+          currentPhaseActualEnd: null,
+          resourceRoleName: 'Reviewer',
+          challengeEndDate: pastDate,
+          totalReviews: 1n,
+          completedReviews: 1n,
+          winners: [
+            {
+              userId: 12345,
+              handle: 'topcoder',
+              placement: 1,
+              type: 'CHALLENGE_PRIZES',
+            },
+          ],
+          status: 'COMPLETED',
+        },
+      ]);
 
     const result = await service.getMyReviews(
       { isMachine: false, userId: 'reviewer-1' },
@@ -132,7 +133,7 @@ describe('MyReviewService', () => {
       totalCount: 1,
       totalPages: 1,
     });
-    expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(2);
     expect(memberPrismaMock.member.findMany).toHaveBeenCalledWith({
       where: {
         userId: {
@@ -185,7 +186,7 @@ describe('MyReviewService', () => {
       'CANCELLED_CLIENT_REQUEST',
     ];
 
-    challengePrismaMock.$queryRaw.mockResolvedValueOnce([]);
+    challengePrismaMock.$queryRaw.mockResolvedValueOnce([{ total: 0n }]);
 
     const result = await service.getMyReviews(
       { isMachine: false, userId: '123' },
@@ -204,14 +205,14 @@ describe('MyReviewService', () => {
     const query = challengePrismaMock.$queryRaw.mock.calls[0][0];
     const queryDetails = query.inspect();
 
-    expect(queryDetails.sql).toContain('base_matches AS MATERIALIZED');
-    expect(queryDetails.sql).toContain('COUNT(*) OVER() AS "totalCount"');
     expect(queryDetails.sql).toContain('c.status IN');
     expect(queryDetails.values).toEqual(expect.arrayContaining(pastStatuses));
   });
 
   it('filters by specific challenge status when provided for past reviews', async () => {
-    challengePrismaMock.$queryRaw.mockResolvedValueOnce([]);
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([]);
 
     await service.getMyReviews(
       { isMachine: false, userId: '123' },
@@ -227,7 +228,9 @@ describe('MyReviewService', () => {
   });
 
   it('uses a paged base query for past member challenge end sorting', async () => {
-    challengePrismaMock.$queryRaw.mockResolvedValueOnce([]);
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([]);
 
     await service.getMyReviews(
       { isMachine: false, userId: '151743' },
@@ -235,18 +238,18 @@ describe('MyReviewService', () => {
       { page: 1, perPage: 50 },
     );
 
-    const query = challengePrismaMock.$queryRaw.mock.calls[0][0];
+    const query = challengePrismaMock.$queryRaw.mock.calls[1][0];
     const queryDetails = query.inspect();
     const sql = queryDetails.sql.replace(/\s+/g, ' ');
 
-    expect(sql).toContain('base_matches AS MATERIALIZED');
     expect(sql).toContain('base_page AS MATERIALIZED');
-    expect(sql).toContain('COUNT(*) OVER() AS "totalCount"');
-    expect(sql).toContain('ORDER BY "challengeEndDate" DESC NULLS LAST');
+    expect(sql).toContain('JOIN LATERAL');
+    expect(sql).not.toContain('COUNT(*) OVER() AS "totalCount"');
+    expect(sql).toContain('ORDER BY c."endDate" DESC NULLS LAST');
     expect(sql).toContain('ORDER BY bp."challengeEndDate" DESC NULLS LAST');
     expect(queryDetails.values).toEqual(expect.arrayContaining(['151743']));
     expect(queryDetails.values).toEqual(expect.arrayContaining([50, 0]));
-    expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(2);
   });
 
   it('reports negative time left when a phase is overdue and uses signed ordering', async () => {
