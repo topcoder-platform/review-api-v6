@@ -34,7 +34,6 @@ interface ChallengeSummaryRow {
   hasPendingAppealResponses: boolean;
   isAppealsResponsePhaseOpen: boolean | null;
   appealsResponsePhaseName: string | null;
-  totalCount?: bigint | null;
 }
 
 const PAST_CHALLENGE_STATUSES = [
@@ -573,9 +572,22 @@ export class MyReviewService {
     const withClause = cteFragments.length
       ? Prisma.sql`WITH ${joinSqlFragments(cteFragments, Prisma.sql`, `)} `
       : Prisma.sql``;
+    const countWithClause =
+      !adminUser && normalizedUserId
+        ? Prisma.sql`
+          WITH member_resources AS (
+            SELECT
+              r.id,
+              r."challengeId",
+              r."roleId"
+            FROM resources."Resource" r
+            WHERE r."memberId" = ${normalizedUserId}
+          )
+        `
+        : Prisma.sql``;
 
     const countQuery = Prisma.sql`
-      ${withClause}
+      ${countWithClause}
       SELECT COUNT(*) AS "total"
       FROM challenges."Challenge" c
       ${countJoinClause}
@@ -587,12 +599,37 @@ export class MyReviewService {
     let totalPages = 0;
 
     if (shouldFetchPastChallenges && !adminUser) {
-      const pastSortFragments: Prisma.Sql[] = [];
+      const countQueryDetails = countQuery.inspect();
+      this.logger.debug({
+        message: 'Executing past challenge count query',
+        sql: countQueryDetails.sql,
+        parameters: countQueryDetails.values,
+      });
+
+      const countResult =
+        await this.challengePrisma.$queryRaw<{ total: bigint }[]>(countQuery);
+      totalCount = Number(countResult?.[0]?.total ?? 0n);
+      totalPages = totalCount ? Math.ceil(totalCount / perPage) : 0;
+
+      if (!totalCount) {
+        return {
+          data: [],
+          meta: {
+            page,
+            perPage,
+            totalCount: 0,
+            totalPages: 0,
+          },
+        };
+      }
+
+      const shouldUseChallengeOrderedPastQuery = sortBy !== 'challengeName';
+      const pastPageSortFragments: Prisma.Sql[] = [];
       const pastFinalSortFragments: Prisma.Sql[] = [];
 
       switch (sortBy) {
         case 'challengeName':
-          pastSortFragments.push(
+          pastPageSortFragments.push(
             Prisma.sql`"challengeName" ${directionSql} NULLS LAST`,
           );
           pastFinalSortFragments.push(
@@ -600,8 +637,8 @@ export class MyReviewService {
           );
           break;
         case 'challengeEndDate':
-          pastSortFragments.push(
-            Prisma.sql`"challengeEndDate" ${directionSql} NULLS LAST`,
+          pastPageSortFragments.push(
+            Prisma.sql`c."endDate" ${directionSql} NULLS LAST`,
           );
           pastFinalSortFragments.push(
             Prisma.sql`bp."challengeEndDate" ${directionSql} NULLS LAST`,
@@ -611,19 +648,25 @@ export class MyReviewService {
           break;
       }
 
-      const pastFallbackOrderFragments = [
-        Prisma.sql`"challengeEndDate" DESC NULLS LAST`,
-        Prisma.sql`"challengeCreatedAt" DESC NULLS LAST`,
-        Prisma.sql`"challengeName" ASC`,
-      ];
+      const pastFallbackOrderFragments = shouldUseChallengeOrderedPastQuery
+        ? [
+            Prisma.sql`c."endDate" DESC NULLS LAST`,
+            Prisma.sql`c."createdAt" DESC NULLS LAST`,
+            Prisma.sql`c.name ASC`,
+          ]
+        : [
+            Prisma.sql`"challengeEndDate" DESC NULLS LAST`,
+            Prisma.sql`"challengeCreatedAt" DESC NULLS LAST`,
+            Prisma.sql`"challengeName" ASC`,
+          ];
       const pastFinalFallbackOrderFragments = [
         Prisma.sql`bp."challengeEndDate" DESC NULLS LAST`,
         Prisma.sql`bp."challengeCreatedAt" DESC NULLS LAST`,
         Prisma.sql`bp."challengeName" ASC`,
       ];
-      const pastOrderClause = joinSqlFragments(
-        pastSortFragments.length
-          ? [...pastSortFragments, ...pastFallbackOrderFragments]
+      const pastPageOrderClause = joinSqlFragments(
+        pastPageSortFragments.length
+          ? [...pastPageSortFragments, ...pastFallbackOrderFragments]
           : pastFallbackOrderFragments,
         Prisma.sql`, `,
       );
@@ -634,7 +677,107 @@ export class MyReviewService {
         Prisma.sql`, `,
       );
 
-      const rowQuery = Prisma.sql`
+      const rowQuery = shouldUseChallengeOrderedPastQuery
+        ? Prisma.sql`
+        WITH
+          base_page AS MATERIALIZED (
+            SELECT
+              c.id AS "challengeId",
+              c.name AS "challengeName",
+              c."typeId" AS "challengeTypeId",
+              ct.name AS "challengeTypeName",
+              r.id AS "resourceId",
+              rr.name AS "resourceRoleName",
+              c."endDate" AS "challengeEndDate",
+              c."createdAt" AS "challengeCreatedAt",
+              c.status AS "status"
+            FROM challenges."Challenge" c
+            JOIN LATERAL (
+              SELECT
+                r.id,
+                r."roleId"
+              FROM resources."Resource" r
+              WHERE r."challengeId" = c.id
+                AND r."memberId" = ${normalizedUserId}
+            ) r ON TRUE
+            LEFT JOIN resources."ResourceRole" rr
+              ON rr.id = r."roleId"
+            LEFT JOIN challenges."ChallengeType" ct
+              ON ct.id = c."typeId"
+            WHERE ${rowWhereClause}
+            ORDER BY ${pastPageOrderClause}
+            LIMIT ${perPage}
+            OFFSET ${offset}
+          )
+        SELECT
+          bp."challengeId" AS "challengeId",
+          bp."challengeName" AS "challengeName",
+          bp."challengeTypeId" AS "challengeTypeId",
+          bp."challengeTypeName" AS "challengeTypeName",
+          cp.name AS "currentPhaseName",
+          cr."hasAIReview" as "hasAIReview",
+          cp."scheduledEndDate" AS "currentPhaseScheduledEnd",
+          cp."actualEndDate" AS "currentPhaseActualEnd",
+          bp."resourceRoleName" AS "resourceRoleName",
+          bp."challengeEndDate" AS "challengeEndDate",
+          review_totals."totalReviews" AS "totalReviews",
+          review_totals."completedReviews" AS "completedReviews",
+          cw.winners AS "winners",
+          FALSE AS "hasIncompleteReviews",
+          NULL::text AS "incompletePhaseName",
+          FALSE AS "hasPendingAppealResponses",
+          NULL::boolean AS "isAppealsResponsePhaseOpen",
+          NULL::text AS "appealsResponsePhaseName",
+          bp.status AS "status"
+        FROM base_page bp
+        LEFT JOIN LATERAL (
+          SELECT
+            p.name,
+            p."scheduledEndDate",
+            p."actualEndDate"
+          FROM challenges."ChallengePhase" p
+          WHERE p."challengeId" = bp."challengeId"
+          ORDER BY
+            CASE WHEN p."isOpen" IS TRUE THEN 0 ELSE 1 END,
+            p."scheduledEndDate" NULLS LAST,
+            p."actualEndDate" NULLS LAST
+          LIMIT 1
+        ) cp ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::bigint AS "totalReviews",
+            COALESCE(
+              SUM(CASE WHEN rv.status = 'COMPLETED' THEN 1 ELSE 0 END),
+              0
+            )::bigint AS "completedReviews"
+          FROM reviews.review rv
+          WHERE rv."resourceId" = bp."resourceId"
+        ) review_totals ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            jsonb_agg(
+              jsonb_build_object(
+                'userId', w."userId",
+                'handle', w.handle,
+                'placement', w."placement",
+                'type', w.type
+              )
+              ORDER BY w."placement" ASC
+            ) AS winners
+          FROM challenges."ChallengeWinner" w
+          WHERE w."challengeId" = bp."challengeId"
+        ) cw ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            TRUE AS "hasAIReview"
+          FROM challenges."ChallengeReviewer" cr
+          WHERE cr."challengeId" = bp."challengeId"
+            AND cr."aiWorkflowId" IS NOT NULL
+          LIMIT 1
+        ) cr ON TRUE
+        ORDER BY ${pastFinalOrderClause}
+      `
+        : Prisma.sql`
         WITH
           member_resources AS MATERIALIZED (
             SELECT
@@ -666,10 +809,9 @@ export class MyReviewService {
           ),
           base_page AS MATERIALIZED (
             SELECT
-              *,
-              COUNT(*) OVER() AS "totalCount"
+              *
             FROM base_matches
-            ORDER BY ${pastOrderClause}
+            ORDER BY ${pastPageOrderClause}
             LIMIT ${perPage}
             OFFSET ${offset}
           )
@@ -692,8 +834,7 @@ export class MyReviewService {
           FALSE AS "hasPendingAppealResponses",
           NULL::boolean AS "isAppealsResponsePhaseOpen",
           NULL::text AS "appealsResponsePhaseName",
-          bp.status AS "status",
-          bp."totalCount" AS "totalCount"
+          bp.status AS "status"
         FROM base_page bp
         LEFT JOIN LATERAL (
           SELECT
@@ -745,30 +886,15 @@ export class MyReviewService {
 
       const challengeQueryDetails = rowQuery.inspect();
       this.logger.debug({
-        message: 'Executing paged past challenge summary query',
+        message: shouldUseChallengeOrderedPastQuery
+          ? 'Executing challenge-ordered past challenge summary query'
+          : 'Executing member-ordered past challenge summary query',
         sql: challengeQueryDetails.sql,
         parameters: challengeQueryDetails.values,
       });
 
       challengeRows =
         await this.challengePrisma.$queryRaw<ChallengeSummaryRow[]>(rowQuery);
-
-      if (!challengeRows.length && page > 1) {
-        const countQueryDetails = countQuery.inspect();
-        this.logger.debug({
-          message: 'Executing fallback past challenge count query',
-          sql: countQueryDetails.sql,
-          parameters: countQueryDetails.values,
-        });
-
-        const countResult =
-          await this.challengePrisma.$queryRaw<{ total: bigint }[]>(countQuery);
-        totalCount = Number(countResult?.[0]?.total ?? 0n);
-      } else {
-        totalCount = Number(challengeRows?.[0]?.totalCount ?? 0n);
-      }
-
-      totalPages = totalCount ? Math.ceil(totalCount / perPage) : 0;
     } else {
       const countQueryDetails = countQuery.inspect();
       this.logger.debug({
