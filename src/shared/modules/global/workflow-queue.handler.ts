@@ -305,7 +305,10 @@ export class WorkflowQueueHandler implements OnModuleInit {
         },
       });
 
-      if (!aiWorkflowRun || aiWorkflowRun.status !== 'DISPATCHED') {
+      if (
+        !aiWorkflowRun ||
+        !['DISPATCHED', 'QUEUED'].includes(aiWorkflowRun.status)
+      ) {
         this.logger.error(
           `Workflow run with id ${aiWorkflowRunId} is not in DISPATCHED status or not found. Status: ${aiWorkflowRun?.status}`,
         );
