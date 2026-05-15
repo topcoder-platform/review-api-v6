@@ -214,16 +214,35 @@ export class WorkflowQueueHandler implements OnModuleInit {
       where: { id: (job.data as { jobId: string })?.jobId },
     });
 
-    await this.giteaService.runDispatchWorkflow(
-      workflow,
-      workflowRun,
-      (job.data as { params: any })?.params,
-    );
+    const initialStatus = workflowRun.status;
 
     await this.prisma.aiWorkflowRun.update({
       where: { id: workflowRun.id },
       data: {
         status: 'DISPATCHED',
+      },
+    });
+
+    try {
+      await this.giteaService.runDispatchWorkflow(
+        workflow,
+        workflowRun,
+        (job.data as { params: any })?.params,
+      );
+    } catch (error) {
+      await this.prisma.aiWorkflowRun.update({
+        where: { id: workflowRun.id },
+        data: {
+          status: initialStatus,
+        },
+      });
+
+      throw error;
+    }
+
+    await this.prisma.aiWorkflowRun.update({
+      where: { id: workflowRun.id },
+      data: {
         scheduledJobId: job.id,
         completedJobs: 0,
       },
