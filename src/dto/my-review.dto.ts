@@ -168,6 +168,17 @@ export class MyReviewSummaryDto {
   reviewProgress: number;
 
   @ApiProperty({
+    description: 'Number of submissions recorded for the challenge',
+  })
+  numOfSubmissions: number;
+
+  @ApiProperty({
+    description:
+      'Whether an Iterative Review phase is currently open for the challenge',
+  })
+  isIterativeReviewPhaseOpen: boolean;
+
+  @ApiProperty({
     description:
       'Indicates whether the user has outstanding review deliverables for this challenge',
   })

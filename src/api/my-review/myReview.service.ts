@@ -25,6 +25,8 @@ interface ChallengeSummaryRow {
   currentPhaseActualEnd: Date | null;
   resourceRoleName: string | null;
   challengeEndDate: Date | null;
+  numOfSubmissions: number | null;
+  isIterativeReviewPhaseOpen: boolean | null;
   totalReviews: bigint | null;
   completedReviews: bigint | null;
   winners: Prisma.JsonValue | null;
@@ -455,6 +457,20 @@ export class MyReviewService {
       `,
     );
 
+    metricJoins.push(
+      Prisma.sql`
+        LEFT JOIN LATERAL (
+          SELECT
+            TRUE AS "isIterativeReviewPhaseOpen"
+          FROM challenges."ChallengePhase" p
+          WHERE p."challengeId" = c.id
+            AND LOWER(p.name) = 'iterative review'
+            AND p."isOpen" IS TRUE
+          LIMIT 1
+        ) iterative_review_phase ON TRUE
+      `,
+    );
+
     const joinClause = joinSqlFragments(
       [...baseJoins, ...metricJoins],
       Prisma.sql``,
@@ -689,6 +705,7 @@ export class MyReviewService {
               r.id AS "resourceId",
               rr.name AS "resourceRoleName",
               c."endDate" AS "challengeEndDate",
+              c."numOfSubmissions" AS "numOfSubmissions",
               c."createdAt" AS "challengeCreatedAt",
               c.status AS "status"
             FROM challenges."Challenge" c
@@ -720,6 +737,8 @@ export class MyReviewService {
           cp."actualEndDate" AS "currentPhaseActualEnd",
           bp."resourceRoleName" AS "resourceRoleName",
           bp."challengeEndDate" AS "challengeEndDate",
+          bp."numOfSubmissions" AS "numOfSubmissions",
+          iterative_review_phase."isIterativeReviewPhaseOpen" AS "isIterativeReviewPhaseOpen",
           review_totals."totalReviews" AS "totalReviews",
           review_totals."completedReviews" AS "completedReviews",
           cw.winners AS "winners",
@@ -775,6 +794,15 @@ export class MyReviewService {
             AND cr."aiWorkflowId" IS NOT NULL
           LIMIT 1
         ) cr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            TRUE AS "isIterativeReviewPhaseOpen"
+          FROM challenges."ChallengePhase" p
+          WHERE p."challengeId" = bp."challengeId"
+            AND LOWER(p.name) = 'iterative review'
+            AND p."isOpen" IS TRUE
+          LIMIT 1
+        ) iterative_review_phase ON TRUE
         ORDER BY ${pastFinalOrderClause}
       `
         : Prisma.sql`
@@ -796,6 +824,7 @@ export class MyReviewService {
               r.id AS "resourceId",
               rr.name AS "resourceRoleName",
               c."endDate" AS "challengeEndDate",
+              c."numOfSubmissions" AS "numOfSubmissions",
               c."createdAt" AS "challengeCreatedAt",
               c.status AS "status"
             FROM member_resources r
@@ -826,6 +855,8 @@ export class MyReviewService {
           cp."actualEndDate" AS "currentPhaseActualEnd",
           bp."resourceRoleName" AS "resourceRoleName",
           bp."challengeEndDate" AS "challengeEndDate",
+          bp."numOfSubmissions" AS "numOfSubmissions",
+          iterative_review_phase."isIterativeReviewPhaseOpen" AS "isIterativeReviewPhaseOpen",
           review_totals."totalReviews" AS "totalReviews",
           review_totals."completedReviews" AS "completedReviews",
           cw.winners AS "winners",
@@ -881,6 +912,15 @@ export class MyReviewService {
             AND cr."aiWorkflowId" IS NOT NULL
           LIMIT 1
         ) cr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            TRUE AS "isIterativeReviewPhaseOpen"
+          FROM challenges."ChallengePhase" p
+          WHERE p."challengeId" = bp."challengeId"
+            AND LOWER(p.name) = 'iterative review'
+            AND p."isOpen" IS TRUE
+          LIMIT 1
+        ) iterative_review_phase ON TRUE
         ORDER BY ${pastFinalOrderClause}
       `;
 
@@ -934,6 +974,8 @@ export class MyReviewService {
           cp."actualEndDate" AS "currentPhaseActualEnd",
           rr.name AS "resourceRoleName",
           c."endDate" AS "challengeEndDate",
+          c."numOfSubmissions" AS "numOfSubmissions",
+          iterative_review_phase."isIterativeReviewPhaseOpen" AS "isIterativeReviewPhaseOpen",
           review_totals."totalReviews" AS "totalReviews",
           review_totals."completedReviews" AS "completedReviews",
           cw.winners AS "winners",
@@ -1045,6 +1087,8 @@ export class MyReviewService {
         timeLeftInCurrentPhase: timeLeftSeconds,
         resourceRoleName: row.resourceRoleName ?? adminRoleLabel,
         reviewProgress,
+        numOfSubmissions: row.numOfSubmissions ?? 0,
+        isIterativeReviewPhaseOpen: row.isIterativeReviewPhaseOpen === true,
         winners,
         deliverableDue,
         deliverableDuePhaseName,
