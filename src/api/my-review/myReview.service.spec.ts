@@ -44,6 +44,8 @@ describe('MyReviewService', () => {
           currentPhaseActualEnd: null,
           resourceRoleName: null,
           challengeEndDate: future,
+          numOfSubmissions: 2,
+          isIterativeReviewPhaseOpen: true,
           totalReviews: BigInt(4),
           completedReviews: BigInt(2),
           winners: null,
@@ -61,6 +63,8 @@ describe('MyReviewService', () => {
       currentPhaseName: 'Review',
       resourceRoleName: 'Admin',
       reviewProgress: 0.5,
+      numOfSubmissions: 2,
+      isIterativeReviewPhaseOpen: true,
     });
     expect(result.data[0].timeLeftInCurrentPhase).toBeGreaterThan(0);
     expect(result.meta).toEqual({
@@ -322,6 +326,52 @@ describe('MyReviewService', () => {
     expect(sql).toContain('ORDER BY');
     expect(sql).toContain('c.name DESC NULLS LAST');
     expect(sql).toContain('c."createdAt" DESC NULLS LAST');
+  });
+
+  it('returns submission and iterative review phase state for active challenges', async () => {
+    const future = new Date(Date.now() + 60_000);
+
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([
+        {
+          challengeId: 'challenge-topgear',
+          challengeName: 'Topgear Task Challenge',
+          challengeTypeId: 'type-topgear',
+          challengeTypeName: 'Topgear Task',
+          currentPhaseName: 'Topgear Submission',
+          currentPhaseScheduledEnd: future,
+          currentPhaseActualEnd: null,
+          resourceRoleName: 'Reviewer',
+          challengeEndDate: future,
+          numOfSubmissions: 3,
+          isIterativeReviewPhaseOpen: false,
+          totalReviews: 0n,
+          completedReviews: 0n,
+          winners: null,
+          status: 'ACTIVE',
+        },
+      ]);
+
+    const result = await service.getMyReviews(
+      { isMachine: false, userId: '151743' },
+      {},
+    );
+
+    expect(result.data[0]).toMatchObject({
+      challengeId: 'challenge-topgear',
+      numOfSubmissions: 3,
+      isIterativeReviewPhaseOpen: false,
+    });
+
+    const rowQuery = challengePrismaMock.$queryRaw.mock.calls[1][0];
+    const sql = rowQuery.inspect().sql.replace(/\s+/g, ' ');
+
+    expect(sql).toContain('c."numOfSubmissions" AS "numOfSubmissions"');
+    expect(sql).toContain(
+      'iterative_review_phase."isIterativeReviewPhaseOpen" AS "isIterativeReviewPhaseOpen"',
+    );
+    expect(sql).toContain("LOWER(p.name) = 'iterative review'");
   });
 
   it('enables time left and challenge end sorting options', async () => {
