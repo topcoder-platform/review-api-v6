@@ -11,6 +11,11 @@ const PGBOSS_JOB_POLLING_INTERVAL_SEC = parseFloat(
   process.env.PGBOSS_JOB_POLLING_INTERVAL_SEC || '10',
 );
 
+const PGBOSS_WORKER_CONCURRENCY_PER_QUEUE = parseInt(
+  process.env.PGBOSS_WORKER_CONCURRENCY_PER_QUEUE || '1',
+  10,
+);
+
 /**
  * QueueSchedulerService
  */
@@ -63,7 +68,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
     }
     await this.boss.createQueue(queueName, {
       name: queueName,
-      policy: policies.singleton,
+      policy: policies.standard,
       retryLimit: 1,
       expireInSeconds: 3600,
       ...options,
@@ -149,7 +154,7 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
         }
 
         /**
-         * Continuously polls a job queue and processes jobs one at a time.
+         * Continuously polls a job queue and processes one job per loop iteration.
          *
          * @typeParam T - The type of the job payload/data.
          *
@@ -162,6 +167,8 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
          *   invocations are swallowed and do not produce unhandled promise rejections. Note that errors thrown
          *   by the current invocation (for example from `handlerFn`) will propagate to the caller of this invocation
          *   unless the caller handles them.
+         * - `PGBOSS_WORKER_CONCURRENCY_PER_QUEUE` independent poll loops are started per queue so that up to that
+         *   many jobs can be fetched and processed concurrently from the same queue.
          *
          * @returns A Promise that resolves when this single poll iteration completes.
          */
@@ -219,7 +226,13 @@ export class QueueSchedulerService implements OnModuleInit, OnModuleDestroy {
           }
         };
 
-        await poll();
+        // Start PGBOSS_WORKER_CONCURRENCY_PER_QUEUE independent poll loops so that up to that
+        // many jobs from this queue can be dispatched concurrently.
+        await Promise.all(
+          Array.from({ length: PGBOSS_WORKER_CONCURRENCY_PER_QUEUE }, () =>
+            poll(),
+          ),
+        );
       }),
     );
   }
