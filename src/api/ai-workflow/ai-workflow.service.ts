@@ -28,9 +28,9 @@ import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { QueueSchedulerService } from 'src/shared/modules/global/queue-scheduler.service';
 import { Prisma, VoteType } from '@prisma/client';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
+import { WorkflowQueueHandler } from 'src/shared/modules/global/workflow-queue.handler';
 
 @Injectable()
 export class AiWorkflowService {
@@ -42,7 +42,7 @@ export class AiWorkflowService {
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
     private readonly giteaService: GiteaService,
-    private readonly scheduler: QueueSchedulerService,
+    private readonly workflowQueueHandler: WorkflowQueueHandler,
     private readonly challengePrisma: ChallengePrismaService,
   ) {
     this.logger = LoggerService.forRoot('AiWorkflowService');
@@ -71,6 +71,7 @@ export class AiWorkflowService {
           select: {
             id: true,
             challengeId: true,
+            memberId: true,
           },
         },
       },
@@ -112,32 +113,27 @@ export class AiWorkflowService {
       },
     });
 
-    if (!this.scheduler.isEnabled) {
+    if (!this.workflowQueueHandler.isDispatchEnabled) {
       this.logger.log(
-        `Scheduler is disabled; retriggered run ${retriggeredRun.id} remains INIT.`,
+        `AI workflow dispatch is disabled; retriggered run ${retriggeredRun.id} remains INIT.`,
       );
       return retriggeredRun;
     }
 
-    await this.scheduler.queueJob(
-      existingRun.workflow.gitWorkflowId,
-      retriggeredRun.id,
-      {
-        workflowId: retriggeredRun.workflowId,
-        params: {
-          challengeId: existingRun.submission.challengeId,
-          submissionId: retriggeredRun.submissionId,
-          aiWorkflowId: retriggeredRun.workflowId,
-          aiWorkflowRunId: retriggeredRun.id,
-        },
+    await this.workflowQueueHandler.dispatchWorkflowRun(retriggeredRun.id, {
+      workflowId: retriggeredRun.workflowId,
+      workflowGitWorkflowId: existingRun.workflow.gitWorkflowId,
+      params: {
+        challengeId: existingRun.submission.challengeId,
+        submissionId: retriggeredRun.submissionId,
+        userId: existingRun.submission.memberId,
+        aiWorkflowId: retriggeredRun.workflowId,
+        aiWorkflowRunId: retriggeredRun.id,
       },
-    );
+    });
 
-    return this.prisma.aiWorkflowRun.update({
+    return this.prisma.aiWorkflowRun.findUniqueOrThrow({
       where: { id: retriggeredRun.id },
-      data: {
-        status: 'QUEUED',
-      },
       include: {
         workflow: true,
       },

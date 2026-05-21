@@ -1,8 +1,6 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { GiteaService } from './gitea.service';
 import { PrismaService } from './prisma.service';
-import { QueueSchedulerService } from './queue-scheduler.service';
-import { Job } from 'pg-boss';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
 import { CommonConfig } from 'src/shared/config/common.config';
@@ -25,7 +23,7 @@ function stringToHash(string: string): number {
 }
 
 @Injectable()
-export class WorkflowQueueHandler implements OnModuleInit {
+export class WorkflowQueueHandler {
   private readonly logger: Logger = new Logger(WorkflowQueueHandler.name);
 
   constructor(
@@ -33,12 +31,15 @@ export class WorkflowQueueHandler implements OnModuleInit {
     private readonly challengesPrisma: ChallengePrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly membersPrisma: MemberPrismaService,
-    private readonly scheduler: QueueSchedulerService,
     private readonly giteaService: GiteaService,
     private readonly eventBusService: EventBusService,
     private readonly aiReviewerDecisionMaker: AiReviewerDecisionMakerService,
     private readonly submissionService: SubmissionService,
   ) {}
+
+  get isDispatchEnabled(): boolean {
+    return process.env.DISPATCH_AI_REVIEW_WORKFLOWS === 'true';
+  }
 
   private async triggerEvaluateSubmission(submissionId: string): Promise<void> {
     try {
@@ -82,19 +83,6 @@ export class WorkflowQueueHandler implements OnModuleInit {
     }
   }
 
-  async onModuleInit() {
-    const queues = (
-      await this.prisma.aiWorkflow.groupBy({
-        by: ['gitWorkflowId'],
-      })
-    ).map((d) => d.gitWorkflowId);
-
-    await this.scheduler.handleWorkForQueues<{ data: any }>(
-      queues,
-      this.handleQueuedWorkflowRun.bind(this),
-    );
-  }
-
   async queueWorkflowRuns(
     aiWorkflows: { id: string }[],
     challengeId: string,
@@ -121,7 +109,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       return;
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    const workflowRuns = await this.prisma.$transaction(async (tx) => {
       // get a lock for the challengeId, submissionId pair
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${stringToHash(`queueWorkflowRuns, ${challengeId}:${submissionId}`)})`;
 
@@ -132,10 +120,10 @@ export class WorkflowQueueHandler implements OnModuleInit {
         this.logger.log(
           `AI workflow runs already queued for submission ${submissionId}. Skipping queueing.`,
         );
-        return;
+        return [];
       }
 
-      const workflowRuns = await tx.aiWorkflowRun.createManyAndReturn({
+      return tx.aiWorkflowRun.createManyAndReturn({
         data: activeWorkflows.map((workflow) => ({
           workflowId: workflow.id,
           submissionId,
@@ -146,31 +134,39 @@ export class WorkflowQueueHandler implements OnModuleInit {
           workflow: { select: { gitWorkflowId: true } },
         },
       });
-
-      if (!this.scheduler.isEnabled) {
-        this.logger.log(
-          'Scheduler is disabled, skipping scheduling workflowRuns for now!',
-        );
-        return;
-      }
-
-      for (const run of workflowRuns) {
-        await this.scheduler.queueJob(run.workflow.gitWorkflowId, run.id, {
-          workflowId: run.workflowId,
-          params: {
-            challengeId,
-            submissionId,
-            aiWorkflowId: run.workflowId,
-            aiWorkflowRunId: run.id,
-          },
-        });
-
-        await tx.aiWorkflowRun.update({
-          where: { id: run.id },
-          data: { status: 'QUEUED' },
-        });
-      }
     });
+
+    if (!workflowRuns.length) {
+      return;
+    }
+
+    if (!this.isDispatchEnabled) {
+      this.logger.log(
+        'AI workflow dispatch is disabled, leaving workflow runs in INIT status.',
+      );
+      return;
+    }
+
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: submissionId },
+      select: { memberId: true },
+    });
+    const userId = submission?.memberId ?? null;
+
+    for (const run of workflowRuns) {
+      await this.dispatchWorkflowRun(run.id, {
+        workflowId: run.workflowId,
+        workflowGitWorkflowId: run.workflow.gitWorkflowId,
+        params: {
+          workflowId: run.workflowId,
+          userId,
+          challengeId,
+          submissionId,
+          aiWorkflowId: run.workflowId,
+          aiWorkflowRunId: run.id,
+        },
+      });
+    }
   }
 
   async hasQueuedWorkflowRuns(submissionId: string): Promise<boolean> {
@@ -185,33 +181,35 @@ export class WorkflowQueueHandler implements OnModuleInit {
     return !!existing;
   }
 
-  async handleQueuedWorkflowRun([job]: [Job]) {
-    this.logger.log(`Processing job ${job.id}`);
-
+  async dispatchWorkflowRun(
+    workflowRunId: string,
+    payload: {
+      workflowId: string;
+      workflowGitWorkflowId?: string;
+      params: Record<string, any>;
+    },
+  ) {
     const workflow = await this.prisma.aiWorkflow.findUniqueOrThrow({
-      where: { id: (job.data as { workflowId: string })?.workflowId },
+      where: { id: payload.workflowId },
     });
 
     if (workflow.disabled) {
-      const queuedRunId = (job.data as { jobId?: string })?.jobId;
-      if (queuedRunId) {
-        await this.prisma.aiWorkflowRun.update({
-          where: { id: queuedRunId },
-          data: {
-            status: 'CANCELLED',
-            completedAt: new Date(),
-          },
-        });
-      }
+      await this.prisma.aiWorkflowRun.update({
+        where: { id: workflowRunId },
+        data: {
+          status: 'CANCELLED',
+          completedAt: new Date(),
+        },
+      });
 
       this.logger.warn(
-        `Skipping dispatch for disabled workflow ${workflow.id}. job=${job.id}`,
+        `Skipping dispatch for disabled workflow ${workflow.id}. run=${workflowRunId}`,
       );
       return;
     }
 
     const workflowRun = await this.prisma.aiWorkflowRun.findUniqueOrThrow({
-      where: { id: (job.data as { jobId: string })?.jobId },
+      where: { id: workflowRunId },
     });
 
     const initialStatus = workflowRun.status;
@@ -227,7 +225,7 @@ export class WorkflowQueueHandler implements OnModuleInit {
       await this.giteaService.runDispatchWorkflow(
         workflow,
         workflowRun,
-        (job.data as { params: any })?.params,
+        payload.params,
       );
     } catch (error) {
       await this.prisma.aiWorkflowRun.update({
@@ -243,12 +241,11 @@ export class WorkflowQueueHandler implements OnModuleInit {
     await this.prisma.aiWorkflowRun.update({
       where: { id: workflowRun.id },
       data: {
-        scheduledJobId: job.id,
         completedJobs: 0,
       },
     });
 
-    this.logger.log(`Job ${job.id} promise finished.`);
+    this.logger.log(`Workflow run ${workflowRunId} dispatched.`);
   }
 
   async handleWorkflowRunEvents(event: {
@@ -421,29 +418,6 @@ export class WorkflowQueueHandler implements OnModuleInit {
 
         await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
 
-        try {
-          await this.scheduler.completeJob(
-            (aiWorkflowRun as any).workflow.gitWorkflowId,
-            aiWorkflowRun.scheduledJobId as string,
-            conclusion === 'FAILURE' ? 'fail' : 'complete',
-          );
-
-          if (conclusion === 'FAILURE') {
-            this.logger.log({
-              message: `Workflow job ${aiWorkflowRun.id} failed. Retrying!`,
-              aiWorkflowRunId: aiWorkflowRun.id,
-              gitRunId: event.workflow_job.run_id,
-              jobId: event.workflow_job.id,
-              status: conclusion,
-              timestamp: new Date().toISOString(),
-            });
-            return;
-          }
-        } catch (e) {
-          this.logger.log(aiWorkflowRun.id, e.message);
-          return;
-        }
-
         this.logger.log({
           message: `Workflow job ${aiWorkflowRun.id} completed with conclusion: ${conclusion}`,
           aiWorkflowRunId: aiWorkflowRun.id,
@@ -456,8 +430,9 @@ export class WorkflowQueueHandler implements OnModuleInit {
         try {
           await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
         } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
           this.logger.log(
-            `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${e.message ?? e}!`,
+            `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
           );
         }
 
@@ -477,8 +452,9 @@ export class WorkflowQueueHandler implements OnModuleInit {
             }
           }
         } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
           this.logger.error(
-            `Failed to publish AI workflow phase completion event for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${e.message ?? e}!`,
+            `Failed to publish AI workflow phase completion event for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
           );
         }
         break;
