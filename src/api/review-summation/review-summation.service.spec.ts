@@ -8,7 +8,7 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 
 describe('ReviewSummationService', () => {
   describe('searchSummation', () => {
-    it('limits submitters to their own summations and returns only safe progress metadata', async () => {
+    it('allows registered marathon submitters to view challenge summations with only safe progress metadata', async () => {
       const prismaMock = {
         reviewSummation: {
           findMany: jest.fn().mockResolvedValue([
@@ -27,7 +27,7 @@ describe('ReviewSummationService', () => {
               updatedAt: null,
               updatedBy: null,
               submission: {
-                memberId: 'member-1',
+                memberId: '111',
               },
               metadata: {
                 testProcess: 'provisional',
@@ -49,8 +49,35 @@ describe('ReviewSummationService', () => {
                 },
               },
             },
+            {
+              id: 'summation-2',
+              submissionId: 'submission-2',
+              aggregateScore: 100,
+              scorecardId: null,
+              isPassing: true,
+              isFinal: false,
+              isProvisional: true,
+              isExample: false,
+              reviewedDate: null,
+              createdAt: new Date('2026-05-01T00:00:00.000Z'),
+              createdBy: null,
+              updatedAt: null,
+              updatedBy: null,
+              submission: {
+                memberId: '222',
+              },
+              metadata: {
+                testProcess: 'provisional',
+                testScores: [
+                  {
+                    score: 100,
+                    seed: 987654321,
+                  },
+                ],
+              },
+            },
           ]),
-          count: jest.fn().mockResolvedValue(1),
+          count: jest.fn().mockResolvedValue(2),
         },
       };
       const challengeApiServiceMock = {
@@ -75,7 +102,7 @@ describe('ReviewSummationService', () => {
 
       const result = await service.searchSummation(
         {
-          userId: 'member-1',
+          userId: '111',
           isMachine: false,
           roles: [UserRole.User],
         },
@@ -95,12 +122,15 @@ describe('ReviewSummationService', () => {
             submission: {
               is: {
                 challengeId: 'challenge-1',
-                memberId: 'member-1',
               },
             },
           }),
         }),
       );
+      expect(result.data).toHaveLength(2);
+      expect(result.data.map((summation) => summation.submitterId)).toEqual([
+        111, 222,
+      ]);
       expect(result.data[0].metadata).toEqual({
         testProcess: 'provisional',
         testProgress: 0.5,
@@ -114,6 +144,9 @@ describe('ReviewSummationService', () => {
       });
       expect(JSON.stringify(result.data[0].metadata)).not.toContain(
         '123456789',
+      );
+      expect(JSON.stringify(result.data[1].metadata)).not.toContain(
+        '987654321',
       );
     });
   });
