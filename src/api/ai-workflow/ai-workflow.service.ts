@@ -351,6 +351,7 @@ export class AiWorkflowService {
       defUrl,
       gitWorkflowId,
       gitOwnerRepo,
+      timeoutSeconds,
     } = createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
@@ -382,6 +383,7 @@ export class AiWorkflowService {
           scorecardId,
           llmId,
           disabled: createAiWorkflowDto.disabled ?? false,
+          timeoutSeconds,
         },
       })
       .catch((e) => {

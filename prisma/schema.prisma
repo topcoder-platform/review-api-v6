@@ -708,6 +708,7 @@ model aiWorkflow {
   gitWorkflowId String   @db.VarChar
   gitOwnerRepo  String   @db.VarChar
   scorecardId String   @db.VarChar(14)
+  timeoutSeconds Int?   @default(1800)
   disabled    Boolean  @default(false)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
   createdBy   String?  @db.Text
@@ -726,11 +727,13 @@ model aiWorkflowRun {
   workflowId   String    @db.VarChar(14)
   submissionId String    @db.VarChar(14)
   startedAt    DateTime? @db.Timestamp(3)
+  lastDispatchedAt DateTime? @db.Timestamp(3)
   completedAt  DateTime? @db.Timestamp(3)
   gitRunId     String    @db.VarChar
   gitRunUrl    String?    @db.Text
   score        Float?    @db.DoublePrecision
   status       String    @db.VarChar
+  retryCount   Int       @default(0)
   usage        Json?     @db.JsonB
   scheduledJobId String?   @db.Text
   completedJobs Int? @default(0)

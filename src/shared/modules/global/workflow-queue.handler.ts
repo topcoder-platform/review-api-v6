@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { GiteaService } from './gitea.service';
 import { PrismaService } from './prisma.service';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
@@ -22,6 +23,10 @@ function stringToHash(string: string): number {
   return hash;
 }
 
+const AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = Number(
+  process.env.AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS ?? 10000,
+);
+
 @Injectable()
 export class WorkflowQueueHandler {
   private readonly logger: Logger = new Logger(WorkflowQueueHandler.name);
@@ -39,6 +44,207 @@ export class WorkflowQueueHandler {
 
   get isDispatchEnabled(): boolean {
     return process.env.DISPATCH_AI_REVIEW_WORKFLOWS === 'true';
+  }
+
+  get maxWorkflowRetries(): number {
+    const configured = Number(process.env.AI_WORKFLOW_MAX_RETRIES ?? 1);
+    if (!Number.isFinite(configured) || configured < 0) {
+      return 0;
+    }
+
+    return Math.floor(configured);
+  }
+
+  get defaultWorkflowTimeoutSeconds(): number {
+    const configured = Number(process.env.AI_WORKFLOW_TIMEOUT_SECONDS ?? 1800);
+    if (!Number.isFinite(configured) || configured < 30) {
+      return 1800;
+    }
+
+    return Math.floor(configured);
+  }
+
+  private getWorkflowTimeoutMs(workflow: any): number {
+    const workflowTimeoutSeconds = workflow.timeoutSeconds;
+    if (
+      typeof workflowTimeoutSeconds === 'number' &&
+      Number.isFinite(workflowTimeoutSeconds) &&
+      workflowTimeoutSeconds >= 30
+    ) {
+      return workflowTimeoutSeconds * 1000;
+    }
+
+    return this.defaultWorkflowTimeoutSeconds * 1000;
+  }
+
+  @Interval(AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS)
+  async processTimedOutWorkflowRuns(): Promise<void> {
+    if (!this.isDispatchEnabled) {
+      return;
+    }
+
+    const activeRuns = await this.prisma.aiWorkflowRun.findMany({
+      where: {
+        status: { in: ['DISPATCHED', 'IN_PROGRESS', 'QUEUED'] },
+        completedAt: null,
+      },
+      include: {
+        workflow: true,
+      },
+    });
+
+    if (!activeRuns.length) {
+      return;
+    }
+
+    const now = Date.now();
+
+    for (const run of activeRuns) {
+      const lastDispatchedAt = (run as any).lastDispatchedAt as
+        | Date
+        | null
+        | undefined;
+      const referenceTime =
+        lastDispatchedAt?.getTime() ?? run.startedAt?.getTime() ?? 0;
+      if (!referenceTime) {
+        continue;
+      }
+
+      const timeoutMs = this.getWorkflowTimeoutMs(run.workflow);
+      if (now - referenceTime <= timeoutMs) {
+        continue;
+      }
+
+      this.logger.warn(
+        `Workflow run ${run.id} timed out after ${timeoutMs / 1000}s. Evaluating retry policy.`,
+      );
+
+      await this.retryWorkflowRunIfEligible(run.id, 'TIMEOUT', {
+        failMessage: 'Workflow run timed out and retries exhausted',
+        retryMessage: 'Workflow run timed out, retrying dispatch',
+      });
+    }
+  }
+
+  private async buildDispatchPayload(workflowRunId: string): Promise<{
+    workflowId: string;
+    workflowGitWorkflowId?: string;
+    params: Record<string, any>;
+  }> {
+    const run = await this.prisma.aiWorkflowRun.findUniqueOrThrow({
+      where: { id: workflowRunId },
+      include: {
+        workflow: { select: { gitWorkflowId: true } },
+        submission: { select: { challengeId: true, memberId: true } },
+      },
+    });
+
+    return {
+      workflowId: run.workflowId,
+      workflowGitWorkflowId: run.workflow.gitWorkflowId,
+      params: {
+        workflowId: run.workflowId,
+        userId: run.submission?.memberId ?? null,
+        challengeId: run.submission?.challengeId,
+        submissionId: run.submissionId,
+        aiWorkflowId: run.workflowId,
+        aiWorkflowRunId: run.id,
+      },
+    };
+  }
+
+  private async retryWorkflowRunIfEligible(
+    workflowRunId: string,
+    terminalStatus: string,
+    logMessages: { failMessage: string; retryMessage: string },
+  ): Promise<boolean> {
+    const retryInfo = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${stringToHash(`retryWorkflowRun, ${workflowRunId}`)})`;
+
+      const run = await tx.aiWorkflowRun.findUnique({
+        where: { id: workflowRunId },
+        include: {
+          workflow: true,
+        },
+      });
+
+      if (!run) {
+        return { shouldRetry: false, retryCount: 0, hasRun: false };
+      }
+
+      const retryCountValue =
+        typeof (run as any).retryCount === 'number'
+          ? (run as any).retryCount
+          : 0;
+
+      if (
+        run.completedAt &&
+        ['SUCCESS', 'FAILURE', 'CANCELLED', 'TIMEOUT'].includes(run.status)
+      ) {
+        return {
+          shouldRetry: false,
+          retryCount: retryCountValue,
+          hasRun: true,
+        };
+      }
+
+      if (retryCountValue >= this.maxWorkflowRetries) {
+        await tx.aiWorkflowRun.update({
+          where: { id: run.id },
+          data: {
+            status: terminalStatus,
+            completedAt: new Date(),
+          },
+        });
+
+        return {
+          shouldRetry: false,
+          retryCount: retryCountValue,
+          hasRun: true,
+        };
+      }
+
+      await tx.aiWorkflowRun.update({
+        where: { id: run.id },
+        data: {
+          retryCount: { increment: 1 },
+          status: 'QUEUED',
+          completedAt: null,
+          startedAt: null,
+          lastDispatchedAt: null,
+          gitRunId: '',
+          gitRunUrl: null,
+          jobsCount: 0,
+          completedJobs: 0,
+          scheduledJobId: null,
+        },
+      });
+
+      return {
+        shouldRetry: true,
+        retryCount: retryCountValue + 1,
+        hasRun: true,
+      };
+    });
+
+    if (!retryInfo.hasRun) {
+      return false;
+    }
+
+    if (!retryInfo.shouldRetry) {
+      this.logger.warn(
+        `${logMessages.failMessage}. run=${workflowRunId}, retries=${retryInfo.retryCount}/${this.maxWorkflowRetries}`,
+      );
+      return false;
+    }
+
+    this.logger.warn(
+      `${logMessages.retryMessage}. run=${workflowRunId}, retry=${retryInfo.retryCount}/${this.maxWorkflowRetries}`,
+    );
+
+    const payload = await this.buildDispatchPayload(workflowRunId);
+    await this.dispatchWorkflowRun(workflowRunId, payload);
+    return true;
   }
 
   private async triggerEvaluateSubmission(submissionId: string): Promise<void> {
@@ -218,6 +424,9 @@ export class WorkflowQueueHandler {
       where: { id: workflowRun.id },
       data: {
         status: 'DISPATCHED',
+        lastDispatchedAt: new Date(),
+        completedAt: null,
+        startedAt: null,
       },
     });
 
@@ -241,6 +450,9 @@ export class WorkflowQueueHandler {
     await this.prisma.aiWorkflowRun.update({
       where: { id: workflowRun.id },
       data: {
+        gitRunId: '',
+        gitRunUrl: null,
+        jobsCount: 0,
         completedJobs: 0,
       },
     });
@@ -388,7 +600,7 @@ export class WorkflowQueueHandler {
           timestamp: new Date().toISOString(),
         });
         break;
-      case 'completed':
+      case 'completed': {
         // we need to mark the run as completed only when the last job in the run has been completed
         if (
           (aiWorkflowRun.completedJobs ?? 0) + 1 !==
@@ -407,10 +619,26 @@ export class WorkflowQueueHandler {
           break;
         }
 
+        const terminalStatus = conclusion || 'FAILURE';
+        const didRetry =
+          ['FAILURE', 'CANCELLED', 'TIMEOUT'].includes(terminalStatus) &&
+          (await this.retryWorkflowRunIfEligible(
+            aiWorkflowRun.id,
+            terminalStatus,
+            {
+              failMessage: `Workflow run ${aiWorkflowRun.id} ${terminalStatus.toLowerCase()} and retries exhausted`,
+              retryMessage: `Workflow run ${aiWorkflowRun.id} ${terminalStatus.toLowerCase()}, retrying`,
+            },
+          ));
+
+        if (didRetry) {
+          break;
+        }
+
         await this.prisma.aiWorkflowRun.update({
           where: { id: aiWorkflowRun.id },
           data: {
-            status: conclusion,
+            status: terminalStatus,
             completedAt: new Date(),
             completedJobs: { increment: 1 },
           },
@@ -423,7 +651,7 @@ export class WorkflowQueueHandler {
           aiWorkflowRunId: aiWorkflowRun.id,
           gitRunId: event.workflow_job.run_id,
           jobId: event.workflow_job.id,
-          status: conclusion,
+          status: terminalStatus,
           timestamp: new Date().toISOString(),
         });
 
@@ -458,6 +686,7 @@ export class WorkflowQueueHandler {
           );
         }
         break;
+      }
       default:
         break;
     }
@@ -684,7 +913,7 @@ export class WorkflowQueueHandler {
       const recentWorkflowRun = await this.prisma.aiWorkflowRun.findFirst({
         where: {
           submissionId,
-          status: { in: ['SUCCESS', 'FAILURE', 'CANCELLED'] },
+          status: { in: ['SUCCESS', 'FAILURE', 'CANCELLED', 'TIMEOUT'] },
         },
         orderBy: {
           completedAt: 'desc',
