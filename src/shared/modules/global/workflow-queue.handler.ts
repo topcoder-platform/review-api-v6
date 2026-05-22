@@ -23,9 +23,23 @@ function stringToHash(string: string): number {
   return hash;
 }
 
-const AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = Number(
-  process.env.AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS ?? 10000,
-);
+const DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = 10000;
+const MIN_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = 1000;
+
+const AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = (() => {
+  const configured = Number(
+    process.env.AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS ??
+      DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS,
+  );
+  if (!Number.isFinite(configured)) {
+    return DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS;
+  }
+  const normalized = Math.floor(configured);
+  if (normalized < MIN_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS) {
+    return DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS;
+  }
+  return normalized;
+})();
 
 @Injectable()
 export class WorkflowQueueHandler {
@@ -418,7 +432,12 @@ export class WorkflowQueueHandler {
       where: { id: workflowRunId },
     });
 
-    const initialStatus = workflowRun.status;
+    const initialState = {
+      status: workflowRun.status,
+      lastDispatchedAt: workflowRun.lastDispatchedAt,
+      completedAt: workflowRun.completedAt,
+      startedAt: workflowRun.startedAt,
+    };
 
     await this.prisma.aiWorkflowRun.update({
       where: { id: workflowRun.id },
@@ -440,7 +459,7 @@ export class WorkflowQueueHandler {
       await this.prisma.aiWorkflowRun.update({
         where: { id: workflowRun.id },
         data: {
-          status: initialStatus,
+          ...initialState,
         },
       });
 
