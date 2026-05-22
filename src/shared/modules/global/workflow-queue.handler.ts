@@ -638,7 +638,7 @@ export class WorkflowQueueHandler {
           break;
         }
 
-        const terminalStatus = conclusion || 'FAILURE';
+        const terminalStatus = this.normalizeWorkflowConclusion(conclusion);
         const didRetry =
           ['FAILURE', 'CANCELLED', 'TIMEOUT'].includes(terminalStatus) &&
           (await this.retryWorkflowRunIfEligible(
@@ -992,5 +992,30 @@ export class WorkflowQueueHandler {
   private isFirst2FinishChallenge(typeName?: string): boolean {
     const normalized = (typeName ?? '').trim().toLowerCase();
     return normalized === 'first2finish' || normalized === 'first 2 finish';
+  }
+
+  private normalizeWorkflowConclusion(
+    conclusion?: string | null,
+  ): 'SUCCESS' | 'FAILURE' | 'CANCELLED' | 'TIMEOUT' {
+    const normalized = (conclusion ?? '').trim().toUpperCase();
+
+    switch (normalized) {
+      case 'SUCCESS':
+        return 'SUCCESS';
+      case 'FAILURE':
+        return 'FAILURE';
+      case 'CANCELLED':
+        return 'CANCELLED';
+      case 'TIMED_OUT':
+      case 'TIMEOUT':
+        return 'TIMEOUT';
+      case 'SKIPPED':
+        return 'CANCELLED';
+      default:
+        this.logger.warn(
+          `Unknown workflow conclusion "${conclusion}". Falling back to FAILURE.`,
+        );
+        return 'FAILURE';
+    }
   }
 }
