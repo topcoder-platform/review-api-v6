@@ -20,7 +20,6 @@ import { ChallengeCatalogService } from './challenge-catalog.service';
 import { SubmissionService } from 'src/api/submission/submission.service';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
-import { QueueSchedulerService } from './queue-scheduler.service';
 import { WorkflowQueueHandler } from './workflow-queue.handler';
 import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
 import { SubmissionScanCompleteHandler } from '../kafka/handlers/submission-scan-complete.handler';
@@ -57,7 +56,6 @@ import { SubmissionScanCompleteHandler } from '../kafka/handlers/submission-scan
     GiteaService,
     SubmissionScanCompleteOrchestrator,
     SubmissionService,
-    QueueSchedulerService,
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
@@ -80,7 +78,6 @@ import { SubmissionScanCompleteHandler } from '../kafka/handlers/submission-scan
     SubmissionBaseService,
     GiteaService,
     SubmissionScanCompleteOrchestrator,
-    QueueSchedulerService,
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
