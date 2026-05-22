@@ -674,8 +674,6 @@ export class ReviewSummationService {
       const includeMetadata =
         (queryDto.metadata ?? '').toLowerCase() === 'true';
 
-      let enforcedMemberId: string | undefined;
-
       if (isSubmitterOnly) {
         const userId =
           authUser?.userId !== undefined && authUser?.userId !== null
@@ -692,7 +690,6 @@ export class ReviewSummationService {
             },
           });
         }
-        enforcedMemberId = userId;
 
         if (!challengeIdFilter) {
           throw new ForbiddenException({
@@ -832,9 +829,6 @@ export class ReviewSummationService {
       const submissionWhereClause: Record<string, unknown> = {};
       if (challengeIdFilter) {
         submissionWhereClause.challengeId = challengeIdFilter;
-      }
-      if (enforcedMemberId) {
-        submissionWhereClause.memberId = enforcedMemberId;
       }
 
       const whereClause = {
