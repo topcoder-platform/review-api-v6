@@ -47,6 +47,10 @@ interface RecentReviewAssignment {
   challengeUrl: string;
 }
 
+interface F2FIterativeReviewerConfigRow {
+  shouldUseIterativeReviewerRole: boolean;
+}
+
 @Injectable()
 export class ReviewApplicationService {
   constructor(
@@ -381,11 +385,7 @@ export class ReviewApplicationService {
       const memberId = String(entity.userId);
       const handle = entity.handle ?? '';
 
-      // Determine the appropriate resource role name using opportunity type with fallback to application role mapping
-      const roleName = this.getResourceRoleName(
-        entity.opportunity.type,
-        entity.role as ReviewApplicationRole,
-      );
+      const roleName = await this.getResourceRoleNameForApproval(entity);
 
       // Resolve role id directly from the Resource DB
       const role = await this.resourcePrisma.resourceRole.findFirst({
@@ -443,6 +443,72 @@ export class ReviewApplicationService {
         details: errorResponse.details,
       });
     }
+  }
+
+  /**
+   * Determine the resource role name used when approving an application.
+   * First2Finish reviewer openings are backed by the Iterative Review phase,
+   * so regular-looking legacy opportunities for those configs must still
+   * assign the Iterative Reviewer resource role.
+   *
+   * @param entity review application with its linked opportunity
+   * @returns resource role name to assign on the challenge
+   */
+  private async getResourceRoleNameForApproval(entity: {
+    role: ReviewApplicationRole | string;
+    opportunity: {
+      challengeId: string;
+      type: ReviewOpportunityType;
+    };
+  }): Promise<string> {
+    const applicationRole = entity.role as ReviewApplicationRole;
+
+    if (
+      entity.opportunity.type === ReviewOpportunityType.REGULAR_REVIEW &&
+      applicationRole === ReviewApplicationRole.REVIEWER &&
+      (await this.hasF2FIterativeReviewerConfig(entity.opportunity.challengeId))
+    ) {
+      return 'Iterative Reviewer';
+    }
+
+    return this.getResourceRoleName(entity.opportunity.type, applicationRole);
+  }
+
+  /**
+   * Check whether a challenge has an open member-reviewer config attached to
+   * the Iterative Review phase on a First2Finish challenge.
+   *
+   * @param challengeId challenge id from the review opportunity
+   * @returns true when approval should assign the Iterative Reviewer role
+   */
+  private async hasF2FIterativeReviewerConfig(
+    challengeId: string,
+  ): Promise<boolean> {
+    const rows = await this.challengePrisma.$queryRaw<
+      F2FIterativeReviewerConfigRow[]
+    >(Prisma.sql`
+      SELECT EXISTS (
+        SELECT 1
+        FROM "Challenge" c
+        INNER JOIN "ChallengeType" ct
+          ON ct.id = c."typeId"
+        INNER JOIN "ChallengeReviewer" cr
+          ON cr."challengeId" = c.id
+        INNER JOIN "ChallengePhase" cp
+          ON cp."challengeId" = c.id
+          AND (cp.id = cr."phaseId" OR cp."phaseId" = cr."phaseId")
+        WHERE c.id = ${challengeId}
+          AND (
+            LOWER(ct.name) = 'first2finish'
+            OR LOWER(ct.abbreviation) = 'f2f'
+          )
+          AND LOWER(REPLACE(cp.name, ' ', '')) = 'iterativereview'
+          AND cr."isMemberReview" IS TRUE
+          AND cr."shouldOpenOpportunity" IS NOT FALSE
+      ) AS "shouldUseIterativeReviewerRole"
+    `);
+
+    return rows[0]?.shouldUseIterativeReviewerRole === true;
   }
 
   /**
