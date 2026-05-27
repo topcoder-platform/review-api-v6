@@ -44,6 +44,7 @@ describe('ReviewApplicationService', () => {
   };
 
   const eventBusServiceMock = {
+    publish: jest.fn(),
     sendEmail: jest.fn(),
   };
 
@@ -55,11 +56,21 @@ describe('ReviewApplicationService', () => {
     jest.clearAllMocks();
 
     resourcePrismaMock.resource.findFirst.mockResolvedValue(null);
-    resourcePrismaMock.resource.create.mockResolvedValue({ id: 'resource-1' });
+    resourcePrismaMock.resource.create.mockImplementation(({ data }) =>
+      Promise.resolve({
+        id: 'resource-1',
+        ...data,
+        createdAt: new Date('2026-05-27T03:49:10.279Z'),
+        updatedAt: null,
+        updatedBy: null,
+        phaseChangeNotifications: true,
+      }),
+    );
     prismaMock.reviewApplication.update.mockResolvedValue({ id: 'app-1' });
     memberServiceMock.getUserEmails.mockResolvedValue([
       { userId: '1001', email: 'reviewer@example.com', handle: 'reviewer' },
     ]);
+    eventBusServiceMock.publish.mockResolvedValue(undefined);
     eventBusServiceMock.sendEmail.mockResolvedValue(undefined);
     prismaErrorServiceMock.handleError.mockImplementation((error) => ({
       code: 'TEST_ERROR',
@@ -121,6 +132,22 @@ describe('ReviewApplicationService', () => {
         roleId: 'iterative-reviewer-role-id',
       },
     });
+    expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+      'challenge.action.resource.create',
+      {
+        id: 'resource-1',
+        challengeId: 'challenge-f2f',
+        memberId: '1001',
+        memberHandle: 'iterative-reviewer',
+        roleId: 'iterative-reviewer-role-id',
+        phaseChangeNotifications: true,
+        created: '2026-05-27T03:49:10.279Z',
+        createdBy: 'review-api',
+        updated: undefined,
+        updatedBy: undefined,
+        roleName: 'Iterative Reviewer',
+      },
+    );
     expect(prismaMock.reviewApplication.update).toHaveBeenCalledWith({
       where: { id: 'app-iterative' },
       data: {
@@ -169,6 +196,14 @@ describe('ReviewApplicationService', () => {
         roleId: 'reviewer-role-id',
       }),
     });
+    expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+      'challenge.action.resource.create',
+      expect.objectContaining({
+        challengeId: 'challenge-regular',
+        roleId: 'reviewer-role-id',
+        roleName: 'Reviewer',
+      }),
+    );
   });
 
   it('includes past review assignments in rejection email payload', async () => {

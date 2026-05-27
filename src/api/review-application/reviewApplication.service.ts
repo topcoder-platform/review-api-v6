@@ -27,6 +27,7 @@ import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 
 const RECENT_REVIEW_WINDOW_DAYS = 60;
+const RESOURCE_CREATED_TOPIC = 'challenge.action.resource.create';
 
 interface ReviewerMetricsRow {
   memberId: string;
@@ -49,6 +50,19 @@ interface RecentReviewAssignment {
 
 interface F2FIterativeReviewerConfigRow {
   shouldUseIterativeReviewerRole: boolean;
+}
+
+interface ReviewerResourceEventRecord {
+  id: string;
+  challengeId: string;
+  memberId: string;
+  memberHandle: string;
+  roleId: string;
+  createdAt?: Date | string | null;
+  createdBy?: string | null;
+  updatedAt?: Date | string | null;
+  updatedBy?: string | null;
+  phaseChangeNotifications?: boolean | null;
 }
 
 @Injectable()
@@ -373,8 +387,14 @@ export class ReviewApplicationService {
   }
 
   /**
-   * Approve a review application.
-   * @param id review application id
+   * Approves a review application, ensures the reviewer resource exists on the
+   * challenge, publishes the resource-created event consumed by autopilot, and
+   * sends the approval email.
+   * @param id Review application id to approve.
+   * @returns Resolves after the application is approved and notifications are sent.
+   * @throws NotFoundException when the application does not exist.
+   * @throws InternalServerErrorException when resource creation, event publishing,
+   * application update, or notification sending fails.
    */
   async approve(id: string): Promise<void> {
     try {
@@ -406,9 +426,11 @@ export class ReviewApplicationService {
         },
       });
 
-      if (!existingRole) {
+      let reviewerResource = existingRole;
+
+      if (!reviewerResource) {
         // Create reviewer resource directly in Resource DB
-        await this.resourcePrisma.resource.create({
+        reviewerResource = await this.resourcePrisma.resource.create({
           data: {
             challengeId,
             memberId,
@@ -418,6 +440,8 @@ export class ReviewApplicationService {
           },
         });
       }
+
+      await this.publishResourceCreatedEvent(reviewerResource, role.name);
 
       // Update application status and send email
       await this.prisma.reviewApplication.update({
@@ -443,6 +467,44 @@ export class ReviewApplicationService {
         details: errorResponse.details,
       });
     }
+  }
+
+  /**
+   * Publishes the resource-created event that resource-api normally emits so
+   * autopilot can react to reviewer assignments created by review-api.
+   * @param resource Reviewer resource record that was created or already existed.
+   * @param roleName Resource role name resolved for the approved application.
+   * @returns Resolves after the event bus accepts the message.
+   * @throws Error from EventBusService when event publication fails.
+   *
+   * Used by approve() after ensuring the reviewer resource exists.
+   */
+  private async publishResourceCreatedEvent(
+    resource: ReviewerResourceEventRecord,
+    roleName: string,
+  ): Promise<void> {
+    const created =
+      resource.createdAt instanceof Date
+        ? resource.createdAt.toISOString()
+        : resource.createdAt || new Date().toISOString();
+    const updated =
+      resource.updatedAt instanceof Date
+        ? resource.updatedAt.toISOString()
+        : resource.updatedAt || undefined;
+
+    await this.eventBusService.publish(RESOURCE_CREATED_TOPIC, {
+      id: resource.id,
+      challengeId: resource.challengeId,
+      memberId: resource.memberId,
+      memberHandle: resource.memberHandle,
+      roleId: resource.roleId,
+      phaseChangeNotifications: resource.phaseChangeNotifications !== false,
+      created,
+      createdBy: resource.createdBy ?? 'review-api',
+      updated,
+      updatedBy: resource.updatedBy ?? undefined,
+      roleName,
+    });
   }
 
   /**
