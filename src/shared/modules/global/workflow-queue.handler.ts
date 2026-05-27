@@ -640,7 +640,7 @@ export class WorkflowQueueHandler {
 
         const terminalStatus = this.normalizeWorkflowConclusion(conclusion);
         const didRetry =
-          ['FAILURE', 'CANCELLED', 'TIMEOUT'].includes(terminalStatus) &&
+          ['FAILURE', 'TIMEOUT'].includes(terminalStatus) &&
           (await this.retryWorkflowRunIfEligible(
             aiWorkflowRun.id,
             terminalStatus,
