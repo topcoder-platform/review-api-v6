@@ -1199,6 +1199,144 @@ describe('SubmissionService', () => {
       expect(other?.review).toBeDefined();
     });
 
+    it('removes submitter emails from marathon match submissions for regular members', async () => {
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Marathon Match',
+        legacy: { subTrack: 'MARATHON_MATCH' },
+        phases: [],
+      });
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+
+      const submissions = [
+        {
+          id: 'submission-own',
+          challengeId: 'challenge-1',
+          memberId: '1001',
+          submittedDate: new Date('2026-05-01T12:00:00Z'),
+          createdAt: new Date('2026-05-01T12:00:00Z'),
+          updatedAt: new Date('2026-05-01T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+        {
+          id: 'submission-other',
+          challengeId: 'challenge-1',
+          memberId: '1002',
+          submittedDate: new Date('2026-05-01T11:00:00Z'),
+          createdAt: new Date('2026-05-01T11:00:00Z'),
+          updatedAt: new Date('2026-05-01T11:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      memberPrismaMock.member.findMany.mockResolvedValue([
+        {
+          userId: BigInt(1001),
+          handle: 'regularMember',
+          email: 'regular@example.com',
+          maxRating: { rating: 1200 },
+        },
+        {
+          userId: BigInt(1002),
+          handle: 'otherMember',
+          email: 'other@example.com',
+          maxRating: { rating: 1400 },
+        },
+      ]);
+
+      const result = await listService.listSubmission(
+        {
+          userId: '1001',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0]).not.toHaveProperty('submitterEmail');
+      expect(result.data[1]).not.toHaveProperty('submitterEmail');
+    });
+
+    it('keeps submitter emails for challenge manager resources', async () => {
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Marathon Match',
+        legacy: { subTrack: 'MARATHON_MATCH' },
+        phases: [],
+      });
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Manager',
+          roleId: 'manager-role',
+        },
+      ]);
+
+      const submissions = [
+        {
+          id: 'submission-1',
+          challengeId: 'challenge-1',
+          memberId: '1002',
+          submittedDate: new Date('2026-05-01T11:00:00Z'),
+          createdAt: new Date('2026-05-01T11:00:00Z'),
+          updatedAt: new Date('2026-05-01T11:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      memberPrismaMock.member.findMany.mockResolvedValue([
+        {
+          userId: BigInt(1002),
+          handle: 'otherMember',
+          email: 'other@example.com',
+          maxRating: { rating: 1400 },
+        },
+      ]);
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'manager-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(result.data[0].submitterEmail).toBe('other@example.com');
+    });
+
     it('masks other reviewers scores while preserving reviewer metadata on active challenges', async () => {
       const now = new Date('2025-01-05T10:00:00Z');
       resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
