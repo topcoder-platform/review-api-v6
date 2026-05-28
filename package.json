@@ -23,6 +23,7 @@
     "export-late-mm-scores": "ts-node --project tsconfig.json scripts/export-late-mm-scores.ts",
     "fix:topgear-reviewers": "ts-node --project tsconfig.json scripts/update-topgear-reviewers.ts",
     "grant-reviewers": "ts-node scripts/grant-reviewer-role.ts",
+    "deploy:dev": "BRANCH=$(git rev-parse --abbrev-ref HEAD) && TAG=\"dev-${BRANCH}\" && git tag -d \"$TAG\" 2>/dev/null; git push origin \":refs/tags/$TAG\" 2>/dev/null; git tag \"$TAG\" && git push origin \"$TAG\"",
     "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma && pnpm exec prisma generate --schema=prisma/member-schema.prisma"
   },
   "dependencies": {
