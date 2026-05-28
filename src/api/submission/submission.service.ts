@@ -112,6 +112,7 @@ type SubmissionBusPayloadSource = Prisma.submissionGetPayload<{
 
 type ChallengeRoleSummary = {
   hasCopilot: boolean;
+  hasManager: boolean;
   hasReviewer: boolean;
   hasSubmitter: boolean;
   reviewerResourceIds: string[];
@@ -125,6 +126,7 @@ type ReviewVisibilityContext = {
 
 const EMPTY_ROLE_SUMMARY: ChallengeRoleSummary = {
   hasCopilot: false,
+  hasManager: false,
   hasReviewer: false,
   hasSubmitter: false,
   reviewerResourceIds: [],
@@ -2972,6 +2974,7 @@ export class SubmissionService {
         submissions,
         reviewVisibilityContext,
       );
+      this.stripSubmitterEmails(authUser, submissions, reviewVisibilityContext);
       this.sanitizeMemberVisibleReviewSummationMetadata(
         authUser,
         submissions,
@@ -3027,7 +3030,7 @@ export class SubmissionService {
     if (isAdmin(authUser)) {
       return true;
     }
-    // Copilots on the challenge are allowed
+    // Copilots or managers on the challenge are allowed
     if (challengeId && authUser.userId) {
       try {
         const resources = await this.resourceApiService.getMemberResourcesRoles(
@@ -3035,7 +3038,7 @@ export class SubmissionService {
           String(authUser.userId),
         );
         return resources.some((r) =>
-          (r.roleName || '').toLowerCase().includes('copilot'),
+          this.canResourceRoleViewSubmitterEmail(r.roleName),
         );
       } catch {
         return false;
@@ -3647,6 +3650,7 @@ export class SubmissionService {
         }
 
         let hasCopilot = false;
+        let hasManager = false;
         let hasReviewer = false;
         let hasSubmitter = false;
         const reviewerResourceIds: string[] = [];
@@ -3655,6 +3659,9 @@ export class SubmissionService {
           const roleName = (resource.roleName || '').toLowerCase();
           if (roleName.includes('copilot')) {
             hasCopilot = true;
+          }
+          if (roleName.includes('manager')) {
+            hasManager = true;
           }
           if (
             REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
@@ -3677,6 +3684,7 @@ export class SubmissionService {
 
         roleSummaryByChallenge.set(challengeId, {
           hasCopilot,
+          hasManager,
           hasReviewer,
           hasSubmitter,
           reviewerResourceIds,
@@ -3703,6 +3711,7 @@ export class SubmissionService {
 
       const roleSummary = roleSummaryByChallenge.get(challengeId) ?? {
         hasCopilot: false,
+        hasManager: false,
         hasReviewer: false,
         hasSubmitter: false,
         reviewerResourceIds: [],
@@ -4619,11 +4628,61 @@ export class SubmissionService {
       if (Object.prototype.hasOwnProperty.call(submission, 'submitterHandle')) {
         delete (submission as any).submitterHandle;
       }
+      if (Object.prototype.hasOwnProperty.call(submission, 'submitterEmail')) {
+        delete (submission as any).submitterEmail;
+      }
       if (
         Object.prototype.hasOwnProperty.call(submission, 'submitterMaxRating')
       ) {
         delete (submission as any).submitterMaxRating;
       }
+    }
+  }
+
+  /**
+   * Removes submitter email addresses from list results unless the requester is allowed to see them.
+   * @param authUser Authenticated requester from the JWT.
+   * @param submissions Submission records being returned by `listSubmission`.
+   * @param visibilityContext Challenge role information for the requester.
+   * @returns Nothing; submissions are mutated in place before response DTO creation.
+   * @throws This method does not throw.
+   * Used by `listSubmission` after resource roles have been resolved for the returned challenges.
+   */
+  private stripSubmitterEmails(
+    authUser: JwtUser,
+    submissions: Array<
+      { challengeId?: string | null; submitterEmail?: string | null } & Record<
+        string,
+        unknown
+      >
+    >,
+    visibilityContext: ReviewVisibilityContext,
+  ): void {
+    if (!submissions.length) {
+      return;
+    }
+    if (authUser?.isMachine || isAdmin(authUser)) {
+      return;
+    }
+
+    for (const submission of submissions) {
+      if (!Object.prototype.hasOwnProperty.call(submission, 'submitterEmail')) {
+        continue;
+      }
+
+      const challengeId =
+        submission.challengeId !== undefined && submission.challengeId !== null
+          ? String(submission.challengeId).trim()
+          : '';
+      const roleSummary = challengeId
+        ? visibilityContext.roleSummaryByChallenge.get(challengeId)
+        : undefined;
+
+      if (roleSummary?.hasCopilot || roleSummary?.hasManager) {
+        continue;
+      }
+
+      delete (submission as any).submitterEmail;
     }
   }
 
@@ -5179,5 +5238,20 @@ export class SubmissionService {
       dto.isFileSubmission = Boolean(data.isFileSubmission);
     }
     return dto;
+  }
+
+  /**
+   * Checks whether a challenge resource role can view submitter email addresses.
+   * @param roleName Resource role name returned by Resource API.
+   * @returns True when the role is a copilot or manager-style challenge resource role.
+   * @throws This method does not throw.
+   * Used by submission list response sanitization and submitter identity access checks.
+   */
+  private canResourceRoleViewSubmitterEmail(roleName?: string | null): boolean {
+    const normalizedRoleName = String(roleName ?? '').toLowerCase();
+    return (
+      normalizedRoleName.includes('copilot') ||
+      normalizedRoleName.includes('manager')
+    );
   }
 }

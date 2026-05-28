@@ -436,7 +436,8 @@ export class SubmissionResponseDto {
   submitterHandle?: string;
 
   @ApiProperty({
-    description: 'Submitter email (visible to Admin/Copilot/M2M)',
+    description:
+      'Submitter email (visible to Admin, M2M, or challenge Copilot/Manager resources)',
     required: false,
     nullable: true,
   })
