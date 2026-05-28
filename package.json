@@ -23,6 +23,7 @@
     "export-late-mm-scores": "ts-node --project tsconfig.json scripts/export-late-mm-scores.ts",
     "fix:topgear-reviewers": "ts-node --project tsconfig.json scripts/update-topgear-reviewers.ts",
     "grant-reviewers": "ts-node scripts/grant-reviewer-role.ts",
+    "deploy:dev": "BRANCH=$(git rev-parse --abbrev-ref HEAD) && TAG=\"dev-${BRANCH}\" && git tag -d \"$TAG\" 2>/dev/null; git push origin \":refs/tags/$TAG\" 2>/dev/null; git tag \"$TAG\" && git push origin \"$TAG\"",
     "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma && pnpm exec prisma generate --schema=prisma/member-schema.prisma"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "@nestjs/core": "^11.1.8",
     "@nestjs/mapped-types": "^2.1.0",
     "@nestjs/platform-express": "^11.1.8",
+    "@nestjs/schedule": "^6.1.3",
     "@nestjs/swagger": "^11.1.8",
     "@platformatic/kafka": "^1.12.0",
     "@prisma/client": "^6.3.1",
@@ -47,7 +49,6 @@
     "lodash": "^4.17.21",
     "multer": "^2.0.2",
     "nanoid": "~5.1.2",
-    "pg-boss": "^11.0.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "tc-core-library-js": "topcoder-platform/tc-core-library-js#master"

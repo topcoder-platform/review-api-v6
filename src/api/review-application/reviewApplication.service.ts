@@ -27,6 +27,7 @@ import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 
 const RECENT_REVIEW_WINDOW_DAYS = 60;
+const RESOURCE_CREATED_TOPIC = 'challenge.action.resource.create';
 
 interface ReviewerMetricsRow {
   memberId: string;
@@ -45,6 +46,23 @@ interface RecentReviewAssignment {
   challengeId: string;
   challengeName: string;
   challengeUrl: string;
+}
+
+interface F2FIterativeReviewerConfigRow {
+  shouldUseIterativeReviewerRole: boolean;
+}
+
+interface ReviewerResourceEventRecord {
+  id: string;
+  challengeId: string;
+  memberId: string;
+  memberHandle: string;
+  roleId: string;
+  createdAt?: Date | string | null;
+  createdBy?: string | null;
+  updatedAt?: Date | string | null;
+  updatedBy?: string | null;
+  phaseChangeNotifications?: boolean | null;
 }
 
 @Injectable()
@@ -369,8 +387,14 @@ export class ReviewApplicationService {
   }
 
   /**
-   * Approve a review application.
-   * @param id review application id
+   * Approves a review application, ensures the reviewer resource exists on the
+   * challenge, publishes the resource-created event consumed by autopilot, and
+   * sends the approval email.
+   * @param id Review application id to approve.
+   * @returns Resolves after the application is approved and notifications are sent.
+   * @throws NotFoundException when the application does not exist.
+   * @throws InternalServerErrorException when resource creation, event publishing,
+   * application update, or notification sending fails.
    */
   async approve(id: string): Promise<void> {
     try {
@@ -381,11 +405,7 @@ export class ReviewApplicationService {
       const memberId = String(entity.userId);
       const handle = entity.handle ?? '';
 
-      // Determine the appropriate resource role name using opportunity type with fallback to application role mapping
-      const roleName = this.getResourceRoleName(
-        entity.opportunity.type,
-        entity.role as ReviewApplicationRole,
-      );
+      const roleName = await this.getResourceRoleNameForApproval(entity);
 
       // Resolve role id directly from the Resource DB
       const role = await this.resourcePrisma.resourceRole.findFirst({
@@ -406,9 +426,11 @@ export class ReviewApplicationService {
         },
       });
 
-      if (!existingRole) {
+      let reviewerResource = existingRole;
+
+      if (!reviewerResource) {
         // Create reviewer resource directly in Resource DB
-        await this.resourcePrisma.resource.create({
+        reviewerResource = await this.resourcePrisma.resource.create({
           data: {
             challengeId,
             memberId,
@@ -418,6 +440,8 @@ export class ReviewApplicationService {
           },
         });
       }
+
+      await this.publishResourceCreatedEvent(reviewerResource, role.name);
 
       // Update application status and send email
       await this.prisma.reviewApplication.update({
@@ -443,6 +467,110 @@ export class ReviewApplicationService {
         details: errorResponse.details,
       });
     }
+  }
+
+  /**
+   * Publishes the resource-created event that resource-api normally emits so
+   * autopilot can react to reviewer assignments created by review-api.
+   * @param resource Reviewer resource record that was created or already existed.
+   * @param roleName Resource role name resolved for the approved application.
+   * @returns Resolves after the event bus accepts the message.
+   * @throws Error from EventBusService when event publication fails.
+   *
+   * Used by approve() after ensuring the reviewer resource exists.
+   */
+  private async publishResourceCreatedEvent(
+    resource: ReviewerResourceEventRecord,
+    roleName: string,
+  ): Promise<void> {
+    const created =
+      resource.createdAt instanceof Date
+        ? resource.createdAt.toISOString()
+        : resource.createdAt || new Date().toISOString();
+    const updated =
+      resource.updatedAt instanceof Date
+        ? resource.updatedAt.toISOString()
+        : resource.updatedAt || undefined;
+
+    await this.eventBusService.publish(RESOURCE_CREATED_TOPIC, {
+      id: resource.id,
+      challengeId: resource.challengeId,
+      memberId: resource.memberId,
+      memberHandle: resource.memberHandle,
+      roleId: resource.roleId,
+      phaseChangeNotifications: resource.phaseChangeNotifications !== false,
+      created,
+      createdBy: resource.createdBy ?? 'review-api',
+      updated,
+      updatedBy: resource.updatedBy ?? undefined,
+      roleName,
+    });
+  }
+
+  /**
+   * Determine the resource role name used when approving an application.
+   * First2Finish reviewer openings are backed by the Iterative Review phase,
+   * so regular-looking legacy opportunities for those configs must still
+   * assign the Iterative Reviewer resource role.
+   *
+   * @param entity review application with its linked opportunity
+   * @returns resource role name to assign on the challenge
+   */
+  private async getResourceRoleNameForApproval(entity: {
+    role: ReviewApplicationRole | string;
+    opportunity: {
+      challengeId: string;
+      type: ReviewOpportunityType;
+    };
+  }): Promise<string> {
+    const applicationRole = entity.role as ReviewApplicationRole;
+
+    if (
+      entity.opportunity.type === ReviewOpportunityType.REGULAR_REVIEW &&
+      applicationRole === ReviewApplicationRole.REVIEWER &&
+      (await this.hasF2FIterativeReviewerConfig(entity.opportunity.challengeId))
+    ) {
+      return 'Iterative Reviewer';
+    }
+
+    return this.getResourceRoleName(entity.opportunity.type, applicationRole);
+  }
+
+  /**
+   * Check whether a challenge has an open member-reviewer config attached to
+   * the Iterative Review phase on a First2Finish challenge.
+   *
+   * @param challengeId challenge id from the review opportunity
+   * @returns true when approval should assign the Iterative Reviewer role
+   */
+  private async hasF2FIterativeReviewerConfig(
+    challengeId: string,
+  ): Promise<boolean> {
+    const rows = await this.challengePrisma.$queryRaw<
+      F2FIterativeReviewerConfigRow[]
+    >(Prisma.sql`
+      SELECT EXISTS (
+        SELECT 1
+        FROM "Challenge" c
+        INNER JOIN "ChallengeType" ct
+          ON ct.id = c."typeId"
+        INNER JOIN "ChallengeReviewer" cr
+          ON cr."challengeId" = c.id
+        INNER JOIN "ChallengePhase" cp
+          ON cp."challengeId" = c.id
+          AND (cp.id = cr."phaseId" OR cp."phaseId" = cr."phaseId")
+        WHERE c.id = ${challengeId}
+          AND (
+            LOWER(ct.name) = 'first2finish'
+            OR LOWER(ct.abbreviation) = 'f2f'
+          )
+          AND LOWER(REPLACE(cp.name, ' ', '')) = 'iterativereview'
+          AND cr."isMemberReview" IS TRUE
+          AND cr."shouldOpenOpportunity" IS NOT FALSE
+      ) AS "shouldUseIterativeReviewerRole"
+    `);
+
+    return rows[0]?.shouldUseIterativeReviewerRole === true;
   }
 
   /**

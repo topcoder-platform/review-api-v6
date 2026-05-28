@@ -208,9 +208,8 @@ For a manually uploaded submission, AI handling works correctly when all of the 
 
 1. the file passes antivirus scanning
 2. `DISPATCH_AI_REVIEW_WORKFLOWS=true`
-3. `PGBOSS_DATABASE_URL` is configured so the queue worker can run
-4. the challenge has AI workflows configured
-5. the challenge also has a valid active `aiReviewConfig`
+3. the challenge has AI workflows configured
+4. the challenge also has a valid active `aiReviewConfig`
 
 When those conditions hold, a manual upload enters the same AI workflow dispatch path as any other scanned file submission.
 

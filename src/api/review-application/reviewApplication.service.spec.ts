@@ -44,6 +44,7 @@ describe('ReviewApplicationService', () => {
   };
 
   const eventBusServiceMock = {
+    publish: jest.fn(),
     sendEmail: jest.fn(),
   };
 
@@ -54,6 +55,29 @@ describe('ReviewApplicationService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
+    resourcePrismaMock.resource.findFirst.mockResolvedValue(null);
+    resourcePrismaMock.resource.create.mockImplementation(({ data }) =>
+      Promise.resolve({
+        id: 'resource-1',
+        ...data,
+        createdAt: new Date('2026-05-27T03:49:10.279Z'),
+        updatedAt: null,
+        updatedBy: null,
+        phaseChangeNotifications: true,
+      }),
+    );
+    prismaMock.reviewApplication.update.mockResolvedValue({ id: 'app-1' });
+    memberServiceMock.getUserEmails.mockResolvedValue([
+      { userId: '1001', email: 'reviewer@example.com', handle: 'reviewer' },
+    ]);
+    eventBusServiceMock.publish.mockResolvedValue(undefined);
+    eventBusServiceMock.sendEmail.mockResolvedValue(undefined);
+    prismaErrorServiceMock.handleError.mockImplementation((error) => ({
+      code: 'TEST_ERROR',
+      details: error,
+      message: error instanceof Error ? error.message : String(error),
+    }));
+
     service = new ReviewApplicationService(
       prismaMock as any,
       challengeServiceMock as any,
@@ -62,6 +86,123 @@ describe('ReviewApplicationService', () => {
       memberServiceMock as any,
       eventBusServiceMock as any,
       prismaErrorServiceMock as any,
+    );
+  });
+
+  it('assigns the Iterative Reviewer resource role for F2F iterative review approvals', async () => {
+    prismaMock.reviewApplication.findUnique.mockResolvedValue({
+      id: 'app-iterative',
+      userId: '1001',
+      handle: 'iterative-reviewer',
+      role: ReviewApplicationRole.REVIEWER,
+      status: ReviewApplicationStatus.PENDING,
+      startDate: new Date('2026-05-26T08:33:26.579Z'),
+      opportunityId: 'opp-iterative',
+      createdAt: new Date('2026-05-26T08:42:54.784Z'),
+      opportunity: {
+        id: 'opp-iterative',
+        challengeId: 'challenge-f2f',
+        type: ReviewOpportunityType.REGULAR_REVIEW,
+      },
+    });
+
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ shouldUseIterativeReviewerRole: true }])
+      .mockResolvedValueOnce([]);
+    resourcePrismaMock.resourceRole.findFirst.mockResolvedValue({
+      id: 'iterative-reviewer-role-id',
+      name: 'Iterative Reviewer',
+    });
+    challengeServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-f2f',
+      name: 'F2F Challenge',
+    });
+
+    await service.approve('app-iterative');
+
+    expect(resourcePrismaMock.resourceRole.findFirst).toHaveBeenCalledWith({
+      where: { name: 'Iterative Reviewer' },
+    });
+    expect(resourcePrismaMock.resource.create).toHaveBeenCalledWith({
+      data: {
+        challengeId: 'challenge-f2f',
+        createdBy: 'review-api',
+        memberHandle: 'iterative-reviewer',
+        memberId: '1001',
+        roleId: 'iterative-reviewer-role-id',
+      },
+    });
+    expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+      'challenge.action.resource.create',
+      {
+        id: 'resource-1',
+        challengeId: 'challenge-f2f',
+        memberId: '1001',
+        memberHandle: 'iterative-reviewer',
+        roleId: 'iterative-reviewer-role-id',
+        phaseChangeNotifications: true,
+        created: '2026-05-27T03:49:10.279Z',
+        createdBy: 'review-api',
+        updated: undefined,
+        updatedBy: undefined,
+        roleName: 'Iterative Reviewer',
+      },
+    );
+    expect(prismaMock.reviewApplication.update).toHaveBeenCalledWith({
+      where: { id: 'app-iterative' },
+      data: {
+        status: ReviewApplicationStatus.APPROVED,
+      },
+    });
+  });
+
+  it('keeps the regular Reviewer resource role when no F2F iterative reviewer config exists', async () => {
+    prismaMock.reviewApplication.findUnique.mockResolvedValue({
+      id: 'app-regular',
+      userId: '1001',
+      handle: 'regular-reviewer',
+      role: ReviewApplicationRole.REVIEWER,
+      status: ReviewApplicationStatus.PENDING,
+      startDate: new Date('2026-05-26T08:33:26.579Z'),
+      opportunityId: 'opp-regular',
+      createdAt: new Date('2026-05-26T08:42:54.784Z'),
+      opportunity: {
+        id: 'opp-regular',
+        challengeId: 'challenge-regular',
+        type: ReviewOpportunityType.REGULAR_REVIEW,
+      },
+    });
+
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ shouldUseIterativeReviewerRole: false }])
+      .mockResolvedValueOnce([]);
+    resourcePrismaMock.resourceRole.findFirst.mockResolvedValue({
+      id: 'reviewer-role-id',
+      name: 'Reviewer',
+    });
+    challengeServiceMock.getChallengeDetail.mockResolvedValue({
+      id: 'challenge-regular',
+      name: 'Regular Challenge',
+    });
+
+    await service.approve('app-regular');
+
+    expect(resourcePrismaMock.resourceRole.findFirst).toHaveBeenCalledWith({
+      where: { name: 'Reviewer' },
+    });
+    expect(resourcePrismaMock.resource.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        challengeId: 'challenge-regular',
+        roleId: 'reviewer-role-id',
+      }),
+    });
+    expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+      'challenge.action.resource.create',
+      expect.objectContaining({
+        challengeId: 'challenge-regular',
+        roleId: 'reviewer-role-id',
+        roleName: 'Reviewer',
+      }),
     );
   });
 
