@@ -75,6 +75,8 @@ workflows:
                           only:
                               - develop
                               - PM-5118_directly-dispatch-to-gitea
+                      tags:
+                          only: /^dev-.*/
 
             - 'build-prod':
                   context: org-global
