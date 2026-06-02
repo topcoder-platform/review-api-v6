@@ -351,7 +351,9 @@ export class AiReviewDecisionService {
       include: DECISION_INCLUDE,
     });
     if (!decision) {
-      throw new NotFoundException(`AI review decision with id ${id} not found.`);
+      throw new NotFoundException(
+        `AI review decision with id ${id} not found.`,
+      );
     }
 
     // Build update payload
@@ -368,9 +370,9 @@ export class AiReviewDecisionService {
       const workflows = Array.isArray(
         (currentBreakdown as { workflows?: unknown }).workflows,
       )
-        ? ([...(currentBreakdown as { workflows: unknown[] }).workflows] as Array<
-            Record<string, unknown>
-          >)
+        ? ([
+            ...(currentBreakdown as { workflows: unknown[] }).workflows,
+          ] as Array<Record<string, unknown>>)
         : [];
 
       for (const override of dto.workflowOverrides) {
