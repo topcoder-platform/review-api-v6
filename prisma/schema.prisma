@@ -885,6 +885,8 @@ model aiReviewDecision {
   isFinal          Boolean  @default(false)
   finalizedAt      DateTime?
 
+  managerComment   String?  @db.Text
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

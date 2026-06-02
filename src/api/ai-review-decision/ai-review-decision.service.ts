@@ -12,6 +12,7 @@ import {
   ListAiReviewDecisionQueryDto,
   AiReviewDecisionResponseDto,
   AiReviewDecisionStatus,
+  PatchAiReviewDecisionDto,
 } from '../../dto/aiReviewDecision.dto';
 import {
   AiReviewDecisionEscalationResponseDto,
@@ -20,6 +21,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 
 const DECISION_INCLUDE = {
   config: {
@@ -56,6 +58,7 @@ type AiReviewDecisionRecord = {
   breakdown: Prisma.JsonValue | null;
   isFinal: boolean;
   finalizedAt: Date | null;
+  managerComment: string | null;
   createdAt: Date;
   updatedAt: Date;
   config?: { id: string; challengeId: string; version: number };
@@ -163,6 +166,7 @@ export class AiReviewDecisionService {
       breakdown: row.breakdown as Record<string, unknown> | null,
       isFinal: row.isFinal,
       finalizedAt: row.finalizedAt,
+      managerComment: row.managerComment ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       config: row.config as Record<string, unknown>,
@@ -324,5 +328,95 @@ export class AiReviewDecisionService {
     }
 
     return this.mapToResponse(decision);
+  }
+
+  async patch(
+    id: string,
+    dto: PatchAiReviewDecisionDto,
+    authUser: JwtUser,
+  ): Promise<AiReviewDecisionResponseDto> {
+    // Only Admin or Copilot role may update AI review decisions
+    const isPrivileged =
+      authUser.isMachine ||
+      isAdmin(authUser) ||
+      authUser.roles?.includes(UserRole.Copilot);
+    if (!isPrivileged) {
+      throw new ForbiddenException(
+        'Only Admins and Copilots may update AI review decisions.',
+      );
+    }
+
+    const decision = await this.prisma.aiReviewDecision.findUnique({
+      where: { id },
+      include: DECISION_INCLUDE,
+    });
+    if (!decision) {
+      throw new NotFoundException(`AI review decision with id ${id} not found.`);
+    }
+
+    // Build update payload
+    const updateData: Prisma.aiReviewDecisionUpdateInput = {};
+
+    if (dto.managerComment !== undefined) {
+      updateData.managerComment = dto.managerComment;
+    }
+
+    if (dto.workflowOverrides?.length) {
+      // Merge manager overrides into breakdown JSON
+      const currentBreakdown =
+        (decision.breakdown as Record<string, unknown> | null) ?? {};
+      const workflows = Array.isArray(
+        (currentBreakdown as { workflows?: unknown }).workflows,
+      )
+        ? ([...(currentBreakdown as { workflows: unknown[] }).workflows] as Array<
+            Record<string, unknown>
+          >)
+        : [];
+
+      for (const override of dto.workflowOverrides) {
+        const idx = workflows.findIndex(
+          (w) => w['workflowId'] === override.workflowId,
+        );
+        if (idx === -1) continue;
+        if (override.managerScore !== undefined) {
+          workflows[idx] = {
+            ...workflows[idx],
+            managerScore: override.managerScore,
+          };
+        }
+        if (override.workflowComment !== undefined) {
+          workflows[idx] = {
+            ...workflows[idx],
+            managerComment: override.workflowComment,
+          };
+        }
+      }
+
+      updateData.breakdown = { ...currentBreakdown, workflows };
+
+      // Recalculate totalScore from workflows using managerScore ?? runScore
+      const newTotal = workflows.reduce((sum, w) => {
+        const score =
+          w['managerScore'] != null
+            ? Number(w['managerScore'])
+            : w['runScore'] != null
+              ? Number(w['runScore'])
+              : 0;
+        const weight =
+          w['weightPercent'] != null ? Number(w['weightPercent']) : 0;
+        return sum + (score * weight) / 100;
+      }, 0);
+
+      updateData.totalScore = new Prisma.Decimal(newTotal.toFixed(2));
+      updateData.status = 'HUMAN_OVERRIDE';
+    }
+
+    const updated = await this.prisma.aiReviewDecision.update({
+      where: { id },
+      data: updateData,
+      include: DECISION_INCLUDE,
+    });
+
+    return this.mapToResponse(updated as AiReviewDecisionRecord);
   }
 }
