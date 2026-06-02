@@ -394,7 +394,10 @@ export class AiReviewDecisionService {
         }
       }
 
-      updateData.breakdown = { ...currentBreakdown, workflows };
+      updateData.breakdown = {
+        ...currentBreakdown,
+        workflows: workflows as unknown as Prisma.InputJsonObject,
+      };
 
       // Recalculate totalScore from workflows using managerScore ?? runScore
       const newTotal = workflows.reduce((sum, w) => {
