@@ -5242,16 +5242,9 @@ export class SubmissionService {
         continue;
       }
 
-      const reviews = Array.isArray(submission.review)
-        ? (submission.review as Array<Record<string, unknown>>)
-        : [];
-
-      // Set the finalScore on each review to the AI decision's totalScore
-      for (const review of reviews) {
-        review.finalScore = decision.totalScore;
-      }
-
       // Also set on the submission itself for convenience
+      (submission as Record<string, unknown>).finalScore =
+        decision.totalScore;
       (submission as Record<string, unknown>).aiDecisionScore =
         decision.totalScore;
       (submission as Record<string, unknown>).aiDecisionStatus =
