@@ -5243,8 +5243,7 @@ export class SubmissionService {
       }
 
       // Also set on the submission itself for convenience
-      (submission as Record<string, unknown>).finalScore =
-        decision.totalScore;
+      (submission as Record<string, unknown>).finalScore = decision.totalScore;
       (submission as Record<string, unknown>).aiDecisionScore =
         decision.totalScore;
       (submission as Record<string, unknown>).aiDecisionStatus =
