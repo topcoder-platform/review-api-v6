@@ -499,7 +499,6 @@ export class WorkflowQueueHandler {
 
     const aiWorkflowRuns = await this.prisma.aiWorkflowRun.findMany({
       where: {
-        status: { in: ['DISPATCHED', 'IN_PROGRESS'] },
         gitRunId: `${event.workflow_job.run_id}`,
       },
       include: {
@@ -509,12 +508,21 @@ export class WorkflowQueueHandler {
 
     if (aiWorkflowRuns.length > 1) {
       this.logger.error(
-        `ERROR! There are more than 1 workflow runs in DISPATCHED status and workflow.gitWorkflowId=${event.workflow_job.name}!`,
+        `ERROR! There are more than 1 workflow runs for gitRunId=${event.workflow_job.run_id} and workflow.gitWorkflowId=${event.workflow_job.name}!`,
       );
       return;
     }
 
     let [aiWorkflowRun]: ((typeof aiWorkflowRuns)[0] | null)[] = aiWorkflowRuns;
+
+    if (
+      aiWorkflowRun &&
+      !['DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)
+    ) {
+      const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
+      this.logger.error(errorMessage);
+      return;
+    }
 
     if (
       !aiWorkflowRun &&
