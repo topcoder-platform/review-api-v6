@@ -732,6 +732,7 @@ model aiWorkflowRun {
   gitRunId     String    @db.VarChar
   gitRunUrl    String?    @db.Text
   score        Float?    @db.DoublePrecision
+  initialScore Float?    @db.DoublePrecision
   status       String    @db.VarChar
   retryCount   Int       @default(0)
   usage        Json?     @db.JsonB

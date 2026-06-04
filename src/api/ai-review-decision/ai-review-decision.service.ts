@@ -358,6 +358,7 @@ export class AiReviewDecisionService {
 
     // Build update payload
     const updateData: Prisma.aiReviewDecisionUpdateInput = {};
+    const runUpdates: Array<{ runId: string; managerScore: number }> = [];
 
     if (dto.managerComment !== undefined) {
       updateData.managerComment = dto.managerComment;
@@ -375,6 +376,11 @@ export class AiReviewDecisionService {
           ] as Array<Record<string, unknown>>)
         : [];
 
+      const runUpdates: Array<{
+        runId: string;
+        managerScore: number;
+      }> = [];
+
       for (const override of dto.workflowOverrides) {
         const idx = workflows.findIndex(
           (w) => w['workflowId'] === override.workflowId,
@@ -385,6 +391,17 @@ export class AiReviewDecisionService {
             ...workflows[idx],
             managerScore: override.managerScore,
           };
+
+          let runId: string | null = null;
+          if (typeof workflows[idx]['runId'] === 'string') {
+            runId = workflows[idx]['runId'];
+          }
+          if (runId && override.managerScore !== null) {
+            runUpdates.push({
+              runId,
+              managerScore: override.managerScore,
+            });
+          }
         }
         if (override.workflowComment !== undefined) {
           workflows[idx] = {
@@ -416,10 +433,42 @@ export class AiReviewDecisionService {
       updateData.status = 'HUMAN_OVERRIDE';
     }
 
-    const updated = await this.prisma.aiReviewDecision.update({
-      where: { id },
-      data: updateData,
-      include: DECISION_INCLUDE,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedDecision = await tx.aiReviewDecision.update({
+        where: { id },
+        data: updateData,
+        include: DECISION_INCLUDE,
+      });
+
+      for (const runUpdate of runUpdates) {
+        const existingRun = await tx.aiWorkflowRun.findUnique({
+          where: { id: runUpdate.runId },
+          select: { score: true, initialScore: true },
+        });
+
+        if (!existingRun) {
+          continue;
+        }
+
+        const aiWorkflowRunUpdate: Prisma.aiWorkflowRunUpdateInput = {
+          score: runUpdate.managerScore,
+        };
+
+        if (
+          existingRun.initialScore === null &&
+          existingRun.score !== null &&
+          existingRun.score !== runUpdate.managerScore
+        ) {
+          aiWorkflowRunUpdate.initialScore = existingRun.score;
+        }
+
+        await tx.aiWorkflowRun.update({
+          where: { id: runUpdate.runId },
+          data: aiWorkflowRunUpdate,
+        });
+      }
+
+      return updatedDecision;
     });
 
     return this.mapToResponse(updated as AiReviewDecisionRecord);
