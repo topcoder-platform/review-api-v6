@@ -358,7 +358,11 @@ export class AiReviewDecisionService {
 
     // Build update payload
     const updateData: Prisma.aiReviewDecisionUpdateInput = {};
-    const runUpdates: Array<{ runId: string; managerScore: number }> = [];
+    const runUpdates: Array<{
+      runId: string;
+      managerScore: number;
+      runStatus: 'SUCCESS' | 'FAILURE';
+    }> = [];
 
     if (dto.managerComment !== undefined) {
       updateData.managerComment = dto.managerComment;
@@ -376,10 +380,16 @@ export class AiReviewDecisionService {
           ] as Array<Record<string, unknown>>)
         : [];
 
-      const runUpdates: Array<{
-        runId: string;
-        managerScore: number;
-      }> = [];
+      const determineRunStatus = (
+        workflow: Record<string, unknown>,
+        score: number,
+      ) => {
+        const minPassing =
+          workflow['minimumPassingScore'] != null
+            ? Number(workflow['minimumPassingScore'])
+            : 0;
+        return score >= minPassing ? 'SUCCESS' : 'FAILURE';
+      };
 
       for (const override of dto.workflowOverrides) {
         const idx = workflows.findIndex(
@@ -400,13 +410,17 @@ export class AiReviewDecisionService {
             runUpdates.push({
               runId,
               managerScore: override.managerScore,
+              runStatus: determineRunStatus(
+                workflows[idx],
+                override.managerScore,
+              ),
             });
           }
         }
         if (override.workflowComment !== undefined) {
           workflows[idx] = {
             ...workflows[idx],
-            managerComment: override.workflowComment,
+            workflowComment: override.workflowComment,
           };
         }
       }
@@ -443,15 +457,20 @@ export class AiReviewDecisionService {
       for (const runUpdate of runUpdates) {
         const existingRun = await tx.aiWorkflowRun.findUnique({
           where: { id: runUpdate.runId },
-          select: { score: true, initialScore: true },
+          select: { score: true, initialScore: true, completedAt: true },
         });
 
         if (!existingRun) {
           continue;
         }
 
-        const aiWorkflowRunUpdate: Prisma.aiWorkflowRunUpdateInput = {
+        const aiWorkflowRunUpdate: Prisma.aiWorkflowRunUpdateInput & {
+          initialScore?: number | null;
+          status?: string;
+          completedAt?: Date | null;
+        } = {
           score: runUpdate.managerScore,
+          status: runUpdate.runStatus,
         };
 
         if (
@@ -460,6 +479,13 @@ export class AiReviewDecisionService {
           existingRun.score !== runUpdate.managerScore
         ) {
           aiWorkflowRunUpdate.initialScore = existingRun.score;
+        }
+
+        if (
+          ['SUCCESS', 'FAILURE'].includes(runUpdate.runStatus) &&
+          existingRun.completedAt == null
+        ) {
+          aiWorkflowRunUpdate.completedAt = new Date();
         }
 
         await tx.aiWorkflowRun.update({
