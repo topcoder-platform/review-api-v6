@@ -844,6 +844,7 @@ export class AiWorkflowService {
           where: { id: runId },
           select: {
             score: true,
+            status: true,
             initialScore: true,
             completedAt: true,
             workflow: {
@@ -858,6 +859,7 @@ export class AiWorkflowService {
           },
         });
 
+        // update final score and status when manager updates score
         if (existingRun) {
           if (
             existingRun.initialScore === null &&
@@ -867,17 +869,23 @@ export class AiWorkflowService {
             updateData.initialScore = existingRun.score;
           }
 
-          const minPassingScore =
-            existingRun.workflow?.scorecard?.minimumPassingScore;
-          if (minPassingScore != null) {
-            const status =
-              patchData.score >= Number(minPassingScore)
-                ? 'SUCCESS'
-                : 'FAILURE';
-            updateData.status = status;
-
-            if (existingRun.completedAt == null) {
-              updateData.completedAt = new Date();
+          if (
+            existingRun.status &&
+            existingRun.score !== null &&
+            existingRun.score !== patchData.score
+          ) {
+            const minPassingScore =
+              existingRun.workflow?.scorecard?.minimumPassingScore;
+            if (minPassingScore != null) {
+              const status =
+                patchData.score >= Number(minPassingScore)
+                  ? 'SUCCESS'
+                  : 'FAILURE';
+              updateData.status = status;
+  
+              if (existingRun.completedAt == null) {
+                updateData.completedAt = new Date();
+              }
             }
           }
         }
