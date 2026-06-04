@@ -882,7 +882,7 @@ export class AiWorkflowService {
                   ? 'SUCCESS'
                   : 'FAILURE';
               updateData.status = status;
-  
+
               if (existingRun.completedAt == null) {
                 updateData.completedAt = new Date();
               }
