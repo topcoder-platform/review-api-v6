@@ -3550,7 +3550,7 @@ export class SubmissionService {
   }
 
   private async applyReviewVisibilityFilters(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<{
       challengeId?: string | null;
       memberId?: string | null;
@@ -3572,7 +3572,7 @@ export class SubmissionService {
         ? String(authUser.userId).trim()
         : '';
 
-    const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+    const isPrivilegedRequester = authUser && (authUser.isMachine || isAdmin(authUser));
     if (!isPrivilegedRequester && !requesterUserId) {
       for (const submission of submissions) {
         if (Object.prototype.hasOwnProperty.call(submission, 'review')) {
@@ -4557,7 +4557,7 @@ export class SubmissionService {
   }
 
   private stripSubmitterMemberIds(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<
       { challengeId?: string | null; memberId?: string | null } & Record<
         string,
@@ -4569,7 +4569,7 @@ export class SubmissionService {
     if (!submissions.length) {
       return;
     }
-    if (authUser?.isMachine || isAdmin(authUser)) {
+    if (authUser && (authUser.isMachine || isAdmin(authUser))) {
       return;
     }
 
@@ -4648,7 +4648,7 @@ export class SubmissionService {
   }
 
   private stripSubmitterSubmissionDetails(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<
       {
         challengeId?: string | null;
@@ -4663,7 +4663,7 @@ export class SubmissionService {
     if (!submissions.length) {
       return;
     }
-    if (authUser?.isMachine || isAdmin(authUser)) {
+    if (authUser && (authUser.isMachine || isAdmin(authUser))) {
       return;
     }
 
@@ -4758,7 +4758,7 @@ export class SubmissionService {
    * Used by `listSubmission` so competitors can see their own test progress without per-seed scores.
    */
   private sanitizeMemberVisibleReviewSummationMetadata(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<
       {
         challengeId?: string | null;
@@ -4770,7 +4770,7 @@ export class SubmissionService {
     if (!submissions.length) {
       return;
     }
-    if (authUser?.isMachine || isAdmin(authUser)) {
+    if (authUser && (authUser.isMachine || isAdmin(authUser))) {
       return;
     }
 
