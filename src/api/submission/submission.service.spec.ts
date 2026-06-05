@@ -726,6 +726,7 @@ describe('SubmissionService', () => {
         findMany: jest.Mock;
         count: jest.Mock;
         findFirst: jest.Mock;
+        findUnique: jest.Mock;
       };
       reviewType: {
         findMany: jest.Mock;
@@ -754,6 +755,7 @@ describe('SubmissionService', () => {
           findMany: jest.fn(),
           count: jest.fn(),
           findFirst: jest.fn(),
+          findUnique: jest.fn(),
         },
         reviewType: {
           findMany: jest.fn().mockResolvedValue([]),
@@ -1054,6 +1056,186 @@ describe('SubmissionService', () => {
       expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
         'challenge-1',
       );
+    });
+
+    it('omits review data for unrelated users before completion', async () => {
+      const submissions = [
+        {
+          id: 'submission-other',
+          challengeId: 'challenge-1',
+          memberId: 'user-2',
+          submittedDate: new Date('2025-01-01T12:00:00Z'),
+          createdAt: new Date('2025-01-01T12:00:00Z'),
+          updatedAt: new Date('2025-01-01T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [{ id: 'review-other' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-other',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'user-3',
+          isMachine: false,
+          roles: [],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const other = result.data[0];
+      expect(other).not.toHaveProperty('review');
+      expect(other.reviewSummation).toEqual([]);
+      expect(
+        resourceApiServiceListMock.getMemberResourcesRoles,
+      ).toHaveBeenCalledWith('challenge-1', 'user-3');
+      expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+        'challenge-1',
+      );
+    });
+
+    it('strips review details for unauthorized active challenge getSubmission requests', async () => {
+      const submission = {
+        id: 'submission-unauthorized',
+        challengeId: 'challenge-1',
+        memberId: 'user-2',
+        submittedDate: new Date('2025-01-01T12:00:00Z'),
+        createdAt: new Date('2025-01-01T12:00:00Z'),
+        updatedAt: new Date('2025-01-01T12:00:00Z'),
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        review: [
+          {
+            id: 'review-1',
+            initialScore: 50,
+            finalScore: 55,
+            reviewItems: [],
+          },
+        ],
+        reviewSummation: [{ id: 'summation-1', metadata: { foo: 'bar' } }],
+        legacyChallengeId: null,
+        prizeId: null,
+      };
+
+      prismaMock.submission.findUnique.mockResolvedValue(submission);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Challenge',
+        legacy: {},
+        phases: [],
+      });
+
+      const result = await listService.getSubmission(
+        {
+          userId: 'user-3',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'submission-unauthorized',
+      );
+
+      expect(result.review).toBeUndefined();
+      expect(result.reviewSummation).toBeDefined();
+      expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+        'challenge-1',
+      );
+    });
+
+    it('allows submitters to see review scores for their own submission while the challenge is active', async () => {
+      const now = new Date('2025-01-02T12:00:00Z');
+      const submissions = [
+        {
+          id: 'submission-own',
+          challengeId: 'challenge-1',
+          memberId: 'user-1',
+          submittedDate: now,
+          createdAt: now,
+          updatedAt: now,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [
+            {
+              id: 'review-own',
+              phaseId: 'phase-review',
+              initialScore: 90,
+              finalScore: 95,
+              reviewItems: [
+                {
+                  id: 'item-1',
+                  scorecardQuestionId: 'q1',
+                  initialAnswer: 'YES',
+                  finalAnswer: 'YES',
+                  reviewItemComments: [],
+                },
+              ],
+            },
+          ],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Challenge',
+        legacy: {},
+        phases: [
+          {
+            id: 'phase-review',
+            phaseId: 'phase-review',
+            name: 'Review',
+            isOpen: false,
+            actualEndTime: new Date('2025-01-01T12:00:00Z').toISOString(),
+          },
+        ],
+      });
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-own',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'user-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const submissionResult = result.data[0];
+      expect(submissionResult.review).toHaveLength(1);
+      expect(submissionResult.review?.[0]?.initialScore).toBe(90);
+      expect(submissionResult.review?.[0]?.finalScore).toBe(95);
+      expect(submissionResult.review?.[0]?.reviewItems).toHaveLength(1);
     });
 
     it('retains review data for other submissions once the challenge completes', async () => {
