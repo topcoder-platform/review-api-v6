@@ -986,7 +986,7 @@ describe('SubmissionService', () => {
       expect(result.data[1]).not.toHaveProperty('isLatest');
     });
 
-    it('omits review data for non-owned submissions before completion', async () => {
+    it('omits review data and submission id for other submitters while challenge is active', async () => {
       const submissions = [
         {
           id: 'submission-own',
@@ -1043,13 +1043,13 @@ describe('SubmissionService', () => {
         { page: 1, perPage: 50 } as any,
       );
 
-      const own = result.data.find((entry) => entry.id === 'submission-own');
-      const other = result.data.find(
-        (entry) => entry.id === 'submission-other',
-      );
+      const own = result.data.find((entry) => entry.memberId === 'user-1');
+      const other = result.data.find((entry) => entry.memberId === 'user-2');
 
       expect(own?.review).toBeDefined();
+      expect(other).toBeDefined();
       expect(other).not.toHaveProperty('review');
+      expect(other).not.toHaveProperty('id');
       expect(
         resourceApiServiceListMock.getMemberResourcesRoles,
       ).toHaveBeenCalledWith('challenge-1', 'user-1');
@@ -1374,11 +1374,11 @@ describe('SubmissionService', () => {
         { page: 1, perPage: 50 } as any,
       );
 
-      const other = result.data.find(
-        (entry) => entry.id === 'submission-other',
-      );
+      const other = result.data.find((entry) => entry.memberId === 'user-2');
 
+      expect(other).toBeDefined();
       expect(other?.review).toBeDefined();
+      expect(other).not.toHaveProperty('id');
     });
 
     it('masks other reviewers scores while preserving reviewer metadata on active challenges', async () => {

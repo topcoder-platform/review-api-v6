@@ -4634,6 +4634,7 @@ export class SubmissionService {
         continue;
       }
 
+      delete (submission as any).id;
       (submission as any).memberId = null;
       if (Object.prototype.hasOwnProperty.call(submission, 'submitterHandle')) {
         delete (submission as any).submitterHandle;
@@ -4738,6 +4739,7 @@ export class SubmissionService {
         }
       }
 
+      delete (submission as any).id;
       if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
         delete (submission as any).reviewSummation;
       }
