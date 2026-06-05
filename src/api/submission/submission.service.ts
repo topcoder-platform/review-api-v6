@@ -3572,7 +3572,8 @@ export class SubmissionService {
         ? String(authUser.userId).trim()
         : '';
 
-    const isPrivilegedRequester = authUser && (authUser.isMachine || isAdmin(authUser));
+    const isPrivilegedRequester =
+      authUser && (authUser.isMachine || isAdmin(authUser));
     if (!isPrivilegedRequester && !requesterUserId) {
       for (const submission of submissions) {
         if (Object.prototype.hasOwnProperty.call(submission, 'review')) {
