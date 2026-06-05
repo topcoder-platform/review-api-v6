@@ -3106,6 +3106,23 @@ export class SubmissionService {
     const data = await this.checkSubmission(id, authUser);
     await this.populateLatestSubmissionFlags([data]);
     await this.enrichAiDecisionScores([data]);
+
+    const reviewVisibilityContext = await this.applyReviewVisibilityFilters(
+      authUser,
+      [data],
+    );
+    this.stripSubmitterMemberIds(authUser, [data], reviewVisibilityContext);
+    this.stripSubmitterSubmissionDetails(
+      authUser,
+      [data],
+      reviewVisibilityContext,
+    );
+    this.sanitizeMemberVisibleReviewSummationMetadata(
+      authUser,
+      [data],
+      reviewVisibilityContext,
+    );
+
     await this.stripIsLatestForUnlimitedChallenges([data]);
     return this.buildResponse(data);
   }
