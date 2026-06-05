@@ -833,12 +833,52 @@ export class AiWorkflowService {
     }
 
     try {
+      const updateData = { ...patchData } as Prisma.aiWorkflowRunUpdateInput & {
+        initialScore?: number | null;
+        completedAt?: Date | null;
+      };
+
+      if (patchData.score !== undefined) {
+        const existingRun = await this.prisma.aiWorkflowRun.findUnique({
+          where: { id: runId },
+          select: {
+            score: true,
+            initialScore: true,
+            completedAt: true,
+            workflow: {
+              select: {
+                scorecard: {
+                  select: {
+                    minimumPassingScore: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        // update final score and status when manager updates score
+        if (existingRun) {
+          if (
+            existingRun.initialScore === null &&
+            existingRun.score !== null &&
+            existingRun.score !== patchData.score
+          ) {
+            updateData.initialScore = existingRun.score;
+          }
+
+          if (existingRun.completedAt == null) {
+            updateData.completedAt = new Date();
+          }
+        }
+      }
+
       await this.prisma.aiWorkflowRun.update({
         where: {
           workflowId,
           id: runId,
         },
-        data: { ...patchData },
+        data: updateData,
       });
     } catch (error) {
       if (

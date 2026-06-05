@@ -2959,6 +2959,7 @@ export class SubmissionService {
       await this.populateReviewPhaseNames(submissions);
       await this.populateReviewTypeNames(submissions);
       await this.enrichReviewerMetadata(submissions);
+      await this.enrichAiDecisionScores(submissions);
 
       // Count total entities matching the filter for pagination metadata
       let totalCount = await this.prisma.submission.count({
@@ -3104,6 +3105,7 @@ export class SubmissionService {
 
     const data = await this.checkSubmission(id, authUser);
     await this.populateLatestSubmissionFlags([data]);
+    await this.enrichAiDecisionScores([data]);
     await this.stripIsLatestForUnlimitedChallenges([data]);
     return this.buildResponse(data);
   }
@@ -5216,6 +5218,95 @@ export class SubmissionService {
         `[hasPassingSubmissionForReviewScorecard] Failed to check passing submission for challenge ${normalizedChallengeId}, member ${normalizedMemberId}: ${message}`,
       );
       return false;
+    }
+  }
+
+  /**
+   * Enriches submissions with the latest (non-PENDING) AI decision totalScore for AI-only challenges.
+   * For each submission, if an AI review config exists for its challenge and there's
+   * a non-PENDING AI decision, sets `finalScore`, `aiDecisionScore`, and `aiDecisionStatus`
+   * on the submission object.
+   */
+  private async enrichAiDecisionScores(
+    submissions: Array<{
+      id: string;
+      challengeId?: string | null;
+      review?: unknown;
+    }>,
+  ): Promise<void> {
+    if (!submissions.length) {
+      return;
+    }
+
+    const challengeIds = Array.from(
+      new Set(
+        submissions
+          .map((s) => s.challengeId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    if (!challengeIds.length) {
+      return;
+    }
+
+    // Find which challenges have AI review configs (AI-only challenges)
+    const aiConfigRows = await this.prisma.$queryRaw<
+      Array<{ challengeId: string }>
+    >(Prisma.sql`
+      SELECT DISTINCT "challengeId"
+      FROM "aiReviewConfig"
+      WHERE "challengeId" IN (${Prisma.join(challengeIds)})
+        AND "mode" = 'AI_ONLY'
+    `);
+
+    const aiOnlyChallengeIds = new Set(aiConfigRows.map((r) => r.challengeId));
+    if (!aiOnlyChallengeIds.size) {
+      return;
+    }
+
+    // Get submissions that belong to AI-only challenges
+    const aiSubmissions = submissions.filter(
+      (s) => s.challengeId && aiOnlyChallengeIds.has(s.challengeId),
+    );
+
+    if (!aiSubmissions.length) {
+      return;
+    }
+
+    const submissionIds = aiSubmissions.map((s) => s.id);
+
+    // Fetch the latest AI decision for each submission
+    const decisionRows = await this.prisma.$queryRaw<
+      Array<{ submissionId: string; totalScore: number | null; status: string }>
+    >(Prisma.sql`
+      SELECT DISTINCT ON ("submissionId")
+        "submissionId",
+        "totalScore",
+        status::text AS "status"
+      FROM "aiReviewDecision"
+      WHERE "submissionId" IN (${Prisma.join(submissionIds)})
+        AND UPPER(status::text) != 'PENDING'
+      ORDER BY "submissionId", "updatedAt" DESC
+    `);
+
+    const decisionBySubmissionId = new Map(
+      decisionRows.map((d) => [d.submissionId, d]),
+    );
+
+    // Enrich submissions with AI decision scores
+    for (const submission of aiSubmissions) {
+      const decision = decisionBySubmissionId.get(submission.id);
+      if (!decision || decision.totalScore === null) {
+        continue;
+      }
+
+      // Also set on the submission itself for convenience
+      (submission as Record<string, unknown>).finalScore = decision.totalScore;
+      (submission as Record<string, unknown>).aiDecisionScore =
+        decision.totalScore;
+      (submission as Record<string, unknown>).aiDecisionStatus =
+        decision.status;
     }
   }
 
