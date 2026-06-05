@@ -5163,10 +5163,10 @@ export class SubmissionService {
   }
 
   /**
-   * Enriches submissions with AI decision totalScore as finalScore for AI-only challenges.
+   * Enriches submissions with the latest (non-PENDING) AI decision totalScore for AI-only challenges.
    * For each submission, if an AI review config exists for its challenge and there's
-   * a non-PENDING AI decision, sets the finalScore on the submission's reviews to the
-   * decision's totalScore.
+   * a non-PENDING AI decision, sets `finalScore`, `aiDecisionScore`, and `aiDecisionStatus`
+   * on the submission object.
    */
   private async enrichAiDecisionScores(
     submissions: Array<{

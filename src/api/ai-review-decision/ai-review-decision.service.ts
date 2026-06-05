@@ -380,6 +380,12 @@ export class AiReviewDecisionService {
           ] as Array<Record<string, unknown>>)
         : [];
 
+      if (!workflows.length) {
+        throw new BadRequestException(
+          'Cannot apply workflow overrides: decision breakdown is missing workflow entries.',
+        );
+      }
+
       const determineRunStatus = (
         workflow: Record<string, unknown>,
         score: number,
