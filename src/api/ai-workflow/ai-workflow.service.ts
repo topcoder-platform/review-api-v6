@@ -1281,7 +1281,14 @@ export class AiWorkflowService {
       scoreUpdateRequested && runScore !== null
         ? this.prisma.aiWorkflowRun.update({
             where: { id: runId },
-            data: { score: runScore },
+            data: {
+              score: runScore,
+              ...(run.initialScore == null &&
+              run.score != null &&
+              run.score !== runScore
+                ? { initialScore: run.score }
+                : {}),
+            },
           })
         : null;
 
