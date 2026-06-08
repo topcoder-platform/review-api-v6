@@ -1,15 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  IsOptional,
-  IsString,
-  IsEnum,
-  IsNumber,
-  IsArray,
-  ValidateNested,
-  Min,
-  Max,
-} from 'class-validator';
-import { Transform, Type } from 'class-transformer';
+import { IsOptional, IsString, IsEnum } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { AiReviewDecisionEscalationResponseDto } from './aiReviewEscalation.dto';
 
 const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
@@ -125,59 +116,4 @@ export class AiReviewDecisionResponseDto {
     type: [AiReviewDecisionEscalationResponseDto],
   })
   escalations?: AiReviewDecisionEscalationResponseDto[];
-
-  @ApiProperty({
-    description: 'Manager comment left during the Approval phase',
-    required: false,
-    nullable: true,
-  })
-  managerComment: string | null;
-}
-
-export class WorkflowManagerOverrideDto {
-  @ApiProperty({ description: 'Workflow ID to override' })
-  @IsString()
-  workflowId: string;
-
-  @ApiProperty({
-    description: 'Manager score override (0–100)',
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  managerScore?: number | null;
-
-  @ApiProperty({
-    description: 'Manager comment for this workflow entry',
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsString()
-  workflowComment?: string | null;
-}
-
-export class PatchAiReviewDecisionDto {
-  @ApiProperty({
-    description: 'Overall manager comment for this decision',
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsString()
-  managerComment?: string | null;
-
-  @ApiProperty({
-    description: 'Per-workflow score/comment overrides',
-    required: false,
-    type: [WorkflowManagerOverrideDto],
-  })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => WorkflowManagerOverrideDto)
-  workflowOverrides?: WorkflowManagerOverrideDto[];
 }

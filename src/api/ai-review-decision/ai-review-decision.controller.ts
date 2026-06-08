@@ -1,12 +1,4 @@
-import {
-  Controller,
-  Get,
-  Param,
-  Query,
-  Patch,
-  Body,
-  ValidationPipe,
-} from '@nestjs/common';
+import { Controller, Get, Param, Query, ValidationPipe } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiTags,
@@ -14,14 +6,12 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
-  ApiBody,
 } from '@nestjs/swagger';
 import { AiReviewDecisionService } from './ai-review-decision.service';
 import {
   ListAiReviewDecisionQueryDto,
   AiReviewDecisionResponseDto,
   AiReviewDecisionStatus,
-  PatchAiReviewDecisionDto,
 } from '../../dto/aiReviewDecision.dto';
 import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { User } from 'src/shared/decorators/user.decorator';
@@ -123,38 +113,5 @@ export class AiReviewDecisionController {
   @ApiResponse({ status: 404, description: 'AI review decision not found.' })
   async getById(@Param('id') id: string, @User() authUser: JwtUser) {
     return this.aiReviewDecisionService.getById(id, authUser);
-  }
-
-  @Patch(':id')
-  @Roles(UserRole.Admin, UserRole.Copilot)
-  @Scopes(Scope.ReadAiReviewDecision)
-  @ApiOperation({
-    summary: 'Update an AI review decision (manager override)',
-    description:
-      'Roles: Admin, Copilot. Allows setting a manager comment and/or per-workflow score overrides. When workflow overrides are provided the total score is recalculated and the status is set to HUMAN_OVERRIDE.',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'The ID of the AI review decision',
-    example: '229c5PnhSKqsSu',
-  })
-  @ApiBody({ type: PatchAiReviewDecisionDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Updated AI review decision.',
-    type: AiReviewDecisionResponseDto,
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden. Only Admins and Copilots may update decisions.',
-  })
-  @ApiResponse({ status: 404, description: 'AI review decision not found.' })
-  async patch(
-    @Param('id') id: string,
-    @Body(new ValidationPipe({ whitelist: true, transform: true }))
-    dto: PatchAiReviewDecisionDto,
-    @User() authUser: JwtUser,
-  ) {
-    return this.aiReviewDecisionService.patch(id, dto, authUser);
   }
 }
