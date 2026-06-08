@@ -194,6 +194,13 @@ export class CommentDto {
 export class UpdateAiWorkflowRunItemDto extends PartialType(
   CreateAiWorkflowRunItemDto,
 ) {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(trimTransformer)
+  @IsNotEmpty()
+  comment?: string;
+
   @ApiHideProperty()
   @IsEmpty({ message: 'scorecardQuestionId cannot be updated' })
   scorecardQuestionId?: never;

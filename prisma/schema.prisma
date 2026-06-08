@@ -754,6 +754,7 @@ model aiWorkflowRunItem {
   scorecardQuestionId String   @db.VarChar(14)
   content             String   @db.Text
   questionScore       Float?   @db.DoublePrecision
+  originalQuestionScore Float? @db.DoublePrecision
   createdAt           DateTime @db.Timestamp(3)
   createdBy           String?  @db.Text
 
