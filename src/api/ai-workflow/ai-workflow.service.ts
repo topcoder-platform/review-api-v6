@@ -1264,7 +1264,7 @@ export class AiWorkflowService {
 
         const approvalOpen = await this.challengeApiService.isPhaseOpen(
           submission.challengeId,
-          'approval',
+          'Approval',
         );
 
         if (!approvalOpen) {
