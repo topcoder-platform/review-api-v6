@@ -1236,7 +1236,9 @@ export class AiWorkflowService {
         updateData.questionScore = patchData.questionScore;
         if (
           runItem.questionScore !== undefined &&
-          runItem.questionScore !== null
+          runItem.questionScore !== null &&
+          (runItem.originalQuestionScore === null ||
+            runItem.originalQuestionScore === undefined)
         ) {
           updateData.originalQuestionScore = runItem.questionScore;
         }
