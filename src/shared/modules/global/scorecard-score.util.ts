@@ -1,6 +1,7 @@
 export type ScorecardQuestionAnswer = string | number | null | undefined;
 
-const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+const round2 = (value: number): number =>
+  Math.round((value + Number.EPSILON) * 100) / 100;
 
 export const computeQuestionScore = (
   type: string | null | undefined,
@@ -66,10 +67,11 @@ export const computeScorecardTotal = (
       ? (group.weight ?? 0) / totalGroupWeight
       : 1 / Math.max(1, scorecard.scorecardGroups.length);
 
-    const totalSectionWeight = group.sections?.reduce(
-      (sum, section) => sum + (section.weight ?? 0),
-      0,
-    ) ?? 0;
+    const totalSectionWeight =
+      group.sections?.reduce(
+        (sum, section) => sum + (section.weight ?? 0),
+        0,
+      ) ?? 0;
 
     let groupScore = 0;
 
@@ -78,10 +80,11 @@ export const computeScorecardTotal = (
         ? (section.weight ?? 0) / totalSectionWeight
         : 1 / Math.max(1, group.sections?.length ?? 1);
 
-      const totalQuestionWeight = section.questions?.reduce(
-        (sum, question) => sum + (question.weight ?? 0),
-        0,
-      ) ?? 0;
+      const totalQuestionWeight =
+        section.questions?.reduce(
+          (sum, question) => sum + (question.weight ?? 0),
+          0,
+        ) ?? 0;
 
       let sectionScore = 0;
 
@@ -134,7 +137,9 @@ export const computeScoresFromItems = <
   },
   items: Item[],
 ): { initialScore: number | null; finalScore: number | null } => {
-  const answersByQuestion = new Map(items.map((item) => [item.scorecardQuestionId, item]));
+  const answersByQuestion = new Map(
+    items.map((item) => [item.scorecardQuestionId, item]),
+  );
 
   const initialAnswers = new Map<string, ScorecardQuestionAnswer>();
   const finalAnswers = new Map<string, ScorecardQuestionAnswer>();
@@ -143,10 +148,7 @@ export const computeScoresFromItems = <
     for (const section of group.sections ?? []) {
       for (const question of section.questions ?? []) {
         const item = answersByQuestion.get(question.id);
-        initialAnswers.set(
-          question.id,
-          item?.initialAnswer ?? null,
-        );
+        initialAnswers.set(question.id, item?.initialAnswer ?? null);
         finalAnswers.set(
           question.id,
           item?.finalAnswer ?? item?.initialAnswer ?? null,
