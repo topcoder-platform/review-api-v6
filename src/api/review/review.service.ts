@@ -31,6 +31,7 @@ import {
 } from 'src/shared/modules/global/challenge.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { computeScoresFromItems as computeScorecardScoresFromItems } from 'src/shared/modules/global/scorecard-score.util';
 import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { CommonConfig } from 'src/shared/config/common.config';
@@ -318,107 +319,12 @@ export class ReviewService {
         return { initialScore: null, finalScore: null };
       }
 
-      // Build a quick lookup for answers by questionId
-      const answersByQuestion = new Map(
-        items.map((i) => [i.scorecardQuestionId, i]),
+      const { initialScore, finalScore } = computeScorecardScoresFromItems(
+        scorecard,
+        items,
       );
 
-      // Normalize weights to avoid issues if they don't sum to exactly 100
-      const totalGroupWeight = scorecard.scorecardGroups.reduce(
-        (sum, g) => sum + (g.weight || 0),
-        0,
-      );
-
-      const computeQuestionScore = (
-        type: string,
-        scaleMin: number | null | undefined,
-        scaleMax: number | null | undefined,
-        answer: string | null | undefined,
-      ): number => {
-        if (answer === undefined || answer === null) return 0;
-        const t = String(type).toUpperCase();
-        if (t === 'YES_NO') {
-          return String(answer).toUpperCase() === 'YES' ? 100 : 0;
-        }
-        if (t === 'SCALE' || t === 'TEST_CASE') {
-          const min = typeof scaleMin === 'number' ? scaleMin : 0;
-          const max = typeof scaleMax === 'number' ? scaleMax : 0;
-          const val = Number(answer);
-          if (!isFinite(val)) return 0;
-          if (max === min) return 0;
-          const norm = ((val - min) / (max - min)) * 100;
-          return Math.min(100, Math.max(0, norm));
-        }
-        // Default for unknown types
-        return 0;
-      };
-
-      let initialTotal = 0;
-      let finalTotal = 0;
-
-      for (const group of scorecard.scorecardGroups) {
-        const groupWeightNorm = totalGroupWeight
-          ? (group.weight || 0) / totalGroupWeight
-          : 1 / Math.max(1, scorecard.scorecardGroups.length);
-
-        const totalSectionWeight = group.sections.reduce(
-          (s, sec) => s + (sec.weight || 0),
-          0,
-        );
-
-        let groupInitial = 0;
-        let groupFinal = 0;
-
-        for (const section of group.sections) {
-          const sectionWeightNorm = totalSectionWeight
-            ? (section.weight || 0) / totalSectionWeight
-            : 1 / Math.max(1, group.sections.length);
-
-          const totalQuestionWeight = section.questions.reduce(
-            (s, q) => s + (q.weight || 0),
-            0,
-          );
-
-          let sectionInitial = 0;
-          let sectionFinal = 0;
-
-          for (const q of section.questions) {
-            const questionWeightNorm = totalQuestionWeight
-              ? (q.weight || 0) / totalQuestionWeight
-              : 1 / Math.max(1, section.questions.length);
-
-            const ans = answersByQuestion.get(q.id);
-            const qi = computeQuestionScore(
-              q.type,
-              q.scaleMin ?? null,
-              q.scaleMax ?? null,
-              ans?.initialAnswer ?? null,
-            );
-            const qf = computeQuestionScore(
-              q.type,
-              q.scaleMin ?? null,
-              q.scaleMax ?? null,
-              ans?.finalAnswer ?? ans?.initialAnswer ?? null,
-            );
-
-            sectionInitial += qi * questionWeightNorm;
-            sectionFinal += qf * questionWeightNorm;
-          }
-
-          groupInitial += sectionInitial * sectionWeightNorm;
-          groupFinal += sectionFinal * sectionWeightNorm;
-        }
-
-        initialTotal += groupInitial * groupWeightNorm;
-        finalTotal += groupFinal * groupWeightNorm;
-      }
-
-      // Round to 2 decimals for readability
-      const round2 = (n: number) => Math.round(n * 100) / 100;
-      return {
-        initialScore: round2(initialTotal),
-        finalScore: round2(finalTotal),
-      };
+      return { initialScore, finalScore };
     } catch (e) {
       this.logger.error(
         '[computeScoresFromItems] Failed to compute scores. Returning nulls.',
