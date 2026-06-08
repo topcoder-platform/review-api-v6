@@ -23,6 +23,8 @@ import {
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { AiReviewerDecisionMakerService } from 'src/shared/modules/global/ai-reviewer-decision-maker.service';
+import { computeScorecardTotal } from 'src/shared/modules/global/scorecard-score.util';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
@@ -41,6 +43,7 @@ export class AiWorkflowService {
     private readonly memberPrisma: MemberPrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly resourceApiService: ResourceApiService,
+    private readonly aiReviewerDecisionMaker: AiReviewerDecisionMakerService,
     private readonly giteaService: GiteaService,
     private readonly workflowQueueHandler: WorkflowQueueHandler,
     private readonly challengePrisma: ChallengePrismaService,
@@ -1124,7 +1127,7 @@ export class AiWorkflowService {
 
     if (!user.isMachine) {
       const keys = Object.keys(patchData);
-      const prohibitedKeys = ['content', 'questionScore'];
+      const prohibitedKeys = ['content'];
       if (keys.some((key) => prohibitedKeys.includes(key))) {
         throw new BadRequestException(
           `Users cannot update one of these properties - ${prohibitedKeys.join(',')}`,
@@ -1168,20 +1171,96 @@ export class AiWorkflowService {
       delete patchData.upVote;
     }
 
-    // Update other properties only allowed for machine users
+    const isPrivilegedRunItemScoreUpdater =
+      !user.isMachine &&
+      Boolean(
+        user.roles?.some(
+          (role) =>
+            role === UserRole.Admin ||
+            role === UserRole.Copilot ||
+            role === UserRole.ProjectManager,
+        ),
+      );
+
     const updateData: any = {};
-    if (user.isMachine) {
-      if (patchData.content) {
-        updateData.content = patchData.content;
-      }
-      if (patchData.questionScore) {
-        updateData.questionScore = patchData.questionScore;
-      }
+    if (user.isMachine && patchData.content) {
+      updateData.content = patchData.content;
     }
 
-    // If there are no other fields to update
-    // just return the run item
-    if (Object.keys(updateData).length === 0) {
+    const scoreUpdateRequested = patchData.questionScore !== undefined;
+    const commentText =
+      typeof patchData.comment === 'string'
+        ? patchData.comment.trim()
+        : undefined;
+
+    let runScore: number | null = null;
+
+    if (scoreUpdateRequested) {
+      if (user.isMachine) {
+        updateData.questionScore = patchData.questionScore;
+      } else if (isPrivilegedRunItemScoreUpdater) {
+        if (!commentText) {
+          throw new BadRequestException(
+            'A comment is required when updating question score.',
+          );
+        }
+
+        if (!run.submissionId) {
+          throw new ForbiddenException(
+            'Unable to validate approval phase for this run.',
+          );
+        }
+
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: run.submissionId },
+          select: { challengeId: true },
+        });
+
+        if (!submission?.challengeId) {
+          throw new ForbiddenException(
+            'Unable to validate approval phase for this run.',
+          );
+        }
+
+        const approvalOpen = await this.challengeApiService.isPhaseOpen(
+          submission.challengeId,
+          'Approval',
+        );
+
+        if (!approvalOpen) {
+          throw new ForbiddenException(
+            'Question score edits are only allowed during the approval phase.',
+          );
+        }
+
+        updateData.questionScore = patchData.questionScore;
+        if (
+          runItem.questionScore !== undefined &&
+          runItem.questionScore !== null
+        ) {
+          updateData.originalQuestionScore = runItem.questionScore;
+        }
+      } else {
+        throw new ForbiddenException(
+          'Only machine users or privileged roles may update question score.',
+        );
+      }
+
+      runScore = await this.computeRunScoreForRunItem(
+        workflowId,
+        runId,
+        runItem.scorecardQuestionId,
+        patchData.questionScore as number,
+      );
+    }
+
+    if (commentText && !scoreUpdateRequested) {
+      throw new BadRequestException(
+        'Comment can only be created when updating the question score.',
+      );
+    }
+
+    if (Object.keys(updateData).length === 0 && !commentText) {
       return this.prisma.aiWorkflowRunItem.findUnique({
         where: { id: itemId },
         include: {
@@ -1191,13 +1270,122 @@ export class AiWorkflowService {
       });
     }
 
-    return this.prisma.aiWorkflowRunItem.update({
+    const itemUpdate = this.prisma.aiWorkflowRunItem.update({
       where: { id: itemId },
+      data: updateData,
+    });
+
+    const runUpdate =
+      scoreUpdateRequested && runScore !== null
+        ? this.prisma.aiWorkflowRun.update({
+            where: { id: runId },
+            data: { score: runScore },
+          })
+        : null;
+
+    let updatedItem;
+
+    if (commentText) {
+      if (!user.userId) {
+        throw new BadRequestException('User id is not available');
+      }
+
+      const transactionItems: any = [
+        itemUpdate,
+        this.prisma.aiWorkflowRunItemComment.create({
+          data: {
+            workflowRunItemId: itemId,
+            content: commentText,
+            userId: user.userId.toString(),
+          },
+        }),
+      ];
+
+      if (runUpdate) {
+        transactionItems.push(runUpdate);
+      }
+
+      const [item] = await this.prisma.$transaction(transactionItems);
+      updatedItem = item;
+    } else if (runUpdate) {
+      const [item] = await this.prisma.$transaction([itemUpdate, runUpdate]);
+      updatedItem = item;
+    } else {
+      updatedItem = await itemUpdate;
+    }
+
+    if (scoreUpdateRequested && run.submissionId) {
+      await this.aiReviewerDecisionMaker.evaluateSubmission(run.submissionId);
+    }
+
+    return this.prisma.aiWorkflowRunItem.findUnique({
+      where: { id: updatedItem.id },
       include: {
         comments: true,
         votes: true,
       },
-      data: updateData,
     });
+  }
+
+  private async computeRunScoreForRunItem(
+    workflowId: string,
+    runId: string,
+    questionId: string,
+    questionScore: number,
+  ): Promise<number | null> {
+    const workflowWithScorecard = await this.prisma.aiWorkflow.findUnique({
+      where: { id: workflowId },
+      select: {
+        scorecard: {
+          select: {
+            scorecardGroups: {
+              select: {
+                weight: true,
+                sections: {
+                  select: {
+                    weight: true,
+                    questions: {
+                      select: {
+                        id: true,
+                        type: true,
+                        scaleMin: true,
+                        scaleMax: true,
+                        weight: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!workflowWithScorecard?.scorecard) {
+      return null;
+    }
+
+    const items = await this.prisma.aiWorkflowRunItem.findMany({
+      where: { workflowRunId: runId },
+      select: {
+        scorecardQuestionId: true,
+        questionScore: true,
+      },
+    });
+
+    const answers = new Map(
+      items.map((item) => [
+        item.scorecardQuestionId,
+        item.scorecardQuestionId === questionId
+          ? questionScore
+          : item.questionScore,
+      ]),
+    );
+
+    const scorecard = workflowWithScorecard.scorecard;
+    const totalScore = computeScorecardTotal(scorecard, answers);
+
+    return Math.round((totalScore + Number.EPSILON) * 100) / 100;
   }
 }
