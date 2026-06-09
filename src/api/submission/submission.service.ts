@@ -4636,10 +4636,7 @@ export class SubmissionService {
         continue;
       }
 
-      const shouldStrip =
-        roleSummary.hasSubmitter &&
-        !roleSummary.hasCopilot &&
-        !roleSummary.hasReviewer;
+      const shouldStrip = !roleSummary.hasCopilot && !roleSummary.hasReviewer;
       if (!shouldStrip) {
         continue;
       }
