@@ -8,6 +8,7 @@ const TERMINAL_RUN_STATUSES = new Set([
   'FAILURE',
   'CANCELLED',
   'COMPLETED',
+  'TIMEOUT',
 ]);
 
 type DecisionContextWorkflow = {
@@ -269,7 +270,10 @@ export class AiReviewerDecisionMakerService {
             startedAt: true,
             completedAt: true,
           },
-          orderBy: [{ startedAt: 'desc' }, { completedAt: 'desc' }],
+          orderBy: [
+            { startedAt: { sort: 'desc', nulls: 'last' } },
+            { completedAt: { sort: 'desc', nulls: 'last' } },
+          ],
         })) as WorkflowRunRow[])
       : [];
 
