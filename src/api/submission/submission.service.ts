@@ -4983,11 +4983,7 @@ export class SubmissionService {
       const roleSummary =
         visibilityContext.roleSummaryByChallenge.get(challengeId) ??
         EMPTY_ROLE_SUMMARY;
-      if (
-        !roleSummary.hasSubmitter ||
-        roleSummary.hasCopilot ||
-        roleSummary.hasReviewer
-      ) {
+      if (roleSummary.hasCopilot || roleSummary.hasReviewer) {
         continue;
       }
 
@@ -5018,6 +5014,11 @@ export class SubmissionService {
       }
 
       delete (submission as any).id;
+      delete (submission as any).initialScore;
+      delete (submission as any).finalScore;
+      delete (submission as any).aiDecisionScore;
+      delete (submission as any).aiDecisionStatus;
+
       if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
         delete (submission as any).reviewSummation;
       }
