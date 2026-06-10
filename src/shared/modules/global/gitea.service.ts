@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   HttpExceptionOptions,
   Injectable,
   InternalServerErrorException,
@@ -182,6 +183,12 @@ export class GiteaService {
   }
 
   async getWorkflowRunArtifacts(owner: string, repo: string, gitJobId: number) {
+    if (!Number.isFinite(gitJobId) || gitJobId <= 0) {
+      throw new BadRequestException(
+        `Invalid gitJobId: ${gitJobId}. Expected a positive finite job ID.`,
+      );
+    }
+
     try {
       const response = await this.giteaClient.repos.getArtifactsOfRun(
         owner,

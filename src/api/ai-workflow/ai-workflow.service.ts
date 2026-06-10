@@ -971,12 +971,19 @@ export class AiWorkflowService {
     );
 
     const [owner, repo] = workflow.gitOwnerRepo.split('/');
-    const artifacts = await this.giteaService.getWorkflowRunArtifacts(
-      owner,
-      repo,
-      +run.gitRunId,
-    );
-    return artifacts;
+    try {
+      return await this.giteaService.getWorkflowRunArtifacts(
+        owner,
+        repo,
+        +run.gitRunId,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to get workflow run attachments for run ${runId} (workflowId=${workflowId}, owner=${owner}, repo=${repo}, gitRunId=${run.gitRunId}). Error=${(error as Error).message}`,
+        (error as Error).stack ?? String(error),
+      );
+      return [];
+    }
   }
 
   async downloadWorkflowRunAttachment(

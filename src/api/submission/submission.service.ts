@@ -266,6 +266,127 @@ export class SubmissionService {
     });
   }
 
+  /**
+   * Creates a clean, downloadable submission row for scorer validation without
+   * normal submission lifecycle side effects.
+   * @param authUser Authenticated admin or M2M token with create:submission access.
+   * @param body Validation upload metadata containing challenge, member, and submission type.
+   * @param file Uploaded submission artifact.
+   * @returns Created validation submission response.
+   * @throws ForbiddenException When the caller is not admin-capable.
+   * @throws BadRequestException When the file, challenge, or submission type is invalid.
+   * @throws InternalServerErrorException When clean storage upload or persistence fails.
+   * Used by Marathon Match API to run pre-launch scorer validation through ECS.
+   */
+  async createValidationSubmissionUpload(
+    authUser: JwtUser,
+    body: ManualSubmissionUploadRequestDto,
+    file: Express.Multer.File,
+  ): Promise<SubmissionResponseDto> {
+    if (!isAdmin(authUser)) {
+      throw new ForbiddenException({
+        message:
+          'Only admins or M2M tokens can use validation submission upload.',
+        code: 'FORBIDDEN_VALIDATION_SUBMISSION_UPLOAD',
+      });
+    }
+
+    const hasUploadedFile =
+      !!file &&
+      ((typeof file.size === 'number' && file.size > 0) ||
+        (file.buffer && file.buffer.length > 0));
+
+    if (!hasUploadedFile) {
+      throw new BadRequestException({
+        message: 'File contents are required for validation submission upload.',
+        code: 'VALIDATION_SUBMISSION_FILE_REQUIRED',
+      });
+    }
+
+    await this.ensureChallengeWhitelistAccess(authUser, body.challengeId);
+
+    let challengeDetails: ChallengeData;
+    try {
+      challengeDetails = await this.challengeApiService.validateChallengeExists(
+        body.challengeId,
+      );
+      this.challengeCatalogService.ensureSubmissionTypeAllowed(
+        body.type as SubmissionType,
+        challengeDetails,
+      );
+    } catch (error) {
+      throw new BadRequestException({
+        message: error instanceof Error ? error.message : String(error ?? ''),
+        code: 'INVALID_VALIDATION_SUBMISSION_CONTEXT',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+          submissionType: body.type,
+        },
+      });
+    }
+
+    const cleanUpload = await this.uploadValidationSubmissionFileToClean(
+      authUser,
+      body,
+      file,
+    );
+    const actor =
+      authUser.userId != null && String(authUser.userId).trim().length > 0
+        ? String(authUser.userId).trim()
+        : 'machine-token';
+    const submittedDate = body.submittedDate
+      ? new Date(body.submittedDate)
+      : new Date();
+
+    if (Number.isNaN(submittedDate.getTime())) {
+      throw new BadRequestException({
+        message: 'Submitted date is invalid.',
+        code: 'INVALID_SUBMITTED_DATE',
+      });
+    }
+
+    try {
+      const data = await this.prisma.submission.create({
+        data: {
+          challengeId: body.challengeId,
+          createdBy: actor,
+          eventRaised: true,
+          fileSize: cleanUpload.fileSize,
+          fileType: cleanUpload.fileType,
+          isFileSubmission: true,
+          memberId: body.memberId,
+          status: SubmissionStatus.ACTIVE,
+          submissionPhaseId: body.submissionPhaseId,
+          submittedDate,
+          systemFileName: cleanUpload.fileName,
+          type: body.type as SubmissionType,
+          updatedBy: actor,
+          url: cleanUpload.url,
+          viewCount: 0,
+          virusScan: true,
+        },
+      });
+
+      this.logger.log(
+        `Validation submission upload stored clean file for challenge ${body.challengeId}, member ${body.memberId}, file ${cleanUpload.fileName}`,
+      );
+
+      return this.buildResponse(data);
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `creating validation submission for challengeId: ${body.challengeId}, memberId: ${body.memberId}`,
+        body,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
   async ensurePendingReviewsForSubmission(
     submissionId: string,
     options?: {
@@ -1730,6 +1851,106 @@ export class SubmissionService {
 
     return {
       url: this.buildS3HttpUrl(dmzBucket, key),
+      fileName: safeFileName,
+      fileSize:
+        typeof file.size === 'number'
+          ? file.size
+          : file.buffer
+            ? file.buffer.length
+            : null,
+      fileType,
+    };
+  }
+
+  /**
+   * Uploads a validation submission artifact directly into clean submission storage.
+   * @param authUser Authenticated admin or M2M caller used for S3 metadata.
+   * @param body Validation upload request metadata.
+   * @param file Uploaded submission file.
+   * @returns Clean S3 URL and file metadata for the submission row.
+   * @throws InternalServerErrorException When clean bucket configuration or upload fails.
+   * Used by `createValidationSubmissionUpload` so ECS scorer validation can download immediately.
+   */
+  private async uploadValidationSubmissionFileToClean(
+    authUser: JwtUser,
+    body: ManualSubmissionUploadRequestDto,
+    file: Express.Multer.File,
+  ): Promise<SubmissionDmzUploadResult> {
+    const cleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    if (!cleanBucket) {
+      this.logger.error('SUBMISSION_CLEAN_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'CLEAN_BUCKET_MISSING',
+      });
+    }
+
+    const requestedName =
+      body.fileName || file.originalname || file.filename || 'submission';
+    let safeFileName =
+      this.sanitizeArtifactFileName(requestedName) ??
+      `submission-${randomUUID()}`;
+    if (!/\.[A-Za-z0-9]+$/.test(safeFileName)) {
+      const ext = this.guessExtFromMime(file.mimetype) ?? 'bin';
+      safeFileName = `${safeFileName}.${ext}`;
+    }
+
+    const challengeSegment = this.sanitizeS3PathSegment(
+      body.challengeId,
+      'challenge',
+    );
+    const memberSegment = this.sanitizeS3PathSegment(body.memberId, 'member');
+    const key = `validation/${challengeSegment}/${memberSegment}/${randomUUID()}-${safeFileName}`;
+
+    const bodyStream = await this.resolveUploadedFileBody(file);
+    const s3 = this.getS3Client();
+    const actor =
+      authUser.userId != null && String(authUser.userId).trim().length > 0
+        ? String(authUser.userId).trim()
+        : 'machine-token';
+
+    const upload = new Upload({
+      client: s3,
+      params: {
+        Bucket: cleanBucket,
+        Key: key,
+        Body: bodyStream,
+        ContentType: file.mimetype || 'application/octet-stream',
+        Metadata: {
+          challengeId: String(body.challengeId),
+          memberId: String(body.memberId),
+          originalFileName: safeFileName,
+          uploadedBy: actor,
+          uploadPurpose: 'marathon-match-validation',
+        },
+      },
+      queueSize: 4,
+      partSize: 5 * 1024 * 1024,
+      leavePartsOnError: false,
+    });
+
+    try {
+      await upload.done();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to upload validation submission file to clean bucket ${cleanBucket}: ${message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to upload validation submission file to clean storage',
+        code: 'CLEAN_UPLOAD_FAILED',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+        },
+      });
+    }
+
+    const fileTypeMatch = safeFileName.match(/\.([A-Za-z0-9]+)$/);
+    const fileType = fileTypeMatch?.[1]?.toLowerCase() ?? null;
+
+    return {
+      url: this.buildS3HttpUrl(cleanBucket, key),
       fileName: safeFileName,
       fileSize:
         typeof file.size === 'number'

@@ -92,6 +92,161 @@ describe('SubmissionService', () => {
     }
   });
 
+  describe('createValidationSubmissionUpload', () => {
+    const createValidationService = () => {
+      const prisma = {
+        submission: {
+          create: jest.fn(),
+        },
+      };
+      const prismaErrorService = {
+        handleError: jest.fn(),
+      };
+      const challengeApiService = {
+        validateChallengeExists: jest.fn(),
+      };
+      const validationResourceApiService = {
+        getMemberResourcesRoles: jest.fn(),
+        validateSubmitterRegistration: jest.fn(),
+      };
+      const challengeCatalogService = {
+        ensureSubmissionTypeAllowed: jest.fn(),
+      };
+      const validationService = new SubmissionService(
+        prisma as any,
+        prismaErrorService as any,
+        {} as any,
+        challengeApiService as any,
+        validationResourceApiService as any,
+        {} as any,
+        {} as any,
+        challengeCatalogService as any,
+        {} as any,
+      );
+
+      return {
+        challengeApiService,
+        challengeCatalogService,
+        prisma,
+        validationResourceApiService,
+        validationService,
+      };
+    };
+
+    it('creates a clean active validation submission without submitter registration checks', async () => {
+      const {
+        challengeApiService,
+        challengeCatalogService,
+        prisma,
+        validationResourceApiService,
+        validationService,
+      } = createValidationService();
+      const submittedDate = new Date('2026-06-01T00:00:00.000Z');
+
+      challengeApiService.validateChallengeExists.mockResolvedValue({
+        id: 'challenge-abc',
+        track: 'DATA_SCIENCE',
+        type: 'Marathon Match',
+      });
+      jest
+        .spyOn(
+          validationService as any,
+          'uploadValidationSubmissionFileToClean',
+        )
+        .mockResolvedValue({
+          fileName: 'solution.zip',
+          fileSize: 12,
+          fileType: 'zip',
+          url: 'https://s3.amazonaws.com/clean/validation/challenge-abc/member-1/solution.zip',
+        });
+      prisma.submission.create.mockResolvedValue({
+        challengeId: 'challenge-abc',
+        createdBy: 'machine-token',
+        eventRaised: true,
+        fileSize: 12,
+        fileType: 'zip',
+        id: 'submission-1',
+        isFileSubmission: true,
+        memberId: 'member-1',
+        status: SubmissionStatus.ACTIVE,
+        submittedDate,
+        systemFileName: 'solution.zip',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        updatedBy: 'machine-token',
+        url: 'https://s3.amazonaws.com/clean/validation/challenge-abc/member-1/solution.zip',
+        viewCount: 0,
+        virusScan: true,
+      });
+
+      const result = await validationService.createValidationSubmissionUpload(
+        {
+          isMachine: true,
+          scopes: ['create:submission'],
+        } as any,
+        {
+          challengeId: 'challenge-abc',
+          memberId: 'member-1',
+          submittedDate: submittedDate.toISOString(),
+          type: SubmissionType.CONTEST_SUBMISSION,
+        },
+        {
+          buffer: Buffer.from('zip'),
+          mimetype: 'application/zip',
+          originalname: 'solution.zip',
+          size: 12,
+        } as Express.Multer.File,
+      );
+
+      expect(result.id).toBe('submission-1');
+      expect(challengeApiService.validateChallengeExists).toHaveBeenCalledWith(
+        'challenge-abc',
+      );
+      expect(
+        challengeCatalogService.ensureSubmissionTypeAllowed,
+      ).toHaveBeenCalledWith(
+        SubmissionType.CONTEST_SUBMISSION,
+        expect.objectContaining({ id: 'challenge-abc' }),
+      );
+      expect(
+        validationResourceApiService.validateSubmitterRegistration,
+      ).not.toHaveBeenCalled();
+      expect(prisma.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          challengeId: 'challenge-abc',
+          eventRaised: true,
+          isFileSubmission: true,
+          memberId: 'member-1',
+          status: SubmissionStatus.ACTIVE,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          virusScan: true,
+        }),
+      });
+    });
+
+    it('rejects validation upload requests without file contents', async () => {
+      const { validationService } = createValidationService();
+
+      await expect(
+        validationService.createValidationSubmissionUpload(
+          {
+            isMachine: true,
+            scopes: ['create:submission'],
+          } as any,
+          {
+            challengeId: 'challenge-abc',
+            memberId: 'member-1',
+            type: SubmissionType.CONTEST_SUBMISSION,
+          },
+          {
+            buffer: Buffer.alloc(0),
+            originalname: 'solution.zip',
+            size: 0,
+          } as Express.Multer.File,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
   describe('listArtifacts', () => {
     it('filters internal artifacts for submission owners', async () => {
       const result = await service.listArtifacts(
