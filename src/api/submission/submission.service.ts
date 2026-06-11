@@ -4857,7 +4857,10 @@ export class SubmissionService {
         continue;
       }
 
-      const shouldStrip = !roleSummary.hasCopilot && !roleSummary.hasReviewer;
+      const shouldStrip =
+        roleSummary.hasSubmitter &&
+        !roleSummary.hasCopilot &&
+        !roleSummary.hasReviewer;
       if (!shouldStrip) {
         continue;
       }
@@ -4983,7 +4986,7 @@ export class SubmissionService {
       const roleSummary =
         visibilityContext.roleSummaryByChallenge.get(challengeId) ??
         EMPTY_ROLE_SUMMARY;
-      if (roleSummary.hasCopilot || roleSummary.hasReviewer) {
+      if (roleSummary.hasCopilot) {
         continue;
       }
 
@@ -4992,6 +4995,14 @@ export class SubmissionService {
         !challenge || challenge.status === ChallengeStatus.ACTIVE;
       if (!isActiveChallenge) {
         continue;
+      }
+
+      if (!this.isMarathonMatchChallenge(challenge)) {
+        delete (submission as any).id;
+      }
+
+      if (roleSummary.hasReviewer) {
+        return;
       }
 
       if (Array.isArray((submission as any).review)) {
@@ -5013,11 +5024,12 @@ export class SubmissionService {
         }
       }
 
-      delete (submission as any).id;
-      delete (submission as any).initialScore;
-      delete (submission as any).finalScore;
-      delete (submission as any).aiDecisionScore;
-      delete (submission as any).aiDecisionStatus;
+      if (!this.isMarathonMatchChallenge(challenge)) {
+        delete (submission as any).initialScore;
+        delete (submission as any).finalScore;
+        delete (submission as any).aiDecisionScore;
+        delete (submission as any).aiDecisionStatus;
+      }
 
       if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
         delete (submission as any).reviewSummation;
