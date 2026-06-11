@@ -116,6 +116,11 @@ export class GiteaService {
           ref: 'refs/heads/main',
           inputs: dispatchInputs,
         },
+        {
+          query: {
+            return_run_details: true,
+          },
+        } as any,
       );
       // successful execution of workflow dispatch actually just returns "204 No Content". So we only log status.
       this.logger.log(
