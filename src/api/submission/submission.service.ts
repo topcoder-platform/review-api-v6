@@ -4986,20 +4986,20 @@ export class SubmissionService {
       const roleSummary =
         visibilityContext.roleSummaryByChallenge.get(challengeId) ??
         EMPTY_ROLE_SUMMARY;
-      if (roleSummary.hasCopilot) {
+      const challenge = visibilityContext.challengeDetailsById.get(challengeId);
+
+      if (roleSummary.hasCopilot || this.isMarathonMatchChallenge(challenge)) {
         continue;
       }
 
-      const challenge = visibilityContext.challengeDetailsById.get(challengeId);
       const isActiveChallenge =
         !challenge || challenge.status === ChallengeStatus.ACTIVE;
       if (!isActiveChallenge) {
         continue;
       }
 
-      if (!this.isMarathonMatchChallenge(challenge)) {
-        delete (submission as any).id;
-      }
+      // reviewer shouldn't be able to identify a submission by id
+      delete (submission as any).id;
 
       if (roleSummary.hasReviewer) {
         return;
@@ -5024,12 +5024,10 @@ export class SubmissionService {
         }
       }
 
-      if (!this.isMarathonMatchChallenge(challenge)) {
-        delete (submission as any).initialScore;
-        delete (submission as any).finalScore;
-        delete (submission as any).aiDecisionScore;
-        delete (submission as any).aiDecisionStatus;
-      }
+      delete (submission as any).initialScore;
+      delete (submission as any).finalScore;
+      delete (submission as any).aiDecisionScore;
+      delete (submission as any).aiDecisionStatus;
 
       if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
         delete (submission as any).reviewSummation;
