@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { GiteaService } from './gitea.service';
+import { GiteaService, ActionDispatchWorkflowResponse } from './gitea.service';
 import { PrismaService } from './prisma.service';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
@@ -449,8 +449,10 @@ export class WorkflowQueueHandler {
       },
     });
 
+    let dispatchResult: ActionDispatchWorkflowResponse;
+
     try {
-      await this.giteaService.runDispatchWorkflow(
+      dispatchResult = await this.giteaService.runDispatchWorkflow(
         workflow,
         workflowRun,
         payload.params,
@@ -469,8 +471,8 @@ export class WorkflowQueueHandler {
     await this.prisma.aiWorkflowRun.update({
       where: { id: workflowRun.id },
       data: {
-        gitRunId: '',
-        gitRunUrl: null,
+        gitRunId: `${dispatchResult.workflow_run_id}`,
+        gitRunUrl: dispatchResult.html_url,
         jobsCount: 0,
         completedJobs: 0,
       },
@@ -514,70 +516,23 @@ export class WorkflowQueueHandler {
       return;
     }
 
-    let [aiWorkflowRun]: ((typeof aiWorkflowRuns)[0] | null)[] = aiWorkflowRuns;
+    const [aiWorkflowRun]: ((typeof aiWorkflowRuns)[0] | null)[] =
+      aiWorkflowRuns;
 
     if (
-      !aiWorkflowRun &&
-      event.action === 'in_progress' &&
-      event.workflow_job.name === 'dump-workflow-context'
+      aiWorkflowRun &&
+      !['DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)
     ) {
-      const [owner, repo] = event.repository.full_name.split('/');
-      const { aiWorkflowRunId, jobsCount } =
-        (await this.giteaService.getAiWorkflowDataFromLogs(
-          owner,
-          repo,
-          event.workflow_job.id,
-        )) ?? ({} as any);
+      const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
+      this.logger.error(errorMessage);
+      return;
+    }
 
-      if (!aiWorkflowRunId) {
-        this.logger.error(
-          `Failed to find workflow run ID from logs for job with id ${event.workflow_job.id}`,
-        );
-        return;
-      }
-
-      if (!jobsCount) {
-        this.logger.error(
-          `Failed to find jobs count from logs for job with id ${event.workflow_job.id}`,
-        );
-        return;
-      }
-
-      aiWorkflowRun = await this.prisma.aiWorkflowRun.findUnique({
-        where: {
-          id: aiWorkflowRunId,
-        },
-        include: {
-          workflow: true,
-        },
-      });
-
-      if (
-        !aiWorkflowRun ||
-        !['DISPATCHED', 'QUEUED'].includes(aiWorkflowRun.status)
-      ) {
-        this.logger.error(
-          `Workflow run with id ${aiWorkflowRunId} is not in DISPATCHED or QUEUED status or not found. Status: ${aiWorkflowRun?.status}`,
-        );
-        return;
-      }
-
-      await this.prisma.aiWorkflowRun.update({
-        where: { id: aiWorkflowRunId },
-        data: {
-          gitRunId: `${event.workflow_job.run_id}`,
-          gitRunUrl: `${event.workflow_job.html_url}`,
-          jobsCount,
-          completedJobs: { increment: 1 },
-        },
-      });
-
-      this.logger.log({
-        message: 'Updated aiWorkflowRun with gitRunId after lookup',
-        aiWorkflowRunId,
-        gitRunId: event.workflow_job.run_id,
-        jobId: event.workflow_job.id,
-      });
+    if (event.workflow_job.name === 'dump-workflow-context') {
+      this.logger.log(
+        `Ignoring dump-workflow-context job event for run ${event.workflow_job.run_id}`,
+      );
+      return;
     }
 
     if (!aiWorkflowRun) {
@@ -588,11 +543,6 @@ export class WorkflowQueueHandler {
         gitJobStatus: event.action,
       });
 
-      return;
-    }
-
-    if (event.workflow_job.name === 'dump-workflow-context') {
-      // no further processing needed, this job is meant to sync our db run with the git run
       return;
     }
 
@@ -622,8 +572,8 @@ export class WorkflowQueueHandler {
       case 'completed': {
         // we need to mark the run as completed only when the last job in the run has been completed
         if (
-          (aiWorkflowRun.completedJobs ?? 0) + 1 !==
-          aiWorkflowRun.jobsCount
+          (aiWorkflowRun.completedJobs ?? 0) + 1 <=
+          (aiWorkflowRun.jobsCount ?? 0)
         ) {
           await this.prisma.aiWorkflowRun.update({
             where: { id: aiWorkflowRun.id },
