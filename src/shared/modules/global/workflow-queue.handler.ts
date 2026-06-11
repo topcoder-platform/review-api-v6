@@ -468,6 +468,15 @@ export class WorkflowQueueHandler {
       throw error;
     }
 
+    this.logger.log({
+      message: 'Workflow dispatch returned run metadata',
+      workflowRunId: workflowRun.id,
+      workflowRunGitId: dispatchResult.workflow_run_id,
+      workflowRunUrl: dispatchResult.run_url,
+      workflowRunHtmlUrl: dispatchResult.html_url,
+      raw: JSON.stringify(dispatchResult),
+    });
+
     await this.prisma.aiWorkflowRun.update({
       where: { id: workflowRun.id },
       data: {
