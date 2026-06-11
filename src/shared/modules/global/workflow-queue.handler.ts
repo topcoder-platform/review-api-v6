@@ -579,24 +579,6 @@ export class WorkflowQueueHandler {
         });
         break;
       case 'completed': {
-        // we need to mark the run as completed only when the last job in the run has been completed
-        if (
-          (aiWorkflowRun.completedJobs ?? 0) + 1 <=
-          (aiWorkflowRun.jobsCount ?? 0)
-        ) {
-          await this.prisma.aiWorkflowRun.update({
-            where: { id: aiWorkflowRun.id },
-            data: {
-              completedJobs: { increment: 1 },
-            },
-          });
-          this.logger.log(
-            `Workflow job ${(aiWorkflowRun.completedJobs ?? 0) + 1}/${aiWorkflowRun.jobsCount} completed.`,
-          );
-          await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
-          break;
-        }
-
         const terminalStatus = this.normalizeWorkflowConclusion(conclusion);
         const didRetry =
           ['FAILURE', 'TIMEOUT'].includes(terminalStatus) &&
