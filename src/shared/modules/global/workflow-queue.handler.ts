@@ -510,7 +510,6 @@ export class WorkflowQueueHandler {
 
     const aiWorkflowRuns = await this.prisma.aiWorkflowRun.findMany({
       where: {
-        status: { in: ['DISPATCHED', 'IN_PROGRESS'] },
         gitRunId: `${event.workflow_job.run_id}`,
       },
       include: {
@@ -520,7 +519,7 @@ export class WorkflowQueueHandler {
 
     if (aiWorkflowRuns.length > 1) {
       this.logger.error(
-        `ERROR! There are more than 1 workflow runs in DISPATCHED status and workflow.gitWorkflowId=${event.workflow_job.name}!`,
+        `ERROR! There are more than 1 workflow runs for workflow=${event.workflow_job.name} and gitWorkflowId=${event.workflow_job.run_id}!`,
       );
       return;
     }
@@ -530,14 +529,19 @@ export class WorkflowQueueHandler {
 
     if (
       aiWorkflowRun &&
-      !['DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)
+      !['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)
     ) {
       const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
       this.logger.error(errorMessage);
       return;
     }
 
-    if (event.workflow_job.name === 'dump-workflow-context') {
+    const conclusion = event.workflow_job.conclusion?.toUpperCase();
+    const terminalStatus = this.normalizeWorkflowConclusion(conclusion);
+    if (
+      event.workflow_job.name === 'dump-workflow-context' &&
+      terminalStatus !== 'CANCELLED'
+    ) {
       this.logger.log(
         `Ignoring dump-workflow-context job event for run ${event.workflow_job.run_id}`,
       );
@@ -555,7 +559,6 @@ export class WorkflowQueueHandler {
       return;
     }
 
-    const conclusion = event.workflow_job.conclusion?.toUpperCase();
     switch (event.action) {
       case 'in_progress':
         if (aiWorkflowRun.status !== 'DISPATCHED') {
@@ -579,7 +582,6 @@ export class WorkflowQueueHandler {
         });
         break;
       case 'completed': {
-        const terminalStatus = this.normalizeWorkflowConclusion(conclusion);
         const didRetry =
           ['FAILURE', 'TIMEOUT'].includes(terminalStatus) &&
           (await this.retryWorkflowRunIfEligible(
