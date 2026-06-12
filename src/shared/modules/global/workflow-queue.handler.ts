@@ -617,13 +617,15 @@ export class WorkflowQueueHandler {
           timestamp: new Date().toISOString(),
         });
 
-        try {
-          await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
-        } catch (e) {
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          this.logger.log(
-            `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
-          );
+        if (terminalStatus !== 'CANCELLED') {
+          try {
+            await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
+          } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            this.logger.log(
+              `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
+            );
+          }
         }
 
         // Check if all AI workflows for the challenge are complete and publish phase completion event
