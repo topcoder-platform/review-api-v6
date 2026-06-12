@@ -95,10 +95,16 @@ export class WorkflowQueueHandler {
     } & Record<string, unknown>,
     logType?: 'log' | 'warn' | 'error',
   ) {
-    this.logger[logType ?? 'log']({
-      ...(typeof message === 'string' ? { message } : message),
-      ...this.buildLogContext(context),
-    });
+    this.logger[logType ?? 'log'](
+      JSON.stringify(
+        {
+          ...(typeof message === 'string' ? { message } : message),
+          ...this.buildLogContext(context),
+        },
+        null,
+        2,
+      ),
+    );
   }
 
   private getWorkflowTimeoutMs(workflow: any): number {
