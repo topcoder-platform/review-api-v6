@@ -96,12 +96,10 @@ export class WorkflowQueueHandler {
     logType?: 'log' | 'warn' | 'error',
   ) {
     this.logger[logType ?? 'log'](
-      JSON.stringify(
-        {
-          ...(typeof message === 'string' ? { message } : message),
-          ...this.buildLogContext(context),
-        },
-      ),
+      JSON.stringify({
+        ...(typeof message === 'string' ? { message } : message),
+        ...this.buildLogContext(context),
+      }),
     );
   }
 
