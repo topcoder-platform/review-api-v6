@@ -78,6 +78,29 @@ export class WorkflowQueueHandler {
     return Math.floor(configured);
   }
 
+  private buildLogContext(
+    context?: {
+      submissionId?: string | null;
+      gitRunId?: string | null;
+    } & Record<string, unknown>,
+  ): Record<string, unknown> {
+    return context ? { ...context } : {};
+  }
+
+  private logWithContext(
+    message: string | Record<string, unknown>,
+    context?: {
+      submissionId?: string | null;
+      gitRunId?: string | null;
+    } & Record<string, unknown>,
+    logType?: 'log' | 'warn' | 'error',
+  ) {
+    this.logger[logType ?? 'log']({
+      ...(typeof message === 'string' ? { message } : message),
+      ...this.buildLogContext(context),
+    });
+  }
+
   private getWorkflowTimeoutMs(workflow: any): number {
     const workflowTimeoutSeconds = workflow.timeoutSeconds;
     if (
@@ -129,8 +152,14 @@ export class WorkflowQueueHandler {
         continue;
       }
 
-      this.logger.warn(
+      this.logWithContext(
         `Workflow run ${run.id} timed out after ${timeoutMs / 1000}s. Evaluating retry policy.`,
+        {
+          workflowRunId: run.id,
+          submissionId: run.submissionId ?? null,
+          gitRunId: run.gitRunId ?? null,
+        },
+        'warn',
       );
 
       await this.retryWorkflowRunIfEligible(run.id, 'TIMEOUT', {
@@ -246,14 +275,18 @@ export class WorkflowQueueHandler {
     }
 
     if (!retryInfo.shouldRetry) {
-      this.logger.warn(
+      this.logWithContext(
         `${logMessages.failMessage}. run=${workflowRunId}, retries=${retryInfo.retryCount}/${this.maxWorkflowRetries}`,
+        { workflowRunId },
+        'warn',
       );
       return false;
     }
 
-    this.logger.warn(
+    this.logWithContext(
       `${logMessages.retryMessage}. run=${workflowRunId}, retry=${retryInfo.retryCount}/${this.maxWorkflowRetries}`,
+      { workflowRunId },
+      'warn',
     );
 
     const payload = await this.buildDispatchPayload(workflowRunId);
@@ -283,8 +316,10 @@ export class WorkflowQueueHandler {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
-      this.logger.error(
+      this.logWithContext(
         `Failed to evaluate submission ${submissionId}. error=${errorMessage}`,
+        { submissionId },
+        'error',
       );
       try {
         await this.aiReviewerDecisionMaker.markDecisionError(
@@ -296,8 +331,10 @@ export class WorkflowQueueHandler {
           markError instanceof Error
             ? markError.message
             : JSON.stringify(markError);
-        this.logger.error(
+        this.logWithContext(
           `Failed to mark AI decision error for submission ${submissionId}: ${markErrorMessage}`,
+          { submissionId },
+          'error',
         );
       }
     }
@@ -323,8 +360,9 @@ export class WorkflowQueueHandler {
     });
 
     if (!activeWorkflows.length) {
-      this.logger.log(
+      this.logWithContext(
         `No active AI workflows to queue for challenge ${challengeId}, submission ${submissionId}.`,
+        { submissionId },
       );
       return;
     }
@@ -337,8 +375,9 @@ export class WorkflowQueueHandler {
       const alreadyQueued = await this.hasQueuedWorkflowRuns(submissionId);
 
       if (alreadyQueued) {
-        this.logger.log(
+        this.logWithContext(
           `AI workflow runs already queued for submission ${submissionId}. Skipping queueing.`,
+          { submissionId },
         );
         return [];
       }
@@ -361,8 +400,9 @@ export class WorkflowQueueHandler {
     }
 
     if (!this.isDispatchEnabled) {
-      this.logger.log(
+      this.logWithContext(
         'AI workflow dispatch is disabled, leaving workflow runs in INIT status.',
+        { submissionId },
       );
       return;
     }
@@ -422,8 +462,10 @@ export class WorkflowQueueHandler {
         },
       });
 
-      this.logger.warn(
+      this.logWithContext(
         `Skipping dispatch for disabled workflow ${workflow.id}. run=${workflowRunId}`,
+        { workflowRunId },
+        'warn',
       );
       return;
     }
@@ -468,14 +510,21 @@ export class WorkflowQueueHandler {
       throw error;
     }
 
-    this.logger.log({
-      message: 'Workflow dispatch returned run metadata',
-      workflowRunId: workflowRun.id,
-      workflowRunGitId: dispatchResult.workflow_run_id,
-      workflowRunUrl: dispatchResult.run_url,
-      workflowRunHtmlUrl: dispatchResult.html_url,
-      raw: JSON.stringify(dispatchResult),
-    });
+    this.logWithContext(
+      {
+        message: 'Workflow dispatch returned run metadata',
+        workflowRunId: workflowRun.id,
+        workflowRunGitId: dispatchResult.workflow_run_id,
+        workflowRunUrl: dispatchResult.run_url,
+        workflowRunHtmlUrl: dispatchResult.html_url,
+        raw: JSON.stringify(dispatchResult),
+      },
+      {
+        submissionId: workflowRun.submissionId ?? null,
+        gitRunId: workflowRun.gitRunId ?? null,
+        workflowRunId: workflowRun.id,
+      },
+    );
 
     await this.prisma.aiWorkflowRun.update({
       where: { id: workflowRun.id },
@@ -487,7 +536,9 @@ export class WorkflowQueueHandler {
       },
     });
 
-    this.logger.log(`Workflow run ${workflowRunId} dispatched.`);
+    this.logWithContext(`Workflow run ${workflowRunId} dispatched.`, {
+      workflowRunId,
+    });
   }
 
   async handleWorkflowRunEvents(event: {
@@ -502,8 +553,9 @@ export class WorkflowQueueHandler {
     repository: { full_name: string };
   }) {
     if (!['in_progress', 'completed'].includes(event.action)) {
-      this.logger.log(
+      this.logWithContext(
         `Skipping ${event.action} event for git workflow id ${event.workflow_job.id}.`,
+        { gitRunId: event.workflow_job.run_id },
       );
       return;
     }
@@ -518,8 +570,10 @@ export class WorkflowQueueHandler {
     });
 
     if (aiWorkflowRuns.length > 1) {
-      this.logger.error(
+      this.logWithContext(
         `ERROR! There are more than 1 workflow runs for gitRunId=${event.workflow_job.run_id} and workflow.gitWorkflowId=${event.workflow_job.name}!`,
+        { gitRunId: event.workflow_job.run_id },
+        'error',
       );
       return;
     }
@@ -532,7 +586,15 @@ export class WorkflowQueueHandler {
       !['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)
     ) {
       const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
-      this.logger.error(errorMessage);
+      this.logWithContext(
+        errorMessage,
+        {
+          aiWorkflowRunId: aiWorkflowRun.id,
+          submissionId: aiWorkflowRun.submissionId ?? null,
+          gitRunId: event.workflow_job.run_id,
+        },
+        'error',
+      );
       return;
     }
 
@@ -542,19 +604,23 @@ export class WorkflowQueueHandler {
       event.workflow_job.name === 'dump-workflow-context' &&
       terminalStatus !== 'CANCELLED'
     ) {
-      this.logger.log(
+      this.logWithContext(
         `Ignoring dump-workflow-context job event for run ${event.workflow_job.run_id}`,
+        { gitRunId: event.workflow_job.run_id },
       );
       return;
     }
 
     if (!aiWorkflowRun) {
-      this.logger.error({
-        message: 'No matching aiWorkflowRun found for workflow_job event',
-        workflowJobId: event.workflow_job.id,
-        gitRunId: event.workflow_job.run_id,
-        gitJobStatus: event.action,
-      });
+      this.logWithContext(
+        'No matching aiWorkflowRun found for workflow_job event',
+        {
+          workflowJobId: event.workflow_job.id,
+          gitRunId: event.workflow_job.run_id,
+          gitJobStatus: event.action,
+        },
+        'error',
+      );
 
       return;
     }
@@ -572,14 +638,20 @@ export class WorkflowQueueHandler {
             startedAt: new Date(),
           },
         });
-        this.logger.log({
-          message: 'Workflow job is now in progress',
-          aiWorkflowRunId: aiWorkflowRun.id,
-          gitRunId: event.workflow_job.run_id,
-          jobId: event.workflow_job.id,
-          status: 'IN_PROGRESS',
-          timestamp: new Date().toISOString(),
-        });
+        this.logWithContext(
+          {
+            message: 'Workflow job is now in progress',
+            aiWorkflowRunId: aiWorkflowRun.id,
+            jobId: event.workflow_job.id,
+            status: 'IN_PROGRESS',
+            timestamp: new Date().toISOString(),
+          },
+          {
+            aiWorkflowRunId: aiWorkflowRun.id,
+            submissionId: aiWorkflowRun.submissionId ?? null,
+            gitRunId: event.workflow_job.run_id,
+          },
+        );
         break;
       case 'completed': {
         const didRetry =
@@ -608,22 +680,33 @@ export class WorkflowQueueHandler {
 
         await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
 
-        this.logger.log({
-          message: `Workflow job ${aiWorkflowRun.id} completed with conclusion: ${conclusion}`,
-          aiWorkflowRunId: aiWorkflowRun.id,
-          gitRunId: event.workflow_job.run_id,
-          jobId: event.workflow_job.id,
-          status: terminalStatus,
-          timestamp: new Date().toISOString(),
-        });
+        this.logWithContext(
+          {
+            message: `Workflow job ${aiWorkflowRun.id} completed with conclusion: ${conclusion}`,
+            aiWorkflowRunId: aiWorkflowRun.id,
+            jobId: event.workflow_job.id,
+            status: terminalStatus,
+            timestamp: new Date().toISOString(),
+          },
+          {
+            aiWorkflowRunId: aiWorkflowRun.id,
+            submissionId: aiWorkflowRun.submissionId ?? null,
+            gitRunId: event.workflow_job.run_id,
+          },
+        );
 
         if (terminalStatus !== 'CANCELLED') {
           try {
             await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
           } catch (e) {
             const errorMessage = e instanceof Error ? e.message : String(e);
-            this.logger.log(
+            this.logWithContext(
               `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
+              {
+                aiWorkflowRunId: aiWorkflowRun.id,
+                submissionId: aiWorkflowRun.submissionId ?? null,
+                gitRunId: event.workflow_job.run_id,
+              },
             );
           }
         }
@@ -645,8 +728,14 @@ export class WorkflowQueueHandler {
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          this.logger.error(
+          this.logWithContext(
             `Failed to publish AI workflow phase completion event for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
+            {
+              aiWorkflowRunId: aiWorkflowRun.id,
+              submissionId: aiWorkflowRun.submissionId ?? null,
+              gitRunId: event.workflow_job.run_id,
+            },
+            'error',
           );
         }
         break;
@@ -664,8 +753,13 @@ export class WorkflowQueueHandler {
     });
 
     if (!submission) {
-      this.logger.log(
+      this.logWithContext(
         `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Submission ${aiWorkflowRun.submissionId} is missing!`,
+        {
+          aiWorkflowRunId: aiWorkflowRun.id,
+          submissionId: aiWorkflowRun.submissionId ?? null,
+          gitRunId: aiWorkflowRun.gitRunId ?? null,
+        },
       );
       return;
     }
@@ -681,8 +775,13 @@ export class WorkflowQueueHandler {
     `;
 
     if (!challenge) {
-      this.logger.log(
+      this.logWithContext(
         `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Challenge ${submission.challengeId} couldn't be fetched!`,
+        {
+          aiWorkflowRunId: aiWorkflowRun.id,
+          submissionId: aiWorkflowRun.submissionId ?? null,
+          gitRunId: aiWorkflowRun.gitRunId ?? null,
+        },
       );
       return;
     }
@@ -705,8 +804,13 @@ export class WorkflowQueueHandler {
     `;
 
     if (!user) {
-      this.logger.log(
+      this.logWithContext(
         `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. User ${submission.memberId} couldn't be fetched!`,
+        {
+          aiWorkflowRunId: aiWorkflowRun.id,
+          submissionId: aiWorkflowRun.submissionId ?? null,
+          gitRunId: aiWorkflowRun.gitRunId ?? null,
+        },
       );
       return;
     }
@@ -796,8 +900,10 @@ export class WorkflowQueueHandler {
         await this.challengeApiService.getChallengeDetail(challengeId);
 
       if (!challenge || !challenge.phases) {
-        this.logger.warn(
+        this.logWithContext(
           `[publishAiWorkflowPhaseCompletedEvent] Challenge ${challengeId} not found or has no phases`,
+          { submissionId, gitRunId: null },
+          'warn',
         );
         return;
       }
@@ -810,16 +916,18 @@ export class WorkflowQueueHandler {
           .at(-1) ?? null;
 
       if (!latestAiScreeningPhase) {
-        this.logger.debug(
+        this.logWithContext(
           `[publishAiWorkflowPhaseCompletedEvent] No AI Screening phase found for challenge ${challengeId}`,
+          { submissionId, gitRunId: null },
         );
         return;
       }
 
       // Check if AI Screening phase is still open
       if (!latestAiScreeningPhase.isOpen) {
-        this.logger.debug(
+        this.logWithContext(
           `[publishAiWorkflowPhaseCompletedEvent] AI Screening phase ${latestAiScreeningPhase.id} is not open for challenge ${challengeId}`,
+          { submissionId, gitRunId: null },
         );
         return;
       }
@@ -834,8 +942,9 @@ export class WorkflowQueueHandler {
       );
 
       if (aiWorkflowIds.length === 0) {
-        this.logger.debug(
+        this.logWithContext(
           `[publishAiWorkflowPhaseCompletedEvent] No AI workflows configured for challenge ${challengeId}`,
+          { submissionId, gitRunId: null },
         );
         return;
       }
@@ -853,8 +962,9 @@ export class WorkflowQueueHandler {
         );
 
         if (!submissionComplete) {
-          this.logger.debug(
+          this.logWithContext(
             `[publishAiWorkflowPhaseCompletedEvent] Not all AI workflows complete for submission ${submissionId} in challenge ${challengeId}`,
+            { submissionId, gitRunId: null },
           );
           return;
         }
@@ -866,8 +976,9 @@ export class WorkflowQueueHandler {
         );
 
         if (!allComplete) {
-          this.logger.debug(
+          this.logWithContext(
             `[publishAiWorkflowPhaseCompletedEvent] Not all AI workflows complete for challenge ${challengeId}`,
+            { submissionId, gitRunId: null },
           );
           return;
         }
@@ -892,8 +1003,10 @@ export class WorkflowQueueHandler {
       });
 
       if (!recentWorkflowRun) {
-        this.logger.warn(
+        this.logWithContext(
           `[publishAiWorkflowPhaseCompletedEvent] No completed workflow run found for submission ${submissionId}`,
+          { submissionId, gitRunId: null },
+          'warn',
         );
         return;
       }
@@ -914,13 +1027,15 @@ export class WorkflowQueueHandler {
         'aiworkflow.action.completed',
         payload,
       );
-      this.logger.log(
+      this.logWithContext(
         `[publishAiWorkflowPhaseCompletedEvent] Published AI workflow completion for challenge ${challengeId}, submission ${submissionId}${isF2F ? ' (F2F)' : ', all AI workflows completed'}`,
+        { submissionId, gitRunId: null },
       );
     } catch (error) {
-      this.logger.error(
+      this.logWithContext(
         `[publishAiWorkflowPhaseCompletedEvent] Failed to publish AI workflow phase completion event for challenge ${challengeId}`,
-        error,
+        { submissionId, gitRunId: null, error },
+        'error',
       );
       // Don't throw - this is a non-critical notification
     }
@@ -957,8 +1072,10 @@ export class WorkflowQueueHandler {
       case 'SKIPPED':
         return 'CANCELLED';
       default:
-        this.logger.warn(
+        this.logWithContext(
           `Unknown workflow conclusion "${conclusion}". Falling back to FAILURE.`,
+          { gitRunId: null },
+          'warn',
         );
         return 'FAILURE';
     }
