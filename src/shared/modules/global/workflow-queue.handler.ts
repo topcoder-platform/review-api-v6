@@ -101,8 +101,6 @@ export class WorkflowQueueHandler {
           ...(typeof message === 'string' ? { message } : message),
           ...this.buildLogContext(context),
         },
-        null,
-        2,
       ),
     );
   }
