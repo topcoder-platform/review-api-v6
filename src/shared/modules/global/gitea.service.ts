@@ -5,8 +5,15 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import type { AxiosResponse } from 'axios';
 import { Api, Repository } from 'src/shared/clients/gitea/gitea.client';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
+
+export interface ActionDispatchWorkflowResponse {
+  workflow_run_id: number;
+  run_url: string;
+  html_url: string;
+}
 
 /**
  * GiteaService handles interactions with the Gitea API, specifically for managing repositories.
@@ -95,7 +102,7 @@ export class GiteaService {
     workflow: aiWorkflow,
     workflowRun: aiWorkflowRun,
     dispatchInputs: any,
-  ): Promise<void> {
+  ): Promise<ActionDispatchWorkflowResponse> {
     this.logger.log(
       `Running workflow ${workflowRun.workflowId} for submission ${workflowRun.submissionId}`,
     );
@@ -108,20 +115,27 @@ export class GiteaService {
     });
 
     try {
-      const response = await this.giteaClient.repos.actionsDispatchWorkflow(
-        owner,
-        repo,
-        workflow.gitWorkflowId,
-        {
-          ref: 'refs/heads/main',
-          inputs: dispatchInputs,
-        },
-      );
-      // successful execution of workflow dispatch actually just returns "204 No Content". So we only log status.
+      const response: AxiosResponse =
+        await this.giteaClient.repos.actionsDispatchWorkflow(
+          owner,
+          repo,
+          workflow.gitWorkflowId,
+          {
+            ref: 'refs/heads/main',
+            inputs: dispatchInputs,
+          },
+          {
+            query: {
+              return_run_details: true,
+            },
+          } as any,
+        );
       this.logger.log(
         `Workflow dispatched successfully: ${response.status} ${response.statusText}`,
         JSON.stringify(response.data),
       );
+
+      return response.data as ActionDispatchWorkflowResponse;
     } catch (error) {
       this.logger.error(
         `Error dispatching workflow ${workflowRun.workflowId}: ${error.message}`,

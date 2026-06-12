@@ -123,12 +123,18 @@ export class AiReviewerDecisionMakerService {
       return pendingDecision;
     }
 
-    const weightedTotal = roundTo2(
-      context.workflows.reduce((sum, workflow) => {
-        const score = workflow.runScore ?? 0;
-        return sum + score * (workflow.weightPercent / 100);
-      }, 0),
+    const hasCancelledRun = context.workflows.some(
+      (workflow) => workflow.runStatus === 'CANCELLED',
     );
+
+    const weightedTotal = hasCancelledRun
+      ? 0
+      : roundTo2(
+          context.workflows.reduce((sum, workflow) => {
+            const score = workflow.runScore ?? 0;
+            return sum + score * (workflow.weightPercent / 100);
+          }, 0),
+        );
 
     const hasBlockingGatingFailure = context.workflows.some(
       (workflow) =>
@@ -138,7 +144,9 @@ export class AiReviewerDecisionMakerService {
     );
 
     const passed =
-      !hasBlockingGatingFailure && weightedTotal >= context.minPassingThreshold;
+      !hasCancelledRun &&
+      !hasBlockingGatingFailure &&
+      weightedTotal >= context.minPassingThreshold;
 
     const status = passed
       ? AiReviewDecisionStatus.PASSED
@@ -149,16 +157,19 @@ export class AiReviewerDecisionMakerService {
       data: {
         status,
         totalScore: weightedTotal,
-        reason: hasBlockingGatingFailure
-          ? 'One or more gating AI workflows scored below scorecard minimumPassingScore.'
-          : passed
-            ? 'Submission passed the configured AI threshold.'
-            : 'Submission score is below the configured AI threshold.',
+        reason: hasCancelledRun
+          ? 'One or more configured AI workflow runs were cancelled.'
+          : hasBlockingGatingFailure
+            ? 'One or more gating AI workflows scored below scorecard minimumPassingScore.'
+            : passed
+              ? 'Submission passed the configured AI threshold.'
+              : 'Submission score is below the configured AI threshold.',
         breakdown: {
           evaluatedAt: new Date().toISOString(),
           mode: context.mode,
           weightedTotal,
           minPassingThreshold: context.minPassingThreshold,
+          hasCancelledRun,
           hasBlockingGatingFailure,
           workflows: context.workflows,
         },
