@@ -4998,9 +4998,6 @@ export class SubmissionService {
         continue;
       }
 
-      // reviewer shouldn't be able to identify a submission by id
-      delete (submission as any).id;
-
       if (roleSummary.hasReviewer) {
         return;
       }
