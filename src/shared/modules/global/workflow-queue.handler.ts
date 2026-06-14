@@ -95,11 +95,20 @@ export class WorkflowQueueHandler {
     } & Record<string, unknown>,
     logType?: 'log' | 'warn' | 'error',
   ) {
+    const logMessage =
+      typeof message === 'string' ? message : ((message as any).message ?? '');
+
+    const logContext = {
+      ...(typeof message === 'string' ? { message } : message),
+      ...this.buildLogContext(context),
+    };
+
+    if (Object.prototype.hasOwnProperty.call(logContext, 'message')) {
+      delete logContext.message;
+    }
+
     this.logger[logType ?? 'log'](
-      JSON.stringify({
-        ...(typeof message === 'string' ? { message } : message),
-        ...this.buildLogContext(context),
-      }),
+      `${logMessage}. ${JSON.stringify(logContext)}`,
     );
   }
 
@@ -519,11 +528,10 @@ export class WorkflowQueueHandler {
         workflowRunGitId: dispatchResult.workflow_run_id,
         workflowRunUrl: dispatchResult.run_url,
         workflowRunHtmlUrl: dispatchResult.html_url,
-        raw: JSON.stringify(dispatchResult),
       },
       {
         submissionId: workflowRun.submissionId ?? null,
-        gitRunId: workflowRun.gitRunId ?? null,
+        gitRunId: `${dispatchResult.workflow_run_id}`,
         workflowRunId: workflowRun.id,
       },
     );
@@ -601,9 +609,14 @@ export class WorkflowQueueHandler {
     }
 
     const conclusion = event.workflow_job.conclusion?.toUpperCase();
-    const terminalStatus = this.normalizeWorkflowConclusion(conclusion);
+    const terminalStatus = conclusion
+      ? this.normalizeWorkflowConclusion(conclusion, {
+          gitRunId: event.workflow_job.run_id,
+        })
+      : '';
     if (
       event.workflow_job.name === 'dump-workflow-context' &&
+      terminalStatus &&
       terminalStatus !== 'CANCELLED'
     ) {
       this.logWithContext(
@@ -1058,6 +1071,7 @@ export class WorkflowQueueHandler {
 
   private normalizeWorkflowConclusion(
     conclusion?: string | null,
+    meta?: { gitRunId?: string },
   ): 'SUCCESS' | 'FAILURE' | 'CANCELLED' | 'TIMEOUT' {
     const normalized = (conclusion ?? '').trim().toUpperCase();
 
@@ -1076,7 +1090,7 @@ export class WorkflowQueueHandler {
       default:
         this.logWithContext(
           `Unknown workflow conclusion "${conclusion}". Falling back to FAILURE.`,
-          { gitRunId: null },
+          meta,
           'warn',
         );
         return 'FAILURE';
