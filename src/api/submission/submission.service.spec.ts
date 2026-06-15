@@ -32,10 +32,14 @@ describe('SubmissionService', () => {
   ];
   let originalBucket: string | undefined;
   let originalCleanBucket: string | undefined;
+  let originalDmzBucket: string | undefined;
+  let originalQuarantineBucket: string | undefined;
 
   beforeAll(() => {
     originalBucket = process.env.ARTIFACTS_S3_BUCKET;
     originalCleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    originalDmzBucket = process.env.SUBMISSION_DMZ_S3_BUCKET;
+    originalQuarantineBucket = process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
   });
 
   beforeEach(() => {
@@ -73,6 +77,8 @@ describe('SubmissionService', () => {
 
     process.env.ARTIFACTS_S3_BUCKET = 'unit-test-bucket';
     process.env.SUBMISSION_CLEAN_S3_BUCKET = 'unit-test-clean-bucket';
+    process.env.SUBMISSION_DMZ_S3_BUCKET = 'unit-test-dmz-bucket';
+    process.env.SUBMISSION_QUARANTINE_S3_BUCKET = 'unit-test-quarantine-bucket';
   });
 
   afterEach(() => {
@@ -90,6 +96,156 @@ describe('SubmissionService', () => {
     } else {
       process.env.SUBMISSION_CLEAN_S3_BUCKET = originalCleanBucket;
     }
+    if (originalDmzBucket === undefined) {
+      delete process.env.SUBMISSION_DMZ_S3_BUCKET;
+    } else {
+      process.env.SUBMISSION_DMZ_S3_BUCKET = originalDmzBucket;
+    }
+    if (originalQuarantineBucket === undefined) {
+      delete process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
+    } else {
+      process.env.SUBMISSION_QUARANTINE_S3_BUCKET = originalQuarantineBucket;
+    }
+  });
+
+  describe('retryStaleSubmissionScanRequests', () => {
+    const createRetryService = (
+      submissions: Array<{
+        id: string;
+        challengeId: string;
+        systemFileName: string | null;
+        url: string;
+      }>,
+      activeChallengeIds = ['challenge-active'],
+    ) => {
+      const prisma = {
+        submission: {
+          findMany: jest.fn().mockResolvedValue(submissions),
+        },
+      };
+      const challengePrisma = {
+        $queryRaw: jest
+          .fn()
+          .mockResolvedValue(activeChallengeIds.map((id) => ({ id }))),
+      };
+      const eventBusService = {
+        publish: jest.fn().mockResolvedValue(undefined),
+      };
+      const retryService = new SubmissionService(
+        prisma as any,
+        {} as any,
+        challengePrisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        eventBusService as any,
+        {} as any,
+        {} as any,
+      );
+      const headObjectSend = jest.fn().mockResolvedValue({});
+      jest.spyOn(retryService as any, 'getS3Client').mockReturnValue({
+        send: headObjectSend,
+      });
+
+      return {
+        challengePrisma,
+        eventBusService,
+        headObjectSend,
+        prisma,
+        retryService,
+      };
+    };
+
+    it('retries stale unscanned submissions for active challenges when the file is still in DMZ', async () => {
+      const submissionUrl =
+        'https://s3.amazonaws.com/unit-test-dmz-bucket/manual/challenge/member/solution.zip';
+      const { eventBusService, headObjectSend, prisma, retryService } =
+        createRetryService([
+          {
+            id: 'submission-retry',
+            challengeId: 'challenge-active',
+            systemFileName: 'solution.zip',
+            url: submissionUrl,
+          },
+        ]);
+
+      const result = await retryService.retryStaleSubmissionScanRequests({
+        limit: 5,
+        now: new Date('2026-06-15T00:20:00.000Z'),
+      });
+
+      expect(prisma.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: { in: ['challenge-active'] },
+            createdAt: { lte: new Date('2026-06-15T00:10:00.000Z') },
+            isFileSubmission: true,
+            status: SubmissionStatus.ACTIVE,
+            url: { not: null },
+            virusScan: false,
+          }),
+          take: 5,
+        }),
+      );
+      expect(headObjectSend).toHaveBeenCalledTimes(1);
+      expect(eventBusService.publish).toHaveBeenCalledWith(
+        'avscan.action.scan',
+        {
+          callbackKafkaTopic: 'submission.scan.complete',
+          callbackOption: 'kafka',
+          cleanDestinationBucket: 'unit-test-clean-bucket',
+          fileName: 'solution.zip',
+          moveFile: true,
+          quarantineDestinationBucket: 'unit-test-quarantine-bucket',
+          submissionId: 'submission-retry',
+          url: submissionUrl,
+        },
+      );
+      expect(result).toEqual({
+        candidates: 1,
+        failed: 0,
+        retried: 1,
+        skipped: 0,
+      });
+    });
+
+    it('skips retry when the submission file is not verified in DMZ', async () => {
+      const { eventBusService, headObjectSend, retryService } =
+        createRetryService([
+          {
+            id: 'submission-clean',
+            challengeId: 'challenge-active',
+            systemFileName: 'clean.zip',
+            url: 'https://s3.amazonaws.com/unit-test-clean-bucket/manual/clean.zip',
+          },
+          {
+            id: 'submission-quarantine',
+            challengeId: 'challenge-active',
+            systemFileName: 'quarantine.zip',
+            url: 'https://s3.amazonaws.com/unit-test-quarantine-bucket/manual/quarantine.zip',
+          },
+          {
+            id: 'submission-missing',
+            challengeId: 'challenge-active',
+            systemFileName: 'missing.zip',
+            url: 'https://s3.amazonaws.com/unit-test-dmz-bucket/manual/missing.zip',
+          },
+        ]);
+      headObjectSend.mockRejectedValueOnce(new Error('NotFound'));
+
+      const result = await retryService.retryStaleSubmissionScanRequests({
+        now: new Date('2026-06-15T00:20:00.000Z'),
+      });
+
+      expect(headObjectSend).toHaveBeenCalledTimes(1);
+      expect(eventBusService.publish).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        candidates: 3,
+        failed: 0,
+        retried: 0,
+        skipped: 3,
+      });
+    });
   });
 
   describe('createValidationSubmissionUpload', () => {
