@@ -70,6 +70,10 @@ export enum Scope {
   DeleteSubmissionArtifacts = 'delete:submission-artifacts',
   AllSubmissionArtifacts = 'all:submission-artifacts',
 
+  // Marathon Match scopes used by service-to-service validation flows
+  UpdateMarathonMatch = 'update:marathon-match',
+  AllMarathonMatch = 'all:marathon-match',
+
   // AI workflow scopes
   CreateWorkflow = 'create:workflow',
   ReadWorkflow = 'read:workflow',
@@ -151,4 +155,5 @@ export const ALL_SCOPE_MAPPINGS: Record<string, string[]> = {
     Scope.ReadSubmissionArtifacts,
     Scope.DeleteSubmissionArtifacts,
   ],
+  [Scope.AllMarathonMatch]: [Scope.UpdateMarathonMatch],
 };
