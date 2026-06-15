@@ -195,11 +195,15 @@ export class SubmissionController {
 
   @Post('/validation-upload')
   @Roles(UserRole.Admin)
-  @Scopes(Scope.CreateSubmission)
+  @Scopes(
+    Scope.CreateSubmission,
+    Scope.UpdateMarathonMatch,
+    Scope.AllMarathonMatch,
+  )
   @ApiOperation({
     summary: 'Upload and create a clean validation submission as Admin/M2M',
     description:
-      'Roles: Admin (M2M allowed via scope). Uploads file contents directly to clean submission storage and creates a downloadable submission row without phase, submitter, counter, scan, or notification side effects. Intended for Marathon Match scorer validation before challenge launch. | Scopes: create:submission',
+      'Roles: Admin (M2M allowed via create:submission, update:marathon-match, or all:marathon-match scope). Uploads file contents directly to clean submission storage and creates a downloadable submission row without phase, submitter, counter, scan, or notification side effects. Intended for Marathon Match scorer validation before challenge launch.',
   })
   @ApiResponse({
     status: 201,

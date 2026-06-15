@@ -403,7 +403,7 @@ export class SubmissionService {
   /**
    * Creates a clean, downloadable submission row for scorer validation without
    * normal submission lifecycle side effects.
-   * @param authUser Authenticated admin or M2M token with create:submission access.
+   * @param authUser Authenticated admin or M2M caller authorized by the validation-upload route scopes.
    * @param body Validation upload metadata containing challenge, member, and submission type.
    * @param file Uploaded submission artifact.
    * @returns Created validation submission response.
