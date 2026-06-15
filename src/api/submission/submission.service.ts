@@ -63,6 +63,26 @@ type SubmissionMinimal = {
   url: string | null;
 };
 
+type SubmissionScanRetryCandidate = SubmissionMinimal & {
+  challengeId: string | null;
+};
+
+type ActiveChallengeRow = {
+  id: string | null;
+};
+
+export type SubmissionScanRetryOptions = {
+  now?: Date;
+  limit?: number;
+};
+
+export type SubmissionScanRetryResult = {
+  candidates: number;
+  retried: number;
+  skipped: number;
+  failed: number;
+};
+
 interface TopgearSubmissionEventPayload {
   submissionId: string;
   challengeId: string;
@@ -139,6 +159,9 @@ const REVIEW_ACCESS_ROLE_KEYWORDS = [
   'approval',
 ];
 
+const SUBMISSION_SCAN_RETRY_AGE_MS = 10 * 60 * 1000;
+const SUBMISSION_SCAN_RETRY_BATCH_SIZE = 100;
+
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {
     include: {
@@ -188,6 +211,117 @@ export class SubmissionService {
     private readonly challengeCatalogService: ChallengeCatalogService,
     private readonly memberPrisma: MemberPrismaService,
   ) {}
+
+  /**
+   * Finds stale file submissions that still need AV scanning and republishes scan requests.
+   * @param options.now Current time used to calculate the ten-minute stale cutoff; defaults to the current system time.
+   * @param options.limit Maximum number of stale submissions to evaluate in this pass; defaults to 100.
+   * @returns Counts for candidate submissions evaluated, retry messages published, submissions skipped, and retry failures.
+   * @throws InternalServerErrorException When required S3 bucket configuration is missing.
+   * Used by the scheduled submission virus scan retry provider.
+   */
+  async retryStaleSubmissionScanRequests(
+    options: SubmissionScanRetryOptions = {},
+  ): Promise<SubmissionScanRetryResult> {
+    const dmzBucket = process.env.SUBMISSION_DMZ_S3_BUCKET;
+    if (!dmzBucket) {
+      this.logger.error('SUBMISSION_DMZ_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'DMZ_BUCKET_MISSING',
+      });
+    }
+
+    const quarantineBucket = process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
+    if (!quarantineBucket) {
+      this.logger.error('SUBMISSION_QUARANTINE_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'QUARANTINE_BUCKET_MISSING',
+      });
+    }
+
+    const cleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    if (!cleanBucket) {
+      this.logger.error('SUBMISSION_CLEAN_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'CLEAN_BUCKET_MISSING',
+      });
+    }
+
+    const now = options.now ?? new Date();
+    const cutoff = new Date(now.getTime() - SUBMISSION_SCAN_RETRY_AGE_MS);
+    const limit =
+      typeof options.limit === 'number' &&
+      Number.isFinite(options.limit) &&
+      options.limit > 0
+        ? Math.floor(options.limit)
+        : SUBMISSION_SCAN_RETRY_BATCH_SIZE;
+
+    const activeChallengeIds =
+      await this.getActiveChallengeIdsForSubmissionScanRetry();
+    if (!activeChallengeIds.length) {
+      return {
+        candidates: 0,
+        retried: 0,
+        skipped: 0,
+        failed: 0,
+      };
+    }
+
+    const candidates: SubmissionScanRetryCandidate[] =
+      await this.prisma.submission.findMany({
+        where: {
+          challengeId: { in: activeChallengeIds },
+          createdAt: { lte: cutoff },
+          isFileSubmission: true,
+          status: SubmissionStatus.ACTIVE,
+          url: { not: null },
+          virusScan: false,
+        },
+        select: {
+          id: true,
+          challengeId: true,
+          systemFileName: true,
+          url: true,
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: limit,
+      });
+
+    const result: SubmissionScanRetryResult = {
+      candidates: candidates.length,
+      retried: 0,
+      skipped: 0,
+      failed: 0,
+    };
+
+    for (const submission of candidates) {
+      const isInDmz = await this.isSubmissionFileStillInDmz(
+        submission,
+        dmzBucket,
+        quarantineBucket,
+      );
+      if (!isInDmz) {
+        result.skipped += 1;
+        continue;
+      }
+
+      try {
+        await this.publishSubmissionScanEvent(submission);
+        result.retried += 1;
+      } catch (error) {
+        result.failed += 1;
+        this.logger.error(
+          `Failed to retry AV scan request for submission ${submission.id}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
+
+    return result;
+  }
 
   async createManualSubmissionUpload(
     authUser: JwtUser,
@@ -1666,6 +1800,85 @@ export class SubmissionService {
       return { key };
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Loads active challenge IDs from the challenge database for stale AV scan retry filtering.
+   * @returns Unique active challenge IDs.
+   * @throws Error When the challenge database query fails.
+   * Used by `retryStaleSubmissionScanRequests` before querying review submissions.
+   */
+  private async getActiveChallengeIdsForSubmissionScanRetry(): Promise<
+    string[]
+  > {
+    const rows = await this.challengePrisma.$queryRaw<ActiveChallengeRow[]>(
+      Prisma.sql`
+        SELECT id
+        FROM "Challenge"
+        WHERE "status" = ${ChallengeStatus.ACTIVE}::"ChallengeStatusEnum"
+      `,
+    );
+
+    return Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+  }
+
+  /**
+   * Verifies that a submission URL still points to an existing object in the DMZ bucket.
+   * @param submission Submission row containing the S3 URL to validate.
+   * @param dmzBucket Configured DMZ S3 bucket name.
+   * @param quarantineBucket Configured quarantine S3 bucket name used to avoid retrying quarantined files.
+   * @returns `true` when the URL is in DMZ and the object exists; otherwise `false`.
+   * Used by `retryStaleSubmissionScanRequests` to avoid resubmitting clean or quarantined files.
+   */
+  private async isSubmissionFileStillInDmz(
+    submission: SubmissionMinimal,
+    dmzBucket: string,
+    quarantineBucket: string,
+  ): Promise<boolean> {
+    const parsed = submission.url ? this.parseS3Url(submission.url) : undefined;
+    if (!parsed?.bucket || !parsed.key) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; unable to resolve S3 bucket/key from URL.`,
+      );
+      return false;
+    }
+
+    if (parsed.bucket === quarantineBucket) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; file is in quarantine bucket.`,
+      );
+      return false;
+    }
+
+    if (parsed.bucket !== dmzBucket) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; file is not in DMZ bucket.`,
+      );
+      return false;
+    }
+
+    try {
+      await this.getS3Client().send(
+        new HeadObjectCommand({
+          Bucket: dmzBucket,
+          Key: parsed.key,
+        }),
+      );
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; DMZ object was not found or could not be verified: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
     }
   }
 
