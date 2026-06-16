@@ -36,7 +36,12 @@ export class AiReviewConfigController {
   constructor(private readonly aiReviewConfigService: AiReviewConfigService) {}
 
   @Post()
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.TalentManager)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.TalentManager,
+  )
   @Scopes(Scope.CreateAiReviewConfig)
   @ApiOperation({
     summary: 'Create an AI review config',
@@ -111,7 +116,12 @@ export class AiReviewConfigController {
   }
 
   @Put(':id')
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.TalentManager)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.TalentManager,
+  )
   @Scopes(Scope.UpdateAiReviewConfig)
   @ApiOperation({
     summary: 'Update an AI review config',

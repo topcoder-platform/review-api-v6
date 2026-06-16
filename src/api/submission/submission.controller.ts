@@ -193,6 +193,71 @@ export class SubmissionController {
     return this.service.createManualSubmissionUpload(authUser, body, file);
   }
 
+  @Post('/validation-upload')
+  @Roles(UserRole.Admin)
+  @Scopes(
+    Scope.CreateSubmission,
+    Scope.UpdateMarathonMatch,
+    Scope.AllMarathonMatch,
+  )
+  @ApiOperation({
+    summary: 'Upload and create a clean validation submission as Admin/M2M',
+    description:
+      'Roles: Admin (M2M allowed via create:submission, update:marathon-match, or all:marathon-match scope). Uploads file contents directly to clean submission storage and creates a downloadable submission row without phase, submitter, counter, scan, or notification side effects. Intended for Marathon Match scorer validation before challenge launch.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Validation submission uploaded and created successfully.',
+    type: SubmissionResponseDto,
+  })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+    }),
+  )
+  @ApiBody({
+    required: true,
+    type: 'multipart/form-data',
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+        fileName: {
+          type: 'string',
+        },
+        challengeId: {
+          type: 'string',
+        },
+        type: {
+          type: 'string',
+        },
+        memberId: {
+          type: 'number',
+        },
+        submissionPhaseId: {
+          type: 'string',
+        },
+        submittedDate: {
+          type: 'string',
+          format: 'date-time',
+        },
+      },
+      required: ['file', 'challengeId', 'type', 'memberId'],
+    },
+  })
+  async validationUploadSubmission(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: ManualSubmissionUploadRequestDto,
+  ): Promise<SubmissionResponseDto> {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.createValidationSubmissionUpload(authUser, body, file);
+  }
+
   @Patch('/:submissionId')
   @Roles(UserRole.Admin)
   @Scopes(Scope.UpdateSubmission)

@@ -63,6 +63,26 @@ type SubmissionMinimal = {
   url: string | null;
 };
 
+type SubmissionScanRetryCandidate = SubmissionMinimal & {
+  challengeId: string | null;
+};
+
+type ActiveChallengeRow = {
+  id: string | null;
+};
+
+export type SubmissionScanRetryOptions = {
+  now?: Date;
+  limit?: number;
+};
+
+export type SubmissionScanRetryResult = {
+  candidates: number;
+  retried: number;
+  skipped: number;
+  failed: number;
+};
+
 interface TopgearSubmissionEventPayload {
   submissionId: string;
   challengeId: string;
@@ -139,6 +159,9 @@ const REVIEW_ACCESS_ROLE_KEYWORDS = [
   'approval',
 ];
 
+const SUBMISSION_SCAN_RETRY_AGE_MS = 10 * 60 * 1000;
+const SUBMISSION_SCAN_RETRY_BATCH_SIZE = 100;
+
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {
     include: {
@@ -188,6 +211,117 @@ export class SubmissionService {
     private readonly challengeCatalogService: ChallengeCatalogService,
     private readonly memberPrisma: MemberPrismaService,
   ) {}
+
+  /**
+   * Finds stale file submissions that still need AV scanning and republishes scan requests.
+   * @param options.now Current time used to calculate the ten-minute stale cutoff; defaults to the current system time.
+   * @param options.limit Maximum number of stale submissions to evaluate in this pass; defaults to 100.
+   * @returns Counts for candidate submissions evaluated, retry messages published, submissions skipped, and retry failures.
+   * @throws InternalServerErrorException When required S3 bucket configuration is missing.
+   * Used by the scheduled submission virus scan retry provider.
+   */
+  async retryStaleSubmissionScanRequests(
+    options: SubmissionScanRetryOptions = {},
+  ): Promise<SubmissionScanRetryResult> {
+    const dmzBucket = process.env.SUBMISSION_DMZ_S3_BUCKET;
+    if (!dmzBucket) {
+      this.logger.error('SUBMISSION_DMZ_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'DMZ_BUCKET_MISSING',
+      });
+    }
+
+    const quarantineBucket = process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
+    if (!quarantineBucket) {
+      this.logger.error('SUBMISSION_QUARANTINE_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'QUARANTINE_BUCKET_MISSING',
+      });
+    }
+
+    const cleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    if (!cleanBucket) {
+      this.logger.error('SUBMISSION_CLEAN_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'CLEAN_BUCKET_MISSING',
+      });
+    }
+
+    const now = options.now ?? new Date();
+    const cutoff = new Date(now.getTime() - SUBMISSION_SCAN_RETRY_AGE_MS);
+    const limit =
+      typeof options.limit === 'number' &&
+      Number.isFinite(options.limit) &&
+      options.limit > 0
+        ? Math.floor(options.limit)
+        : SUBMISSION_SCAN_RETRY_BATCH_SIZE;
+
+    const activeChallengeIds =
+      await this.getActiveChallengeIdsForSubmissionScanRetry();
+    if (!activeChallengeIds.length) {
+      return {
+        candidates: 0,
+        retried: 0,
+        skipped: 0,
+        failed: 0,
+      };
+    }
+
+    const candidates: SubmissionScanRetryCandidate[] =
+      await this.prisma.submission.findMany({
+        where: {
+          challengeId: { in: activeChallengeIds },
+          createdAt: { lte: cutoff },
+          isFileSubmission: true,
+          status: SubmissionStatus.ACTIVE,
+          url: { not: null },
+          virusScan: false,
+        },
+        select: {
+          id: true,
+          challengeId: true,
+          systemFileName: true,
+          url: true,
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: limit,
+      });
+
+    const result: SubmissionScanRetryResult = {
+      candidates: candidates.length,
+      retried: 0,
+      skipped: 0,
+      failed: 0,
+    };
+
+    for (const submission of candidates) {
+      const isInDmz = await this.isSubmissionFileStillInDmz(
+        submission,
+        dmzBucket,
+        quarantineBucket,
+      );
+      if (!isInDmz) {
+        result.skipped += 1;
+        continue;
+      }
+
+      try {
+        await this.publishSubmissionScanEvent(submission);
+        result.retried += 1;
+      } catch (error) {
+        result.failed += 1;
+        this.logger.error(
+          `Failed to retry AV scan request for submission ${submission.id}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
+
+    return result;
+  }
 
   async createManualSubmissionUpload(
     authUser: JwtUser,
@@ -264,6 +398,127 @@ export class SubmissionService {
     return this.createSubmission(authUser, submissionPayload, file, {
       allowPrivilegedPostSubmissionUpload: true,
     });
+  }
+
+  /**
+   * Creates a clean, downloadable submission row for scorer validation without
+   * normal submission lifecycle side effects.
+   * @param authUser Authenticated admin or M2M caller authorized by the validation-upload route scopes.
+   * @param body Validation upload metadata containing challenge, member, and submission type.
+   * @param file Uploaded submission artifact.
+   * @returns Created validation submission response.
+   * @throws ForbiddenException When the caller is not admin-capable.
+   * @throws BadRequestException When the file, challenge, or submission type is invalid.
+   * @throws InternalServerErrorException When clean storage upload or persistence fails.
+   * Used by Marathon Match API to run pre-launch scorer validation through ECS.
+   */
+  async createValidationSubmissionUpload(
+    authUser: JwtUser,
+    body: ManualSubmissionUploadRequestDto,
+    file: Express.Multer.File,
+  ): Promise<SubmissionResponseDto> {
+    if (!isAdmin(authUser)) {
+      throw new ForbiddenException({
+        message:
+          'Only admins or M2M tokens can use validation submission upload.',
+        code: 'FORBIDDEN_VALIDATION_SUBMISSION_UPLOAD',
+      });
+    }
+
+    const hasUploadedFile =
+      !!file &&
+      ((typeof file.size === 'number' && file.size > 0) ||
+        (file.buffer && file.buffer.length > 0));
+
+    if (!hasUploadedFile) {
+      throw new BadRequestException({
+        message: 'File contents are required for validation submission upload.',
+        code: 'VALIDATION_SUBMISSION_FILE_REQUIRED',
+      });
+    }
+
+    await this.ensureChallengeWhitelistAccess(authUser, body.challengeId);
+
+    let challengeDetails: ChallengeData;
+    try {
+      challengeDetails = await this.challengeApiService.validateChallengeExists(
+        body.challengeId,
+      );
+      this.challengeCatalogService.ensureSubmissionTypeAllowed(
+        body.type as SubmissionType,
+        challengeDetails,
+      );
+    } catch (error) {
+      throw new BadRequestException({
+        message: error instanceof Error ? error.message : String(error ?? ''),
+        code: 'INVALID_VALIDATION_SUBMISSION_CONTEXT',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+          submissionType: body.type,
+        },
+      });
+    }
+
+    const cleanUpload = await this.uploadValidationSubmissionFileToClean(
+      authUser,
+      body,
+      file,
+    );
+    const actor =
+      authUser.userId != null && String(authUser.userId).trim().length > 0
+        ? String(authUser.userId).trim()
+        : 'machine-token';
+    const submittedDate = body.submittedDate
+      ? new Date(body.submittedDate)
+      : new Date();
+
+    if (Number.isNaN(submittedDate.getTime())) {
+      throw new BadRequestException({
+        message: 'Submitted date is invalid.',
+        code: 'INVALID_SUBMITTED_DATE',
+      });
+    }
+
+    try {
+      const data = await this.prisma.submission.create({
+        data: {
+          challengeId: body.challengeId,
+          createdBy: actor,
+          eventRaised: true,
+          fileSize: cleanUpload.fileSize,
+          fileType: cleanUpload.fileType,
+          isFileSubmission: true,
+          memberId: body.memberId,
+          status: SubmissionStatus.ACTIVE,
+          submissionPhaseId: body.submissionPhaseId,
+          submittedDate,
+          systemFileName: cleanUpload.fileName,
+          type: body.type as SubmissionType,
+          updatedBy: actor,
+          url: cleanUpload.url,
+          viewCount: 0,
+          virusScan: true,
+        },
+      });
+
+      this.logger.log(
+        `Validation submission upload stored clean file for challenge ${body.challengeId}, member ${body.memberId}, file ${cleanUpload.fileName}`,
+      );
+
+      return this.buildResponse(data);
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `creating validation submission for challengeId: ${body.challengeId}, memberId: ${body.memberId}`,
+        body,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
   }
 
   async ensurePendingReviewsForSubmission(
@@ -1548,6 +1803,85 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Loads active challenge IDs from the challenge database for stale AV scan retry filtering.
+   * @returns Unique active challenge IDs.
+   * @throws Error When the challenge database query fails.
+   * Used by `retryStaleSubmissionScanRequests` before querying review submissions.
+   */
+  private async getActiveChallengeIdsForSubmissionScanRetry(): Promise<
+    string[]
+  > {
+    const rows = await this.challengePrisma.$queryRaw<ActiveChallengeRow[]>(
+      Prisma.sql`
+        SELECT id
+        FROM "Challenge"
+        WHERE "status" = ${ChallengeStatus.ACTIVE}::"ChallengeStatusEnum"
+      `,
+    );
+
+    return Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+  }
+
+  /**
+   * Verifies that a submission URL still points to an existing object in the DMZ bucket.
+   * @param submission Submission row containing the S3 URL to validate.
+   * @param dmzBucket Configured DMZ S3 bucket name.
+   * @param quarantineBucket Configured quarantine S3 bucket name used to avoid retrying quarantined files.
+   * @returns `true` when the URL is in DMZ and the object exists; otherwise `false`.
+   * Used by `retryStaleSubmissionScanRequests` to avoid resubmitting clean or quarantined files.
+   */
+  private async isSubmissionFileStillInDmz(
+    submission: SubmissionMinimal,
+    dmzBucket: string,
+    quarantineBucket: string,
+  ): Promise<boolean> {
+    const parsed = submission.url ? this.parseS3Url(submission.url) : undefined;
+    if (!parsed?.bucket || !parsed.key) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; unable to resolve S3 bucket/key from URL.`,
+      );
+      return false;
+    }
+
+    if (parsed.bucket === quarantineBucket) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; file is in quarantine bucket.`,
+      );
+      return false;
+    }
+
+    if (parsed.bucket !== dmzBucket) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; file is not in DMZ bucket.`,
+      );
+      return false;
+    }
+
+    try {
+      await this.getS3Client().send(
+        new HeadObjectCommand({
+          Bucket: dmzBucket,
+          Key: parsed.key,
+        }),
+      );
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Skipping AV scan retry for submission ${submission.id}; DMZ object was not found or could not be verified: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  }
+
   async deleteArtifact(
     authUser: JwtUser,
     submissionId: string,
@@ -1730,6 +2064,106 @@ export class SubmissionService {
 
     return {
       url: this.buildS3HttpUrl(dmzBucket, key),
+      fileName: safeFileName,
+      fileSize:
+        typeof file.size === 'number'
+          ? file.size
+          : file.buffer
+            ? file.buffer.length
+            : null,
+      fileType,
+    };
+  }
+
+  /**
+   * Uploads a validation submission artifact directly into clean submission storage.
+   * @param authUser Authenticated admin or M2M caller used for S3 metadata.
+   * @param body Validation upload request metadata.
+   * @param file Uploaded submission file.
+   * @returns Clean S3 URL and file metadata for the submission row.
+   * @throws InternalServerErrorException When clean bucket configuration or upload fails.
+   * Used by `createValidationSubmissionUpload` so ECS scorer validation can download immediately.
+   */
+  private async uploadValidationSubmissionFileToClean(
+    authUser: JwtUser,
+    body: ManualSubmissionUploadRequestDto,
+    file: Express.Multer.File,
+  ): Promise<SubmissionDmzUploadResult> {
+    const cleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    if (!cleanBucket) {
+      this.logger.error('SUBMISSION_CLEAN_S3_BUCKET is not configured');
+      throw new InternalServerErrorException({
+        message: 'S3 bucket not configured',
+        code: 'CLEAN_BUCKET_MISSING',
+      });
+    }
+
+    const requestedName =
+      body.fileName || file.originalname || file.filename || 'submission';
+    let safeFileName =
+      this.sanitizeArtifactFileName(requestedName) ??
+      `submission-${randomUUID()}`;
+    if (!/\.[A-Za-z0-9]+$/.test(safeFileName)) {
+      const ext = this.guessExtFromMime(file.mimetype) ?? 'bin';
+      safeFileName = `${safeFileName}.${ext}`;
+    }
+
+    const challengeSegment = this.sanitizeS3PathSegment(
+      body.challengeId,
+      'challenge',
+    );
+    const memberSegment = this.sanitizeS3PathSegment(body.memberId, 'member');
+    const key = `validation/${challengeSegment}/${memberSegment}/${randomUUID()}-${safeFileName}`;
+
+    const bodyStream = await this.resolveUploadedFileBody(file);
+    const s3 = this.getS3Client();
+    const actor =
+      authUser.userId != null && String(authUser.userId).trim().length > 0
+        ? String(authUser.userId).trim()
+        : 'machine-token';
+
+    const upload = new Upload({
+      client: s3,
+      params: {
+        Bucket: cleanBucket,
+        Key: key,
+        Body: bodyStream,
+        ContentType: file.mimetype || 'application/octet-stream',
+        Metadata: {
+          challengeId: String(body.challengeId),
+          memberId: String(body.memberId),
+          originalFileName: safeFileName,
+          uploadedBy: actor,
+          uploadPurpose: 'marathon-match-validation',
+        },
+      },
+      queueSize: 4,
+      partSize: 5 * 1024 * 1024,
+      leavePartsOnError: false,
+    });
+
+    try {
+      await upload.done();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to upload validation submission file to clean bucket ${cleanBucket}: ${message}`,
+      );
+      throw new InternalServerErrorException({
+        message: 'Failed to upload validation submission file to clean storage',
+        code: 'CLEAN_UPLOAD_FAILED',
+        details: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+        },
+      });
+    }
+
+    const fileTypeMatch = safeFileName.match(/\.([A-Za-z0-9]+)$/);
+    const fileType = fileTypeMatch?.[1]?.toLowerCase() ?? null;
+
+    return {
+      url: this.buildS3HttpUrl(cleanBucket, key),
       fileName: safeFileName,
       fileSize:
         typeof file.size === 'number'
@@ -2959,6 +3393,7 @@ export class SubmissionService {
       await this.populateReviewPhaseNames(submissions);
       await this.populateReviewTypeNames(submissions);
       await this.enrichReviewerMetadata(submissions);
+      await this.enrichAiDecisionScores(submissions);
 
       // Count total entities matching the filter for pagination metadata
       let totalCount = await this.prisma.submission.count({
@@ -3104,6 +3539,24 @@ export class SubmissionService {
 
     const data = await this.checkSubmission(id, authUser);
     await this.populateLatestSubmissionFlags([data]);
+    await this.enrichAiDecisionScores([data]);
+
+    const reviewVisibilityContext = await this.applyReviewVisibilityFilters(
+      authUser,
+      [data],
+    );
+    this.stripSubmitterMemberIds(authUser, [data], reviewVisibilityContext);
+    this.stripSubmitterSubmissionDetails(
+      authUser,
+      [data],
+      reviewVisibilityContext,
+    );
+    this.sanitizeMemberVisibleReviewSummationMetadata(
+      authUser,
+      [data],
+      reviewVisibilityContext,
+    );
+
     await this.stripIsLatestForUnlimitedChallenges([data]);
     return this.buildResponse(data);
   }
@@ -3534,7 +3987,7 @@ export class SubmissionService {
   }
 
   private async applyReviewVisibilityFilters(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<{
       challengeId?: string | null;
       memberId?: string | null;
@@ -3556,7 +4009,8 @@ export class SubmissionService {
         ? String(authUser.userId).trim()
         : '';
 
-    const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
+    const isPrivilegedRequester =
+      authUser && (authUser.isMachine || isAdmin(authUser));
     if (!isPrivilegedRequester && !requesterUserId) {
       for (const submission of submissions) {
         if (Object.prototype.hasOwnProperty.call(submission, 'review')) {
@@ -4547,7 +5001,7 @@ export class SubmissionService {
   }
 
   private stripSubmitterMemberIds(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<
       { challengeId?: string | null; memberId?: string | null } & Record<
         string,
@@ -4559,7 +5013,7 @@ export class SubmissionService {
     if (!submissions.length) {
       return;
     }
-    if (authUser?.isMachine || isAdmin(authUser)) {
+    if (authUser && (authUser.isMachine || isAdmin(authUser))) {
       return;
     }
 
@@ -4624,6 +5078,7 @@ export class SubmissionService {
         continue;
       }
 
+      delete (submission as any).id;
       (submission as any).memberId = null;
       if (Object.prototype.hasOwnProperty.call(submission, 'submitterHandle')) {
         delete (submission as any).submitterHandle;
@@ -4687,7 +5142,7 @@ export class SubmissionService {
   }
 
   private stripSubmitterSubmissionDetails(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<
       {
         challengeId?: string | null;
@@ -4702,7 +5157,7 @@ export class SubmissionService {
     if (!submissions.length) {
       return;
     }
-    if (authUser?.isMachine || isAdmin(authUser)) {
+    if (authUser && (authUser.isMachine || isAdmin(authUser))) {
       return;
     }
 
@@ -4744,19 +5199,20 @@ export class SubmissionService {
       const roleSummary =
         visibilityContext.roleSummaryByChallenge.get(challengeId) ??
         EMPTY_ROLE_SUMMARY;
-      if (
-        !roleSummary.hasSubmitter ||
-        roleSummary.hasCopilot ||
-        roleSummary.hasReviewer
-      ) {
+      const challenge = visibilityContext.challengeDetailsById.get(challengeId);
+
+      if (roleSummary.hasCopilot || this.isMarathonMatchChallenge(challenge)) {
         continue;
       }
 
-      const challenge = visibilityContext.challengeDetailsById.get(challengeId);
       const isActiveChallenge =
         !challenge || challenge.status === ChallengeStatus.ACTIVE;
       if (!isActiveChallenge) {
         continue;
+      }
+
+      if (roleSummary.hasReviewer) {
+        return;
       }
 
       if (Array.isArray((submission as any).review)) {
@@ -4778,6 +5234,11 @@ export class SubmissionService {
         }
       }
 
+      delete (submission as any).initialScore;
+      delete (submission as any).finalScore;
+      delete (submission as any).aiDecisionScore;
+      delete (submission as any).aiDecisionStatus;
+
       if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
         delete (submission as any).reviewSummation;
       }
@@ -4796,7 +5257,7 @@ export class SubmissionService {
    * Used by `listSubmission` so competitors can see their own test progress without per-seed scores.
    */
   private sanitizeMemberVisibleReviewSummationMetadata(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     submissions: Array<
       {
         challengeId?: string | null;
@@ -4808,7 +5269,7 @@ export class SubmissionService {
     if (!submissions.length) {
       return;
     }
-    if (authUser?.isMachine || isAdmin(authUser)) {
+    if (authUser && (authUser.isMachine || isAdmin(authUser))) {
       return;
     }
 
@@ -5216,6 +5677,95 @@ export class SubmissionService {
         `[hasPassingSubmissionForReviewScorecard] Failed to check passing submission for challenge ${normalizedChallengeId}, member ${normalizedMemberId}: ${message}`,
       );
       return false;
+    }
+  }
+
+  /**
+   * Enriches submissions with the latest (non-PENDING) AI decision totalScore for AI-only challenges.
+   * For each submission, if an AI review config exists for its challenge and there's
+   * a non-PENDING AI decision, sets `finalScore`, `aiDecisionScore`, and `aiDecisionStatus`
+   * on the submission object.
+   */
+  private async enrichAiDecisionScores(
+    submissions: Array<{
+      id: string;
+      challengeId?: string | null;
+      review?: unknown;
+    }>,
+  ): Promise<void> {
+    if (!submissions.length) {
+      return;
+    }
+
+    const challengeIds = Array.from(
+      new Set(
+        submissions
+          .map((s) => s.challengeId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    if (!challengeIds.length) {
+      return;
+    }
+
+    // Find which challenges have AI review configs (AI-only challenges)
+    const aiConfigRows = await this.prisma.$queryRaw<
+      Array<{ challengeId: string }>
+    >(Prisma.sql`
+      SELECT DISTINCT "challengeId"
+      FROM "aiReviewConfig"
+      WHERE "challengeId" IN (${Prisma.join(challengeIds)})
+        AND "mode" = 'AI_ONLY'
+    `);
+
+    const aiOnlyChallengeIds = new Set(aiConfigRows.map((r) => r.challengeId));
+    if (!aiOnlyChallengeIds.size) {
+      return;
+    }
+
+    // Get submissions that belong to AI-only challenges
+    const aiSubmissions = submissions.filter(
+      (s) => s.challengeId && aiOnlyChallengeIds.has(s.challengeId),
+    );
+
+    if (!aiSubmissions.length) {
+      return;
+    }
+
+    const submissionIds = aiSubmissions.map((s) => s.id);
+
+    // Fetch the latest AI decision for each submission
+    const decisionRows = await this.prisma.$queryRaw<
+      Array<{ submissionId: string; totalScore: number | null; status: string }>
+    >(Prisma.sql`
+      SELECT DISTINCT ON ("submissionId")
+        "submissionId",
+        "totalScore",
+        status::text AS "status"
+      FROM "aiReviewDecision"
+      WHERE "submissionId" IN (${Prisma.join(submissionIds)})
+        AND UPPER(status::text) != 'PENDING'
+      ORDER BY "submissionId", "updatedAt" DESC
+    `);
+
+    const decisionBySubmissionId = new Map(
+      decisionRows.map((d) => [d.submissionId, d]),
+    );
+
+    // Enrich submissions with AI decision scores
+    for (const submission of aiSubmissions) {
+      const decision = decisionBySubmissionId.get(submission.id);
+      if (!decision || decision.totalScore === null) {
+        continue;
+      }
+
+      // Also set on the submission itself for convenience
+      (submission as Record<string, unknown>).finalScore = decision.totalScore;
+      (submission as Record<string, unknown>).aiDecisionScore =
+        decision.totalScore;
+      (submission as Record<string, unknown>).aiDecisionStatus =
+        decision.status;
     }
   }
 

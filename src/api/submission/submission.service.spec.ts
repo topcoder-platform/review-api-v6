@@ -32,10 +32,14 @@ describe('SubmissionService', () => {
   ];
   let originalBucket: string | undefined;
   let originalCleanBucket: string | undefined;
+  let originalDmzBucket: string | undefined;
+  let originalQuarantineBucket: string | undefined;
 
   beforeAll(() => {
     originalBucket = process.env.ARTIFACTS_S3_BUCKET;
     originalCleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
+    originalDmzBucket = process.env.SUBMISSION_DMZ_S3_BUCKET;
+    originalQuarantineBucket = process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
   });
 
   beforeEach(() => {
@@ -73,6 +77,8 @@ describe('SubmissionService', () => {
 
     process.env.ARTIFACTS_S3_BUCKET = 'unit-test-bucket';
     process.env.SUBMISSION_CLEAN_S3_BUCKET = 'unit-test-clean-bucket';
+    process.env.SUBMISSION_DMZ_S3_BUCKET = 'unit-test-dmz-bucket';
+    process.env.SUBMISSION_QUARANTINE_S3_BUCKET = 'unit-test-quarantine-bucket';
   });
 
   afterEach(() => {
@@ -90,6 +96,311 @@ describe('SubmissionService', () => {
     } else {
       process.env.SUBMISSION_CLEAN_S3_BUCKET = originalCleanBucket;
     }
+    if (originalDmzBucket === undefined) {
+      delete process.env.SUBMISSION_DMZ_S3_BUCKET;
+    } else {
+      process.env.SUBMISSION_DMZ_S3_BUCKET = originalDmzBucket;
+    }
+    if (originalQuarantineBucket === undefined) {
+      delete process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
+    } else {
+      process.env.SUBMISSION_QUARANTINE_S3_BUCKET = originalQuarantineBucket;
+    }
+  });
+
+  describe('retryStaleSubmissionScanRequests', () => {
+    const createRetryService = (
+      submissions: Array<{
+        id: string;
+        challengeId: string;
+        systemFileName: string | null;
+        url: string;
+      }>,
+      activeChallengeIds = ['challenge-active'],
+    ) => {
+      const prisma = {
+        submission: {
+          findMany: jest.fn().mockResolvedValue(submissions),
+        },
+      };
+      const challengePrisma = {
+        $queryRaw: jest
+          .fn()
+          .mockResolvedValue(activeChallengeIds.map((id) => ({ id }))),
+      };
+      const eventBusService = {
+        publish: jest.fn().mockResolvedValue(undefined),
+      };
+      const retryService = new SubmissionService(
+        prisma as any,
+        {} as any,
+        challengePrisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        eventBusService as any,
+        {} as any,
+        {} as any,
+      );
+      const headObjectSend = jest.fn().mockResolvedValue({});
+      jest.spyOn(retryService as any, 'getS3Client').mockReturnValue({
+        send: headObjectSend,
+      });
+
+      return {
+        challengePrisma,
+        eventBusService,
+        headObjectSend,
+        prisma,
+        retryService,
+      };
+    };
+
+    it('retries stale unscanned submissions for active challenges when the file is still in DMZ', async () => {
+      const submissionUrl =
+        'https://s3.amazonaws.com/unit-test-dmz-bucket/manual/challenge/member/solution.zip';
+      const { eventBusService, headObjectSend, prisma, retryService } =
+        createRetryService([
+          {
+            id: 'submission-retry',
+            challengeId: 'challenge-active',
+            systemFileName: 'solution.zip',
+            url: submissionUrl,
+          },
+        ]);
+
+      const result = await retryService.retryStaleSubmissionScanRequests({
+        limit: 5,
+        now: new Date('2026-06-15T00:20:00.000Z'),
+      });
+
+      expect(prisma.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: { in: ['challenge-active'] },
+            createdAt: { lte: new Date('2026-06-15T00:10:00.000Z') },
+            isFileSubmission: true,
+            status: SubmissionStatus.ACTIVE,
+            url: { not: null },
+            virusScan: false,
+          }),
+          take: 5,
+        }),
+      );
+      expect(headObjectSend).toHaveBeenCalledTimes(1);
+      expect(eventBusService.publish).toHaveBeenCalledWith(
+        'avscan.action.scan',
+        {
+          callbackKafkaTopic: 'submission.scan.complete',
+          callbackOption: 'kafka',
+          cleanDestinationBucket: 'unit-test-clean-bucket',
+          fileName: 'solution.zip',
+          moveFile: true,
+          quarantineDestinationBucket: 'unit-test-quarantine-bucket',
+          submissionId: 'submission-retry',
+          url: submissionUrl,
+        },
+      );
+      expect(result).toEqual({
+        candidates: 1,
+        failed: 0,
+        retried: 1,
+        skipped: 0,
+      });
+    });
+
+    it('skips retry when the submission file is not verified in DMZ', async () => {
+      const { eventBusService, headObjectSend, retryService } =
+        createRetryService([
+          {
+            id: 'submission-clean',
+            challengeId: 'challenge-active',
+            systemFileName: 'clean.zip',
+            url: 'https://s3.amazonaws.com/unit-test-clean-bucket/manual/clean.zip',
+          },
+          {
+            id: 'submission-quarantine',
+            challengeId: 'challenge-active',
+            systemFileName: 'quarantine.zip',
+            url: 'https://s3.amazonaws.com/unit-test-quarantine-bucket/manual/quarantine.zip',
+          },
+          {
+            id: 'submission-missing',
+            challengeId: 'challenge-active',
+            systemFileName: 'missing.zip',
+            url: 'https://s3.amazonaws.com/unit-test-dmz-bucket/manual/missing.zip',
+          },
+        ]);
+      headObjectSend.mockRejectedValueOnce(new Error('NotFound'));
+
+      const result = await retryService.retryStaleSubmissionScanRequests({
+        now: new Date('2026-06-15T00:20:00.000Z'),
+      });
+
+      expect(headObjectSend).toHaveBeenCalledTimes(1);
+      expect(eventBusService.publish).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        candidates: 3,
+        failed: 0,
+        retried: 0,
+        skipped: 3,
+      });
+    });
+  });
+
+  describe('createValidationSubmissionUpload', () => {
+    const createValidationService = () => {
+      const prisma = {
+        submission: {
+          create: jest.fn(),
+        },
+      };
+      const prismaErrorService = {
+        handleError: jest.fn(),
+      };
+      const challengeApiService = {
+        validateChallengeExists: jest.fn(),
+      };
+      const validationResourceApiService = {
+        getMemberResourcesRoles: jest.fn(),
+        validateSubmitterRegistration: jest.fn(),
+      };
+      const challengeCatalogService = {
+        ensureSubmissionTypeAllowed: jest.fn(),
+      };
+      const validationService = new SubmissionService(
+        prisma as any,
+        prismaErrorService as any,
+        {} as any,
+        challengeApiService as any,
+        validationResourceApiService as any,
+        {} as any,
+        {} as any,
+        challengeCatalogService as any,
+        {} as any,
+      );
+
+      return {
+        challengeApiService,
+        challengeCatalogService,
+        prisma,
+        validationResourceApiService,
+        validationService,
+      };
+    };
+
+    it('creates a clean active validation submission without submitter registration checks', async () => {
+      const {
+        challengeApiService,
+        challengeCatalogService,
+        prisma,
+        validationResourceApiService,
+        validationService,
+      } = createValidationService();
+      const submittedDate = new Date('2026-06-01T00:00:00.000Z');
+
+      challengeApiService.validateChallengeExists.mockResolvedValue({
+        id: 'challenge-abc',
+        track: 'DATA_SCIENCE',
+        type: 'Marathon Match',
+      });
+      jest
+        .spyOn(
+          validationService as any,
+          'uploadValidationSubmissionFileToClean',
+        )
+        .mockResolvedValue({
+          fileName: 'solution.zip',
+          fileSize: 12,
+          fileType: 'zip',
+          url: 'https://s3.amazonaws.com/clean/validation/challenge-abc/member-1/solution.zip',
+        });
+      prisma.submission.create.mockResolvedValue({
+        challengeId: 'challenge-abc',
+        createdBy: 'machine-token',
+        eventRaised: true,
+        fileSize: 12,
+        fileType: 'zip',
+        id: 'submission-1',
+        isFileSubmission: true,
+        memberId: 'member-1',
+        status: SubmissionStatus.ACTIVE,
+        submittedDate,
+        systemFileName: 'solution.zip',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        updatedBy: 'machine-token',
+        url: 'https://s3.amazonaws.com/clean/validation/challenge-abc/member-1/solution.zip',
+        viewCount: 0,
+        virusScan: true,
+      });
+
+      const result = await validationService.createValidationSubmissionUpload(
+        {
+          isMachine: true,
+          scopes: ['create:submission'],
+        } as any,
+        {
+          challengeId: 'challenge-abc',
+          memberId: 'member-1',
+          submittedDate: submittedDate.toISOString(),
+          type: SubmissionType.CONTEST_SUBMISSION,
+        },
+        {
+          buffer: Buffer.from('zip'),
+          mimetype: 'application/zip',
+          originalname: 'solution.zip',
+          size: 12,
+        } as Express.Multer.File,
+      );
+
+      expect(result.id).toBe('submission-1');
+      expect(challengeApiService.validateChallengeExists).toHaveBeenCalledWith(
+        'challenge-abc',
+      );
+      expect(
+        challengeCatalogService.ensureSubmissionTypeAllowed,
+      ).toHaveBeenCalledWith(
+        SubmissionType.CONTEST_SUBMISSION,
+        expect.objectContaining({ id: 'challenge-abc' }),
+      );
+      expect(
+        validationResourceApiService.validateSubmitterRegistration,
+      ).not.toHaveBeenCalled();
+      expect(prisma.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          challengeId: 'challenge-abc',
+          eventRaised: true,
+          isFileSubmission: true,
+          memberId: 'member-1',
+          status: SubmissionStatus.ACTIVE,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          virusScan: true,
+        }),
+      });
+    });
+
+    it('rejects validation upload requests without file contents', async () => {
+      const { validationService } = createValidationService();
+
+      await expect(
+        validationService.createValidationSubmissionUpload(
+          {
+            isMachine: true,
+            scopes: ['create:submission'],
+          } as any,
+          {
+            challengeId: 'challenge-abc',
+            memberId: 'member-1',
+            type: SubmissionType.CONTEST_SUBMISSION,
+          },
+          {
+            buffer: Buffer.alloc(0),
+            originalname: 'solution.zip',
+            size: 0,
+          } as Express.Multer.File,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   describe('listArtifacts', () => {
@@ -726,6 +1037,7 @@ describe('SubmissionService', () => {
         findMany: jest.Mock;
         count: jest.Mock;
         findFirst: jest.Mock;
+        findUnique: jest.Mock;
       };
       reviewType: {
         findMany: jest.Mock;
@@ -754,6 +1066,7 @@ describe('SubmissionService', () => {
           findMany: jest.fn(),
           count: jest.fn(),
           findFirst: jest.fn(),
+          findUnique: jest.fn(),
         },
         reviewType: {
           findMany: jest.fn().mockResolvedValue([]),
@@ -984,7 +1297,7 @@ describe('SubmissionService', () => {
       expect(result.data[1]).not.toHaveProperty('isLatest');
     });
 
-    it('omits review data for non-owned submissions before completion', async () => {
+    it('omits review data and submission id for other submitters while challenge is active', async () => {
       const submissions = [
         {
           id: 'submission-own',
@@ -1041,19 +1354,199 @@ describe('SubmissionService', () => {
         { page: 1, perPage: 50 } as any,
       );
 
-      const own = result.data.find((entry) => entry.id === 'submission-own');
-      const other = result.data.find(
-        (entry) => entry.id === 'submission-other',
-      );
+      const own = result.data.find((entry) => entry.memberId === 'user-1');
+      const other = result.data.find((entry) => entry.memberId === 'user-2');
 
       expect(own?.review).toBeDefined();
+      expect(other).toBeDefined();
       expect(other).not.toHaveProperty('review');
+      expect(other).not.toHaveProperty('id');
       expect(
         resourceApiServiceListMock.getMemberResourcesRoles,
       ).toHaveBeenCalledWith('challenge-1', 'user-1');
       expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
         'challenge-1',
       );
+    });
+
+    it('omits review data for unrelated users before completion', async () => {
+      const submissions = [
+        {
+          id: 'submission-other',
+          challengeId: 'challenge-1',
+          memberId: 'user-2',
+          submittedDate: new Date('2025-01-01T12:00:00Z'),
+          createdAt: new Date('2025-01-01T12:00:00Z'),
+          updatedAt: new Date('2025-01-01T12:00:00Z'),
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [{ id: 'review-other' }],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-other',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'user-3',
+          isMachine: false,
+          roles: [],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const other = result.data[0];
+      expect(other).not.toHaveProperty('review');
+      expect(other.reviewSummation).toEqual([]);
+      expect(
+        resourceApiServiceListMock.getMemberResourcesRoles,
+      ).toHaveBeenCalledWith('challenge-1', 'user-3');
+      expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+        'challenge-1',
+      );
+    });
+
+    it('strips review details for unauthorized active challenge getSubmission requests', async () => {
+      const submission = {
+        id: 'submission-unauthorized',
+        challengeId: 'challenge-1',
+        memberId: 'user-2',
+        submittedDate: new Date('2025-01-01T12:00:00Z'),
+        createdAt: new Date('2025-01-01T12:00:00Z'),
+        updatedAt: new Date('2025-01-01T12:00:00Z'),
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        review: [
+          {
+            id: 'review-1',
+            initialScore: 50,
+            finalScore: 55,
+            reviewItems: [],
+          },
+        ],
+        reviewSummation: [{ id: 'summation-1', metadata: { foo: 'bar' } }],
+        legacyChallengeId: null,
+        prizeId: null,
+      };
+
+      prismaMock.submission.findUnique.mockResolvedValue(submission);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Challenge',
+        legacy: {},
+        phases: [],
+      });
+
+      const result = await listService.getSubmission(
+        {
+          userId: 'user-3',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'submission-unauthorized',
+      );
+
+      expect(result.review).toBeUndefined();
+      expect(result.reviewSummation).toBeDefined();
+      expect(challengeApiServiceMock.getChallengeDetail).toHaveBeenCalledWith(
+        'challenge-1',
+      );
+    });
+
+    it('allows submitters to see review scores for their own submission while the challenge is active', async () => {
+      const now = new Date('2025-01-02T12:00:00Z');
+      const submissions = [
+        {
+          id: 'submission-own',
+          challengeId: 'challenge-1',
+          memberId: 'user-1',
+          submittedDate: now,
+          createdAt: now,
+          updatedAt: now,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          review: [
+            {
+              id: 'review-own',
+              phaseId: 'phase-review',
+              initialScore: 90,
+              finalScore: 95,
+              reviewItems: [
+                {
+                  id: 'item-1',
+                  scorecardQuestionId: 'q1',
+                  initialAnswer: 'YES',
+                  finalAnswer: 'YES',
+                  reviewItemComments: [],
+                },
+              ],
+            },
+          ],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ];
+
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Challenge',
+        legacy: {},
+        phases: [
+          {
+            id: 'phase-review',
+            phaseId: 'phase-review',
+            name: 'Review',
+            isOpen: false,
+            actualEndTime: new Date('2025-01-01T12:00:00Z').toISOString(),
+          },
+        ],
+      });
+
+      prismaMock.submission.findMany.mockResolvedValue(
+        submissions.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(submissions.length);
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'submission-own',
+      });
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'user-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const submissionResult = result.data[0];
+      expect(submissionResult.review).toHaveLength(1);
+      expect(submissionResult.review?.[0]?.initialScore).toBe(90);
+      expect(submissionResult.review?.[0]?.finalScore).toBe(95);
+      expect(submissionResult.review?.[0]?.reviewItems).toHaveLength(1);
     });
 
     it('retains review data for other submissions once the challenge completes', async () => {
@@ -1192,11 +1685,11 @@ describe('SubmissionService', () => {
         { page: 1, perPage: 50 } as any,
       );
 
-      const other = result.data.find(
-        (entry) => entry.id === 'submission-other',
-      );
+      const other = result.data.find((entry) => entry.memberId === 'user-2');
 
+      expect(other).toBeDefined();
       expect(other?.review).toBeDefined();
+      expect(other).not.toHaveProperty('id');
     });
 
     it('removes submitter emails from marathon match submissions for regular members', async () => {
