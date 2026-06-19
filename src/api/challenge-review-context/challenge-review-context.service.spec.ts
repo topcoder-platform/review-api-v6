@@ -149,4 +149,47 @@ describe('ChallengeReviewContextService', () => {
       },
     });
   });
+
+  it('allows updating a review context when challenge is in DRAFT status', async () => {
+    const challenge = {
+      id: 'challenge-4',
+      status: ChallengeStatus.DRAFT,
+      phases: [],
+    };
+    challengeApiMock.getChallengeDetailForUser.mockResolvedValue(challenge);
+    prismaMock.challengeReviewContext.findUnique.mockResolvedValue({
+      id: 'context-4',
+      challengeId: 'challenge-4',
+      context: { summary: 'existing' },
+      status: ChallengeReviewContextStatus.AI_GENERATED,
+      createdAt: new Date(),
+      createdBy: 'user-1',
+      updatedAt: new Date(),
+      updatedBy: 'user-1',
+    });
+    prismaMock.challengeReviewContext.update.mockResolvedValue({
+      id: 'context-4',
+      challengeId: 'challenge-4',
+      context: { summary: 'updated context' },
+      status: ChallengeReviewContextStatus.HUMAN_APPROVED,
+      createdAt: new Date(),
+      createdBy: 'user-1',
+      updatedAt: new Date(),
+      updatedBy: 'user-1',
+    });
+    const dto: UpdateChallengeReviewContextDto = {
+      context: { summary: 'updated context' },
+      status: ChallengeReviewContextStatus.HUMAN_APPROVED,
+    };
+    const result = await service.update('challenge-4', dto, authUser);
+    expect(result.context).toEqual({ summary: 'updated context' });
+    expect(prismaMock.challengeReviewContext.update).toHaveBeenCalledWith({
+      where: { challengeId: 'challenge-4' },
+      data: {
+        context: dto.context,
+        status: dto.status,
+        updatedBy: authUser.userId?.toString(),
+      },
+    });
+  });
 });
