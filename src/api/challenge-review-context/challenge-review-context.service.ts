@@ -92,7 +92,7 @@ export class ChallengeReviewContextService {
    * @throws ForbiddenException when whitelist or challenge phase rules block writing.
    * @throws NotFoundException when the challenge cannot be loaded.
    */
-  private async validateChallengeAllowedForWrite(
+  private async validateChallengeAllowedForUpdate(
     challengeId: string,
     authUser: JwtUser,
     loadedChallenge?: ChallengeData,
@@ -107,7 +107,7 @@ export class ChallengeReviewContextService {
       ) ?? false;
     if (!isDraft && !hasRegistrationPhase) {
       throw new ForbiddenException(
-        'Creating or updating challenge review context is only allowed for challenges in DRAFT status or REGISTRATION phase.',
+        'Updating challenge review context is only allowed for challenges in DRAFT status or REGISTRATION phase.',
       );
     }
   }
@@ -116,15 +116,7 @@ export class ChallengeReviewContextService {
     dto: CreateChallengeReviewContextDto,
     authUser: JwtUser,
   ): Promise<ChallengeReviewContextResponseDto> {
-    const challenge = await this.validateChallengeExists(
-      dto.challengeId,
-      authUser,
-    );
-    await this.validateChallengeAllowedForWrite(
-      dto.challengeId,
-      authUser,
-      challenge,
-    );
+    await this.validateChallengeExists(dto.challengeId, authUser);
 
     const existing = await this.prisma.challengeReviewContext.findUnique({
       where: { challengeId: dto.challengeId },
@@ -173,7 +165,7 @@ export class ChallengeReviewContextService {
     authUser: JwtUser,
   ): Promise<ChallengeReviewContextResponseDto> {
     const challenge = await this.validateChallengeExists(challengeId, authUser);
-    await this.validateChallengeAllowedForWrite(
+    await this.validateChallengeAllowedForUpdate(
       challengeId,
       authUser,
       challenge,
