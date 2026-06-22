@@ -682,29 +682,22 @@ export class AppealService {
         challengeId,
       );
 
-      const data = await this.prisma.appeal.update({
-        where: { id: appealId },
+      const data = await this.prisma.appealResponse.create({
         data: {
-          appealResponse: {
-            create: {
-              ...mapAppealResponseRequestToDto(body),
-              resourceId: reviewerResourceId,
-            },
-          },
-        },
-        include: {
-          appealResponse: true,
+          appealId,
+          ...mapAppealResponseRequestToDto(body),
+          resourceId: reviewerResourceId,
         },
       });
 
       this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
       await this.publishAppealRespondedEvent({
         appealId,
-        appealResponseId: data.appealResponse?.id ?? null,
+        appealResponseId: data.id,
         reviewId: review.id,
         reviewerResource,
       });
-      return data.appealResponse as AppealResponseResponseDto;
+      return data as AppealResponseResponseDto;
     } catch (error) {
       if (error instanceof ForbiddenException) {
         throw error;
