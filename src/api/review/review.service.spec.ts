@@ -3667,6 +3667,43 @@ describe('ReviewService.updateReviewItem validations', () => {
     expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
   });
 
+  it('allows admins assigned as reviewers on the challenge to update review item scores without a manager comment', async () => {
+    const adminReviewerUser: JwtUser = {
+      userId: 'admin-reviewer-1',
+      roles: [UserRole.Admin],
+      isMachine: false,
+    };
+
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValueOnce([
+      {
+        id: 'resource-1',
+        memberId: 'admin-reviewer-1',
+        roleName: 'Reviewer',
+        challengeId: 'challenge-1',
+      },
+    ]);
+
+    prismaMock.reviewItem.update.mockResolvedValueOnce({
+      ...baseExistingItem,
+      finalAnswer: 'No',
+      managerComment: null,
+      reviewItemComments: [],
+    });
+
+    await expect(
+      service.updateReviewItem(adminReviewerUser, 'item-1', {
+        ...baseRequest,
+        finalAnswer: 'No',
+      }),
+    ).resolves.toMatchObject({ id: 'item-1' });
+
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'admin-reviewer-1',
+    );
+    expect(prismaMock.reviewItem.update).toHaveBeenCalled();
+  });
+
   it('requires manager comment when an admin updates the score on a review item', async () => {
     const adminUser: JwtUser = {
       userId: 'admin-1',
@@ -3674,6 +3711,7 @@ describe('ReviewService.updateReviewItem validations', () => {
       isMachine: false,
     };
 
+    resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValueOnce([]);
     prismaMock.reviewItem.update.mockClear();
     prismaMock.reviewAudit.create.mockClear();
 
@@ -3689,9 +3727,10 @@ describe('ReviewService.updateReviewItem validations', () => {
       status: 400,
     });
 
-    expect(
-      resourceApiServiceMock.getMemberResourcesRoles,
-    ).not.toHaveBeenCalled();
+    expect(resourceApiServiceMock.getMemberResourcesRoles).toHaveBeenCalledWith(
+      'challenge-1',
+      'admin-1',
+    );
     expect(prismaMock.reviewItem.update).not.toHaveBeenCalled();
     expect(prismaMock.reviewAudit.create).not.toHaveBeenCalled();
   });
