@@ -42,7 +42,7 @@ export class ChallengeReviewContextController {
   @ApiOperation({
     summary: 'Create a challenge review context',
     description:
-      'Roles: Admin, Copilot | Scopes: create:challenge-review-context. Only allowed for challenges in DRAFT status or REGISTRATION phase. At most one context per challenge.',
+      'Roles: Admin, Copilot | Scopes: create:challenge-review-context. Allowed for any existing challenge. At most one context per challenge.',
   })
   @ApiBody({
     description: 'Challenge review context to create',
