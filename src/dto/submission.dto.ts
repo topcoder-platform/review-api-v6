@@ -97,6 +97,16 @@ export class SubmissionQueryDto {
   @IsString()
   @IsNotEmpty()
   submissionPhaseId?: string;
+
+  @ApiProperty({
+    name: 'isLatest',
+    description:
+      'When true, only the latest submission per challenge/member pair is returned. When false, latest submissions are excluded.',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(['true', 'false', '1', '0', 'TRUE', 'FALSE'])
+  isLatest?: string;
 }
 
 export class SubmissionRequestBaseDto {
