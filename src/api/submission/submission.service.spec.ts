@@ -1190,6 +1190,72 @@ describe('SubmissionService', () => {
       ]);
     });
 
+    it('filters latest submissions before pagination when isLatest=true', async () => {
+      const latestSubmission = {
+        id: 'submission-new',
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        submittedDate: new Date('2024-01-02T12:00:00Z'),
+        createdAt: new Date('2024-01-02T12:00:00Z'),
+        updatedAt: new Date('2024-01-02T12:00:00Z'),
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        review: [],
+        reviewSummation: [],
+        legacyChallengeId: null,
+        prizeId: null,
+      };
+
+      prismaMock.$queryRaw.mockResolvedValue([{ id: 'submission-new' }]);
+      prismaMock.submission.findMany.mockResolvedValue([
+        { ...latestSubmission },
+      ]);
+      prismaMock.submission.count.mockResolvedValue(1);
+
+      const result = await listService.listSubmission(
+        { isMachine: false } as any,
+        { challengeId: 'challenge-1', isLatest: 'true' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(prismaMock.$queryRaw).toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: 'challenge-1',
+            id: { in: ['submission-new'] },
+          }),
+          skip: 0,
+          take: 50,
+        }),
+      );
+      expect(prismaMock.submission.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          challengeId: 'challenge-1',
+          id: { in: ['submission-new'] },
+        }),
+      });
+      expect(result.meta.totalCount).toBe(1);
+      expect(result.data).toEqual([
+        expect.objectContaining({
+          id: 'submission-new',
+          isLatest: true,
+        }),
+      ]);
+    });
+
+    it('requires challengeId when filtering by isLatest', async () => {
+      await expect(
+        listService.listSubmission(
+          { isMachine: false } as any,
+          { isLatest: 'true' } as any,
+          { page: 1, perPage: 50 } as any,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+    });
+
     it('enriches reviews with review type names when typeId is present', async () => {
       const submissions = [
         {
