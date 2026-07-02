@@ -3456,6 +3456,10 @@ export class SubmissionService {
         totalCount = submissions.length;
       }
 
+      if (isLatestFilter === true) {
+        await this.populateSubmissionCountsForQuery(submissions, queryDto);
+      }
+
       if (isLatestFilter !== null) {
         for (const submission of submissions) {
           (submission as any).isLatest = isLatestFilter;
@@ -4928,6 +4932,98 @@ export class SubmissionService {
     return latestEntries
       .map((entry) => String(entry.id ?? '').trim())
       .filter((id) => id.length > 0);
+  }
+
+  /**
+   * Populates per-member submission counts on latest-only submission list rows.
+   * This lets clients render a compact member list while still showing the
+   * complete history count before fetching historical attempts on demand.
+   *
+   * @param submissions - Latest submission rows returned by the list query.
+   * @param queryDto - Submission list filters from the request query string.
+   */
+  private async populateSubmissionCountsForQuery(
+    submissions: Array<{
+      challengeId?: string | null;
+      memberId?: string | null;
+      submissionCount?: number;
+    }>,
+    queryDto: SubmissionQueryDto,
+  ): Promise<void> {
+    if (!submissions.length || !queryDto.challengeId) {
+      return;
+    }
+
+    const memberIds = Array.from(
+      new Set(
+        submissions
+          .map((submission) =>
+            submission.memberId !== undefined && submission.memberId !== null
+              ? String(submission.memberId)
+              : '',
+          )
+          .filter((memberId) => memberId.length > 0),
+      ),
+    );
+
+    if (!memberIds.length) {
+      return;
+    }
+
+    const filters: Prisma.Sql[] = [
+      Prisma.sql`"challengeId" = ${queryDto.challengeId}`,
+      Prisma.sql`"memberId" IN (${Prisma.join(memberIds)})`,
+    ];
+
+    if (queryDto.type) {
+      filters.push(Prisma.sql`"type" = ${queryDto.type}`);
+    }
+    if (queryDto.url) {
+      filters.push(Prisma.sql`"url" = ${queryDto.url}`);
+    }
+    if (queryDto.legacySubmissionId) {
+      filters.push(
+        Prisma.sql`"legacySubmissionId" = ${queryDto.legacySubmissionId}`,
+      );
+    }
+    if (queryDto.legacyUploadId) {
+      filters.push(Prisma.sql`"legacyUploadId" = ${queryDto.legacyUploadId}`);
+    }
+    if (queryDto.submissionPhaseId) {
+      filters.push(
+        Prisma.sql`"submissionPhaseId" = ${queryDto.submissionPhaseId}`,
+      );
+    }
+
+    const whereSql = filters.reduce(
+      (combined, filter) => Prisma.sql`${combined} AND ${filter}`,
+    );
+
+    const countRows = await this.prisma.$queryRaw<
+      Array<{ memberId: string | null; submissionCount: bigint | number }>
+    >(
+      Prisma.sql`
+        SELECT "memberId", COUNT(*) AS "submissionCount"
+        FROM "submission"
+        WHERE ${whereSql}
+        GROUP BY "memberId"
+      `,
+    );
+
+    const countByMemberId = new Map(
+      countRows.map((row) => [
+        String(row.memberId ?? ''),
+        Number(row.submissionCount ?? 0),
+      ]),
+    );
+
+    for (const submission of submissions) {
+      const memberId =
+        submission.memberId !== undefined && submission.memberId !== null
+          ? String(submission.memberId)
+          : '';
+      submission.submissionCount = countByMemberId.get(memberId) ?? 0;
+    }
   }
 
   private async getActiveSubmitterRestrictedChallengeIds(
