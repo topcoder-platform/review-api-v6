@@ -71,6 +71,47 @@ type ActiveChallengeRow = {
   id: string | null;
 };
 
+/**
+ * Parses optional boolean-like query parameters used by submission listing filters.
+ *
+ * @param value - Raw query parameter value from Nest's query DTO.
+ * @param fieldName - Query field name used in validation error messages.
+ * @returns A boolean when the query parameter is present, otherwise null.
+ * @throws BadRequestException when the value is not a supported boolean token.
+ */
+function parseOptionalBooleanQuery(
+  value: unknown,
+  fieldName: string,
+): boolean | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    throw new BadRequestException({
+      message: `${fieldName} must be true or false`,
+      code: 'INVALID_BOOLEAN_QUERY_PARAMETER',
+      details: { fieldName },
+    });
+  }
+
+  const normalized = value.toString().trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0') {
+    return false;
+  }
+
+  throw new BadRequestException({
+    message: `${fieldName} must be true or false`,
+    code: 'INVALID_BOOLEAN_QUERY_PARAMETER',
+    details: { fieldName, value },
+  });
+}
+
 export type SubmissionScanRetryOptions = {
   now?: Date;
   limit?: number;
@@ -3195,6 +3236,10 @@ export class SubmissionService {
       if (queryDto.submissionPhaseId) {
         submissionWhereClause.submissionPhaseId = queryDto.submissionPhaseId;
       }
+      const isLatestFilter = parseOptionalBooleanQuery(
+        queryDto.isLatest,
+        'isLatest',
+      );
 
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
       const requesterUserId =
@@ -3285,6 +3330,14 @@ export class SubmissionService {
             whereClause.AND = [whitelistCriteria];
           }
         }
+      }
+
+      if (isLatestFilter !== null) {
+        const latestSubmissionIds =
+          await this.findLatestSubmissionIdsForQuery(queryDto);
+        whereClause.id = isLatestFilter
+          ? { in: latestSubmissionIds }
+          : { notIn: latestSubmissionIds };
       }
 
       // find entities by filters
@@ -3403,7 +3456,13 @@ export class SubmissionService {
         totalCount = submissions.length;
       }
 
-      await this.populateLatestSubmissionFlags(submissions);
+      if (isLatestFilter !== null) {
+        for (const submission of submissions) {
+          (submission as any).isLatest = isLatestFilter;
+        }
+      } else {
+        await this.populateLatestSubmissionFlags(submissions);
+      }
       this.stripSubmitterSubmissionDetails(
         authUser,
         submissions,
@@ -4791,6 +4850,84 @@ export class SubmissionService {
       );
       throw error;
     }
+  }
+
+  /**
+   * Finds submission ids that are latest within each challenge/member pair for
+   * the supplied submission-list filters. The result is used to constrain the
+   * main list and count queries before pagination, so callers can request a
+   * compact member-level view without fetching historical attempts first.
+   *
+   * @param queryDto - Submission list filters from the request query string.
+   * @returns Submission ids that represent the latest attempt per member.
+   * @throws BadRequestException when isLatest is requested without challengeId.
+   */
+  private async findLatestSubmissionIdsForQuery(
+    queryDto: SubmissionQueryDto,
+  ): Promise<string[]> {
+    if (!queryDto.challengeId) {
+      throw new BadRequestException({
+        message: 'isLatest filtering requires challengeId',
+        code: 'LATEST_SUBMISSION_FILTER_REQUIRES_CHALLENGE',
+        details: { fieldName: 'challengeId' },
+      });
+    }
+
+    const filters: Prisma.Sql[] = [
+      Prisma.sql`"challengeId" = ${queryDto.challengeId}`,
+      Prisma.sql`"memberId" IS NOT NULL`,
+    ];
+
+    if (queryDto.type) {
+      filters.push(Prisma.sql`"type" = ${queryDto.type}`);
+    }
+    if (queryDto.url) {
+      filters.push(Prisma.sql`"url" = ${queryDto.url}`);
+    }
+    if (queryDto.memberId) {
+      filters.push(Prisma.sql`"memberId" = ${String(queryDto.memberId)}`);
+    }
+    if (queryDto.legacySubmissionId) {
+      filters.push(
+        Prisma.sql`"legacySubmissionId" = ${queryDto.legacySubmissionId}`,
+      );
+    }
+    if (queryDto.legacyUploadId) {
+      filters.push(Prisma.sql`"legacyUploadId" = ${queryDto.legacyUploadId}`);
+    }
+    if (queryDto.submissionPhaseId) {
+      filters.push(
+        Prisma.sql`"submissionPhaseId" = ${queryDto.submissionPhaseId}`,
+      );
+    }
+
+    const whereSql = filters.reduce(
+      (combined, filter) => Prisma.sql`${combined} AND ${filter}`,
+    );
+
+    const latestEntries = await this.prisma.$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`
+        SELECT "id"
+        FROM (
+          SELECT
+            "id",
+            ROW_NUMBER() OVER (
+              PARTITION BY "challengeId", "memberId"
+              ORDER BY "submittedDate" DESC NULLS LAST,
+                       "createdAt" DESC,
+                       "updatedAt" DESC NULLS LAST,
+                       "id" DESC
+            ) AS row_num
+          FROM "submission"
+          WHERE ${whereSql}
+        ) ranked
+        WHERE row_num = 1
+      `,
+    );
+
+    return latestEntries
+      .map((entry) => String(entry.id ?? '').trim())
+      .filter((id) => id.length > 0);
   }
 
   private async getActiveSubmitterRestrictedChallengeIds(
