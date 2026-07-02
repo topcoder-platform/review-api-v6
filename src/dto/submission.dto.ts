@@ -468,4 +468,12 @@ export class SubmissionResponseDto {
     required: false,
   })
   isLatest?: boolean;
+
+  @ApiProperty({
+    description:
+      'Total number of submissions for this member matching the same challenge submission filters',
+    example: 3,
+    required: false,
+  })
+  submissionCount?: number;
 }
