@@ -1163,7 +1163,11 @@ describe('SubmissionService', () => {
       prismaMock.submission.findFirst.mockResolvedValue({
         id: 'submission-new',
       });
-      prismaMock.$queryRaw.mockResolvedValue([{ id: 'submission-new' }]);
+      prismaMock.$queryRaw
+        .mockResolvedValueOnce([{ id: 'submission-new' }])
+        .mockResolvedValueOnce([
+          { memberId: 'member-1', submissionCount: BigInt(2) },
+        ]);
 
       const result = await listService.listSubmission(
         { isMachine: false } as any,
@@ -1206,7 +1210,17 @@ describe('SubmissionService', () => {
         prizeId: null,
       };
 
-      prismaMock.$queryRaw.mockResolvedValue([{ id: 'submission-new' }]);
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['submission-new']);
+      const countSpy = jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockImplementation((submissions: any[]) => {
+          submissions.forEach((submission) => {
+            submission.submissionCount = 2;
+          });
+          return Promise.resolve();
+        });
       prismaMock.submission.findMany.mockResolvedValue([
         { ...latestSubmission },
       ]);
@@ -1218,7 +1232,21 @@ describe('SubmissionService', () => {
         { page: 1, perPage: 50 } as any,
       );
 
-      expect(prismaMock.$queryRaw).toHaveBeenCalled();
+      expect(latestSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          challengeId: 'challenge-1',
+          isLatest: 'true',
+        }),
+      );
+      expect(countSpy).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'submission-new' }),
+        ]),
+        expect.objectContaining({
+          challengeId: 'challenge-1',
+          isLatest: 'true',
+        }),
+      );
       expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
@@ -1240,6 +1268,7 @@ describe('SubmissionService', () => {
         expect.objectContaining({
           id: 'submission-new',
           isLatest: true,
+          submissionCount: 2,
         }),
       ]);
     });
