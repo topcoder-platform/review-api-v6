@@ -8,7 +8,7 @@ import { UserRole } from 'src/shared/enums/userRole.enum';
 
 describe('ReviewSummationService', () => {
   describe('searchSummation', () => {
-    it('allows registered marathon submitters to view challenge summations with only safe progress metadata', async () => {
+    it('allows registered marathon submitters to view challenge summations without metadata', async () => {
       const prismaMock = {
         reviewSummation: {
           findMany: jest.fn().mockResolvedValue([
@@ -127,27 +127,81 @@ describe('ReviewSummationService', () => {
           }),
         }),
       );
+      const findManyArg = prismaMock.reviewSummation.findMany.mock.calls[0][0];
+      expect(findManyArg.select).not.toHaveProperty('metadata');
       expect(result.data).toHaveLength(2);
       expect(result.data.map((summation) => summation.submitterId)).toEqual([
         111, 222,
       ]);
-      expect(result.data[0].metadata).toEqual({
+      expect(result.data[0]).not.toHaveProperty('metadata');
+      expect(result.data[1]).not.toHaveProperty('metadata');
+      expect(JSON.stringify(result.data)).not.toContain('123456789');
+      expect(JSON.stringify(result.data)).not.toContain('987654321');
+    });
+
+    it('returns metadata to machine callers that explicitly request it', async () => {
+      const metadata = {
         testProcess: 'provisional',
-        testProgress: 0.5,
-        testStatus: 'IN PROGRESS',
-        testProgressDetails: {
-          completedTests: 5,
-          progress: 0.5,
-          status: 'IN PROGRESS',
-          totalTests: 10,
+        testScores: [
+          {
+            score: 11,
+            seed: 123456789,
+          },
+        ],
+      };
+      const prismaMock = {
+        reviewSummation: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'summation-1',
+              submissionId: 'submission-1',
+              aggregateScore: -1,
+              scorecardId: null,
+              isPassing: false,
+              isFinal: false,
+              isProvisional: true,
+              isExample: false,
+              reviewedDate: null,
+              createdAt: new Date('2026-05-01T00:00:00.000Z'),
+              createdBy: null,
+              updatedAt: null,
+              updatedBy: null,
+              metadata,
+            },
+          ]),
+          count: jest.fn().mockResolvedValue(1),
         },
-      });
-      expect(JSON.stringify(result.data[0].metadata)).not.toContain(
-        '123456789',
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        {} as any,
+        { member: { findMany: jest.fn().mockResolvedValue([]) } } as any,
+        {} as any,
       );
-      expect(JSON.stringify(result.data[1].metadata)).not.toContain(
-        '987654321',
+
+      const result = await service.searchSummation(
+        {
+          isMachine: true,
+          roles: [],
+        },
+        {
+          submissionId: 'submission-1',
+          metadata: 'true',
+          provisional: 'true',
+        },
+        {
+          page: 1,
+          perPage: 10,
+        },
       );
+
+      const findManyArg = prismaMock.reviewSummation.findMany.mock.calls[0][0];
+      expect(findManyArg.select).toHaveProperty('metadata', true);
+      expect(findManyArg.select).not.toHaveProperty('submission');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].metadata).toEqual(metadata);
+      expect(result.data[0]).not.toHaveProperty('submission');
     });
   });
 });

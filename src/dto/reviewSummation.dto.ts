@@ -109,7 +109,7 @@ export class ReviewSummationQueryDto {
 
   @ApiProperty({
     description:
-      'When true, include the metadata payload for each review summation in responses',
+      'Internal-use flag. Metadata is omitted by default and is only returned to machine-to-machine callers when explicitly set to true.',
     required: false,
   })
   @IsOptional()
@@ -384,7 +384,7 @@ export class ReviewSummationResponseDto {
 
   @ApiProperty({
     description:
-      'Auxiliary metadata for the review summation (test scores, etc.)',
+      'Internal response field. Omitted by default; only machine-to-machine reviewSummations list requests with metadata=true receive it.',
     required: false,
     nullable: true,
     type: Object,
