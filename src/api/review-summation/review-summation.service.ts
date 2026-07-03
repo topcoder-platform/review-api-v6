@@ -26,7 +26,47 @@ import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.ser
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Prisma } from '@prisma/client';
-import { buildSafeReviewSummationMetadata } from 'src/shared/utils/review-summation-metadata.util';
+
+const REVIEW_SUMMATION_RESPONSE_SELECT = {
+  id: true,
+  submissionId: true,
+  legacySubmissionId: true,
+  aggregateScore: true,
+  scorecardId: true,
+  scorecardLegacyId: true,
+  isPassing: true,
+  isFinal: true,
+  isProvisional: true,
+  isExample: true,
+  reviewedDate: true,
+  createdAt: true,
+  createdBy: true,
+  updatedAt: true,
+  updatedBy: true,
+} satisfies Prisma.reviewSummationSelect;
+
+const REVIEW_SUMMATION_RESPONSE_WITH_METADATA_SELECT = {
+  ...REVIEW_SUMMATION_RESPONSE_SELECT,
+  metadata: true,
+} satisfies Prisma.reviewSummationSelect;
+
+const REVIEW_SUMMATION_WITH_SUBMITTER_SELECT = {
+  ...REVIEW_SUMMATION_RESPONSE_SELECT,
+  submission: {
+    select: {
+      memberId: true,
+    },
+  },
+} satisfies Prisma.reviewSummationSelect;
+
+const REVIEW_SUMMATION_WITH_SUBMITTER_AND_METADATA_SELECT = {
+  ...REVIEW_SUMMATION_RESPONSE_WITH_METADATA_SELECT,
+  submission: {
+    select: {
+      memberId: true,
+    },
+  },
+} satisfies Prisma.reviewSummationSelect;
 
 @Injectable()
 export class ReviewSummationService {
@@ -562,9 +602,10 @@ export class ReviewSummationService {
 
       const data = await this.prisma.reviewSummation.create({
         data: createData,
+        select: REVIEW_SUMMATION_RESPONSE_SELECT,
       });
       this.logger.log(`Review summation created with ID: ${data.id}`);
-      return data as ReviewSummationResponseDto;
+      return this.buildResponse(data);
     } catch (error) {
       // Re-throw NotFoundException and BadRequestException as-is
       if (
@@ -671,8 +712,6 @@ export class ReviewSummationService {
         : undefined;
       const challengeIdFilter =
         rawChallengeId && rawChallengeId.length ? rawChallengeId : undefined;
-      const includeMetadata =
-        (queryDto.metadata ?? '').toLowerCase() === 'true';
 
       if (isSubmitterOnly) {
         const userId =
@@ -839,23 +878,23 @@ export class ReviewSummationService {
       };
 
       const shouldEnrichSubmitterMetadata = Boolean(challengeIdFilter);
+      const includeMetadata =
+        (authUser?.isMachine ?? false) &&
+        parseBooleanString(queryDto.metadata) === true;
+      const summationSelect = shouldEnrichSubmitterMetadata
+        ? includeMetadata
+          ? REVIEW_SUMMATION_WITH_SUBMITTER_AND_METADATA_SELECT
+          : REVIEW_SUMMATION_WITH_SUBMITTER_SELECT
+        : includeMetadata
+          ? REVIEW_SUMMATION_RESPONSE_WITH_METADATA_SELECT
+          : REVIEW_SUMMATION_RESPONSE_SELECT;
 
       const summations = await this.prisma.reviewSummation.findMany({
         where: whereClause,
         skip,
         take: perPage,
         orderBy,
-        ...(shouldEnrichSubmitterMetadata
-          ? {
-              include: {
-                submission: {
-                  select: {
-                    memberId: true,
-                  },
-                },
-              },
-            }
-          : {}),
+        select: summationSelect,
       });
 
       const submitterInfoByMemberId = new Map<
@@ -929,11 +968,10 @@ export class ReviewSummationService {
       });
 
       const data: ReviewSummationResponseDto[] = summations.map((summation) => {
-        const { submission, metadata, ...rest } =
-          summation as typeof summation & {
-            submission?: { memberId: string | null };
-            metadata?: Prisma.JsonValue | null;
-          };
+        const summationRecord = summation as typeof summation & {
+          submission?: { memberId: string | null };
+        };
+        const { submission } = summationRecord;
 
         let submitterId: number | null = null;
         let submitterHandle: string | null = null;
@@ -958,20 +996,17 @@ export class ReviewSummationService {
           }
         }
 
-        const base: ReviewSummationResponseDto = {
-          ...rest,
-          submitterId,
-          submitterHandle,
-          submitterMaxRating,
-        } as ReviewSummationResponseDto;
-
-        if (includeMetadata) {
-          base.metadata = isSubmitterOnly
-            ? buildSafeReviewSummationMetadata(metadata)
-            : (metadata ?? null);
-        }
-
-        return base;
+        return this.buildResponse(
+          summationRecord,
+          {
+            submitterId,
+            submitterHandle,
+            submitterMaxRating,
+          },
+          {
+            includeMetadata,
+          },
+        );
       });
 
       this.logger.log(
@@ -1081,9 +1116,10 @@ export class ReviewSummationService {
       const data = await this.prisma.reviewSummation.update({
         where: { id },
         data: updateData,
+        select: REVIEW_SUMMATION_RESPONSE_SELECT,
       });
       this.logger.log(`Review summation updated successfully: ${id}`);
-      return data as ReviewSummationResponseDto;
+      return this.buildResponse(data);
     } catch (error) {
       // Re-throw NotFoundException and BadRequestException from checkSummation and validation as-is
       if (
@@ -1165,13 +1201,14 @@ export class ReviewSummationService {
     try {
       const data = await this.prisma.reviewSummation.findUnique({
         where: { id },
+        select: REVIEW_SUMMATION_RESPONSE_SELECT,
       });
       if (!data || !data.id) {
         throw new NotFoundException(
           `Review summation with ID ${id} not found. Please verify the summation ID is correct.`,
         );
       }
-      return data;
+      return this.buildResponse(data);
     } catch (error) {
       // Re-throw NotFoundException as-is
       if (error instanceof NotFoundException) {
@@ -1188,5 +1225,30 @@ export class ReviewSummationService {
         details: errorResponse.details,
       });
     }
+  }
+
+  /**
+   * Builds a review summation response object.
+   * @param data Review summation row or row-like object to serialize.
+   * @param extras Optional computed submitter fields to append.
+   * @param options Response serialization options, including internal metadata access.
+   * @returns Review summation response DTO with internal relations removed.
+   * @throws This method does not throw.
+   * Used by all review summation response paths as a final guard against exposing per-seed metadata by default.
+   */
+  private buildResponse(
+    data: Record<string, unknown>,
+    extras: Partial<ReviewSummationResponseDto> = {},
+    options: { includeMetadata?: boolean } = {},
+  ): ReviewSummationResponseDto {
+    const response: Record<string, unknown> = {
+      ...data,
+      ...extras,
+    };
+    if (!options.includeMetadata) {
+      delete response.metadata;
+    }
+    delete response.submission;
+    return response as unknown as ReviewSummationResponseDto;
   }
 }

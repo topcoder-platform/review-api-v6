@@ -2246,7 +2246,7 @@ describe('SubmissionService', () => {
       expect(submissionResult.url).toBeNull();
     });
 
-    it('sanitizes review summation metadata for submitter-owned submissions', async () => {
+    it('omits review summation metadata for submitter-owned submissions', async () => {
       const now = new Date('2026-05-01T12:00:00Z');
       const submissions = [
         {
@@ -2307,19 +2307,16 @@ describe('SubmissionService', () => {
         { page: 1, perPage: 10 } as any,
       );
 
-      const metadata = result.data[0].reviewSummation?.[0].metadata;
-      expect(metadata).toEqual({
-        testProcess: 'system',
-        testProgress: 0.75,
-        testStatus: 'IN PROGRESS',
-        testProgressDetails: {
-          completedTests: 15,
-          progress: 0.75,
-          status: 'IN PROGRESS',
-          totalTests: 20,
-        },
-      });
-      expect(JSON.stringify(metadata)).not.toContain('987654321');
+      const findManyArg = prismaMock.submission.findMany.mock.calls[0][0];
+      expect(findManyArg.include.reviewSummation.select).not.toHaveProperty(
+        'metadata',
+      );
+      expect(result.data[0].reviewSummation?.[0]).not.toHaveProperty(
+        'metadata',
+      );
+      expect(JSON.stringify(result.data[0].reviewSummation)).not.toContain(
+        '987654321',
+      );
     });
   });
 

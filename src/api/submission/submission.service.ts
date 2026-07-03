@@ -35,7 +35,6 @@ import {
   ChallengeApiService,
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
-import { buildSafeReviewSummationMetadata } from 'src/shared/utils/review-summation-metadata.util';
 import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
@@ -214,6 +213,24 @@ const REVIEW_ITEM_COMMENTS_INCLUDE = {
     },
   },
 } as const;
+
+const REVIEW_SUMMATION_RESPONSE_SELECT = {
+  id: true,
+  submissionId: true,
+  legacySubmissionId: true,
+  aggregateScore: true,
+  scorecardId: true,
+  scorecardLegacyId: true,
+  isPassing: true,
+  isFinal: true,
+  isProvisional: true,
+  isExample: true,
+  reviewedDate: true,
+  createdAt: true,
+  createdBy: true,
+  updatedAt: true,
+  updatedBy: true,
+} satisfies Prisma.reviewSummationSelect;
 
 type CreateSubmissionOptions = {
   allowPrivilegedPostSubmissionUpload?: boolean;
@@ -3351,7 +3368,9 @@ export class SubmissionService {
               },
             },
           },
-          reviewSummation: {},
+          reviewSummation: {
+            select: REVIEW_SUMMATION_RESPONSE_SELECT,
+          },
         },
         skip,
         take: perPage,
@@ -3473,11 +3492,6 @@ export class SubmissionService {
         reviewVisibilityContext,
       );
       this.stripSubmitterEmails(authUser, submissions, reviewVisibilityContext);
-      this.sanitizeMemberVisibleReviewSummationMetadata(
-        authUser,
-        submissions,
-        reviewVisibilityContext,
-      );
       await this.stripIsLatestForUnlimitedChallenges(submissions);
 
       this.logger.log(
@@ -3614,12 +3628,6 @@ export class SubmissionService {
       [data],
       reviewVisibilityContext,
     );
-    this.sanitizeMemberVisibleReviewSummationMetadata(
-      authUser,
-      [data],
-      reviewVisibilityContext,
-    );
-
     await this.stripIsLatestForUnlimitedChallenges([data]);
     return this.buildResponse(data);
   }
@@ -3904,7 +3912,12 @@ export class SubmissionService {
   private async checkSubmission(id: string, authUser?: JwtUser) {
     const data = await this.prisma.submission.findUnique({
       where: { id },
-      include: { review: true, reviewSummation: true },
+      include: {
+        review: true,
+        reviewSummation: {
+          select: REVIEW_SUMMATION_RESPONSE_SELECT,
+        },
+      },
     });
     if (!data || !data.id) {
       throw new NotFoundException({
@@ -5482,62 +5495,6 @@ export class SubmissionService {
     }
   }
 
-  /**
-   * Replaces review summation metadata with member-safe progress metadata for non-privileged callers.
-   * @param authUser Authenticated requester from the JWT.
-   * @param submissions Submission records being returned by list endpoints.
-   * @param visibilityContext Challenge role information for the requester.
-   * Used by `listSubmission` so competitors can see their own test progress without per-seed scores.
-   */
-  private sanitizeMemberVisibleReviewSummationMetadata(
-    authUser: JwtUser | undefined,
-    submissions: Array<
-      {
-        challengeId?: string | null;
-        reviewSummation?: unknown;
-      } & Record<string, unknown>
-    >,
-    visibilityContext: ReviewVisibilityContext,
-  ): void {
-    if (!submissions.length) {
-      return;
-    }
-    if (authUser && (authUser.isMachine || isAdmin(authUser))) {
-      return;
-    }
-
-    for (const submission of submissions) {
-      if (!Array.isArray((submission as any).reviewSummation)) {
-        continue;
-      }
-
-      const challengeId =
-        submission.challengeId !== undefined && submission.challengeId !== null
-          ? String(submission.challengeId).trim()
-          : '';
-      const roleSummary = challengeId
-        ? visibilityContext.roleSummaryByChallenge.get(challengeId)
-        : undefined;
-
-      if (roleSummary?.hasCopilot || roleSummary?.hasReviewer) {
-        continue;
-      }
-
-      (submission as any).reviewSummation = (
-        (submission as any).reviewSummation as Array<Record<string, unknown>>
-      ).map((summation) => {
-        if (!summation || typeof summation !== 'object') {
-          return summation;
-        }
-
-        return {
-          ...summation,
-          metadata: buildSafeReviewSummationMetadata(summation.metadata),
-        };
-      });
-    }
-  }
-
   private async stripIsLatestForUnlimitedChallenges(
     submissions: Array<
       { challengeId?: string | null } & Record<string, unknown>
@@ -6002,6 +5959,32 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Removes individual review summation metadata from nested submission responses.
+   * @param reviewSummation Raw nested review summation rows from Prisma.
+   * @returns Review summation rows without metadata fields, or undefined when absent.
+   * @throws This method does not throw.
+   * Used by `buildResponse` as a response-boundary guard against leaking per-seed data.
+   */
+  private stripReviewSummationMetadata(
+    reviewSummation: unknown,
+  ): unknown[] | undefined {
+    if (!Array.isArray(reviewSummation)) {
+      return undefined;
+    }
+
+    const summations = reviewSummation as unknown[];
+    return summations.map((summation: unknown): unknown => {
+      if (!summation || typeof summation !== 'object') {
+        return summation;
+      }
+
+      const safeSummation = { ...(summation as Record<string, unknown>) };
+      delete safeSummation.metadata;
+      return safeSummation;
+    });
+  }
+
   private buildResponse(data: any): SubmissionResponseDto {
     const dto: SubmissionResponseDto = {
       ...data,
@@ -6012,7 +5995,9 @@ export class SubmissionService {
       dto.review = data.review as ReviewResponseDto[];
     }
     if (data.reviewSummation) {
-      dto.reviewSummation = data.reviewSummation;
+      dto.reviewSummation = this.stripReviewSummationMetadata(
+        data.reviewSummation,
+      ) as any[];
     }
     if (Object.prototype.hasOwnProperty.call(data, 'isLatest')) {
       dto.isLatest = Boolean(data.isLatest);
