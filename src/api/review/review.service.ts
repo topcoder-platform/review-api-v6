@@ -799,6 +799,8 @@ export class ReviewService {
 
     await this.ensureChallengeWhitelistAccess(requester, challengeId);
 
+    const isRequesterAdmin = isAdmin(requester);
+
     if (requester.isMachine) {
       return {
         mode: 'machine',
@@ -806,17 +808,6 @@ export class ReviewService {
         hasCopilotRole: false,
         ownsReview: false,
         requiresManagerComment: false,
-        requesterResources: [],
-      };
-    }
-
-    if (isAdmin(requester)) {
-      return {
-        mode: 'admin',
-        hasReviewerRole: false,
-        hasCopilotRole: false,
-        ownsReview: false,
-        requiresManagerComment: true,
         requesterResources: [],
       };
     }
@@ -840,7 +831,7 @@ export class ReviewService {
           ? 'delete'
           : 'update';
 
-    if (!hasReviewerRole && !hasCopilotRole) {
+    if (!hasReviewerRole && !hasCopilotRole && !isRequesterAdmin) {
       throw new ForbiddenException({
         message: `You do not have permission to ${actionVerb} this review item.`,
         code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_ROLE`,
@@ -887,6 +878,38 @@ export class ReviewService {
           itemId: context.itemId,
           challengeId,
           requester: requesterMemberId,
+        },
+      });
+    }
+
+    if (isRequesterAdmin) {
+      const isAssignedReviewerRole = requesterResources.some((resource) => {
+        const normalizedRoleName = (resource.roleName || '').toLowerCase();
+        const matchesReviewer = normalizedRoleName.includes('reviewer');
+        const matchesChallenge = challengeId
+          ? resource.challengeId === challengeId
+          : false;
+        return matchesReviewer && matchesChallenge;
+      });
+
+      return {
+        mode: 'admin',
+        hasReviewerRole,
+        hasCopilotRole,
+        ownsReview: false,
+        requiresManagerComment: !isAssignedReviewerRole,
+        requesterResources,
+      };
+    }
+
+    if (!hasReviewerRole && !hasCopilotRole) {
+      throw new ForbiddenException({
+        message: `You do not have permission to ${actionVerb} this review item.`,
+        code: `REVIEW_ITEM_${context.action.toUpperCase()}_FORBIDDEN_ROLE`,
+        details: {
+          reviewId: review.id,
+          itemId: context.itemId,
+          requesterRoles: requester.roles,
         },
       });
     }
