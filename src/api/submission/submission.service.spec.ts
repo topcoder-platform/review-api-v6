@@ -816,6 +816,177 @@ describe('SubmissionService', () => {
     });
   });
 
+  describe('createSubmission URL First2Finish event', () => {
+    let prismaMock: {
+      submission: {
+        create: jest.Mock;
+      };
+    };
+    let prismaErrorServiceMock: { handleError: jest.Mock };
+    let challengeApiServiceMock: {
+      validateChallengeExists: jest.Mock;
+      validateSubmissionCreation: jest.Mock;
+      validateCheckpointSubmissionCreation: jest.Mock;
+      validateFinalFixSubmissionCreation: jest.Mock;
+      getChallengeDetail: jest.Mock;
+    };
+    let resourceApiServiceMock: {
+      validateSubmitterRegistration: jest.Mock;
+    };
+    let resourcePrismaMock: {
+      resource: {
+        findFirst: jest.Mock;
+      };
+    };
+    let eventBusServiceMock: {
+      publish: jest.Mock;
+    };
+    let challengeCatalogServiceMock: {
+      ensureSubmissionTypeAllowed: jest.Mock;
+    };
+    let challengePrismaMock: {
+      $executeRaw: jest.Mock;
+      $queryRaw: jest.Mock;
+    };
+    let createService: SubmissionService;
+
+    const createdSubmission = {
+      challengeId: 'challenge-f2f',
+      createdAt: new Date('2026-07-10T13:00:00Z'),
+      createdBy: '1001',
+      eventRaised: false,
+      fileType: undefined,
+      id: 'submission-f2f-url',
+      isFileSubmission: false,
+      legacyChallengeId: null,
+      legacySubmissionId: null,
+      legacyUploadId: null,
+      memberId: '1001',
+      prizeId: null,
+      status: SubmissionStatus.ACTIVE,
+      submissionPhaseId: 'submission-phase',
+      submittedDate: new Date('2026-07-10T13:00:00Z'),
+      systemFileName: 'submission',
+      type: SubmissionType.CONTEST_SUBMISSION,
+      updatedAt: new Date('2026-07-10T13:00:00Z'),
+      updatedBy: '1001',
+      url: 'https://example.com/submission',
+      virusScan: false,
+      viewCount: 0,
+    };
+
+    beforeEach(() => {
+      prismaMock = {
+        submission: {
+          create: jest.fn().mockResolvedValue(createdSubmission),
+        },
+      };
+      prismaErrorServiceMock = {
+        handleError: jest.fn().mockReturnValue({
+          message: 'Unexpected error',
+          code: 'INTERNAL_ERROR',
+          details: {},
+        }),
+      };
+      challengeApiServiceMock = {
+        validateChallengeExists: jest.fn().mockResolvedValue({
+          id: 'challenge-f2f',
+          legacy: {},
+          status: ChallengeStatus.ACTIVE,
+          track: 'Development',
+          type: 'First2Finish',
+        }),
+        validateSubmissionCreation: jest.fn().mockResolvedValue(undefined),
+        validateCheckpointSubmissionCreation: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        validateFinalFixSubmissionCreation: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-f2f',
+          type: 'First2Finish',
+        }),
+      };
+      resourceApiServiceMock = {
+        validateSubmitterRegistration: jest.fn().mockResolvedValue(undefined),
+      };
+      resourcePrismaMock = {
+        resource: {
+          findFirst: jest.fn().mockResolvedValue({
+            memberHandle: 'submitterHandle',
+          }),
+        },
+      };
+      eventBusServiceMock = {
+        publish: jest.fn().mockResolvedValue(undefined),
+      };
+      challengeCatalogServiceMock = {
+        ensureSubmissionTypeAllowed: jest.fn(),
+      };
+      challengePrismaMock = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+
+      createService = new SubmissionService(
+        prismaMock as any,
+        prismaErrorServiceMock as any,
+        challengePrismaMock as any,
+        challengeApiServiceMock as any,
+        resourceApiServiceMock as any,
+        resourcePrismaMock as any,
+        eventBusServiceMock as any,
+        challengeCatalogServiceMock as any,
+        {} as any,
+      );
+
+      jest
+        .spyOn(createService as any, 'publishSubmissionCreateEvent')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(createService as any, 'publishSubmissionScanEvent')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(createService as any, 'populateLatestSubmissionFlags')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(createService as any, 'stripIsLatestForUnlimitedChallenges')
+        .mockResolvedValue(undefined);
+    });
+
+    it('publishes first2finish.submission.received immediately for URL submissions', async () => {
+      await createService.createSubmission(
+        {
+          isMachine: false,
+          roles: [],
+          userId: '1001',
+        } as any,
+        {
+          challengeId: 'challenge-f2f',
+          memberId: '1001',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          url: 'https://example.com/submission',
+        },
+      );
+
+      expect(
+        (createService as any).publishSubmissionScanEvent,
+      ).not.toHaveBeenCalled();
+      expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
+        'first2finish.submission.received',
+        {
+          challengeId: 'challenge-f2f',
+          memberHandle: 'submitterHandle',
+          memberId: '1001',
+          submissionId: 'submission-f2f-url',
+          submissionUrl: 'https://example.com/submission',
+          submittedDate: '2026-07-10T13:00:00.000Z',
+        },
+      );
+    });
+  });
+
   describe('createSubmission Final Fix', () => {
     let prismaMock: {
       submission: {

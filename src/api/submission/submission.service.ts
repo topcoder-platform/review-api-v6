@@ -123,7 +123,7 @@ export type SubmissionScanRetryResult = {
   failed: number;
 };
 
-interface TopgearSubmissionEventPayload {
+interface RapidSubmissionEventPayload {
   submissionId: string;
   challengeId: string;
   submissionUrl: string;
@@ -132,7 +132,7 @@ interface TopgearSubmissionEventPayload {
   submittedDate: string;
 }
 
-type TopgearSubmissionRecord = {
+type RapidSubmissionRecord = {
   id: string;
   challengeId: string | null;
   memberId: string | null;
@@ -2709,8 +2709,95 @@ export class SubmissionService {
     );
   }
 
+  /**
+   * Publishes the First2Finish submission event immediately for URL submissions.
+   *
+   * File-backed submissions publish the same event after AV scan completes. URL
+   * submissions skip AV scan, so this method keeps the autopilot iterative
+   * review flow aligned for non-file First2Finish submissions.
+   *
+   * @param submission - Newly created non-file submission details.
+   * @returns Resolves after the event is published or skipped for non-F2F data.
+   * @throws InternalServerErrorException when required event payload fields
+   * are missing for a First2Finish challenge.
+   */
+  private async publishFirst2FinishSubmissionEventIfEligible(
+    submission: RapidSubmissionRecord,
+  ): Promise<void> {
+    if (!submission.challengeId) {
+      this.logger.log(
+        `Submission ${submission.id} missing challengeId. Skipping First2Finish event publish.`,
+      );
+      return;
+    }
+
+    const challenge = await this.challengeApiService.getChallengeDetail(
+      submission.challengeId,
+    );
+
+    if (!this.isFirst2FinishTypeName(challenge?.type)) {
+      this.logger.log(
+        `Challenge ${submission.challengeId} is not First2Finish. Skipping immediate First2Finish event for submission ${submission.id}.`,
+      );
+      return;
+    }
+
+    if (!submission.url) {
+      throw new InternalServerErrorException({
+        message:
+          'Updated submission does not contain a URL required for First2Finish event payload.',
+        code: 'FIRST2FINISH_SUBMISSION_URL_MISSING',
+        details: { submissionId: submission.id },
+      });
+    }
+
+    if (!submission.memberId) {
+      throw new InternalServerErrorException({
+        message:
+          'Submission is missing memberId. Cannot publish First2Finish event.',
+        code: 'FIRST2FINISH_SUBMISSION_MEMBER_MISSING',
+        details: { submissionId: submission.id },
+      });
+    }
+
+    const memberHandle = await this.lookupMemberHandle(
+      submission.challengeId,
+      submission.memberId,
+    );
+
+    if (!memberHandle) {
+      throw new InternalServerErrorException({
+        message:
+          'Unable to locate member handle for First2Finish event payload.',
+        code: 'FIRST2FINISH_MEMBER_HANDLE_MISSING',
+        details: {
+          submissionId: submission.id,
+          challengeId: submission.challengeId,
+          memberId: submission.memberId,
+        },
+      });
+    }
+
+    const payload: RapidSubmissionEventPayload = {
+      submissionId: submission.id,
+      challengeId: submission.challengeId,
+      submissionUrl: submission.url,
+      memberHandle,
+      memberId: submission.memberId,
+      submittedDate: submission.createdAt.toISOString(),
+    };
+
+    await this.eventBusService.publish(
+      'first2finish.submission.received',
+      payload,
+    );
+    this.logger.log(
+      `Published first2finish.submission.received event for submission ${submission.id} immediately after creation.`,
+    );
+  }
+
   private async publishTopgearSubmissionEventIfEligible(
-    submission: TopgearSubmissionRecord,
+    submission: RapidSubmissionRecord,
   ): Promise<void> {
     if (!submission.challengeId) {
       this.logger.log(
@@ -2765,7 +2852,7 @@ export class SubmissionService {
       });
     }
 
-    const payload: TopgearSubmissionEventPayload = {
+    const payload: RapidSubmissionEventPayload = {
       submissionId: submission.id,
       challengeId: submission.challengeId,
       submissionUrl: submission.url,
@@ -2782,6 +2869,17 @@ export class SubmissionService {
 
   private isTopgearTaskChallenge(typeName?: string): boolean {
     return (typeName ?? '').trim().toLowerCase() === 'topgear task';
+  }
+
+  /**
+   * Checks whether a challenge type name is the First2Finish type used by
+   * rapid-submission event routing.
+   *
+   * @param typeName - Challenge type name returned by challenge-api.
+   * @returns True when the type name matches First2Finish.
+   */
+  private isFirst2FinishTypeName(typeName?: string): boolean {
+    return (typeName ?? '').toString().trim().toLowerCase() === 'first2finish';
   }
 
   private async lookupMemberHandle(
@@ -3113,6 +3211,15 @@ export class SubmissionService {
         this.logger.log(
           `Skipping AV scan event for submission ${data.id} because it is not a file-based submission.`,
         );
+        if (data.type === SubmissionType.CONTEST_SUBMISSION) {
+          await this.publishFirst2FinishSubmissionEventIfEligible({
+            id: data.id,
+            challengeId: data.challengeId,
+            memberId: data.memberId,
+            url: data.url,
+            createdAt: data.createdAt,
+          });
+        }
         await this.publishTopgearSubmissionEventIfEligible({
           id: data.id,
           challengeId: data.challengeId,
