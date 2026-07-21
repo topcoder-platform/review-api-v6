@@ -35,6 +35,7 @@ import {
   ChallengeApiService,
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
+import { buildSafeReviewSummationMetadata } from 'src/shared/utils/review-summation-metadata.util';
 import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
@@ -230,6 +231,7 @@ const REVIEW_SUMMATION_RESPONSE_SELECT = {
   createdBy: true,
   updatedAt: true,
   updatedBy: true,
+  metadata: true,
 } satisfies Prisma.reviewSummationSelect;
 
 type CreateSubmissionOptions = {
@@ -6067,13 +6069,13 @@ export class SubmissionService {
   }
 
   /**
-   * Removes individual review summation metadata from nested submission responses.
+   * Replaces nested review summation metadata with member-safe test progress fields.
    * @param reviewSummation Raw nested review summation rows from Prisma.
-   * @returns Review summation rows without metadata fields, or undefined when absent.
+   * @returns Review summation rows with sanitized metadata, or undefined when absent.
    * @throws This method does not throw.
-   * Used by `buildResponse` as a response-boundary guard against leaking per-seed data.
+   * Used by `buildResponse` to expose Marathon Match progress without leaking per-seed data.
    */
-  private stripReviewSummationMetadata(
+  private sanitizeReviewSummationMetadata(
     reviewSummation: unknown,
   ): unknown[] | undefined {
     if (!Array.isArray(reviewSummation)) {
@@ -6086,9 +6088,11 @@ export class SubmissionService {
         return summation;
       }
 
-      const safeSummation = { ...(summation as Record<string, unknown>) };
-      delete safeSummation.metadata;
-      return safeSummation;
+      const typedSummation = summation as Record<string, unknown>;
+      return {
+        ...typedSummation,
+        metadata: buildSafeReviewSummationMetadata(typedSummation.metadata),
+      };
     });
   }
 
@@ -6102,7 +6106,7 @@ export class SubmissionService {
       dto.review = data.review as ReviewResponseDto[];
     }
     if (data.reviewSummation) {
-      dto.reviewSummation = this.stripReviewSummationMetadata(
+      dto.reviewSummation = this.sanitizeReviewSummationMetadata(
         data.reviewSummation,
       ) as any[];
     }
