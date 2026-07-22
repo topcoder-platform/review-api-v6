@@ -405,7 +405,7 @@ export class SubmissionController {
   @ApiOperation({
     summary: 'Download the submission',
     description:
-      'Roles: Copilot, Admin, User Reviewer. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. Registered Submitters may download winning submissions after challenge completion when challenge metadata allows it; Design challenges also require submissionsViewable. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
