@@ -75,6 +75,7 @@ workflows:
                           only:
                               - develop
                               - PM-5118_directly-dispatch-to-gitea
+                              - security_july_2026
                       tags:
                           only: /^dev-.*/
 
