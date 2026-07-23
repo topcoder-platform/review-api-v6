@@ -64,11 +64,13 @@ export class ProjectResultService {
    *
    * Canonical `challengeResult` rows are loaded in one batch and keyed by
    * challenge and user. A row is returned only when its positive placement
-   * matches a final `PLACEMENT` winner for the same member. Canonical rows are
-   * decisive: mismatches never fall through to legacy lookup. When a canonical
-   * row is genuinely absent, compatibility fallback accepts only one ACTIVE
-   * contest submission carrying the exact member and placement; ambiguous or
-   * missing direct evidence is omitted rather than reconstructed from reviews.
+   * matches a final placement winner for the same member. Current records use
+   * `PLACEMENT`; untyped and contest-submission aliases remain accepted for
+   * migrated challenges. Canonical rows are decisive: mismatches never fall
+   * through to legacy lookup. When a canonical row is genuinely absent,
+   * compatibility fallback accepts only one ACTIVE contest submission carrying
+   * the exact member and placement; ambiguous or missing direct evidence is
+   * omitted rather than reconstructed from reviews.
    *
    * @param authUser - The authenticated request user.
    * @param challengeId - Challenge id whose results should be returned.
@@ -95,12 +97,17 @@ export class ProjectResultService {
     for (const winner of challenge.winners ?? []) {
       const winnerType = String(winner.type ?? '')
         .trim()
-        .toUpperCase();
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '');
       const userId = String(winner.userId ?? '').trim();
       const placement = Number(winner.placement);
+      const isFinalPlacementWinner =
+        winnerType === '' ||
+        winnerType === 'PLACEMENT' ||
+        winnerType === 'CONTESTSUBMISSION';
 
       if (
-        winnerType !== 'PLACEMENT' ||
+        !isFinalPlacementWinner ||
         !userId ||
         !Number.isInteger(placement) ||
         placement <= 0

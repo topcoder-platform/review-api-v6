@@ -145,6 +145,68 @@ describe('ProjectResultService', () => {
     ]);
   });
 
+  it.each([
+    undefined,
+    '',
+    'CONTEST_SUBMISSION',
+    'Contest Submission',
+  ])(
+    'accepts the legacy final-placement winner type %p',
+    async (winnerType) => {
+      challengeApiServiceMock.getChallengeDetailForUser.mockResolvedValue({
+        id: 'challenge-1',
+        name: 'Legacy Challenge With Winners',
+        status: ChallengeStatus.COMPLETED,
+        track: 'Development',
+        legacyId: 1001,
+        winners: [
+          {
+            userId: 12345,
+            handle: 'legacy-winner',
+            placement: 1,
+            type: winnerType,
+          },
+        ],
+      });
+      prismaMock.challengeResult.findMany.mockResolvedValue([
+        {
+          challengeId: 'challenge-1',
+          userId: '12345',
+          paymentId: null,
+          submissionId: 'canonical-winning-submission',
+          oldRating: null,
+          newRating: null,
+          initialScore: 91,
+          finalScore: 94.5,
+          placement: 1,
+          rated: false,
+          passedReview: true,
+          validSubmission: true,
+          pointAdjustment: null,
+          ratingOrder: null,
+          createdAt,
+          createdBy: 'autopilot',
+          updatedAt,
+          updatedBy: 'autopilot',
+        },
+      ]);
+
+      const results = await service.getProjectResultsFromChallenge(
+        authUser,
+        'challenge-1',
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        challengeId: 'challenge-1',
+        userId: '12345',
+        submissionId: 'canonical-winning-submission',
+        placement: 1,
+      });
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+    },
+  );
+
   it('treats a mismatching canonical row as decisive instead of selecting a sibling submission', async () => {
     challengeApiServiceMock.getChallengeDetailForUser.mockResolvedValue({
       id: 'challenge-1',
