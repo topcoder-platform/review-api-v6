@@ -1,9 +1,11 @@
 import {
   Controller,
+  Delete,
   Get,
   Post,
   Put,
   Body,
+  HttpCode,
   Param,
   ValidationPipe,
 } from '@nestjs/common';
@@ -151,5 +153,36 @@ export class ChallengeReviewContextController {
       dto,
       authUser,
     );
+  }
+
+  @Delete(':challengeId')
+  @HttpCode(204)
+  @Roles(UserRole.Admin, UserRole.Copilot)
+  @Scopes(Scope.DeleteChallengeReviewContext)
+  @ApiOperation({
+    summary: 'Delete a challenge review context',
+    description:
+      'Roles: Admin, Copilot | Scopes: delete:challenge-review-context. Only allowed for challenges in DRAFT status or REGISTRATION phase.',
+  })
+  @ApiParam({
+    name: 'challengeId',
+    description: 'The challenge ID',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+  })
+  @ApiResponse({
+    status: 204,
+    description: 'The challenge review context was deleted successfully.',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden. Caller is not whitelisted for the challenge, or challenge is not in DRAFT status or REGISTRATION phase.',
+  })
+  @ApiResponse({ status: 404, description: 'Challenge or context not found.' })
+  async delete(
+    @Param('challengeId') challengeId: string,
+    @User() authUser: JwtUser,
+  ): Promise<void> {
+    await this.challengeReviewContextService.delete(challengeId, authUser);
   }
 }
