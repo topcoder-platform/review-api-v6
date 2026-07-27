@@ -101,6 +101,7 @@ export enum Scope {
   CreateChallengeReviewContext = 'create:challenge-review-context',
   ReadChallengeReviewContext = 'read:challenge-review-context',
   UpdateChallengeReviewContext = 'update:challenge-review-context',
+  DeleteChallengeReviewContext = 'delete:challenge-review-context',
 }
 
 /**
