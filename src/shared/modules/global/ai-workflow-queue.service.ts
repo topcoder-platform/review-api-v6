@@ -15,7 +15,10 @@ export class AiWorkflowQueueService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async queueWorkflowsForSubmission(submissionId: string): Promise<void> {
+  async queueWorkflowsForSubmission(
+    submissionId: string,
+    options?: { aiPhaseOpened?: boolean },
+  ): Promise<void> {
     this.logger.log(`Queueing AI workflows for submission ${submissionId}`);
 
     const submission = await this.submissionBaseService.getSubmissionById(
@@ -29,7 +32,10 @@ export class AiWorkflowQueueService {
       return;
     }
 
-    const workflowIds = await this.resolveWorkflowIdsForChallenge(challengeId);
+    const workflowIds = await this.resolveWorkflowIdsForChallenge(
+      challengeId,
+      options,
+    );
     if (!workflowIds.length) {
       this.logger.log(
         `No AI workflows configured for challenge ${challengeId}; skipping queueing for submission ${submissionId}.`,
@@ -46,13 +52,18 @@ export class AiWorkflowQueueService {
 
   private async resolveWorkflowIdsForChallenge(
     challengeId: string,
+    options?: { aiPhaseOpened?: boolean },
   ): Promise<string[]> {
     const configured = await this.getConfiguredAiWorkflowIds(challengeId);
-    if (configured?.mode === 'queue') {
-      return configured.workflowIds;
-    }
+    if (configured) {
+      if (configured.templateDisabled) {
+        return [];
+      }
 
-    if (configured?.mode === 'skip') {
+      if (configured.instantReviewEnabled || options?.aiPhaseOpened) {
+        return configured.workflowIds;
+      }
+
       return [];
     }
 
@@ -72,12 +83,15 @@ export class AiWorkflowQueueService {
   private async getConfiguredAiWorkflowIds(
     challengeId: string,
   ): Promise<
-    | { mode: 'queue'; workflowIds: string[] }
-    | { mode: 'skip' }
-    | { mode: 'fallback' }
+    | {
+        instantReviewEnabled: boolean;
+        templateDisabled: boolean;
+        workflowIds: string[];
+      }
+    | null
   > {
     if (!challengeId) {
-      return { mode: 'fallback' };
+      return null;
     }
 
     const config = await this.prisma.aiReviewConfig.findFirst({
@@ -102,36 +116,25 @@ export class AiWorkflowQueueService {
     });
 
     if (!config) {
-      return { mode: 'fallback' };
+      return null;
     }
 
-    if (config.template?.disabled) {
-      this.logger.warn(
-        `Skipping AI workflow queueing for challenge ${challengeId} because linked template is disabled.`,
-      );
-      return { mode: 'skip' };
-    }
-
-    if (config.instantReview !== true) {
-      this.logger.log(
-        `Skipping AI workflow queueing for challenge ${challengeId} because instantReview is disabled.`,
-      );
-      return { mode: 'skip' };
-    }
+    const workflowIds = Array.from(
+      new Set(
+        (config.workflows ?? [])
+          .map((workflow: { workflowId?: unknown }) =>
+            typeof workflow.workflowId === 'string'
+              ? workflow.workflowId
+              : undefined,
+          )
+          .filter((workflowId): workflowId is string => Boolean(workflowId)),
+      ),
+    );
 
     return {
-      mode: 'queue',
-      workflowIds: Array.from(
-        new Set(
-          (config.workflows ?? [])
-            .map((workflow: { workflowId?: unknown }) =>
-              typeof workflow.workflowId === 'string'
-                ? workflow.workflowId
-                : undefined,
-            )
-            .filter((workflowId): workflowId is string => Boolean(workflowId)),
-        ),
-      ),
+      instantReviewEnabled: config.instantReview === true,
+      templateDisabled: !!config.template?.disabled,
+      workflowIds,
     };
   }
 }

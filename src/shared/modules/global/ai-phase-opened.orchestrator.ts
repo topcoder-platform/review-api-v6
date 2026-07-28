@@ -35,6 +35,7 @@ export class AiPhaseOpenedOrchestrator {
         try {
           await this.aiWorkflowQueueService.queueWorkflowsForSubmission(
             submissionId,
+            { aiPhaseOpened: true },
           );
         } catch (error) {
           const err = error as Error;

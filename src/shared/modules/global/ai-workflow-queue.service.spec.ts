@@ -51,6 +51,7 @@ describe('AiWorkflowQueueService', () => {
     });
     prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
       instantReview: true,
+      template: { disabled: false },
       workflows: [
         { workflowId: 'workflow-a' },
         { workflowId: 'workflow-a' },
@@ -65,6 +66,30 @@ describe('AiWorkflowQueueService', () => {
       [{ id: 'workflow-a' }, { id: 'workflow-b' }],
       'challenge-1',
       'submission-1',
+    );
+  });
+
+  it('queues workflows during AI phase opened event even when instantReview is disabled', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-5',
+      challengeId: 'challenge-5',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: false,
+      template: { disabled: false },
+      workflows: [
+        { workflowId: 'workflow-c' },
+      ],
+    });
+
+    await service.queueWorkflowsForSubmission('submission-5', {
+      aiPhaseOpened: true,
+    });
+
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).toHaveBeenCalledWith(
+      [{ id: 'workflow-c' }],
+      'challenge-5',
+      'submission-5',
     );
   });
 
