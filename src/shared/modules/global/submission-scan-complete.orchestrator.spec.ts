@@ -50,6 +50,7 @@ describe('SubmissionScanCompleteOrchestrator', () => {
       challengeId: 'challenge-1',
     });
     prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: true,
       workflows: [
         { workflowId: 'workflow-a' },
         { workflowId: 'workflow-a' },
@@ -65,6 +66,22 @@ describe('SubmissionScanCompleteOrchestrator', () => {
       'challenge-1',
       'submission-1',
     );
+  });
+
+  it('does not queue workflows when instantReview is disabled on active AI review config', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-3',
+      challengeId: 'challenge-3',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: false,
+      workflows: [{ workflowId: 'workflow-a' }],
+    });
+
+    await orchestrator.orchestrateScanComplete('submission-3');
+
+    expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
   });
 
   it('falls back to challenge-linked workflows when no AI review config exists', async () => {

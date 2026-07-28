@@ -41,8 +41,8 @@ export class SubmissionScanCompleteOrchestrator {
    * @returns True when the active AI review config defines at least one workflow.
    */
   async hasConfiguredAiReviewWorkflows(challengeId: string): Promise<boolean> {
-    const workflowIds = await this.getConfiguredAiWorkflowIds(challengeId);
-    return workflowIds.length > 0;
+    const configured = await this.getConfiguredAiWorkflowIds(challengeId);
+    return configured?.mode === 'queue' && configured.workflowIds.length > 0;
   }
 
   async orchestrateScanComplete(submissionId: string): Promise<void> {
@@ -93,10 +93,12 @@ export class SubmissionScanCompleteOrchestrator {
   private async getWorkflowIdsForScanComplete(
     challengeId: string,
   ): Promise<string[]> {
-    const configuredWorkflowIds =
-      await this.getConfiguredAiWorkflowIds(challengeId);
-    if (configuredWorkflowIds.length) {
-      return configuredWorkflowIds;
+    const configured = await this.getConfiguredAiWorkflowIds(challengeId);
+    if (configured?.mode === 'queue') {
+      return configured.workflowIds;
+    }
+    if (configured?.mode === 'skip') {
+      return [];
     }
 
     const challenge =
@@ -120,9 +122,13 @@ export class SubmissionScanCompleteOrchestrator {
    */
   private async getConfiguredAiWorkflowIds(
     challengeId: string,
-  ): Promise<string[]> {
+  ): Promise<
+    | { mode: 'queue'; workflowIds: string[] }
+    | { mode: 'skip' }
+    | { mode: 'fallback' }
+  > {
     if (!challengeId) {
-      return [];
+      return { mode: 'fallback' };
     }
 
     const config = await this.prisma.aiReviewConfig.findFirst({
@@ -134,6 +140,7 @@ export class SubmissionScanCompleteOrchestrator {
             disabled: true,
           },
         },
+        instantReview: true,
         workflows: {
           where: {
             workflow: {
@@ -145,23 +152,37 @@ export class SubmissionScanCompleteOrchestrator {
       },
     });
 
-    if (config?.template?.disabled) {
+    if (!config) {
+      return { mode: 'fallback' };
+    }
+
+    if (config.template?.disabled) {
       this.logger.warn(
         `Skipping AI workflow queueing for challenge ${challengeId} because linked template is disabled.`,
       );
-      return [];
+      return { mode: 'skip' };
     }
 
-    return Array.from(
-      new Set(
-        (config?.workflows ?? [])
-          .map((workflow: { workflowId?: unknown }) =>
-            typeof workflow.workflowId === 'string'
-              ? workflow.workflowId
-              : undefined,
-          )
-          .filter((workflowId): workflowId is string => Boolean(workflowId)),
+    if (config.instantReview !== true) {
+      this.logger.log(
+        `Skipping AI workflow queueing for challenge ${challengeId} because instantReview is disabled.`,
+      );
+      return { mode: 'skip' };
+    }
+
+    return {
+      mode: 'queue',
+      workflowIds: Array.from(
+        new Set(
+          (config.workflows ?? [])
+            .map((workflow: { workflowId?: unknown }) =>
+              typeof workflow.workflowId === 'string'
+                ? workflow.workflowId
+                : undefined,
+            )
+            .filter((workflowId): workflowId is string => Boolean(workflowId)),
+        ),
       ),
-    );
+    };
   }
 }
