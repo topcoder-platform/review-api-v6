@@ -152,6 +152,12 @@ The application includes a robust Dead Letter Queue implementation for handling 
 - **Kafka UI**: Monitor topics, partitions, and consumer groups at http://localhost:8080
 - **Health Checks**: Kafka connection status is included in application health checks
 
+### Kafka Client and Recovery
+
+- The service uses `@platformatic/kafka` 2.8.0 for broker failover and consumer group recovery fixes.
+- Platformatic Kafka 2.x raises the aggregate consumer Fetch limit to 50 MiB. The service deliberately retains the previous 10 MiB `maxBytes` limit to avoid increasing its per-consumer memory envelope.
+- Terminal consumer or producer client errors and offset commit timeouts mark Kafka health as `reconnecting` and start the shared reconnect lifecycle. A successful reconnect returns health to `ready`; exhausted attempts mark it as `failed` with the last failure reason.
+
 ### Environment Variables
 
 All Kafka-related environment variables are documented in `.env.sample`:

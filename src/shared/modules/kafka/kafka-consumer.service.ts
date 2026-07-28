@@ -15,7 +15,20 @@ import {
 } from '@platformatic/kafka';
 import { KafkaHandlerRegistry } from './kafka-handler.registry';
 import { LoggerService } from '../global/logger.service';
-import { KAFKA_TIMING_DEFAULTS } from './kafka.constants';
+import {
+  KAFKA_CONSUMER_MAX_BYTES,
+  KAFKA_TIMING_DEFAULTS,
+} from './kafka.constants';
+
+/**
+ * Keeps a detached Kafka emitter from escalating a later `error` event into an
+ * uncaught process exception after its asynchronous close has already failed.
+ *
+ * The close failure itself is logged before this listener is installed.
+ *
+ * @returns Nothing.
+ */
+const ignoreDetachedKafkaError = (): void => undefined;
 
 export enum KafkaConnectionState {
   disabled = 'disabled',
@@ -83,8 +96,38 @@ export class KafkaConsumerService
   private kafkaState: KafkaConnectionState;
   private kafkaFailureReason?: string;
   private reconnectionTask?: Promise<void>;
+  private reconnectRequested = false;
+  private queuedKafkaFailureReason?: string;
+  private reconnectCandidateActive = false;
   private kafkaReconnectAttempts = 0;
   private isShuttingDown = false;
+
+  /**
+   * Handles terminal errors emitted by the Platformatic consumer client.
+   *
+   * Consumer-level errors are separate from MessagesStream errors. Routing
+   * them through the service failure handler ensures a stale coordinator or
+   * failed group rejoin rebuilds both Kafka clients.
+   *
+   * @param error The terminal consumer client error.
+   * @returns Nothing; reconnection is scheduled asynchronously.
+   */
+  private readonly consumerErrorListener = (error: Error): void => {
+    this.handleKafkaFailure('Kafka consumer client error', error);
+  };
+
+  /**
+   * Handles terminal errors emitted by the Platformatic producer client.
+   *
+   * The producer and consumer share one lifecycle in this service, so a
+   * terminal producer error also recreates both clients.
+   *
+   * @param error The terminal producer client error.
+   * @returns Nothing; reconnection is scheduled asynchronously.
+   */
+  private readonly producerErrorListener = (error: Error): void => {
+    this.handleKafkaFailure('Kafka producer client error', error);
+  };
 
   constructor(
     private readonly options: KafkaModuleOptions,
@@ -145,6 +188,9 @@ export class KafkaConsumerService
       this.consumer = new Consumer(this.createConsumerOptions());
       this.producer = new Producer(this.createProducerOptions());
 
+      this.consumer.on('error', this.consumerErrorListener);
+      this.producer.on('error', this.producerErrorListener);
+
       this.logger.log('Kafka consumer and producer initialized successfully');
     } catch (error) {
       const trace =
@@ -155,40 +201,93 @@ export class KafkaConsumerService
   }
 
   async disconnect(): Promise<void> {
-    try {
-      if (this.stream) {
-        await this.stream.close();
-        this.stream.removeAllListeners();
-        this.stream = undefined;
-      }
+    const stream = this.stream;
+    this.stream = undefined;
 
-      if (this.consumerLoop) {
-        try {
-          await this.consumerLoop;
-        } catch (error) {
-          const trace =
-            error instanceof Error
-              ? (error.stack ?? error.message)
-              : String(error);
-          this.logger.error('Kafka consumer loop terminated with error', trace);
-        } finally {
-          this.consumerLoop = undefined;
+    if (stream) {
+      let streamClosed = false;
+
+      try {
+        await stream.close();
+        streamClosed = true;
+      } catch (error) {
+        const trace =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+        this.logger.error('Error during Kafka stream disconnect', trace);
+      } finally {
+        stream.removeAllListeners();
+
+        if (!streamClosed) {
+          stream.on('error', ignoreDetachedKafkaError);
         }
       }
+    }
 
-      if (this.consumer) {
-        await Promise.resolve(this.consumer.close(true));
+    const consumerLoop = this.consumerLoop;
+    this.consumerLoop = undefined;
+
+    if (consumerLoop) {
+      try {
+        await consumerLoop;
+      } catch (error) {
+        const trace =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+        this.logger.error('Kafka consumer loop terminated with error', trace);
+      }
+    }
+
+    const consumer = this.consumer;
+    this.consumer = undefined;
+
+    if (consumer) {
+      let consumerClosed = false;
+
+      try {
+        await Promise.resolve(consumer.close(true));
+        consumerClosed = true;
         this.logger.log('Kafka consumer disconnected successfully');
-      }
+      } catch (error) {
+        const trace =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+        this.logger.error('Error during Kafka consumer disconnect', trace);
+      } finally {
+        if (!consumerClosed) {
+          consumer.on('error', ignoreDetachedKafkaError);
+        }
 
-      if (this.producer) {
-        await Promise.resolve(this.producer.close());
-        this.logger.log('Kafka producer disconnected successfully');
+        consumer.removeListener('error', this.consumerErrorListener);
       }
-    } catch (error) {
-      const trace =
-        error instanceof Error ? (error.stack ?? error.message) : String(error);
-      this.logger.error('Error during Kafka disconnect', trace);
+    }
+
+    const producer = this.producer;
+    this.producer = undefined;
+
+    if (producer) {
+      let producerClosed = false;
+
+      try {
+        await Promise.resolve(producer.close());
+        producerClosed = true;
+        this.logger.log('Kafka producer disconnected successfully');
+      } catch (error) {
+        const trace =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+        this.logger.error('Error during Kafka producer disconnect', trace);
+      } finally {
+        if (!producerClosed) {
+          producer.on('error', ignoreDetachedKafkaError);
+        }
+
+        producer.removeListener('error', this.producerErrorListener);
+      }
     }
   }
 
@@ -208,7 +307,16 @@ export class KafkaConsumerService
     });
   }
 
-  private async startConsumer(): Promise<void> {
+  /**
+   * Starts the registered topic stream for the current Kafka clients.
+   *
+   * Reconnect attempts defer the ready transition until the replacement client
+   * has survived startup without emitting a terminal client error.
+   *
+   * @param updateHealth Whether this method should mark Kafka health as ready.
+   * @returns A promise that resolves after the stream and processing loop start.
+   */
+  private async startConsumer(updateHealth = true): Promise<void> {
     if (!this.consumer || !this.producer) {
       throw new Error('Kafka consumer is not initialized');
     }
@@ -236,9 +344,11 @@ export class KafkaConsumerService
 
       this.consumerLoop = this.consumeStream(this.stream);
 
-      this.kafkaState = KafkaConnectionState.ready;
-      this.kafkaFailureReason = undefined;
-      this.kafkaReconnectAttempts = 0;
+      if (updateHealth) {
+        this.kafkaState = KafkaConnectionState.ready;
+        this.kafkaFailureReason = undefined;
+        this.kafkaReconnectAttempts = 0;
+      }
 
       this.logger.log('Kafka consumer started successfully');
     } catch (error) {
@@ -496,10 +606,7 @@ export class KafkaConsumerService
         commitError instanceof Error
           ? commitError
           : new Error(String(commitError));
-      this.logger.error(
-        'Failed to commit message offset',
-        error.stack ?? error.message,
-      );
+      this.handleKafkaFailure('Failed to commit message offset', error);
     }
   }
 
@@ -516,6 +623,10 @@ export class KafkaConsumerService
       return;
     }
 
+    const queueAfterCurrentReconnect =
+      this.reconnectionTask !== undefined &&
+      (this.reconnectCandidateActive ||
+        this.kafkaState === KafkaConnectionState.ready);
     const trace =
       error instanceof Error ? (error.stack ?? error.message) : String(error);
 
@@ -526,16 +637,42 @@ export class KafkaConsumerService
       this.kafkaState = KafkaConnectionState.reconnecting;
     }
 
-    void this.scheduleReconnect();
+    void this.scheduleReconnect(queueAfterCurrentReconnect);
   }
 
-  private scheduleReconnect(): Promise<void> {
+  /**
+   * Starts or reuses the shared Kafka reconnect task.
+   *
+   * Failures from the replacement clients are remembered while the current
+   * task settles so they cannot be lost in the ready-to-finally transition.
+   *
+   * @param queueAfterCurrentReconnect Whether a replacement-client failure
+   * requires another reconnect after the active task.
+   * @returns The active reconnect task.
+   */
+  private scheduleReconnect(queueAfterCurrentReconnect = false): Promise<void> {
     if (this.reconnectionTask) {
+      if (queueAfterCurrentReconnect) {
+        this.reconnectRequested = true;
+        this.queuedKafkaFailureReason = this.kafkaFailureReason;
+      }
+
       return this.reconnectionTask;
     }
 
     this.reconnectionTask = this.performReconnect().finally(() => {
       this.reconnectionTask = undefined;
+
+      const reconnectRequested = this.reconnectRequested;
+      const queuedFailureReason = this.queuedKafkaFailureReason;
+      this.reconnectRequested = false;
+      this.queuedKafkaFailureReason = undefined;
+
+      if (reconnectRequested && !this.isDisabled && !this.isShuttingDown) {
+        this.kafkaState = KafkaConnectionState.reconnecting;
+        this.kafkaFailureReason = queuedFailureReason;
+        void this.scheduleReconnect();
+      }
     });
 
     return this.reconnectionTask;
@@ -568,7 +705,18 @@ export class KafkaConsumerService
         }
 
         this.connect();
-        await this.startConsumer();
+        this.reconnectCandidateActive = true;
+        await this.startConsumer(false);
+        this.reconnectCandidateActive = false;
+
+        if (this.reconnectRequested) {
+          const failureReason =
+            this.queuedKafkaFailureReason ??
+            'Replacement Kafka client failed during startup';
+          this.reconnectRequested = false;
+          this.queuedKafkaFailureReason = undefined;
+          throw new Error(failureReason);
+        }
 
         this.kafkaState = KafkaConnectionState.ready;
         this.kafkaFailureReason = undefined;
@@ -581,6 +729,10 @@ export class KafkaConsumerService
 
         return;
       } catch (error) {
+        this.reconnectCandidateActive = false;
+        this.reconnectRequested = false;
+        this.queuedKafkaFailureReason = undefined;
+
         const trace =
           error instanceof Error
             ? (error.stack ?? error.message)
@@ -707,6 +859,7 @@ export class KafkaConsumerService
       bootstrapBrokers: this.options.brokers,
       groupId: this.options.groupId,
       autocommit: false,
+      maxBytes: KAFKA_CONSUMER_MAX_BYTES,
     };
 
     if (this.options.connectionTimeout !== undefined) {
