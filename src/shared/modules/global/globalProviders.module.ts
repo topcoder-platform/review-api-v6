@@ -16,6 +16,8 @@ import { KafkaModule } from '../kafka/kafka.module';
 import { SubmissionBaseService } from './submission-base.service';
 import { GiteaService } from './gitea.service';
 import { SubmissionScanCompleteOrchestrator } from './submission-scan-complete.orchestrator';
+import { AiPhaseOpenedOrchestrator } from './ai-phase-opened.orchestrator';
+import { AiWorkflowQueueService } from './ai-workflow-queue.service';
 import { ChallengeCatalogService } from './challenge-catalog.service';
 import { SubmissionService } from 'src/api/submission/submission.service';
 import { ChallengePrismaService } from './challenge-prisma.service';
@@ -23,6 +25,7 @@ import { MemberPrismaService } from './member-prisma.service';
 import { WorkflowQueueHandler } from './workflow-queue.handler';
 import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
 import { SubmissionScanCompleteHandler } from '../kafka/handlers/submission-scan-complete.handler';
+import { AiPhaseOpenedHandler } from '../kafka/handlers/ai-phase-opened.handler';
 import { SubmissionVirusScanRetryService } from './submission-virus-scan-retry.service';
 
 // Global module for providing global providers
@@ -56,10 +59,13 @@ import { SubmissionVirusScanRetryService } from './submission-virus-scan-retry.s
     SubmissionBaseService,
     GiteaService,
     SubmissionScanCompleteOrchestrator,
+    AiPhaseOpenedOrchestrator,
+    AiWorkflowQueueService,
     SubmissionService,
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
+    AiPhaseOpenedHandler,
     SubmissionVirusScanRetryService,
   ],
   exports: [
@@ -80,9 +86,12 @@ import { SubmissionVirusScanRetryService } from './submission-virus-scan-retry.s
     SubmissionBaseService,
     GiteaService,
     SubmissionScanCompleteOrchestrator,
+    AiPhaseOpenedOrchestrator,
+    AiWorkflowQueueService,
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
+    AiPhaseOpenedHandler,
   ],
 })
 export class GlobalProvidersModule {}
