@@ -1,6 +1,16 @@
 import { AiPhaseOpenedHandler } from './ai-phase-opened.handler';
 
 describe('AiPhaseOpenedHandler', () => {
+  const originalDispatchAiReviewWorkflows =
+    process.env.DISPATCH_AI_REVIEW_WORKFLOWS;
+  afterEach(() => {
+    if (originalDispatchAiReviewWorkflows === undefined) {
+      delete process.env.DISPATCH_AI_REVIEW_WORKFLOWS;
+    } else {
+      process.env.DISPATCH_AI_REVIEW_WORKFLOWS =
+        originalDispatchAiReviewWorkflows;
+    }
+  });
   const handlerRegistryMock = {
     registerHandler: jest.fn(),
   };

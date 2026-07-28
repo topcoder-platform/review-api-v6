@@ -34,20 +34,24 @@ describe('AiPhaseOpenedOrchestrator', () => {
     await orchestrator.orchestrateChallengePhaseOpened('challenge-1');
 
     expect(prismaMock.$queryRaw).toHaveBeenCalled();
-    expect(aiWorkflowQueueServiceMock.queueWorkflowsForSubmission).toHaveBeenCalledTimes(2);
-    expect(aiWorkflowQueueServiceMock.queueWorkflowsForSubmission).toHaveBeenCalledWith(
-      'submission-1',
-    );
-    expect(aiWorkflowQueueServiceMock.queueWorkflowsForSubmission).toHaveBeenCalledWith(
-      'submission-2',
-    );
+    expect(
+      aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
+    ).toHaveBeenCalledWith('submission-1', { aiPhaseOpened: true });
+    expect(
+      aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
+    ).toHaveBeenCalledWith('submission-2', { aiPhaseOpened: true });
   });
 
   it('skips orchestration when challengeId is missing', async () => {
     await orchestrator.orchestrateChallengePhaseOpened('');
 
     expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
-    expect(aiWorkflowQueueServiceMock.queueWorkflowsForSubmission).not.toHaveBeenCalled();
+    expect(
+      aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
+    ).not.toHaveBeenCalled();
   });
 
   it('skips when there are no latest submissions', async () => {
@@ -56,6 +60,8 @@ describe('AiPhaseOpenedOrchestrator', () => {
     await orchestrator.orchestrateChallengePhaseOpened('challenge-1');
 
     expect(prismaMock.$queryRaw).toHaveBeenCalled();
-    expect(aiWorkflowQueueServiceMock.queueWorkflowsForSubmission).not.toHaveBeenCalled();
+    expect(
+      aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
+    ).not.toHaveBeenCalled();
   });
 });
