@@ -15,6 +15,7 @@ import {
 } from '@platformatic/kafka';
 import { KafkaHandlerRegistry } from './kafka-handler.registry';
 import { LoggerService } from '../global/logger.service';
+import { KAFKA_TIMING_DEFAULTS } from './kafka.constants';
 
 export enum KafkaConnectionState {
   disabled = 'disabled',
@@ -51,6 +52,10 @@ export interface KafkaModuleOptions {
   sasl?: KafkaSaslOptions;
   connectionTimeout?: number;
   requestTimeout?: number;
+  brokerTimeout?: number;
+  sessionTimeout?: number;
+  heartbeatInterval?: number;
+  maxWaitTime?: number;
   retry?: {
     retries: number;
     initialRetryTime: number;
@@ -86,6 +91,7 @@ export class KafkaConsumerService
     private readonly handlerRegistry: KafkaHandlerRegistry,
   ) {
     this.logger = LoggerService.forRoot('KafkaConsumerService');
+    this.validateTimingOptions();
     this.isDisabled = options.disabled ?? false;
     this.kafkaState = this.isDisabled
       ? KafkaConnectionState.disabled
@@ -548,6 +554,11 @@ export class KafkaConsumerService
       }
 
       this.kafkaReconnectAttempts = attempt;
+      await this.wait(this.getReconnectDelay(attempt));
+
+      if (this.isShuttingDown) {
+        return;
+      }
 
       try {
         await this.disconnect();
@@ -585,10 +596,6 @@ export class KafkaConsumerService
           },
           trace,
         );
-
-        if (attempt < maxAttempts && !this.isShuttingDown) {
-          await this.wait(this.getRetryDelay(attempt));
-        }
       }
     }
 
@@ -618,6 +625,77 @@ export class KafkaConsumerService
     return Math.min(calculatedDelay, maxDelay);
   }
 
+  /**
+   * Calculates an equal-jitter delay for a Kafka reconnection attempt.
+   *
+   * The reconnect loop uses this delay before every attempt so ECS tasks that
+   * observe the same broker interruption do not all reconnect simultaneously.
+   *
+   * @param attempt The one-based reconnection attempt number.
+   * @returns A delay between half and all of the exponential retry delay, in
+   * milliseconds.
+   */
+  private getReconnectDelay(attempt: number): number {
+    const retryDelay = this.getRetryDelay(attempt);
+    const minimumDelay = Math.floor(retryDelay / 2);
+    const jitterRange = retryDelay - minimumDelay;
+
+    return minimumDelay + Math.floor(Math.random() * (jitterRange + 1));
+  }
+
+  /**
+   * Validates Kafka timing options before clients are created.
+   *
+   * This is called by the constructor so both environment-backed and directly
+   * registered module options keep broker waits below the client-side request
+   * deadline and consumer heartbeats below the session timeout.
+   *
+   * @returns Nothing when all configured timing options are valid.
+   * @throws {Error} If a timing value is not a positive integer or if related
+   * timeout values would race each other.
+   */
+  private validateTimingOptions(): void {
+    const timingOptions = [
+      ['connectionTimeout', this.options.connectionTimeout],
+      ['requestTimeout', this.options.requestTimeout],
+      ['brokerTimeout', this.options.brokerTimeout],
+      ['sessionTimeout', this.options.sessionTimeout],
+      ['heartbeatInterval', this.options.heartbeatInterval],
+      ['maxWaitTime', this.options.maxWaitTime],
+    ] as const;
+
+    for (const [name, value] of timingOptions) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+        throw new Error(`Kafka ${name} must be a positive integer`);
+      }
+    }
+
+    const requestTimeout =
+      this.options.requestTimeout ?? KAFKA_TIMING_DEFAULTS.requestTimeout;
+    const brokerTimeout =
+      this.options.brokerTimeout ?? KAFKA_TIMING_DEFAULTS.brokerTimeout;
+    const maxWaitTime =
+      this.options.maxWaitTime ?? KAFKA_TIMING_DEFAULTS.maxWaitTime;
+    const sessionTimeout =
+      this.options.sessionTimeout ?? KAFKA_TIMING_DEFAULTS.sessionTimeout;
+    const heartbeatInterval =
+      this.options.heartbeatInterval ?? KAFKA_TIMING_DEFAULTS.heartbeatInterval;
+
+    if (maxWaitTime >= requestTimeout) {
+      throw new Error('Kafka maxWaitTime must be less than requestTimeout');
+    }
+
+    if (brokerTimeout >= requestTimeout) {
+      throw new Error('Kafka brokerTimeout must be less than requestTimeout');
+    }
+
+    if (heartbeatInterval + requestTimeout >= sessionTimeout) {
+      throw new Error(
+        'Kafka heartbeatInterval plus requestTimeout must be less than sessionTimeout',
+      );
+    }
+  }
+
   private createConsumerOptions(): ConsumerOptions<
     Buffer,
     Buffer,
@@ -636,8 +714,23 @@ export class KafkaConsumerService
     }
 
     if (this.options.requestTimeout !== undefined) {
-      consumerOptions.timeout = this.options.requestTimeout;
-      consumerOptions.maxWaitTime = this.options.requestTimeout;
+      consumerOptions.requestTimeout = this.options.requestTimeout;
+    }
+
+    if (this.options.brokerTimeout !== undefined) {
+      consumerOptions.timeout = this.options.brokerTimeout;
+    }
+
+    if (this.options.sessionTimeout !== undefined) {
+      consumerOptions.sessionTimeout = this.options.sessionTimeout;
+    }
+
+    if (this.options.heartbeatInterval !== undefined) {
+      consumerOptions.heartbeatInterval = this.options.heartbeatInterval;
+    }
+
+    if (this.options.maxWaitTime !== undefined) {
+      consumerOptions.maxWaitTime = this.options.maxWaitTime;
     }
 
     if (this.options.retry?.retries !== undefined) {
@@ -676,7 +769,11 @@ export class KafkaConsumerService
     }
 
     if (this.options.requestTimeout !== undefined) {
-      producerOptions.timeout = this.options.requestTimeout;
+      producerOptions.requestTimeout = this.options.requestTimeout;
+    }
+
+    if (this.options.brokerTimeout !== undefined) {
+      producerOptions.timeout = this.options.brokerTimeout;
     }
 
     if (this.options.retry?.retries !== undefined) {
