@@ -131,7 +131,20 @@ describe('AiWorkflowQueueService', () => {
       'submission-3',
     );
   });
-
+  it('skips queueing when active AI review config template is disabled', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-6',
+      challengeId: 'challenge-6',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: true,
+      template: { disabled: true },
+      workflows: [{ workflowId: 'workflow-a' }],
+    });
+    await service.queueWorkflowsForSubmission('submission-6');
+    expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
+  });
   it('skips queueing when submission challengeId is missing', async () => {
     submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
       id: 'submission-4',
