@@ -1284,11 +1284,11 @@ export class SubmissionService {
    * - M2M tokens: require scope read:submission or all:submission
    * - Member tokens: allow admins, the submission owner, and the challenge's
    *   eligible reviewers, copilots, or managers.
-   * - Challenge Submitters may download after completion according to the
-   *   challenge visibility metadata and their passing-submission eligibility.
-   *   When `allowAllRegistrantsToDownloadWinningSubmissions` is exactly
-   *   `"true"`, any registered Submitter may download a winner's submission.
-   *   Design challenges additionally require `submissionsViewable` to be true.
+   * - When `allowAllRegistrantsToDownloadWinningSubmissions` is exactly
+   *   `"true"`, every registered Submitter may download only an exact final
+   *   winning submission after completion. Other metadata values retain legacy
+   *   passing or First2Finish eligibility. Design challenges additionally
+   *   require `submissionsViewable` to be true.
    *
    * The file is always fetched from the configured clean bucket, never from DMZ.
    * The S3 key is derived from the submission.url.
@@ -1506,10 +1506,11 @@ export class SubmissionService {
    * This method is used only after the caller has been confirmed to hold the
    * challenge's Submitter resource role. The challenge must be completed. For
    * Design challenges, `submissionsViewable` is an outer gate. Once that gate
-   * passes, the all-registrants metadata flag grants access only when the
-   * requested contest submission is the exact canonical result for a recorded
-   * placement winner (or carries matching legacy placement data); otherwise
-   * the legacy First2Finish or passing-submission check remains in force.
+   * passes, exact `"true"` makes the requested target decisive: it must be the
+   * exact canonical result for a recorded placement winner (or carry matching
+   * legacy placement data), and a non-winner fails closed without legacy
+   * fallback. Other metadata values retain the legacy First2Finish or
+   * passing-submission eligibility behavior.
    *
    * @param challengeId - Challenge containing the requested submission.
    * @param requesterMemberId - Registered Submitter requesting the download.
@@ -1538,10 +1539,9 @@ export class SubmissionService {
     }
 
     if (
-      this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge) &&
-      (await this.isWinningSubmission(challengeId, challenge, submission))
+      this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge)
     ) {
-      return true;
+      return this.isWinningSubmission(challengeId, challenge, submission);
     }
 
     if (this.isFirst2FinishChallenge(challenge)) {
