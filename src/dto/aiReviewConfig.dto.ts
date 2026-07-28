@@ -85,9 +85,12 @@ export class CreateAiReviewConfigDto {
   @ApiProperty({
     description: 'Whether AI review should be dispatched immediately after scan completion',
     example: false,
+    required: false,
+    default: false,
   })
+  @IsOptional()
   @IsBoolean()
-  instantReview: boolean;
+  instantReview?: boolean;
 
   @ApiProperty({
     description: 'Optional formula configuration (JSON object)',
