@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 type MetadataRecord = Record<string, unknown>;
-type SafeTestProcess = 'provisional' | 'system';
+type SafeTestProcess = 'example' | 'provisional' | 'system';
 type SafeTestStatus = 'FAILED' | 'IN PROGRESS' | 'SUCCESS';
 const ISO_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
@@ -19,7 +19,7 @@ function isMetadataRecord(value: unknown): value is MetadataRecord {
 /**
  * Normalizes test process metadata to the member-visible process values.
  * @param value Raw metadata value.
- * @returns Safe process value, or `undefined` when the value is unsupported.
+ * @returns Safe example, provisional, or system process value, or `undefined` when unsupported.
  * Used by `buildSafeReviewSummationMetadata` to avoid leaking free-form text.
  */
 function normalizeTestProcess(value: unknown): SafeTestProcess | undefined {
@@ -27,7 +27,9 @@ function normalizeTestProcess(value: unknown): SafeTestProcess | undefined {
     return undefined;
   }
   const normalized = value.trim().toLowerCase();
-  return normalized === 'provisional' || normalized === 'system'
+  return normalized === 'example' ||
+    normalized === 'provisional' ||
+    normalized === 'system'
     ? normalized
     : undefined;
 }

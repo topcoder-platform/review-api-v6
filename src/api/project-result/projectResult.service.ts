@@ -1,9 +1,51 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma, SubmissionStatus, SubmissionType } from '@prisma/client';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { ProjectResultResponseDto } from '../../dto/projectResult.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
+
+const CANONICAL_PROJECT_RESULT_SELECT = {
+  challengeId: true,
+  userId: true,
+  paymentId: true,
+  submissionId: true,
+  oldRating: true,
+  newRating: true,
+  initialScore: true,
+  finalScore: true,
+  placement: true,
+  rated: true,
+  passedReview: true,
+  validSubmission: true,
+  pointAdjustment: true,
+  ratingOrder: true,
+  createdAt: true,
+  createdBy: true,
+  updatedAt: true,
+  updatedBy: true,
+} as const;
+
+const LEGACY_PROJECT_RESULT_SUBMISSION_SELECT = {
+  id: true,
+  memberId: true,
+  initialScore: true,
+  finalScore: true,
+  placement: true,
+  createdAt: true,
+  createdBy: true,
+  updatedAt: true,
+  updatedBy: true,
+} as const;
+
+type CanonicalProjectResultRow = Prisma.challengeResultGetPayload<{
+  select: typeof CANONICAL_PROJECT_RESULT_SELECT;
+}>;
+
+type LegacyProjectResultSubmission = Prisma.submissionGetPayload<{
+  select: typeof LEGACY_PROJECT_RESULT_SUBMISSION_SELECT;
+}>;
 
 @Injectable()
 export class ProjectResultService {
@@ -17,12 +59,23 @@ export class ProjectResultService {
   }
 
   /**
-   * Load project results from challenge winners after applying challenge
-   * whitelist access for interactive callers.
+   * Loads exact project results for final placement winners after applying the
+   * challenge whitelist for interactive callers.
+   *
+   * Canonical `challengeResult` rows are loaded in one batch and keyed by
+   * challenge and user. A row is returned only when its positive placement
+   * matches a final placement winner for the same member. Current records use
+   * `PLACEMENT`; untyped and contest-submission aliases remain accepted for
+   * migrated challenges. Canonical rows are decisive: mismatches never fall
+   * through to legacy lookup. When a canonical row is genuinely absent,
+   * compatibility fallback accepts only one ACTIVE contest submission carrying
+   * the exact member and placement; ambiguous or missing direct evidence is
+   * omitted rather than reconstructed from reviews.
    *
    * @param authUser - The authenticated request user.
    * @param challengeId - Challenge id whose results should be returned.
-   * @returns Project result rows visible to the caller.
+   * @returns Exact final-placement result rows visible to the caller.
+   * @throws Error when challenge or result storage cannot be queried.
    */
   async getProjectResultsFromChallenge(
     authUser: JwtUser,
@@ -40,91 +93,224 @@ export class ProjectResultService {
       return [];
     }
 
-    const results: ProjectResultResponseDto[] = [];
-
-    const auditCreatedAt = challenge.createdAt ?? new Date();
-    const auditUpdatedAt = challenge.updatedAt ?? auditCreatedAt;
-
+    const placementsByUserId = new Map<string, Set<number>>();
     for (const winner of challenge.winners ?? []) {
-      const winnerUserId =
-        winner.userId !== undefined && winner.userId !== null
-          ? winner.userId.toString()
-          : winner.handle || 'unknown';
+      const winnerType = String(winner.type ?? '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '');
+      const userId = String(winner.userId ?? '').trim();
+      const placement = Number(winner.placement);
+      const isFinalPlacementWinner =
+        winnerType === '' ||
+        winnerType === 'PLACEMENT' ||
+        winnerType === 'CONTESTSUBMISSION';
 
-      // Query the submission table to find the actual submission ID
-      const submission = await this.prisma.submission.findFirst({
-        where: {
-          memberId: winnerUserId,
-          challengeId: challenge.id,
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      // Query reviews for initial and final scores if submission exists
-      let initialScore = 0;
-      let finalScore = 0;
-      if (submission) {
-        const reviews = await this.prisma.review.findMany({
-          where: {
-            submissionId: submission.id,
-          },
-          select: {
-            initialScore: true,
-            finalScore: true,
-          },
-        });
-
-        // Calculate aggregate scores from all reviews
-        if (reviews.length > 0) {
-          const validInitialScores = reviews
-            .map((r) => r.initialScore)
-            .filter((score): score is number => score !== null);
-          const validFinalScores = reviews
-            .map((r) => r.finalScore)
-            .filter((score): score is number => score !== null);
-
-          initialScore =
-            validInitialScores.length > 0
-              ? validInitialScores.reduce((sum, score) => sum + score, 0) /
-                validInitialScores.length
-              : 0;
-          finalScore =
-            validFinalScores.length > 0
-              ? validFinalScores.reduce((sum, score) => sum + score, 0) /
-                validFinalScores.length
-              : initialScore; // Use initial score as fallback if no final scores
-        }
+      if (
+        !isFinalPlacementWinner ||
+        !userId ||
+        !Number.isInteger(placement) ||
+        placement <= 0
+      ) {
+        continue;
       }
 
-      const result: ProjectResultResponseDto = {
-        challengeId: challenge.id,
-        userId: winnerUserId,
-        initialScore,
-        finalScore,
-        placement: winner.placement,
-        rated: false,
-        passedReview: true,
-        validSubmission: true,
-        createdAt: auditCreatedAt,
-        createdBy: challenge.createdBy || 'system',
-        updatedAt: auditUpdatedAt,
-        updatedBy: challenge.updatedBy || 'system',
-        reviews: [],
-      };
-
-      // Only include submissionId if we found a submission
-      if (submission) {
-        result.submissionId = submission.id;
-      }
-
-      results.push(result);
+      const placements = placementsByUserId.get(userId) ?? new Set<number>();
+      placements.add(placement);
+      placementsByUserId.set(userId, placements);
     }
+
+    const winnerUserIds = Array.from(placementsByUserId.keys());
+    if (!winnerUserIds.length) {
+      this.logger.log(`Found 0 results for challenge ${challengeId}`);
+      return [];
+    }
+
+    const canonicalRows = await this.prisma.challengeResult.findMany({
+      where: {
+        challengeId: challenge.id,
+        userId: { in: winnerUserIds },
+      },
+      select: CANONICAL_PROJECT_RESULT_SELECT,
+    });
+    const canonicalByUserId = new Map(
+      canonicalRows.map((row) => [row.userId, row]),
+    );
+    const resultByUserId = new Map<string, ProjectResultResponseDto>();
+    const missingCanonicalPlacements = new Map<string, Set<number>>();
+
+    for (const [userId, placements] of placementsByUserId.entries()) {
+      const canonicalRow = canonicalByUserId.get(userId);
+      if (!canonicalRow) {
+        missingCanonicalPlacements.set(userId, placements);
+        continue;
+      }
+
+      if (
+        !canonicalRow.submissionId ||
+        canonicalRow.placement <= 0 ||
+        !placements.has(canonicalRow.placement)
+      ) {
+        this.logger.warn(
+          `Canonical project result for challenge ${challenge.id} and user ${userId} does not match a final placement winner; omitting it`,
+        );
+        continue;
+      }
+
+      resultByUserId.set(userId, this.mapCanonicalProjectResult(canonicalRow));
+    }
+
+    if (missingCanonicalPlacements.size) {
+      const unresolvedUserIds = Array.from(missingCanonicalPlacements.keys());
+      const unresolvedPlacements = Array.from(
+        new Set(
+          Array.from(missingCanonicalPlacements.values()).flatMap(
+            (placements) => Array.from(placements),
+          ),
+        ),
+      );
+      const legacySubmissions = await this.prisma.submission.findMany({
+        where: {
+          challengeId: challenge.id,
+          memberId: { in: unresolvedUserIds },
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          placement: { in: unresolvedPlacements },
+        },
+        select: LEGACY_PROJECT_RESULT_SUBMISSION_SELECT,
+      });
+      const legacyByUserId = new Map<string, LegacyProjectResultSubmission[]>();
+
+      for (const submission of legacySubmissions) {
+        const userId = String(submission.memberId ?? '').trim();
+        const placements = missingCanonicalPlacements.get(userId);
+        if (
+          !placements ||
+          submission.placement == null ||
+          !placements.has(submission.placement)
+        ) {
+          continue;
+        }
+
+        const candidates = legacyByUserId.get(userId) ?? [];
+        candidates.push(submission);
+        legacyByUserId.set(userId, candidates);
+      }
+
+      for (const [userId] of missingCanonicalPlacements.entries()) {
+        const candidates = legacyByUserId.get(userId) ?? [];
+        if (candidates.length !== 1) {
+          this.logger.warn(
+            `No unambiguous legacy project result for challenge ${challenge.id} and user ${userId}; omitting it`,
+          );
+          continue;
+        }
+
+        resultByUserId.set(
+          userId,
+          this.mapLegacyProjectResult(challenge.id, userId, candidates[0]),
+        );
+      }
+    }
+
+    const results = winnerUserIds
+      .map((userId) => resultByUserId.get(userId))
+      .filter((result): result is ProjectResultResponseDto => Boolean(result));
 
     this.logger.log(
       `Found ${results.length} results for challenge ${challengeId}`,
     );
     return results;
+  }
+
+  /**
+   * Maps an authoritative challenge-result row into the project-result response.
+   *
+   * This preserves the canonical submission identity, scores, rating data, and
+   * audit timestamps used by winner consumers. Nullable optional result fields
+   * remain absent, while nullable audit actors use the response contract's
+   * historical `system` fallback.
+   *
+   * @param row - Canonical result selected for a final placement winner.
+   * @returns A project-result response backed by the exact canonical row.
+   * @throws Never.
+   */
+  private mapCanonicalProjectResult(
+    row: CanonicalProjectResultRow,
+  ): ProjectResultResponseDto {
+    const result: ProjectResultResponseDto = {
+      challengeId: row.challengeId,
+      userId: row.userId,
+      submissionId: row.submissionId,
+      initialScore: row.initialScore,
+      finalScore: row.finalScore,
+      placement: row.placement,
+      rated: row.rated,
+      passedReview: row.passedReview,
+      validSubmission: row.validSubmission,
+      createdAt: row.createdAt,
+      createdBy: row.createdBy ?? 'system',
+      updatedAt: row.updatedAt,
+      updatedBy: row.updatedBy ?? 'system',
+      reviews: [],
+    };
+
+    if (row.paymentId != null) {
+      result.paymentId = row.paymentId;
+    }
+    if (row.oldRating != null) {
+      result.oldRating = row.oldRating;
+    }
+    if (row.newRating != null) {
+      result.newRating = row.newRating;
+    }
+    if (row.pointAdjustment != null) {
+      result.pointAdjustment = row.pointAdjustment;
+    }
+    if (row.ratingOrder != null) {
+      result.ratingOrder = row.ratingOrder;
+    }
+
+    return result;
+  }
+
+  /**
+   * Maps one unambiguous legacy placement submission into a compatibility row.
+   *
+   * This method is used only when no canonical result exists and the caller has
+   * already proven there is exactly one ACTIVE contest submission with the
+   * winner's exact user and positive placement. It uses only persisted
+   * submission scores and audit fields; it never reconstructs scores from
+   * reviews. Rating-specific fields remain at their historical safe defaults.
+   *
+   * @param challengeId - Challenge containing the legacy submission.
+   * @param userId - Final placement winner owning the submission.
+   * @param submission - Sole exact legacy placement candidate.
+   * @returns A compatibility project-result response for that submission.
+   * @throws Never.
+   */
+  private mapLegacyProjectResult(
+    challengeId: string,
+    userId: string,
+    submission: LegacyProjectResultSubmission,
+  ): ProjectResultResponseDto {
+    const initialScore = Number(submission.initialScore ?? 0);
+
+    return {
+      challengeId,
+      userId,
+      submissionId: submission.id,
+      initialScore,
+      finalScore: Number(submission.finalScore ?? initialScore),
+      placement: submission.placement as number,
+      rated: false,
+      passedReview: true,
+      validSubmission: true,
+      createdAt: submission.createdAt,
+      createdBy: submission.createdBy ?? 'system',
+      updatedAt: submission.updatedAt ?? submission.createdAt,
+      updatedBy: submission.updatedBy ?? 'system',
+      reviews: [],
+    };
   }
 }

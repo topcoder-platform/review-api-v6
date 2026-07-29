@@ -39,7 +39,8 @@ export class ProjectResultController {
   @Scopes(Scope.ReadProjectResult)
   @ApiOperation({
     summary: 'Get project results',
-    description: 'Roles: Reviewer, Copilot, User | Scopes: read:project-result',
+    description:
+      'Returns canonical result data for final placement winners, including migrated winner records whose type is absent or uses a contest-submission alias. Missing canonical rows are included only when one exact legacy placement submission exists. Roles: Reviewer, Copilot, User | Scopes: read:project-result',
   })
   @ApiQuery({
     name: 'challengeId',

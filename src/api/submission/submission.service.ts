@@ -35,6 +35,7 @@ import {
   ChallengeApiService,
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
+import { buildSafeReviewSummationMetadata } from 'src/shared/utils/review-summation-metadata.util';
 import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
@@ -69,6 +70,27 @@ type SubmissionScanRetryCandidate = SubmissionMinimal & {
 type ActiveChallengeRow = {
   id: string | null;
 };
+
+type SubmissionDownloadCandidate = {
+  id: string;
+  memberId: string | null;
+  type: SubmissionType;
+  status: SubmissionStatus;
+  placement: number | null;
+};
+
+const ALLOW_ALL_REGISTRANTS_TO_DOWNLOAD_WINNING_SUBMISSIONS_METADATA_KEY =
+  'allowAllRegistrantsToDownloadWinningSubmissions';
+const SUBMISSIONS_VIEWABLE_METADATA_KEY = 'submissionsViewable';
+const NON_WINNING_SUBMISSION_STATUSES: SubmissionStatus[] = [
+  SubmissionStatus.FAILED_SCREENING,
+  SubmissionStatus.FAILED_REVIEW,
+  SubmissionStatus.COMPLETED_WITHOUT_WIN,
+  SubmissionStatus.DELETED,
+  SubmissionStatus.FAILED_CHECKPOINT_SCREENING,
+  SubmissionStatus.FAILED_CHECKPOINT_REVIEW,
+  SubmissionStatus.AI_FAILED_REVIEW,
+];
 
 /**
  * Parses optional boolean-like query parameters used by submission listing filters.
@@ -230,6 +252,7 @@ const REVIEW_SUMMATION_RESPONSE_SELECT = {
   createdBy: true,
   updatedAt: true,
   updatedBy: true,
+  metadata: true,
 } satisfies Prisma.reviewSummationSelect;
 
 type CreateSubmissionOptions = {
@@ -1259,10 +1282,23 @@ export class SubmissionService {
    *
    * Authorization rules:
    * - M2M tokens: require scope read:submission or all:submission
-   * - Member tokens: allow if admin OR submission owner OR reviewer/copilot on the challenge
+   * - Member tokens: allow admins, the submission owner, and the challenge's
+   *   eligible reviewers, copilots, or managers.
+   * - When `allowAllRegistrantsToDownloadWinningSubmissions` is exactly
+   *   `"true"`, every registered Submitter may download only an exact final
+   *   winning submission after completion. Other metadata values retain legacy
+   *   passing or First2Finish eligibility. Design challenges additionally
+   *   require `submissionsViewable` to be true.
    *
    * The file is always fetched from the configured clean bucket, never from DMZ.
    * The S3 key is derived from the submission.url.
+   *
+   * @param authUser - Authenticated member or machine requesting the file.
+   * @param submissionId - Submission whose clean artifact should be streamed.
+   * @returns The readable file stream and response filename/content type.
+   * @throws ForbiddenException when the requester is not eligible to download.
+   * @throws NotFoundException when the submission row or its download URL is missing.
+   * @throws InternalServerErrorException when storage configuration or access fails.
    */
   async getSubmissionFileStream(
     authUser: JwtUser,
@@ -1321,7 +1357,10 @@ export class SubmissionService {
             if (rn.includes('copilot')) {
               isCopilot = true;
             }
-            if (rn.includes('submitter')) {
+            if (
+              rn.includes('submitter') ||
+              r.roleId === CommonConfig.roles.submitterRoleId
+            ) {
               isSubmitter = true;
             }
             if (rn.includes('manager')) {
@@ -1343,35 +1382,11 @@ export class SubmissionService {
 
       if (!canDownload && isSubmitter && submission.challengeId && uid) {
         try {
-          const challenge = await this.challengeApiService.getChallengeDetail(
+          canDownload = await this.canRegisteredSubmitterDownloadSubmission(
             submission.challengeId,
+            uid,
+            submission,
           );
-          if (challenge.status === ChallengeStatus.COMPLETED) {
-            if (this.isFirst2FinishChallenge(challenge)) {
-              const memberSubmission = await this.prisma.submission.findFirst({
-                where: {
-                  challengeId: submission.challengeId,
-                  memberId: uid,
-                },
-                select: { id: true },
-              });
-              canDownload = !!memberSubmission;
-            } else {
-              const passingSubmission = await this.prisma.submission.findFirst({
-                where: {
-                  challengeId: submission.challengeId,
-                  memberId: uid,
-                  reviewSummation: {
-                    some: {
-                      isPassing: true,
-                    },
-                  },
-                },
-                select: { id: true },
-              });
-              canDownload = !!passingSubmission;
-            }
-          }
         } catch (err) {
           this.logger.warn(
             `Failed to validate submitter download eligibility for challenge ${submission.challengeId} and member ${uid}: ${(err as Error)?.message}`,
@@ -1382,7 +1397,7 @@ export class SubmissionService {
       if (!canDownload) {
         throw new ForbiddenException({
           message:
-            'Only the submission owner, a challenge reviewer/copilot/manager, or an admin can download the submission',
+            'Only the submission owner, a challenge reviewer/copilot/manager, an eligible registered Submitter, or an admin can download the submission',
           code: 'FORBIDDEN_SUBMISSION_DOWNLOAD',
           details: {
             submissionId,
@@ -1483,6 +1498,236 @@ export class SubmissionService {
         details: { submissionId },
       });
     }
+  }
+
+  /**
+   * Evaluates post-challenge download access for a registered Submitter.
+   *
+   * This method is used only after the caller has been confirmed to hold the
+   * challenge's Submitter resource role. The challenge must be completed. For
+   * Design challenges, `submissionsViewable` is an outer gate. Once that gate
+   * passes, exact `"true"` makes the requested target decisive: it must be the
+   * exact canonical result for a recorded placement winner (or carry matching
+   * legacy placement data), and a non-winner fails closed without legacy
+   * fallback. Other metadata values retain the legacy First2Finish or
+   * passing-submission eligibility behavior.
+   *
+   * @param challengeId - Challenge containing the requested submission.
+   * @param requesterMemberId - Registered Submitter requesting the download.
+   * @param submission - Requested submission and its exact result identity.
+   * @returns True when the registered Submitter may download the submission.
+   * @throws Error when challenge or submission eligibility data cannot be read;
+   *   the caller catches the error and fails authorization closed.
+   */
+  private async canRegisteredSubmitterDownloadSubmission(
+    challengeId: string,
+    requesterMemberId: string,
+    submission: SubmissionDownloadCandidate,
+  ): Promise<boolean> {
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+
+    if (challenge.status !== ChallengeStatus.COMPLETED) {
+      return false;
+    }
+
+    if (
+      this.isDesignChallenge(challenge) &&
+      !this.isSubmissionsViewableAfterChallengeEnd(challenge)
+    ) {
+      return false;
+    }
+
+    if (
+      this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge)
+    ) {
+      return this.isWinningSubmission(challengeId, challenge, submission);
+    }
+
+    if (this.isFirst2FinishChallenge(challenge)) {
+      const memberSubmission = await this.prisma.submission.findFirst({
+        where: {
+          challengeId,
+          memberId: requesterMemberId,
+        },
+        select: { id: true },
+      });
+      return Boolean(memberSubmission);
+    }
+
+    const passingSubmission = await this.prisma.submission.findFirst({
+      where: {
+        challengeId,
+        memberId: requesterMemberId,
+        reviewSummation: {
+          some: {
+            isPassing: true,
+          },
+        },
+      },
+      select: { id: true },
+    });
+    return Boolean(passingSubmission);
+  }
+
+  /**
+   * Determines whether a challenge belongs to the Design track.
+   *
+   * The current track name is preferred, while the legacy track is checked so
+   * migrated Design challenges receive the same visibility gate.
+   *
+   * @param challenge - Challenge metadata returned by the challenge service.
+   * @returns True when either current or legacy track is named Design.
+   * @throws Never.
+   */
+  private isDesignChallenge(challenge: ChallengeData): boolean {
+    return [challenge.track, challenge.legacy?.track].some(
+      (track) =>
+        String(track ?? '')
+          .trim()
+          .toLowerCase() === 'design',
+    );
+  }
+
+  /**
+   * Reads the existing Design submission-visibility setting.
+   *
+   * Existing challenge data and clients historically treat the string value
+   * case-insensitively, so this gate preserves that behavior.
+   *
+   * @param challenge - Challenge containing the metadata record.
+   * @returns True only when `submissionsViewable` represents true.
+   * @throws Never.
+   */
+  private isSubmissionsViewableAfterChallengeEnd(
+    challenge: ChallengeData,
+  ): boolean {
+    return (
+      String(challenge.metadata?.[SUBMISSIONS_VIEWABLE_METADATA_KEY] ?? '')
+        .trim()
+        .toLowerCase() === 'true'
+    );
+  }
+
+  /**
+   * Reads the all-registrants winner-download feature flag.
+   *
+   * The cross-service metadata contract is strict: only the exact string
+   * `"true"` enables the feature. Missing, boolean, differently-cased, and all
+   * other values retain legacy passing-submitter behavior.
+   *
+   * @param challenge - Challenge containing the metadata record.
+   * @returns True only when the canonical metadata value is exactly `"true"`.
+   * @throws Never.
+   */
+  private areAllRegistrantsAllowedToDownloadWinningSubmissions(
+    challenge: ChallengeData,
+  ): boolean {
+    return (
+      challenge.metadata?.[
+        ALLOW_ALL_REGISTRANTS_TO_DOWNLOAD_WINNING_SUBMISSIONS_METADATA_KEY
+      ] === 'true'
+    );
+  }
+
+  /**
+   * Determines whether the requested row is the exact final winning submission.
+   *
+   * Only contest submissions qualify. The canonical `challengeResult` row is
+   * authoritative because completion selects one final submission per member
+   * and stores its exact submission ID and placement. The one-per-member row is
+   * queried by challenge and winner, then its ID is compared to the request; a
+   * mismatching canonical row is decisively denied without running fallbacks.
+   * Older migrated challenges can lack that row, so the submission's own
+   * matching placement is checked next. When neither signal exists, access
+   * fails closed: reconstructing completion from review scores would be unsafe
+   * because canonical selection differs for limited and unlimited submissions.
+   * Owner membership alone never grants access. Checkpoint winner records and
+   * every non-contest submission type are excluded.
+   *
+   * @param challengeId - Challenge containing the requested submission.
+   * @param challenge - Completed challenge containing placement winner records.
+   * @param submission - Exact submission requested by the download endpoint.
+   * @returns True only when exact submission-level winner evidence matches.
+   * @throws Never. Canonical result lookup failures fail closed because the
+   *   authoritative row cannot be ruled out before considering legacy data.
+   */
+  private async isWinningSubmission(
+    challengeId: string,
+    challenge: ChallengeData,
+    submission: SubmissionDownloadCandidate,
+  ): Promise<boolean> {
+    if (submission.type !== SubmissionType.CONTEST_SUBMISSION) {
+      return false;
+    }
+
+    const normalizedSubmissionMemberId = String(
+      submission.memberId ?? '',
+    ).trim();
+    if (!normalizedSubmissionMemberId) {
+      return false;
+    }
+
+    const placementWinners = (challenge.winners ?? []).filter((winner) => {
+      const winnerType = String(winner.type ?? '')
+        .trim()
+        .toUpperCase();
+      const isPlacementWinner = !winnerType || winnerType === 'PLACEMENT';
+
+      return (
+        isPlacementWinner &&
+        String(winner.userId).trim() === normalizedSubmissionMemberId &&
+        winner.placement > 0
+      );
+    });
+    if (!placementWinners.length) {
+      return false;
+    }
+
+    try {
+      const canonicalResult = await this.prisma.challengeResult.findUnique({
+        where: {
+          challengeId_userId: {
+            challengeId,
+            userId: normalizedSubmissionMemberId,
+          },
+        },
+        select: {
+          submissionId: true,
+          userId: true,
+          placement: true,
+        },
+      });
+
+      if (canonicalResult) {
+        return (
+          canonicalResult.submissionId === submission.id &&
+          String(canonicalResult.userId).trim() ===
+            normalizedSubmissionMemberId &&
+          placementWinners.some(
+            (winner) => winner.placement === canonicalResult.placement,
+          )
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to load canonical challenge result for submission ${submission.id}: ${message}`,
+      );
+      return false;
+    }
+
+    if (submission.placement != null) {
+      return (
+        !NON_WINNING_SUBMISSION_STATUSES.includes(submission.status) &&
+        submission.placement > 0 &&
+        placementWinners.some(
+          (winner) => winner.placement === submission.placement,
+        )
+      );
+    }
+
+    return false;
   }
 
   private isFirst2FinishChallenge(challenge?: ChallengeData | null): boolean {
@@ -6067,13 +6312,13 @@ export class SubmissionService {
   }
 
   /**
-   * Removes individual review summation metadata from nested submission responses.
+   * Replaces nested review summation metadata with member-safe test progress fields.
    * @param reviewSummation Raw nested review summation rows from Prisma.
-   * @returns Review summation rows without metadata fields, or undefined when absent.
+   * @returns Review summation rows with sanitized metadata, or undefined when absent.
    * @throws This method does not throw.
-   * Used by `buildResponse` as a response-boundary guard against leaking per-seed data.
+   * Used by `buildResponse` to expose Marathon Match progress without leaking per-seed data.
    */
-  private stripReviewSummationMetadata(
+  private sanitizeReviewSummationMetadata(
     reviewSummation: unknown,
   ): unknown[] | undefined {
     if (!Array.isArray(reviewSummation)) {
@@ -6086,9 +6331,11 @@ export class SubmissionService {
         return summation;
       }
 
-      const safeSummation = { ...(summation as Record<string, unknown>) };
-      delete safeSummation.metadata;
-      return safeSummation;
+      const typedSummation = summation as Record<string, unknown>;
+      return {
+        ...typedSummation,
+        metadata: buildSafeReviewSummationMetadata(typedSummation.metadata),
+      };
     });
   }
 
@@ -6102,7 +6349,7 @@ export class SubmissionService {
       dto.review = data.review as ReviewResponseDto[];
     }
     if (data.reviewSummation) {
-      dto.reviewSummation = this.stripReviewSummationMetadata(
+      dto.reviewSummation = this.sanitizeReviewSummationMetadata(
         data.reviewSummation,
       ) as any[];
     }

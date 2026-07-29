@@ -152,6 +152,12 @@ The application includes a robust Dead Letter Queue implementation for handling 
 - **Kafka UI**: Monitor topics, partitions, and consumer groups at http://localhost:8080
 - **Health Checks**: Kafka connection status is included in application health checks
 
+### Kafka Client and Recovery
+
+- The service uses `@platformatic/kafka` 2.8.0 for broker failover and consumer group recovery fixes.
+- Platformatic Kafka 2.x raises the aggregate consumer Fetch limit to 50 MiB. The service deliberately retains the previous 10 MiB `maxBytes` limit to avoid increasing its per-consumer memory envelope.
+- Terminal consumer or producer client errors and offset commit timeouts mark Kafka health as `reconnecting` and start the shared reconnect lifecycle. A successful reconnect returns health to `ready`; exhausted attempts mark it as `failed` with the last failure reason.
+
 ### Environment Variables
 
 All Kafka-related environment variables are documented in `.env.sample`:
@@ -160,7 +166,19 @@ All Kafka-related environment variables are documented in `.env.sample`:
 - `KAFKA_CLIENT_ID`: Unique client identifier
 - `KAFKA_GROUP_ID`: Consumer group ID
 - `KAFKA_SSL_ENABLED`: Enable SSL encryption
-- Connection timeouts and retry configurations
+- **Connection and consumer timing**:
+  - `KAFKA_CONNECTION_TIMEOUT`: Maximum time to establish a broker connection; defaults to `10000` ms
+  - `KAFKA_REQUEST_TIMEOUT`: Client-side deadline for an in-flight Kafka request; defaults to `30000` ms
+  - `KAFKA_BROKER_TIMEOUT`: Timeout sent to broker APIs that support one; defaults to `5000` ms
+  - `KAFKA_MAX_WAIT_TIME`: Maximum time the broker may hold an idle Fetch request; defaults to `5000` ms
+  - `KAFKA_SESSION_TIMEOUT`: Consumer group session timeout; defaults to `60000` ms
+  - `KAFKA_HEARTBEAT_INTERVAL`: Consumer group heartbeat interval; defaults to `3000` ms
+- `KAFKA_REQUEST_TIMEOUT` must be greater than both `KAFKA_BROKER_TIMEOUT` and `KAFKA_MAX_WAIT_TIME`. The sum of `KAFKA_HEARTBEAT_INTERVAL` and `KAFKA_REQUEST_TIMEOUT` must be less than `KAFKA_SESSION_TIMEOUT`.
+- **Retry configuration**:
+  - `KAFKA_RETRY_ATTEMPTS`: Maximum client and reconnection attempts
+  - `KAFKA_INITIAL_RETRY_TIME`: Initial retry delay in milliseconds
+  - `KAFKA_MAX_RETRY_TIME`: Maximum retry delay in milliseconds
+  - Reconnection delays use bounded jitter so multiple service tasks do not reconnect to the brokers simultaneously
 - **DLQ Configuration**:
   - `KAFKA_DLQ_ENABLED`: Enable/disable the Dead Letter Queue feature
   - `KAFKA_DLQ_TOPIC_SUFFIX`: Suffix to append to original topic name for DLQ topics

@@ -4,6 +4,7 @@ import {
   KafkaModuleOptions,
 } from './kafka-consumer.service';
 import { KafkaHandlerRegistry } from './kafka-handler.registry';
+import { KAFKA_TIMING_DEFAULTS } from './kafka.constants';
 
 @Module({})
 export class KafkaModule {
@@ -45,10 +46,28 @@ export class KafkaModule {
             password: process.env.KAFKA_SASL_PASSWORD || '',
           }
         : undefined,
-      connectionTimeout: parseInt(
-        process.env.KAFKA_CONNECTION_TIMEOUT || '10000',
+      connectionTimeout: Number(
+        process.env.KAFKA_CONNECTION_TIMEOUT ??
+          KAFKA_TIMING_DEFAULTS.connectionTimeout,
       ),
-      requestTimeout: parseInt(process.env.KAFKA_REQUEST_TIMEOUT || '30000'),
+      requestTimeout: Number(
+        process.env.KAFKA_REQUEST_TIMEOUT ??
+          KAFKA_TIMING_DEFAULTS.requestTimeout,
+      ),
+      brokerTimeout: Number(
+        process.env.KAFKA_BROKER_TIMEOUT ?? KAFKA_TIMING_DEFAULTS.brokerTimeout,
+      ),
+      sessionTimeout: Number(
+        process.env.KAFKA_SESSION_TIMEOUT ??
+          KAFKA_TIMING_DEFAULTS.sessionTimeout,
+      ),
+      heartbeatInterval: Number(
+        process.env.KAFKA_HEARTBEAT_INTERVAL ??
+          KAFKA_TIMING_DEFAULTS.heartbeatInterval,
+      ),
+      maxWaitTime: Number(
+        process.env.KAFKA_MAX_WAIT_TIME ?? KAFKA_TIMING_DEFAULTS.maxWaitTime,
+      ),
       retry: {
         retries: parseInt(process.env.KAFKA_RETRY_ATTEMPTS || '5'),
         initialRetryTime: parseInt(

@@ -200,4 +200,26 @@ export class ChallengeReviewContextService {
 
     return mapToResponse(record);
   }
+
+  async delete(challengeId: string, authUser: JwtUser): Promise<void> {
+    const challenge = await this.validateChallengeExists(challengeId, authUser);
+    await this.validateChallengeAllowedForUpdate(
+      challengeId,
+      authUser,
+      challenge,
+    );
+
+    const existing = await this.prisma.challengeReviewContext.findUnique({
+      where: { challengeId },
+    });
+    if (!existing) {
+      throw new NotFoundException(
+        `Challenge review context for challenge ${challengeId} not found.`,
+      );
+    }
+
+    await this.prisma.challengeReviewContext.delete({
+      where: { challengeId },
+    });
+  }
 }

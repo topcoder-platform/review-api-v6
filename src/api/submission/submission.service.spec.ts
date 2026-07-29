@@ -604,14 +604,21 @@ describe('SubmissionService', () => {
   });
 
   describe('getSubmissionFileStream', () => {
-    let prismaMock: { submission: { findFirst: jest.Mock } };
+    let prismaMock: {
+      challengeResult: { findUnique: jest.Mock };
+      submission: { findFirst: jest.Mock; findMany: jest.Mock };
+    };
     let challengeApiServiceMock: { getChallengeDetail: jest.Mock };
     let checkSubmissionSpy: jest.SpyInstance;
 
     beforeEach(() => {
       prismaMock = {
+        challengeResult: {
+          findUnique: jest.fn().mockResolvedValue(null),
+        },
         submission: {
           findFirst: jest.fn(),
+          findMany: jest.fn().mockResolvedValue([]),
         },
       };
       challengeApiServiceMock = {
@@ -643,6 +650,8 @@ describe('SubmissionService', () => {
           memberId: 'owner-user',
           challengeId: 'challenge-xyz',
           type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          placement: null,
           url: 'https://s3.amazonaws.com/dummy/submission.zip',
         });
       jest
@@ -709,13 +718,44 @@ describe('SubmissionService', () => {
       );
     });
 
-    it('allows submitters with passing reviews to download when challenge is completed', async () => {
+    it('preserves submission-owner access outside the registered-Submitter winner gate', async () => {
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'different-owner', placement: 1 }],
+      });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'owner-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(
+        resourceApiService.getMemberResourcesRoles,
+      ).not.toHaveBeenCalled();
+      expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+      expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('preserves legacy passing-submitter download behavior when the feature flag is disabled', async () => {
       resourceApiService.getMemberResourcesRoles.mockResolvedValue([
         { roleName: 'Submitter' },
       ]);
       challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
         status: ChallengeStatus.COMPLETED,
         type: 'Something Else',
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'false',
+        },
       });
       prismaMock.submission.findFirst.mockResolvedValue({
         id: 'passing-sub',
@@ -753,12 +793,665 @@ describe('SubmissionService', () => {
       expect(s3Send).toHaveBeenCalledTimes(2);
     });
 
+    it('matches the exact canonical winner across duplicate owner placements despite completed-without-win status', async () => {
+      checkSubmissionSpy.mockResolvedValueOnce({
+        id: 'winning-submission',
+        memberId: '4242',
+        challengeId: 'challenge-xyz',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.COMPLETED_WITHOUT_WIN,
+        placement: null,
+        url: 'https://s3.amazonaws.com/dummy/winning-submission.zip',
+      });
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: '',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Development',
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [
+          { userId: 4242, placement: 2, type: 'PLACEMENT' },
+          { userId: 4242, placement: 1, type: 'PLACEMENT' },
+        ],
+      });
+      prismaMock.challengeResult.findUnique.mockResolvedValue({
+        submissionId: 'winning-submission',
+        userId: '4242',
+        placement: 1,
+      });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'registered-user-without-submission',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'winning-submission',
+      );
+
+      expect(result.fileName).toBe('submission-winning-submission.zip');
+      expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledWith({
+        where: {
+          challengeId_userId: {
+            challengeId: 'challenge-xyz',
+            userId: '4242',
+          },
+        },
+        select: {
+          submissionId: true,
+          userId: true,
+          placement: true,
+        },
+      });
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('denies a passing winner access to a canonical sibling submission when the feature flag is enabled', async () => {
+      checkSubmissionSpy.mockResolvedValueOnce({
+        id: 'same-owner-sibling-submission',
+        memberId: 'owner-user',
+        challengeId: 'challenge-xyz',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        placement: null,
+        url: 'https://s3.amazonaws.com/dummy/sibling.zip',
+      });
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Development',
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [
+          { userId: 'owner-user', placement: 1, type: 'PLACEMENT' },
+          {
+            userId: 'passing-winner-requester',
+            placement: 2,
+            type: 'PLACEMENT',
+          },
+        ],
+      });
+      prismaMock.challengeResult.findUnique.mockResolvedValue({
+        submissionId: 'actual-winning-submission',
+        userId: 'owner-user',
+        placement: 1,
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'requester-passing-submission',
+      });
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'passing-winner-requester',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'same-owner-sibling-submission',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            challengeId_userId: {
+              challengeId: 'challenge-xyz',
+              userId: 'owner-user',
+            },
+          },
+        }),
+      );
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('does not expand enabled access to a non-contest submission owned by a placement winner', async () => {
+      checkSubmissionSpy.mockResolvedValueOnce({
+        id: 'winner-checkpoint',
+        memberId: 'owner-user',
+        challengeId: 'challenge-xyz',
+        type: SubmissionType.CHECKPOINT_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        placement: 1,
+        url: 'https://s3.amazonaws.com/dummy/checkpoint.zip',
+      });
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1, type: 'PLACEMENT' }],
+      });
+      prismaMock.challengeResult.findUnique.mockResolvedValue({
+        submissionId: 'winner-checkpoint',
+        userId: 'owner-user',
+        placement: 1,
+      });
+      prismaMock.submission.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'registered-user-without-passing-submission',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'winner-checkpoint',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      SubmissionStatus.FAILED_REVIEW,
+      SubmissionStatus.COMPLETED_WITHOUT_WIN,
+    ])(
+      'does not accept an exact legacy placement for a %s submission',
+      async (nonWinningStatus) => {
+        const requestedSubmissionId = `non-winning-${nonWinningStatus.toLowerCase()}`;
+        checkSubmissionSpy.mockResolvedValueOnce({
+          id: requestedSubmissionId,
+          memberId: 'owner-user',
+          challengeId: 'challenge-xyz',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: nonWinningStatus,
+          placement: 1,
+          url: 'https://s3.amazonaws.com/dummy/non-winner.zip',
+        });
+        resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+          { roleName: 'Submitter' },
+        ]);
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          status: ChallengeStatus.COMPLETED,
+          track: 'Development',
+          metadata: {
+            allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+          },
+          winners: [{ userId: 'owner-user', placement: 1, type: 'PLACEMENT' }],
+        });
+        prismaMock.submission.findFirst.mockResolvedValue(null);
+
+        await expect(
+          service.getSubmissionFileStream(
+            {
+              userId: 'registered-user-without-passing-submission',
+              isMachine: false,
+              roles: [],
+            } as any,
+            requestedSubmissionId,
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledTimes(1);
+        expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+        expect(s3Send).not.toHaveBeenCalled();
+      },
+    );
+
+    it('supports an exact legacy placement when no canonical challenge result exists', async () => {
+      checkSubmissionSpy.mockResolvedValueOnce({
+        id: 'legacy-winning-submission',
+        memberId: 'owner-user',
+        challengeId: 'challenge-xyz',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        placement: 1,
+        url: 'https://s3.amazonaws.com/dummy/legacy-winner.zip',
+      });
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Development',
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1, type: 'PLACEMENT' }],
+      });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'registered-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'legacy-winning-submission',
+      );
+
+      expect(result.fileName).toBe('submission-legacy-winning-submission.zip');
+      expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledTimes(1);
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+      ['First2Finish', { type: 'First2Finish' }, undefined],
+      [
+        'limited submissions',
+        { track: 'Development' },
+        '{"limit":true,"count":1}',
+      ],
+      ['unlimited submissions', { track: 'Development' }, '{"unlimited":true}'],
+    ])(
+      'fails closed without canonical result or legacy placement for %s winner selection',
+      async (_description, challengeOverrides, submissionLimit) => {
+        checkSubmissionSpy.mockResolvedValueOnce({
+          id: 'winner-owned-submission-without-exact-evidence',
+          memberId: 'owner-user',
+          challengeId: 'challenge-xyz',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          placement: null,
+          url: 'https://s3.amazonaws.com/dummy/unverified-winner.zip',
+        });
+        resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+          { roleName: 'Submitter' },
+        ]);
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          status: ChallengeStatus.COMPLETED,
+          metadata: {
+            allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+            ...(submissionLimit ? { submissionLimit } : {}),
+          },
+          winners: [{ userId: 'owner-user', placement: 1, type: 'PLACEMENT' }],
+          ...challengeOverrides,
+        });
+        prismaMock.submission.findFirst.mockResolvedValue(null);
+
+        await expect(
+          service.getSubmissionFileStream(
+            {
+              userId: 'registered-user-without-legacy-eligibility',
+              isMachine: false,
+              roles: [],
+            } as any,
+            'winner-owned-submission-without-exact-evidence',
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledTimes(1);
+        expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+        expect(s3Send).not.toHaveBeenCalled();
+      },
+    );
+
+    it('denies a passing winner access to a failed non-winning submission when the feature flag is enabled', async () => {
+      checkSubmissionSpy.mockResolvedValueOnce({
+        id: 'failed-non-winning-submission',
+        memberId: 'failed-submitter',
+        challengeId: 'challenge-xyz',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.FAILED_REVIEW,
+        placement: null,
+        url: 'https://s3.amazonaws.com/dummy/failed-non-winner.zip',
+      });
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Development',
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [
+          {
+            userId: 'passing-winner-requester',
+            placement: 1,
+            type: 'PLACEMENT',
+          },
+        ],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'requester-passing-submission',
+      });
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'passing-winner-requester',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'failed-non-winning-submission',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('preserves legacy passing-submitter target scope when the feature flag is disabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Development',
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'false',
+        },
+        winners: [{ userId: 'different-owner', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'requester-passing-submission',
+      });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'passing-registered-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledWith({
+        where: {
+          challengeId: 'challenge-xyz',
+          memberId: 'passing-registered-user',
+          reviewSummation: { some: { isPassing: true } },
+        },
+        select: { id: true },
+      });
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not treat a checkpoint winner as a final winning submission', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1, type: 'CHECKPOINT' }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'registered-user-without-passing-submission',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['false', 'false'],
+      ['differently-cased', 'TRUE'],
+      ['non-string', true],
+    ])(
+      'does not enable all-registrant access when the feature flag is %s',
+      async (_description, metadataValue) => {
+        resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+          { roleName: 'Submitter' },
+        ]);
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          status: ChallengeStatus.COMPLETED,
+          track: 'Development',
+          metadata: {
+            allowAllRegistrantsToDownloadWinningSubmissions: metadataValue,
+          },
+          winners: [{ userId: 'owner-user', placement: 1 }],
+        });
+        prismaMock.submission.findFirst.mockResolvedValue(null);
+
+        await expect(
+          service.getSubmissionFileStream(
+            {
+              userId: 'registered-user-without-passing-submission',
+              isMachine: false,
+              roles: [],
+            } as any,
+            'sub-123',
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
+        expect(prismaMock.submission.findFirst).toHaveBeenCalledTimes(1);
+        expect(s3Send).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not grant enabled winner access without a Submitter resource role', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Observer' },
+      ]);
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'unregistered-user',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('lets the Design visibility gate block registrants even when the new flag is enabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'false',
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({ id: 'passing-sub' });
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'registered-user',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('applies the Design visibility gate to legacy Design tracks', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Legacy',
+        legacy: { track: 'DESIGN' },
+        metadata: {
+          submissionsViewable: 'false',
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'registered-user',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('allows all Design registrants to download winner submissions when both gates are enabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.challengeResult.findUnique.mockResolvedValue({
+        submissionId: 'sub-123',
+        userId: 'owner-user',
+        placement: 1,
+      });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'registered-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses passing-submitter eligibility for viewable Design challenges when the new flag is disabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+          allowAllRegistrantsToDownloadWinningSubmissions: 'false',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({ id: 'passing-sub' });
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'passing-registered-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledTimes(1);
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('denies a non-passing submitter for a viewable Design challenge when the new flag is disabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+          allowAllRegistrantsToDownloadWinningSubmissions: 'false',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'non-passing-registered-user',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledTimes(1);
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('preserves manager access when Design submissions are not viewable', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Manager' },
+      ]);
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'manager-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
     it('denies submitters when the challenge is not completed', async () => {
       resourceApiService.getMemberResourcesRoles.mockResolvedValue([
         { roleName: 'Submitter' },
       ]);
       challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
         status: ChallengeStatus.ACTIVE,
+        track: 'Development',
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
       });
 
       await expect(
@@ -774,7 +1467,7 @@ describe('SubmissionService', () => {
       expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
     });
 
-    it('allows First2Finish submitters to download any submission when challenge is completed', async () => {
+    it('preserves legacy First2Finish target scope when the feature flag is missing', async () => {
       resourceApiService.getMemberResourcesRoles.mockResolvedValue([
         { roleName: 'Submitter' },
       ]);
@@ -812,6 +1505,74 @@ describe('SubmissionService', () => {
         },
         select: { id: true },
       });
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('denies a First2Finish submitter a non-winner without legacy fallback when the feature flag is enabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        type: 'First2Finish',
+        legacy: { subTrack: 'first_2_finish' },
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'different-owner', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue({
+        id: 'requester-own-submission',
+      });
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'first2finish-submitter',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('allows every registered First2Finish submitter an exact winner when the feature flag is enabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        type: 'First2Finish',
+        legacy: { subTrack: 'first_2_finish' },
+        metadata: {
+          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.challengeResult.findUnique.mockResolvedValue({
+        submissionId: 'sub-123',
+        userId: 'owner-user',
+        placement: 1,
+      });
+      prismaMock.submission.findFirst.mockResolvedValue(null);
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'registered-first2finish-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledTimes(1);
+      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
       expect(s3Send).toHaveBeenCalledTimes(2);
     });
   });
@@ -2417,7 +3178,7 @@ describe('SubmissionService', () => {
       expect(submissionResult.url).toBeNull();
     });
 
-    it('omits review summation metadata for submitter-owned submissions', async () => {
+    it('returns safe review summation progress metadata for submissions', async () => {
       const now = new Date('2026-05-01T12:00:00Z');
       const submissions = [
         {
@@ -2434,7 +3195,7 @@ describe('SubmissionService', () => {
             {
               id: 'summation-own',
               metadata: {
-                testProcess: 'system',
+                testType: 'example',
                 testProgress: 0.75,
                 testStatus: 'IN PROGRESS',
                 testScores: [
@@ -2479,15 +3240,21 @@ describe('SubmissionService', () => {
       );
 
       const findManyArg = prismaMock.submission.findMany.mock.calls[0][0];
-      expect(findManyArg.include.reviewSummation.select).not.toHaveProperty(
-        'metadata',
-      );
-      expect(result.data[0].reviewSummation?.[0]).not.toHaveProperty(
-        'metadata',
-      );
-      expect(JSON.stringify(result.data[0].reviewSummation)).not.toContain(
-        '987654321',
-      );
+      expect(findManyArg.include.reviewSummation.select.metadata).toBe(true);
+
+      const metadata = result.data[0].reviewSummation?.[0].metadata;
+      expect(metadata).toEqual({
+        testProgress: 0.75,
+        testStatus: 'IN PROGRESS',
+        testType: 'example',
+        testProgressDetails: {
+          completedTests: 15,
+          progress: 0.75,
+          status: 'IN PROGRESS',
+          totalTests: 20,
+        },
+      });
+      expect(JSON.stringify(metadata)).not.toContain('987654321');
     });
   });
 
