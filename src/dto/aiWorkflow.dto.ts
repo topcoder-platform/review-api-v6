@@ -20,14 +20,10 @@ import {
   IsEnum,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { ReviewMethod } from '@prisma/client';
 
 const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
   typeof value === 'string' ? value.trim() : undefined;
-
-export enum ReviewMethod {
-  AI_ASSISTED = 'AI-Assisted',
-  DETERMINISTIC = 'Deterministic',
-}
 
 export class CreateAiWorkflowDto {
   @ApiProperty()

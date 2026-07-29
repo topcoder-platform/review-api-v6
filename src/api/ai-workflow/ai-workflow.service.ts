@@ -30,7 +30,7 @@ import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { Prisma, VoteType } from '@prisma/client';
+import { Prisma, ReviewMethod, VoteType } from '@prisma/client';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { WorkflowQueueHandler } from 'src/shared/modules/global/workflow-queue.handler';
 
@@ -165,7 +165,7 @@ export class AiWorkflowService {
         );
       }
 
-      if (workflow.reviewMethod === 'Deterministic') {
+      if (workflow.reviewMethod === ReviewMethod.DETERMINISTIC) {
         throw new ForbiddenException(
           'Comments are disabled for deterministic workflows.',
         );
@@ -292,7 +292,7 @@ export class AiWorkflowService {
       throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
     }
 
-    if (workflow.reviewMethod === 'Deterministic') {
+    if (workflow.reviewMethod === ReviewMethod.DETERMINISTIC) {
       throw new ForbiddenException(
         'Comments are disabled for deterministic workflows.',
       );
@@ -399,7 +399,7 @@ export class AiWorkflowService {
           scorecardId,
           llmId,
           disabled: createAiWorkflowDto.disabled ?? false,
-          reviewMethod,
+          reviewMethod: reviewMethod,
           timeoutSeconds,
         },
       })
