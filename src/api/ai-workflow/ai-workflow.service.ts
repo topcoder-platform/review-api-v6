@@ -165,6 +165,12 @@ export class AiWorkflowService {
         );
       }
 
+      if (workflow.reviewMethod === 'Deterministic') {
+        throw new ForbiddenException(
+          'Comments are disabled for deterministic workflows.',
+        );
+      }
+
       const run = await this.prisma.aiWorkflowRun.findUnique({
         where: { id: runId },
       });
@@ -284,6 +290,12 @@ export class AiWorkflowService {
     });
     if (!workflow) {
       throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
+    }
+
+    if (workflow.reviewMethod === 'Deterministic') {
+      throw new ForbiddenException(
+        'Comments are disabled for deterministic workflows.',
+      );
     }
 
     const run = await this.prisma.aiWorkflowRun.findUnique({
