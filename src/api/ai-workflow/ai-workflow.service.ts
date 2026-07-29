@@ -355,6 +355,7 @@ export class AiWorkflowService {
       gitWorkflowId,
       gitOwnerRepo,
       timeoutSeconds,
+      reviewMethod,
     } = createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
@@ -386,6 +387,7 @@ export class AiWorkflowService {
           scorecardId,
           llmId,
           disabled: createAiWorkflowDto.disabled ?? false,
+          reviewMethod,
           timeoutSeconds,
         },
       })

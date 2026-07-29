@@ -699,6 +699,11 @@ enum AiReviewDecisionEscalationStatus {
   REJECTED
 }
 
+enum ReviewMethod {
+  AI_ASSISTED      @map("AI-Assisted")
+  DETERMINISTIC   @map("Deterministic")
+}
+
 model aiWorkflow {
   id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
   name        String   @unique @db.VarChar
@@ -709,6 +714,7 @@ model aiWorkflow {
   gitOwnerRepo  String   @db.VarChar
   scorecardId String   @db.VarChar(14)
   timeoutSeconds Int?   @default(1800)
+  reviewMethod ReviewMethod @default(AI_ASSISTED)
   disabled    Boolean  @default(false)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
   createdBy   String?  @db.Text
