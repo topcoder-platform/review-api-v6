@@ -399,7 +399,7 @@ export class AiWorkflowService {
           scorecardId,
           llmId,
           disabled: createAiWorkflowDto.disabled ?? false,
-          reviewMethod: reviewMethod,
+          reviewMethod,
           timeoutSeconds,
         },
       })

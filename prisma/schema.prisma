@@ -700,8 +700,8 @@ enum AiReviewDecisionEscalationStatus {
 }
 
 enum ReviewMethod {
-  AI_ASSISTED      @map("AI-Assisted")
-  DETERMINISTIC   @map("Deterministic")
+  AI_ASSISTED
+  DETERMINISTIC
 }
 
 model aiWorkflow {
