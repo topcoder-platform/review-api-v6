@@ -73,6 +73,7 @@ export class AiPhaseOpenedOrchestrator {
         FROM ${Prisma.sql`"submission"`} s
         WHERE s."challengeId" = ${challengeId}
           AND (s."status" = 'ACTIVE' OR s."status" IS NULL)
+          AND s."virusScan" = TRUE
           AND (
             s."type" IS NULL
             OR UPPER((s."type")::text) = 'CONTEST_SUBMISSION'

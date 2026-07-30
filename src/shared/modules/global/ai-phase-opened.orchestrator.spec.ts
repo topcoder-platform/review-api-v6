@@ -54,6 +54,19 @@ describe('AiPhaseOpenedOrchestrator', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('queries only submissions that have passed virus scan', async () => {
+    prismaMock.$queryRaw.mockResolvedValueOnce([{ id: 'submission-1' }]);
+
+    await orchestrator.orchestrateChallengePhaseOpened('challenge-1');
+
+    expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    const query = prismaMock.$queryRaw.mock.calls[0][0];
+    expect(String(query)).toContain('"virusScan" = TRUE');
+    expect(
+      aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
+    ).toHaveBeenCalledWith('submission-1', { aiPhaseOpened: true });
+  });
+
   it('skips when there are no latest submissions', async () => {
     prismaMock.$queryRaw.mockResolvedValueOnce([]);
 
