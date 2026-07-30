@@ -447,12 +447,30 @@ model submission {
   aiReviewDecisions   aiReviewDecision[]
   auditLogs           reviewAudit[]
   accessAudits        submissionAccessAudit[]
+  confirmationEmail   submissionConfirmationEmail?
 
   @@index([memberId])
   @@index([challengeId])
   @@index([legacySubmissionId])
   @@index([challengeId, memberId, status])
   @@index([submittedDate])
+}
+
+/// Durable submission-confirmation request created atomically with a member submission.
+model submissionConfirmationEmail {
+  submissionId        String    @id @db.VarChar(14)
+  processingStartedAt DateTime?
+  processingToken     String?   @db.VarChar(36)
+  publishedAt         DateTime?
+  nextAttemptAt       DateTime  @default(now())
+  attemptCount        Int       @default(0)
+  lastError           String?   @db.Text
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([publishedAt, nextAttemptAt, processingStartedAt, createdAt], map: "submissionConfirmationEmail_pending_idx")
 }
 
 enum ReviewOpportunityStatus {

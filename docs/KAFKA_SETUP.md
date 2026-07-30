@@ -109,8 +109,12 @@ docker exec -it kafka kafka-console-consumer --topic avscan.action.scan --from-b
    }
    ```
 
-2. Register the handler in the `src/shared/modules/kafka/handlers/registered-handlers.config.ts` config handlers array.
-3. The handler will automatically be registered and start consuming messages.
+2. Add the handler to
+   `src/shared/modules/kafka/handlers/registered-handlers.config.ts` so the
+   handler catalog remains complete.
+3. Add the handler class to `GlobalProvidersModule.providers`. Nest must
+   instantiate the provider for its `onModuleInit` registration to run.
+4. The registered topic is included when the Kafka consumer starts.
 
 ### Dead Letter Queue (DLQ) Support
 
@@ -127,9 +131,13 @@ The application includes a robust Dead Letter Queue implementation for handling 
 
 2. **Retry Mechanism**:
 
-   - Failed messages are automatically retried up to the configured maximum number of retries
+   - Failed messages are automatically retried up to the configured maximum
+     number of retries, whether or not DLQ publication is enabled
    - Retry count is tracked per message using a unique key based on topic, partition, and offset
    - Exponential backoff is applied between retries
+   - `KAFKA_DLQ_ENABLED` controls whether an event is copied to a DLQ after the
+     retry budget is exhausted; exhausted messages are logged and committed
+     when DLQ publication is disabled
 
 3. **DLQ Processing**:
 
@@ -156,6 +164,12 @@ The application includes a robust Dead Letter Queue implementation for handling 
 
 - The service uses `@platformatic/kafka` 2.8.0 for broker failover and consumer group recovery fixes.
 - Platformatic Kafka 2.x raises the aggregate consumer Fetch limit to 50 MiB. The service deliberately retains the previous 10 MiB `maxBytes` limit to avoid increasing its per-consumer memory envelope.
+- Streams use committed-offset mode so restarts resume the consumer group's
+  last successful offset. A topic without a committed offset starts at latest,
+  which avoids replaying historical events when a handler is first deployed.
+- Submission confirmation additionally persists a request in the same database
+  operation as each normal member submission. Its scheduled recovery pass does
+  not depend on Kafka redelivery, so a missed source event remains recoverable.
 - Terminal consumer or producer client errors and offset commit timeouts mark Kafka health as `reconnecting` and start the shared reconnect lifecycle. A successful reconnect returns health to `ready`; exhausted attempts mark it as `failed` with the last failure reason.
 
 ### Environment Variables

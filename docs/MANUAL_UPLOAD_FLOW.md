@@ -40,14 +40,21 @@ sequenceDiagram
     participant S3DMZ as S3 DMZ bucket
     participant AV as AV scan pipeline
     participant Kafka as Kafka
+    participant Email as email-service-v6
+    participant Member
     participant AI as AI workflow queue
     participant ReviewDB as review DB
 
     Client->>ReviewAPI: POST /submissions/manual-upload
     ReviewAPI->>ReviewAPI: Validate auth, file, submitter, challenge, phase window
     ReviewAPI->>S3DMZ: Upload file to DMZ
-    ReviewAPI->>ReviewDB: Create submission row
+    ReviewAPI->>ReviewDB: Create submission + confirmation request atomically
     ReviewAPI->>Kafka: Publish avscan.action.scan
+    ReviewAPI->>Kafka: Publish submission.notification.create
+    Kafka->>ReviewAPI: submission.notification.create
+    ReviewAPI->>Kafka: Publish submission.notification.send
+    Kafka->>Email: submission.notification.send
+    Email-->>Member: Submission confirmation
     AV->>Kafka: Publish submission.scan.complete
     Kafka->>ReviewAPI: submission.scan.complete
     ReviewAPI->>ReviewDB: Update submission URL + virusScan=true
@@ -127,6 +134,11 @@ The created submission row is initially stored with:
 - `eventRaised = false`
 - `url = <DMZ URL>`
 
+The same database operation also creates one
+`submissionConfirmationEmail` request with no `publishedAt` timestamp. This
+request is the durable recovery source for the member receipt; historical and
+validation-only submissions are not automatically added to it.
+
 At this point the file is not yet considered clean.
 
 ### 6. Events emitted immediately after creation
@@ -146,6 +158,55 @@ The AV scan event includes:
 - clean destination bucket
 - quarantine destination bucket
 - callback topic `submission.scan.complete`
+
+### 7. Submission receipt confirmation
+
+The Kafka handler for `submission.notification.create` asks the durable
+confirmation dispatcher to claim the related request. The dispatcher re-reads
+the persisted submission instead of trusting member or challenge fields in the
+event. It then:
+
+- resolves the submitter email and handle from member storage
+- resolves the challenge title from challenge storage
+- publishes `submission.notification.send` with Kafka key
+  `submission-confirmation:{submissionId}`
+- records the request's `publishedAt` only after Bus API accepts that event
+
+A once-per-minute recovery pass selects unpublished requests. A five-minute
+database lease with an opaque per-claim token prevents the Kafka handler,
+multiple ECS tasks, and the recovery pass from concurrently publishing the same
+request. A stale worker cannot release a newer worker's lease. If review-api
+stops after the submission is stored but before
+`submission.notification.create` reaches Kafka, the recovery pass still
+publishes the confirmation from the durable request.
+
+The email-ready payload uses the `v3` dynamic-template shape:
+
+```json
+{
+  "recipients": ["member@example.com"],
+  "version": "v3",
+  "data": {
+    "submitter": { "handle": "memberHandle" },
+    "challenge": { "challengeTitle": "Challenge title" },
+    "submission": {
+      "id": "submission-id",
+      "challengeId": "challenge-id"
+    }
+  }
+}
+```
+
+The email service selects its configured template from the
+`submission.notification.send` topic, so review-api does not hardcode a
+SendGrid template ID. A populated request `publishedAt` suppresses ordinary
+replay after successful publication. It records Bus acceptance, not a SendGrid
+delivery receipt; a process failure after Bus acceptance but before the request
+is marked can still produce at-least-once delivery. Transient enrichment or
+publication failures release the lease and become eligible for scheduled
+recovery after five minutes, preventing permanently bad records from starving
+new requests. Keep `KAFKA_DLQ_ENABLED=true` to retain exhausted source events
+for operational inspection and replay.
 
 ## What Happens After AV Scan
 

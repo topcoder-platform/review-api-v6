@@ -377,6 +377,9 @@ describe('SubmissionService', () => {
           virusScan: true,
         }),
       });
+      expect(
+        prisma.submission.create.mock.calls[0][0].data,
+      ).not.toHaveProperty('confirmationEmail');
     });
 
     it('rejects validation upload requests without file contents', async () => {
@@ -1896,7 +1899,13 @@ describe('SubmissionService', () => {
         challengeApiServiceMock.validateFinalFixSubmissionCreation,
       ).toHaveBeenCalledWith('challenge-final-fix');
       expect(challengePrismaMock.$queryRaw).toHaveBeenCalled();
-      expect(prismaMock.submission.create).toHaveBeenCalled();
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          confirmationEmail: {
+            create: {},
+          },
+        }),
+      });
       expect(result.type).toBe(SubmissionType.STUDIO_FINAL_FIX_SUBMISSION);
     });
 

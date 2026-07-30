@@ -2842,6 +2842,15 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Publishes the canonical submission-created event after persistence.
+   *
+   * @param submission Persisted submission fields used to build the public event payload.
+   * @returns A promise that resolves after Bus API accepts the event.
+   * @throws InternalServerErrorException when Bus API publication fails.
+   * Used by createSubmission to trigger downstream scanning, automation, and
+   * submission-confirmation consumers with stable per-submission ordering.
+   */
   private async publishSubmissionCreateEvent(
     submission: SubmissionBusPayloadSource,
   ): Promise<void> {
@@ -2886,6 +2895,7 @@ export class SubmissionService {
     await this.eventBusService.publish(
       'submission.notification.create',
       payload,
+      `submission:${submission.id}`,
     );
     this.logger.log(
       `Published submission.notification.create event for submission ${submission.id}`,
@@ -3446,6 +3456,9 @@ export class SubmissionService {
           type: body.type as SubmissionType,
           virusScan: false,
           eventRaised: false,
+          confirmationEmail: {
+            create: {},
+          },
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);

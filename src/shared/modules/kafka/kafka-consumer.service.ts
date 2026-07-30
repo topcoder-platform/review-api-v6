@@ -312,6 +312,9 @@ export class KafkaConsumerService
    *
    * Reconnect attempts defer the ready transition until the replacement client
    * has survived startup without emitting a terminal client error.
+   * Committed mode resumes the consumer group's durable offsets after restart;
+   * latest fallback prevents historical replay when a topic has no committed
+   * offset yet, including the first deployment of a newly registered handler.
    *
    * @param updateHealth Whether this method should mark Kafka health as ready.
    * @returns A promise that resolves after the stream and processing loop start.
@@ -336,6 +339,8 @@ export class KafkaConsumerService
       this.stream = await this.consumer.consume({
         topics,
         autocommit: false,
+        mode: 'committed',
+        fallbackMode: 'latest',
       });
 
       this.stream.on('error', (error) => {
@@ -477,16 +482,7 @@ export class KafkaConsumerService
     messageKey: string,
     currentRetryCount: number,
   ): Promise<boolean> {
-    if (!this.options.dlq?.enabled) {
-      this.logger.error({
-        message: 'Message processing failed and DLQ is disabled',
-        topic,
-        error: error.message,
-      });
-      return false;
-    }
-
-    const maxRetries = this.options.dlq.maxRetries || 3;
+    const maxRetries = this.options.dlq?.maxRetries || 3;
 
     if (currentRetryCount < maxRetries) {
       this.logger.warn({
@@ -499,14 +495,22 @@ export class KafkaConsumerService
       return true;
     }
 
-    this.logger.error({
-      message: `Message processing failed after ${maxRetries} retries, sending to DLQ`,
-      topic,
-      messageKey,
-      error: error.message,
-    });
-
-    await this.sendToDLQ(topic, message, error.message);
+    if (this.options.dlq?.enabled) {
+      this.logger.error({
+        message: `Message processing failed after ${maxRetries} retries, sending to DLQ`,
+        topic,
+        messageKey,
+        error: error.message,
+      });
+      await this.sendToDLQ(topic, message, error.message);
+    } else {
+      this.logger.error({
+        message: `Message processing failed after ${maxRetries} retries; DLQ is disabled`,
+        topic,
+        messageKey,
+        error: error.message,
+      });
+    }
     return false;
   }
 
