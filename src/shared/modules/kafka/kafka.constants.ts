@@ -13,3 +13,12 @@ export const KAFKA_TIMING_DEFAULTS = {
   heartbeatInterval: 3000,
   maxWaitTime: 5000,
 } as const;
+
+/**
+ * Maximum aggregate payload returned by a single Kafka Fetch request.
+ *
+ * Platformatic Kafka 2.x defaults this value to 50 MiB. Keeping the previous
+ * 10 MiB limit avoids increasing the per-consumer memory envelope when the
+ * client library is upgraded.
+ */
+export const KAFKA_CONSUMER_MAX_BYTES = 10 * 1024 * 1024;
