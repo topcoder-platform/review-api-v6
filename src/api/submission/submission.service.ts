@@ -2666,7 +2666,6 @@ export class SubmissionService {
       'review',
       'checkpoint review',
       'iterative review',
-      'approval',
     ]).has(normalizedPhaseName);
   }
 

@@ -3838,6 +3838,104 @@ describe('SubmissionService', () => {
       );
     });
 
+    it('skips approval pending creation because autopilot owns winner selection', async () => {
+      const prismaMock = {
+        submission: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'submission-approval',
+            challengeId: 'challenge-approval',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            virusScan: true,
+          }),
+        },
+        scorecard: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'scorecard-approval',
+              type: ScorecardType.APPROVAL,
+            },
+          ]),
+        },
+        reviewType: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'review-type-approval',
+              name: 'Approval',
+            },
+          ]),
+        },
+        review: {
+          createMany: jest.fn(),
+        },
+        aiReviewDecision: {
+          findFirst: jest.fn(),
+        },
+      };
+      const challengePrismaMock = {
+        $queryRaw: jest.fn().mockResolvedValue([
+          {
+            scorecardId: 'scorecard-approval',
+            templatePhaseId: 'phase-template-approval',
+            challengePhaseId: 'challenge-phase-approval',
+            phaseName: 'Approval',
+          },
+        ]),
+      };
+      const challengeApiServiceMock = {
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-approval',
+          phases: [
+            {
+              id: 'challenge-phase-approval',
+              name: 'Approval',
+              isOpen: true,
+            },
+          ],
+        }),
+      };
+      const resourceApiServiceMock = {
+        getResources: jest.fn().mockResolvedValue([
+          {
+            id: 'resource-approver',
+            challengeId: 'challenge-approval',
+            memberId: '2002',
+            memberHandle: 'approverOne',
+            roleId: 'role-approver',
+            phaseId: 'challenge-phase-approval',
+            createdBy: 'system',
+            created: new Date().toISOString(),
+          },
+        ]),
+        getResourceRoles: jest.fn().mockResolvedValue({
+          'role-approver': {
+            id: 'role-approver',
+            name: 'Approver',
+          },
+        }),
+      };
+
+      const pendingReviewService = new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        challengePrismaMock as any,
+        challengeApiServiceMock as any,
+        resourceApiServiceMock as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      const created =
+        await pendingReviewService.ensurePendingReviewsForSubmission(
+          'submission-approval',
+          { triggerSource: 'scan-complete' },
+        );
+
+      expect(created).toBe(0);
+      expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+    });
+
     it('skips pending review creation when AI pass is required but decision is failed', async () => {
       const prismaMock = {
         submission: {
