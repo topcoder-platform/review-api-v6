@@ -1245,6 +1245,15 @@ export class AiWorkflowService {
         ? patchData.comment.trim()
         : undefined;
 
+    if (
+      commentText &&
+      workflow.reviewMethod === ReviewMethod.DETERMINISTIC
+    ) {
+      throw new ForbiddenException(
+        'Comments are disabled for deterministic workflows.',
+      );
+    }
+
     let runScore: number | null = null;
 
     if (scoreUpdateRequested) {
