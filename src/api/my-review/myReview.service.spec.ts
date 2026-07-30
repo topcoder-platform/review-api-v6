@@ -231,6 +231,126 @@ describe('MyReviewService', () => {
     expect(queryDetails.values).toContain(ChallengeStatus.COMPLETED);
   });
 
+  it('pages role-filtered past reviews by distinct challenge before restoring resource rows', async () => {
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([]);
+
+    await service.getMyReviews(
+      { isMachine: false, userId: '151743' },
+      {
+        past: 'true',
+        resourceRoleIds:
+          ' reviewer-role-id, ,screener-role-id,reviewer-role-id, ',
+      },
+      { page: 1, perPage: 50 },
+    );
+
+    const [countQuery, rowQuery] = challengePrismaMock.$queryRaw.mock.calls.map(
+      (call) => call[0],
+    );
+
+    [countQuery, rowQuery].forEach((query) => {
+      const queryDetails = query.inspect();
+      const sql = queryDetails.sql.replace(/\s+/g, ' ');
+      const requestedRoleValues = queryDetails.values.filter(
+        (value) => value === 'reviewer-role-id' || value === 'screener-role-id',
+      );
+
+      expect(sql).toContain('r."roleId" IN (?, ?)');
+      expect(requestedRoleValues).toEqual([
+        'reviewer-role-id',
+        'screener-role-id',
+      ]);
+      expect(queryDetails.values).not.toContain('');
+    });
+
+    const countSql = countQuery.inspect().sql.replace(/\s+/g, ' ');
+    const rowSql = rowQuery.inspect().sql.replace(/\s+/g, ' ');
+    const limitPosition = rowSql.indexOf('LIMIT ?');
+    const finalResourceJoinPosition = rowSql.indexOf('JOIN base_matches bm');
+
+    expect(countSql).toContain('SELECT COUNT(DISTINCT c.id) AS "total"');
+    expect(rowSql).toContain('challenge_page AS MATERIALIZED');
+    expect(rowSql).toContain('SELECT DISTINCT "challengeId"');
+    expect(limitPosition).toBeGreaterThan(-1);
+    expect(finalResourceJoinPosition).toBeGreaterThan(limitPosition);
+  });
+
+  it('filters member-ordered past reviews by the requested resource roles', async () => {
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([]);
+
+    await service.getMyReviews(
+      { isMachine: false, userId: '151743' },
+      {
+        past: 'true',
+        resourceRoleIds: 'reviewer-role-id,screener-role-id',
+        sortBy: 'challengeName',
+      },
+      { page: 1, perPage: 50 },
+    );
+
+    const rowQuery = challengePrismaMock.$queryRaw.mock.calls[1][0];
+    const queryDetails = rowQuery.inspect();
+    const sql = queryDetails.sql.replace(/\s+/g, ' ');
+
+    expect(sql).toContain('base_matches AS MATERIALIZED');
+    expect(sql).toContain('challenge_page AS MATERIALIZED');
+    expect(sql.indexOf('LIMIT ?')).toBeLessThan(
+      sql.indexOf('JOIN base_matches bm'),
+    );
+    expect(sql).toContain('r."roleId" IN (?, ?)');
+    expect(queryDetails.values).toEqual(
+      expect.arrayContaining(['reviewer-role-id', 'screener-role-id']),
+    );
+  });
+
+  it('joins member resources in the admin count query when filtering by role', async () => {
+    challengePrismaMock.$queryRaw.mockResolvedValueOnce([{ total: 0n }]);
+
+    await service.getMyReviews(
+      { isMachine: true, userId: 'admin-member-id' },
+      { resourceRoleIds: 'reviewer-role-id' },
+    );
+
+    const countQuery = challengePrismaMock.$queryRaw.mock.calls[0][0];
+    const queryDetails = countQuery.inspect();
+    const sql = queryDetails.sql.replace(/\s+/g, ' ');
+
+    expect(sql).toContain('LEFT JOIN resources."Resource" r');
+    expect(sql).toContain('r."memberId" = ?');
+    expect(sql).toContain('r."roleId" IN (?)');
+    expect(queryDetails.values).toEqual(
+      expect.arrayContaining(['admin-member-id', 'reviewer-role-id']),
+    );
+  });
+
+  it('uses challenge-level pagination for an admin past-role filter', async () => {
+    challengePrismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([]);
+
+    await service.getMyReviews(
+      { isMachine: true, userId: 'admin-member-id' },
+      { past: 'true', resourceRoleIds: 'reviewer-role-id' },
+      { page: 1, perPage: 50 },
+    );
+
+    const [countQuery, rowQuery] = challengePrismaMock.$queryRaw.mock.calls.map(
+      (call) => call[0],
+    );
+    const countSql = countQuery.inspect().sql.replace(/\s+/g, ' ');
+    const rowSql = rowQuery.inspect().sql.replace(/\s+/g, ' ');
+
+    expect(countSql).toContain('SELECT COUNT(DISTINCT c.id) AS "total"');
+    expect(rowSql).toContain('challenge_page AS MATERIALIZED');
+    expect(rowSql.indexOf('LIMIT ?')).toBeLessThan(
+      rowSql.indexOf('JOIN base_matches bm'),
+    );
+  });
+
   it('uses a paged base query for past member challenge end sorting', async () => {
     challengePrismaMock.$queryRaw
       .mockResolvedValueOnce([{ total: 1n }])
@@ -245,9 +365,14 @@ describe('MyReviewService', () => {
     const query = challengePrismaMock.$queryRaw.mock.calls[1][0];
     const queryDetails = query.inspect();
     const sql = queryDetails.sql.replace(/\s+/g, ' ');
+    const countSql = challengePrismaMock.$queryRaw.mock.calls[0][0]
+      .inspect()
+      .sql.replace(/\s+/g, ' ');
 
+    expect(countSql).toContain('SELECT COUNT(*) AS "total"');
     expect(sql).toContain('base_page AS MATERIALIZED');
     expect(sql).toContain('JOIN LATERAL');
+    expect(sql).not.toContain('challenge_page AS MATERIALIZED');
     expect(sql).not.toContain('COUNT(*) OVER() AS "totalCount"');
     expect(sql).toContain('ORDER BY c."endDate" DESC NULLS LAST');
     expect(sql).toContain('ORDER BY bp."challengeEndDate" DESC NULLS LAST');

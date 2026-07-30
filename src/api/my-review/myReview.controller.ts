@@ -69,6 +69,12 @@ export class MyReviewController {
     enum: ChallengeStatus,
   })
   @ApiQuery({
+    name: 'resourceRoleIds',
+    required: false,
+    description:
+      'Comma-separated resource role identifiers assigned to the requesting member',
+  })
+  @ApiQuery({
     name: 'past',
     required: false,
     description:
