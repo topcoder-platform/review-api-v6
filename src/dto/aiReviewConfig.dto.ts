@@ -83,6 +83,16 @@ export class CreateAiReviewConfigDto {
   autoFinalize: boolean;
 
   @ApiProperty({
+    description: 'Whether AI review should be dispatched immediately after scan completion',
+    example: false,
+    required: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  instantReview?: boolean;
+
+  @ApiProperty({
     description: 'Optional formula configuration (JSON object)',
     required: false,
   })
@@ -170,6 +180,9 @@ export class AiReviewConfigResponseDto {
 
   @ApiProperty({ description: 'Auto-finalize enabled' })
   autoFinalize: boolean;
+
+  @ApiProperty({ description: 'Instant Review enabled' })
+  instantReview: boolean;
 
   @ApiProperty({ description: 'Formula configuration', required: false })
   formula?: Record<string, unknown>;

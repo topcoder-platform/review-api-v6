@@ -790,6 +790,7 @@ model aiReviewConfig {
   version             Int          @default(1)
   minPassingThreshold  Decimal      @db.Decimal(5, 2)
   autoFinalize         Boolean      @default(false)
+  instantReview        Boolean      @default(false)
   mode                 AiReviewMode @default(AI_GATING)
   formula             Json?
 
