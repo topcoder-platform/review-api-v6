@@ -766,13 +766,44 @@ export class AiWorkflowService {
       },
     });
 
+    const runIds = runs.map((run) => run.id);
+    const commentCounts =
+      runIds.length > 0
+        ? await this.prisma.$queryRaw<
+            Array<{ workflowRunId: string; count: bigint }>
+          >(
+            Prisma.sql`
+              SELECT "aiWorkflowRunItem"."workflowRunId" AS "workflowRunId",
+                    COUNT(*) AS "count"
+              FROM "aiWorkflowRunItemComment"
+              INNER JOIN "aiWorkflowRunItem"
+                ON "aiWorkflowRunItemComment"."workflowRunItemId" = "aiWorkflowRunItem"."id"
+              WHERE "aiWorkflowRunItem"."workflowRunId" IN (${Prisma.join(runIds)})
+              GROUP BY "aiWorkflowRunItem"."workflowRunId"
+            `,
+          )
+        : [];
+
+    const commentCountMap = commentCounts.reduce(
+      (acc, entry) => {
+        acc[entry.workflowRunId] = Number(entry.count);
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+
+    const runsWithCommentCount = runs.map((run) => ({
+      ...run,
+      commentsCount: commentCountMap[run.id] ?? 0,
+    }));
+
     if (filter.runId && !runs.length) {
       throw new NotFoundException(
         `AI Workflow run with id ${filter.runId} not found!`,
       );
     }
 
-    const submission = runs[0]?.submission;
+    const submission = runsWithCommentCount[0]?.submission;
     if ((!submission || !submission.challengeId) && filter.submissionId) {
       this.logger.log(
         `No runs have been found for submission ${filter.submissionId}`,
@@ -830,7 +861,7 @@ export class AiWorkflowService {
       }
     }
 
-    return runs.map((r) => ({ ...r, submission: undefined }));
+    return runsWithCommentCount.map((r) => ({ ...r, submission: undefined }));
   }
 
   async updateWorkflowRun(
