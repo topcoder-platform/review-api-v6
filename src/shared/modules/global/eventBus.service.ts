@@ -18,9 +18,12 @@ class EventBusMessage<T> {
   'mime-type': string = 'application/json';
   timestamp: string = new Date().toISOString();
   payload: T;
+  key?: string;
 }
 
-// event bus send email payload
+/**
+ * Payload accepted by the legacy external.action.email topic.
+ */
 export class EventBusSendEmailPayload {
   // Template-specific variables payload. Structure depends on the sendgrid template.
   data: Record<string, any>;
@@ -40,10 +43,22 @@ export class EventBusService {
     private readonly httpService: HttpService,
   ) {}
 
+  /**
+   * Posts a message to Bus API using the review-api M2M identity.
+   *
+   * @param topic Event topic to publish.
+   * @param payload Topic-specific JSON payload.
+   * @param originator Service name recorded on the event.
+   * @param key Optional stable Kafka partitioning and correlation key.
+   * @returns A promise that resolves after Bus API accepts the event.
+   * @throws InternalServerErrorException when token acquisition or Bus API publication fails.
+   * Used by sendEmail and publish for all review-api event delivery.
+   */
   private async postMessage<T>(
     topic: string,
     payload: T,
     originator = 'review-api-v6',
+    key?: string,
   ): Promise<void> {
     // Get M2M token
     const token = await this.m2mService.getM2MToken();
@@ -52,6 +67,9 @@ export class EventBusService {
     msg.topic = topic;
     msg.originator = originator;
     msg.payload = payload;
+    if (key !== undefined) {
+      msg.key = key;
+    }
     // send message to event bus
     const url = CommonConfig.apis.busApiUrl;
     try {
@@ -80,14 +98,28 @@ export class EventBusService {
 
   /**
    * Send email message to Event bus.
-   * @param payload send email payload
+   *
+   * @param payload Legacy external.action.email payload, including its template ID.
+   * @returns A promise that resolves after Bus API accepts the event.
+   * @throws InternalServerErrorException when Bus API publication fails.
+   * Used by review-api features that select their SendGrid template directly.
    */
   async sendEmail(payload: EventBusSendEmailPayload): Promise<void> {
     console.log(`${JSON.stringify(payload, null, 2)}`);
     await this.postMessage('external.action.email', payload);
   }
 
-  async publish<T>(topic: string, payload: T): Promise<void> {
-    await this.postMessage(topic, payload);
+  /**
+   * Publishes a topic-specific event through Bus API.
+   *
+   * @param topic Event topic to publish.
+   * @param payload Topic-specific JSON payload.
+   * @param key Optional stable Kafka partitioning and correlation key.
+   * @returns A promise that resolves after Bus API accepts the event.
+   * @throws InternalServerErrorException when Bus API publication fails.
+   * Used by submission, scan, workflow, and notification event producers.
+   */
+  async publish<T>(topic: string, payload: T, key?: string): Promise<void> {
+    await this.postMessage(topic, payload, 'review-api-v6', key);
   }
 }
