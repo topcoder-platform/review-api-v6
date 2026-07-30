@@ -1286,8 +1286,9 @@ export class SubmissionService {
    *   eligible reviewers, copilots, or managers.
    * - When `allowAllRegistrantsToDownloadWinningSubmissions` is exactly
    *   `"true"`, every registered Submitter may download only an exact final
-   *   winning submission after completion. Other metadata values retain legacy
-   *   passing or First2Finish eligibility. Design challenges additionally
+   *   winning submission after completion. Other metadata values require
+   *   passing-submission eligibility, except non-Design First2Finish challenges
+   *   retain legacy submitter eligibility. Design challenges additionally
    *   require `submissionsViewable` to be true.
    *
    * The file is always fetched from the configured clean bucket, never from DMZ.
@@ -1509,8 +1510,9 @@ export class SubmissionService {
    * passes, exact `"true"` makes the requested target decisive: it must be the
    * exact canonical result for a recorded placement winner (or carry matching
    * legacy placement data), and a non-winner fails closed without legacy
-   * fallback. Other metadata values retain the legacy First2Finish or
-   * passing-submission eligibility behavior.
+   * fallback. Other metadata values require passing-submission eligibility,
+   * except non-Design First2Finish challenges retain legacy submitter
+   * eligibility.
    *
    * @param challengeId - Challenge containing the requested submission.
    * @param requesterMemberId - Registered Submitter requesting the download.
@@ -1544,7 +1546,10 @@ export class SubmissionService {
       return this.isWinningSubmission(challengeId, challenge, submission);
     }
 
-    if (this.isFirst2FinishChallenge(challenge)) {
+    if (
+      this.isFirst2FinishChallenge(challenge) &&
+      !this.isDesignChallenge(challenge)
+    ) {
       const memberSubmission = await this.prisma.submission.findFirst({
         where: {
           challengeId,
