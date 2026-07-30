@@ -30,7 +30,7 @@ import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { GiteaService } from 'src/shared/modules/global/gitea.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { Prisma, VoteType } from '@prisma/client';
+import { Prisma, ReviewMethod, VoteType } from '@prisma/client';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { WorkflowQueueHandler } from 'src/shared/modules/global/workflow-queue.handler';
 
@@ -165,6 +165,12 @@ export class AiWorkflowService {
         );
       }
 
+      if (workflow.reviewMethod === ReviewMethod.DETERMINISTIC) {
+        throw new ForbiddenException(
+          'Comments are disabled for deterministic workflows.',
+        );
+      }
+
       const run = await this.prisma.aiWorkflowRun.findUnique({
         where: { id: runId },
       });
@@ -286,6 +292,12 @@ export class AiWorkflowService {
       throw new NotFoundException(`Workflow with id ${workflowId} not found.`);
     }
 
+    if (workflow.reviewMethod === ReviewMethod.DETERMINISTIC) {
+      throw new ForbiddenException(
+        'Comments are disabled for deterministic workflows.',
+      );
+    }
+
     const run = await this.prisma.aiWorkflowRun.findUnique({
       where: { id: runId },
     });
@@ -355,6 +367,7 @@ export class AiWorkflowService {
       gitWorkflowId,
       gitOwnerRepo,
       timeoutSeconds,
+      reviewMethod,
     } = createAiWorkflowDto;
 
     const scorecardExists = await this.scorecardExists(scorecardId);
@@ -386,6 +399,7 @@ export class AiWorkflowService {
           scorecardId,
           llmId,
           disabled: createAiWorkflowDto.disabled ?? false,
+          reviewMethod,
           timeoutSeconds,
         },
       })
@@ -752,13 +766,44 @@ export class AiWorkflowService {
       },
     });
 
+    const runIds = runs.map((run) => run.id);
+    const commentCounts =
+      runIds.length > 0
+        ? await this.prisma.$queryRaw<
+            Array<{ workflowRunId: string; count: bigint }>
+          >(
+            Prisma.sql`
+              SELECT "aiWorkflowRunItem"."workflowRunId" AS "workflowRunId",
+                    COUNT(*) AS "count"
+              FROM "aiWorkflowRunItemComment"
+              INNER JOIN "aiWorkflowRunItem"
+                ON "aiWorkflowRunItemComment"."workflowRunItemId" = "aiWorkflowRunItem"."id"
+              WHERE "aiWorkflowRunItem"."workflowRunId" IN (${Prisma.join(runIds)})
+              GROUP BY "aiWorkflowRunItem"."workflowRunId"
+            `,
+          )
+        : [];
+
+    const commentCountMap = commentCounts.reduce(
+      (acc, entry) => {
+        acc[entry.workflowRunId] = Number(entry.count);
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+
+    const runsWithCommentCount = runs.map((run) => ({
+      ...run,
+      commentsCount: commentCountMap[run.id] ?? 0,
+    }));
+
     if (filter.runId && !runs.length) {
       throw new NotFoundException(
         `AI Workflow run with id ${filter.runId} not found!`,
       );
     }
 
-    const submission = runs[0]?.submission;
+    const submission = runsWithCommentCount[0]?.submission;
     if ((!submission || !submission.challengeId) && filter.submissionId) {
       this.logger.log(
         `No runs have been found for submission ${filter.submissionId}`,
@@ -816,7 +861,7 @@ export class AiWorkflowService {
       }
     }
 
-    return runs.map((r) => ({ ...r, submission: undefined }));
+    return runsWithCommentCount.map((r) => ({ ...r, submission: undefined }));
   }
 
   async updateWorkflowRun(
@@ -1199,6 +1244,15 @@ export class AiWorkflowService {
       typeof patchData.comment === 'string'
         ? patchData.comment.trim()
         : undefined;
+
+    if (
+      commentText &&
+      workflow.reviewMethod === ReviewMethod.DETERMINISTIC
+    ) {
+      throw new ForbiddenException(
+        'Comments are disabled for deterministic workflows.',
+      );
+    }
 
     let runScore: number | null = null;
 

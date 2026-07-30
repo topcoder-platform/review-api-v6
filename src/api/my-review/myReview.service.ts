@@ -98,6 +98,14 @@ export class MyReviewService {
     const challengeTrackId = filters.challengeTrackId?.trim();
     const challengeTypeName = filters.challengeTypeName?.trim();
     const challengeName = filters.challengeName?.trim();
+    const resourceRoleIds = Array.from(
+      new Set(
+        (filters.resourceRoleIds ?? '')
+          .split(',')
+          .map((roleId) => roleId.trim())
+          .filter(Boolean),
+      ),
+    );
     const normalizedChallengeStatus = filters.challengeStatus
       ? filters.challengeStatus.trim().toUpperCase()
       : undefined;
@@ -128,6 +136,17 @@ export class MyReviewService {
       filters.sortOrder?.toLowerCase() === 'desc' ? 'desc' : 'asc';
 
     const whereFragments: Prisma.Sql[] = [];
+
+    if (resourceRoleIds.length) {
+      const resourceRoleIdFragments = resourceRoleIds.map(
+        (roleId) => Prisma.sql`${roleId}`,
+      );
+      const resourceRoleIdList = joinSqlFragments(
+        resourceRoleIdFragments,
+        Prisma.sql`, `,
+      );
+      whereFragments.push(Prisma.sql`r."roleId" IN (${resourceRoleIdList})`);
+    }
 
     if (shouldFetchPastChallenges) {
       if (normalizedChallengeStatus) {
@@ -295,15 +314,21 @@ export class MyReviewService {
         `,
       );
     } else {
-      baseJoins.push(
-        Prisma.sql`
+      const adminResourceJoin = Prisma.sql`
           LEFT JOIN resources."Resource" r
             ON r."challengeId" = c.id
            AND ${normalizedUserId} IS NOT NULL AND r."memberId" = ${normalizedUserId}
+      `;
+      baseJoins.push(
+        adminResourceJoin,
+        Prisma.sql`
           LEFT JOIN resources."ResourceRole" rr
             ON rr.id = r."roleId"
         `,
       );
+      if (resourceRoleIds.length) {
+        countJoins.push(adminResourceJoin);
+      }
     }
 
     baseJoins.push(
@@ -602,9 +627,16 @@ export class MyReviewService {
         `
         : Prisma.sql``;
 
+    const shouldUseRoleFilteredPastQuery =
+      shouldFetchPastChallenges &&
+      resourceRoleIds.length > 0 &&
+      normalizedUserId !== null;
+    const countExpression = shouldUseRoleFilteredPastQuery
+      ? Prisma.sql`COUNT(DISTINCT c.id)`
+      : Prisma.sql`COUNT(*)`;
     const countQuery = Prisma.sql`
       ${countWithClause}
-      SELECT COUNT(*) AS "total"
+      SELECT ${countExpression} AS "total"
       FROM challenges."Challenge" c
       ${countJoinClause}
       WHERE ${countWhereClause}
@@ -614,7 +646,10 @@ export class MyReviewService {
     let totalCount = 0;
     let totalPages = 0;
 
-    if (shouldFetchPastChallenges && !adminUser) {
+    if (
+      shouldFetchPastChallenges &&
+      (!adminUser || shouldUseRoleFilteredPastQuery)
+    ) {
       const countQueryDetails = countQuery.inspect();
       this.logger.debug({
         message: 'Executing past challenge count query',
@@ -639,7 +674,8 @@ export class MyReviewService {
         };
       }
 
-      const shouldUseChallengeOrderedPastQuery = sortBy !== 'challengeName';
+      const shouldUseChallengeOrderedPastQuery =
+        !resourceRoleIds.length && sortBy !== 'challengeName';
       const pastPageSortFragments: Prisma.Sql[] = [];
       const pastFinalSortFragments: Prisma.Sql[] = [];
 
@@ -654,7 +690,9 @@ export class MyReviewService {
           break;
         case 'challengeEndDate':
           pastPageSortFragments.push(
-            Prisma.sql`c."endDate" ${directionSql} NULLS LAST`,
+            shouldUseChallengeOrderedPastQuery
+              ? Prisma.sql`c."endDate" ${directionSql} NULLS LAST`
+              : Prisma.sql`"challengeEndDate" ${directionSql} NULLS LAST`,
           );
           pastFinalSortFragments.push(
             Prisma.sql`bp."challengeEndDate" ${directionSql} NULLS LAST`,
@@ -692,6 +730,40 @@ export class MyReviewService {
           : pastFinalFallbackOrderFragments,
         Prisma.sql`, `,
       );
+      const memberOrderedBasePageCte = resourceRoleIds.length
+        ? Prisma.sql`
+          challenge_page AS MATERIALIZED (
+            SELECT DISTINCT
+              "challengeId",
+              "challengeName",
+              "challengeTypeId",
+              "challengeTypeName",
+              "challengeEndDate",
+              "numOfSubmissions",
+              "challengeCreatedAt",
+              status
+            FROM base_matches
+            ORDER BY ${pastPageOrderClause}
+            LIMIT ${perPage}
+            OFFSET ${offset}
+          ),
+          base_page AS MATERIALIZED (
+            SELECT bm.*
+            FROM challenge_page cp
+            JOIN base_matches bm
+              ON bm."challengeId" = cp."challengeId"
+          )
+        `
+        : Prisma.sql`
+          base_page AS MATERIALIZED (
+            SELECT
+              *
+            FROM base_matches
+            ORDER BY ${pastPageOrderClause}
+            LIMIT ${perPage}
+            OFFSET ${offset}
+          )
+        `;
 
       const rowQuery = shouldUseChallengeOrderedPastQuery
         ? Prisma.sql`
@@ -836,14 +908,7 @@ export class MyReviewService {
               ON ct.id = c."typeId"
             WHERE ${rowWhereClause}
           ),
-          base_page AS MATERIALIZED (
-            SELECT
-              *
-            FROM base_matches
-            ORDER BY ${pastPageOrderClause}
-            LIMIT ${perPage}
-            OFFSET ${offset}
-          )
+          ${memberOrderedBasePageCte}
         SELECT
           bp."challengeId" AS "challengeId",
           bp."challengeName" AS "challengeName",

@@ -88,6 +88,15 @@ export class MyReviewFilterDto {
 
   @ApiProperty({
     description:
+      'Comma-separated resource role identifiers assigned to the requesting member',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  resourceRoleIds?: string;
+
+  @ApiProperty({
+    description:
       'Whether or not to include current challenges or past challenges',
     required: false,
   })
