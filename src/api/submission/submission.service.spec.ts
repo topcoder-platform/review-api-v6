@@ -377,6 +377,9 @@ describe('SubmissionService', () => {
           virusScan: true,
         }),
       });
+      expect(
+        prisma.submission.create.mock.calls[0][0].data,
+      ).not.toHaveProperty('confirmationEmail');
     });
 
     it('rejects validation upload requests without file contents', async () => {
@@ -1269,7 +1272,7 @@ describe('SubmissionService', () => {
       expect(s3Send).not.toHaveBeenCalled();
     });
 
-    it('lets the Design visibility gate block registrants even when the new flag is enabled', async () => {
+    it('allows all Design registrants to download winner submissions when legacy visibility is disabled', async () => {
       resourceApiService.getMemberResourcesRoles.mockResolvedValue([
         { roleName: 'Submitter' },
       ]);
@@ -1278,66 +1281,6 @@ describe('SubmissionService', () => {
         track: 'Design',
         metadata: {
           submissionsViewable: 'false',
-          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
-        },
-        winners: [{ userId: 'owner-user', placement: 1 }],
-      });
-      prismaMock.submission.findFirst.mockResolvedValue({ id: 'passing-sub' });
-
-      await expect(
-        service.getSubmissionFileStream(
-          {
-            userId: 'registered-user',
-            isMachine: false,
-            roles: [],
-          } as any,
-          'sub-123',
-        ),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-
-      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
-      expect(s3Send).not.toHaveBeenCalled();
-    });
-
-    it('applies the Design visibility gate to legacy Design tracks', async () => {
-      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
-        { roleName: 'Submitter' },
-      ]);
-      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
-        status: ChallengeStatus.COMPLETED,
-        track: 'Legacy',
-        legacy: { track: 'DESIGN' },
-        metadata: {
-          submissionsViewable: 'false',
-          allowAllRegistrantsToDownloadWinningSubmissions: 'true',
-        },
-        winners: [{ userId: 'owner-user', placement: 1 }],
-      });
-
-      await expect(
-        service.getSubmissionFileStream(
-          {
-            userId: 'registered-user',
-            isMachine: false,
-            roles: [],
-          } as any,
-          'sub-123',
-        ),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-
-      expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
-      expect(s3Send).not.toHaveBeenCalled();
-    });
-
-    it('allows all Design registrants to download winner submissions when both gates are enabled', async () => {
-      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
-        { roleName: 'Submitter' },
-      ]);
-      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
-        status: ChallengeStatus.COMPLETED,
-        track: 'Design',
-        metadata: {
-          submissionsViewable: 'true',
           allowAllRegistrantsToDownloadWinningSubmissions: 'true',
         },
         winners: [{ userId: 'owner-user', placement: 1 }],
@@ -1362,7 +1305,7 @@ describe('SubmissionService', () => {
       expect(s3Send).toHaveBeenCalledTimes(2);
     });
 
-    it('uses passing-submitter eligibility for viewable Design challenges when the new flag is disabled', async () => {
+    it('uses passing-submitter eligibility for Design challenges when legacy visibility is disabled', async () => {
       resourceApiService.getMemberResourcesRoles.mockResolvedValue([
         { roleName: 'Submitter' },
       ]);
@@ -1370,7 +1313,7 @@ describe('SubmissionService', () => {
         status: ChallengeStatus.COMPLETED,
         track: 'Design',
         metadata: {
-          submissionsViewable: 'true',
+          submissionsViewable: 'false',
           allowAllRegistrantsToDownloadWinningSubmissions: 'false',
         },
         winners: [{ userId: 'owner-user', placement: 1 }],
@@ -1391,7 +1334,7 @@ describe('SubmissionService', () => {
       expect(s3Send).toHaveBeenCalledTimes(2);
     });
 
-    it('denies a non-passing submitter for a viewable Design challenge when the new flag is disabled', async () => {
+    it('denies a non-passing Design submitter when the new flag is disabled regardless of legacy visibility', async () => {
       resourceApiService.getMemberResourcesRoles.mockResolvedValue([
         { roleName: 'Submitter' },
       ]);
@@ -1399,7 +1342,7 @@ describe('SubmissionService', () => {
         status: ChallengeStatus.COMPLETED,
         track: 'Design',
         metadata: {
-          submissionsViewable: 'true',
+          submissionsViewable: 'false',
           allowAllRegistrantsToDownloadWinningSubmissions: 'false',
         },
         winners: [{ userId: 'owner-user', placement: 1 }],
@@ -1942,7 +1885,13 @@ describe('SubmissionService', () => {
         challengeApiServiceMock.validateFinalFixSubmissionCreation,
       ).toHaveBeenCalledWith('challenge-final-fix');
       expect(challengePrismaMock.$queryRaw).toHaveBeenCalled();
-      expect(prismaMock.submission.create).toHaveBeenCalled();
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          confirmationEmail: {
+            create: {},
+          },
+        }),
+      });
       expect(result.type).toBe(SubmissionType.STUDIO_FINAL_FIX_SUBMISSION);
     });
 

@@ -27,6 +27,9 @@ import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.ser
 import { SubmissionScanCompleteHandler } from '../kafka/handlers/submission-scan-complete.handler';
 import { AiPhaseOpenedHandler } from '../kafka/handlers/ai-phase-opened.handler';
 import { SubmissionVirusScanRetryService } from './submission-virus-scan-retry.service';
+import { SubmissionNotificationCreateHandler } from '../kafka/handlers/submission-notification-create.handler';
+import { SubmissionConfirmationEmailService } from './submission-confirmation-email.service';
+import { SubmissionConfirmationEmailRetryService } from './submission-confirmation-email-retry.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -65,6 +68,9 @@ import { SubmissionVirusScanRetryService } from './submission-virus-scan-retry.s
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
+    SubmissionNotificationCreateHandler,
+    SubmissionConfirmationEmailService,
+    SubmissionConfirmationEmailRetryService,
     AiPhaseOpenedHandler,
     SubmissionVirusScanRetryService,
   ],
@@ -91,6 +97,8 @@ import { SubmissionVirusScanRetryService } from './submission-virus-scan-retry.s
     WorkflowQueueHandler,
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
+    SubmissionNotificationCreateHandler,
+    SubmissionConfirmationEmailService,
     AiPhaseOpenedHandler,
   ],
 })

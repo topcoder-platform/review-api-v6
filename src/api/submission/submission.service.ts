@@ -81,7 +81,6 @@ type SubmissionDownloadCandidate = {
 
 const ALLOW_ALL_REGISTRANTS_TO_DOWNLOAD_WINNING_SUBMISSIONS_METADATA_KEY =
   'allowAllRegistrantsToDownloadWinningSubmissions';
-const SUBMISSIONS_VIEWABLE_METADATA_KEY = 'submissionsViewable';
 const NON_WINNING_SUBMISSION_STATUSES: SubmissionStatus[] = [
   SubmissionStatus.FAILED_SCREENING,
   SubmissionStatus.FAILED_REVIEW,
@@ -1288,8 +1287,7 @@ export class SubmissionService {
    *   `"true"`, every registered Submitter may download only an exact final
    *   winning submission after completion. Other metadata values require
    *   passing-submission eligibility, except non-Design First2Finish challenges
-   *   retain legacy submitter eligibility. Design challenges additionally
-   *   require `submissionsViewable` to be true.
+   *   retain legacy submitter eligibility.
    *
    * The file is always fetched from the configured clean bucket, never from DMZ.
    * The S3 key is derived from the submission.url.
@@ -1505,14 +1503,12 @@ export class SubmissionService {
    * Evaluates post-challenge download access for a registered Submitter.
    *
    * This method is used only after the caller has been confirmed to hold the
-   * challenge's Submitter resource role. The challenge must be completed. For
-   * Design challenges, `submissionsViewable` is an outer gate. Once that gate
-   * passes, exact `"true"` makes the requested target decisive: it must be the
-   * exact canonical result for a recorded placement winner (or carry matching
-   * legacy placement data), and a non-winner fails closed without legacy
-   * fallback. Other metadata values require passing-submission eligibility,
-   * except non-Design First2Finish challenges retain legacy submitter
-   * eligibility.
+   * challenge's Submitter resource role. The challenge must be completed. Exact
+   * `"true"` makes the requested target decisive: it must be the exact canonical
+   * result for a recorded placement winner (or carry matching legacy placement
+   * data), and a non-winner fails closed without legacy fallback. Other metadata
+   * values require passing-submission eligibility, except non-Design
+   * First2Finish challenges retain legacy submitter eligibility.
    *
    * @param challengeId - Challenge containing the requested submission.
    * @param requesterMemberId - Registered Submitter requesting the download.
@@ -1530,13 +1526,6 @@ export class SubmissionService {
       await this.challengeApiService.getChallengeDetail(challengeId);
 
     if (challenge.status !== ChallengeStatus.COMPLETED) {
-      return false;
-    }
-
-    if (
-      this.isDesignChallenge(challenge) &&
-      !this.isSubmissionsViewableAfterChallengeEnd(challenge)
-    ) {
       return false;
     }
 
@@ -1578,8 +1567,9 @@ export class SubmissionService {
   /**
    * Determines whether a challenge belongs to the Design track.
    *
-   * The current track name is preferred, while the legacy track is checked so
-   * migrated Design challenges receive the same visibility gate.
+   * The current track name is preferred, while the legacy track is also checked
+   * so migrated Design First2Finish challenges use passing-submission
+   * eligibility.
    *
    * @param challenge - Challenge metadata returned by the challenge service.
    * @returns True when either current or legacy track is named Design.
@@ -1591,26 +1581,6 @@ export class SubmissionService {
         String(track ?? '')
           .trim()
           .toLowerCase() === 'design',
-    );
-  }
-
-  /**
-   * Reads the existing Design submission-visibility setting.
-   *
-   * Existing challenge data and clients historically treat the string value
-   * case-insensitively, so this gate preserves that behavior.
-   *
-   * @param challenge - Challenge containing the metadata record.
-   * @returns True only when `submissionsViewable` represents true.
-   * @throws Never.
-   */
-  private isSubmissionsViewableAfterChallengeEnd(
-    challenge: ChallengeData,
-  ): boolean {
-    return (
-      String(challenge.metadata?.[SUBMISSIONS_VIEWABLE_METADATA_KEY] ?? '')
-        .trim()
-        .toLowerCase() === 'true'
     );
   }
 
@@ -2847,6 +2817,15 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Publishes the canonical submission-created event after persistence.
+   *
+   * @param submission Persisted submission fields used to build the public event payload.
+   * @returns A promise that resolves after Bus API accepts the event.
+   * @throws InternalServerErrorException when Bus API publication fails.
+   * Used by createSubmission to trigger downstream scanning, automation, and
+   * submission-confirmation consumers with stable per-submission ordering.
+   */
   private async publishSubmissionCreateEvent(
     submission: SubmissionBusPayloadSource,
   ): Promise<void> {
@@ -2891,6 +2870,7 @@ export class SubmissionService {
     await this.eventBusService.publish(
       'submission.notification.create',
       payload,
+      `submission:${submission.id}`,
     );
     this.logger.log(
       `Published submission.notification.create event for submission ${submission.id}`,
@@ -3451,6 +3431,9 @@ export class SubmissionService {
           type: body.type as SubmissionType,
           virusScan: false,
           eventRaised: false,
+          confirmationEmail: {
+            create: {},
+          },
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);
