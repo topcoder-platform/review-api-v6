@@ -1285,8 +1285,9 @@ export class SubmissionService {
    *   eligible reviewers, copilots, or managers.
    * - When `allowAllRegistrantsToDownloadWinningSubmissions` is exactly
    *   `"true"`, every registered Submitter may download only an exact final
-   *   winning submission after completion. Other metadata values retain legacy
-   *   passing or First2Finish eligibility.
+   *   winning submission after completion. Other metadata values require
+   *   passing-submission eligibility, except non-Design First2Finish challenges
+   *   retain legacy submitter eligibility.
    *
    * The file is always fetched from the configured clean bucket, never from DMZ.
    * The S3 key is derived from the submission.url.
@@ -1506,8 +1507,8 @@ export class SubmissionService {
    * `"true"` makes the requested target decisive: it must be the exact canonical
    * result for a recorded placement winner (or carry matching legacy placement
    * data), and a non-winner fails closed without legacy fallback. Other metadata
-   * values retain the legacy First2Finish or passing-submission eligibility
-   * behavior.
+   * values require passing-submission eligibility, except non-Design
+   * First2Finish challenges retain legacy submitter eligibility.
    *
    * @param challengeId - Challenge containing the requested submission.
    * @param requesterMemberId - Registered Submitter requesting the download.
@@ -1534,7 +1535,10 @@ export class SubmissionService {
       return this.isWinningSubmission(challengeId, challenge, submission);
     }
 
-    if (this.isFirst2FinishChallenge(challenge)) {
+    if (
+      this.isFirst2FinishChallenge(challenge) &&
+      !this.isDesignChallenge(challenge)
+    ) {
       const memberSubmission = await this.prisma.submission.findFirst({
         where: {
           challengeId,
@@ -1558,6 +1562,26 @@ export class SubmissionService {
       select: { id: true },
     });
     return Boolean(passingSubmission);
+  }
+
+  /**
+   * Determines whether a challenge belongs to the Design track.
+   *
+   * The current track name is preferred, while the legacy track is also checked
+   * so migrated Design First2Finish challenges use passing-submission
+   * eligibility.
+   *
+   * @param challenge - Challenge metadata returned by the challenge service.
+   * @returns True when either current or legacy track is named Design.
+   * @throws Never.
+   */
+  private isDesignChallenge(challenge: ChallengeData): boolean {
+    return [challenge.track, challenge.legacy?.track].some(
+      (track) =>
+        String(track ?? '')
+          .trim()
+          .toLowerCase() === 'design',
+    );
   }
 
   /**

@@ -1364,6 +1364,52 @@ describe('SubmissionService', () => {
       expect(s3Send).not.toHaveBeenCalled();
     });
 
+    it('denies a failed Design First2Finish submitter when the new flag is disabled', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        type: 'First2Finish',
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockImplementation(({ where }) =>
+        Promise.resolve(
+          where.reviewSummation ? null : { id: 'failed-own-submission' },
+        ),
+      );
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'failed-first2finish-submitter',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledTimes(1);
+      expect(prismaMock.submission.findFirst).toHaveBeenCalledWith({
+        where: {
+          challengeId: 'challenge-xyz',
+          memberId: 'failed-first2finish-submitter',
+          reviewSummation: {
+            some: {
+              isPassing: true,
+            },
+          },
+        },
+        select: { id: true },
+      });
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
     it('preserves manager access when Design submissions are not viewable', async () => {
       resourceApiService.getMemberResourcesRoles.mockResolvedValue([
         { roleName: 'Manager' },

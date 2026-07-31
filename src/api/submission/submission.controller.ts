@@ -405,7 +405,7 @@ export class SubmissionController {
   @ApiOperation({
     summary: 'Download the submission',
     description:
-      'Roles: Copilot, Admin, User, Reviewer. After challenge completion, the exact metadata value allowAllRegistrantsToDownloadWinningSubmissions=true lets every registered Submitter download only an exact final winning submission and denies non-winners without legacy fallback. Other values retain legacy passing or First2Finish eligibility. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. After challenge completion, the exact metadata value allowAllRegistrantsToDownloadWinningSubmissions=true lets every registered Submitter download only an exact final winning submission and denies non-winners without legacy fallback. Other values require passing-submission eligibility, except non-Design First2Finish challenges retain legacy submitter eligibility. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
