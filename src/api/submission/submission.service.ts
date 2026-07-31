@@ -1561,7 +1561,125 @@ export class SubmissionService {
       },
       select: { id: true },
     });
-    return Boolean(passingSubmission);
+    if (passingSubmission) {
+      return true;
+    }
+
+    return this.hasPassingStaleReviewSummation(
+      challengeId,
+      requesterMemberId,
+    );
+  }
+
+  /**
+   * Rechecks a demonstrably stale, non-passing final Review summation.
+   *
+   * Completed, committed Review and Iterative Review scores for the same
+   * submission and scorecard are averaged only when a review was updated after
+   * its final summation. The current average is compared with the scorecard's
+   * minimum passing score, with its legacy minimum score as fallback.
+   *
+   * @param challengeId - Challenge containing the requester's submissions.
+   * @param memberId - Registered Submitter whose passing score is required.
+   * @returns True when a stale summation now has a passing Review average.
+   * @throws Error when summations or current review scores cannot be read.
+   */
+  private async hasPassingStaleReviewSummation(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    const reviewScorecardTypes = [
+      ScorecardType.REVIEW,
+      ScorecardType.ITERATIVE_REVIEW,
+    ];
+    const reviewScorecardWhere = {
+      type: {
+        in: reviewScorecardTypes,
+      },
+    };
+    const completedReviewWhere = {
+      committed: true,
+      status: ReviewStatus.COMPLETED,
+      scorecard: reviewScorecardWhere,
+    };
+    const summations = await this.prisma.reviewSummation.findMany({
+      where: {
+        isFinal: true,
+        isPassing: false,
+        scorecard: reviewScorecardWhere,
+        submission: {
+          challengeId,
+          memberId,
+        },
+      },
+      select: {
+        scorecardId: true,
+        updatedAt: true,
+        submission: {
+          select: {
+            review: {
+              where: completedReviewWhere,
+              select: {
+                scorecardId: true,
+                initialScore: true,
+                finalScore: true,
+                updatedAt: true,
+                scorecard: {
+                  select: {
+                    minScore: true,
+                    minimumPassingScore: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return summations.some((summation) => {
+      if (!summation.scorecardId) {
+        return false;
+      }
+
+      const matchingReviews = summation.submission.review.filter(
+        (review) => review.scorecardId === summation.scorecardId,
+      );
+      if (
+        !matchingReviews.length ||
+        !matchingReviews.some(
+          (review) => review.updatedAt > summation.updatedAt,
+        )
+      ) {
+        return false;
+      }
+
+      const scores = matchingReviews
+        .map((review) => review.finalScore ?? review.initialScore)
+        .filter(
+          (score): score is number =>
+            typeof score === 'number' && Number.isFinite(score),
+        );
+      if (!scores.length) {
+        return false;
+      }
+
+      const scorecard = matchingReviews[0].scorecard;
+      const minimumPassingScore = Number.isFinite(
+        scorecard.minimumPassingScore,
+      )
+        ? scorecard.minimumPassingScore
+        : Number.isFinite(scorecard.minScore)
+          ? scorecard.minScore
+          : null;
+      if (minimumPassingScore === null) {
+        return false;
+      }
+
+      const total = scores.reduce((sum, score) => sum + score, 0);
+      const aggregateScore = Math.round((total / scores.length) * 100) / 100;
+      return aggregateScore >= minimumPassingScore;
+    });
   }
 
   /**

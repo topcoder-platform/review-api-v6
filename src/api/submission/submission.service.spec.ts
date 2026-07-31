@@ -609,6 +609,7 @@ describe('SubmissionService', () => {
   describe('getSubmissionFileStream', () => {
     let prismaMock: {
       challengeResult: { findUnique: jest.Mock };
+      reviewSummation: { findMany: jest.Mock };
       submission: { findFirst: jest.Mock; findMany: jest.Mock };
     };
     let challengeApiServiceMock: { getChallengeDetail: jest.Mock };
@@ -618,6 +619,9 @@ describe('SubmissionService', () => {
       prismaMock = {
         challengeResult: {
           findUnique: jest.fn().mockResolvedValue(null),
+        },
+        reviewSummation: {
+          findMany: jest.fn().mockResolvedValue([]),
         },
         submission: {
           findFirst: jest.fn(),
@@ -794,6 +798,123 @@ describe('SubmissionService', () => {
         select: { id: true },
       });
       expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses an adjusted passing Review score when the stored summation is stale', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue(null);
+      prismaMock.reviewSummation.findMany.mockResolvedValue([
+        {
+          scorecardId: 'review-scorecard',
+          updatedAt: new Date('2026-07-24T07:18:53.107Z'),
+          submission: {
+            review: [
+              {
+                scorecardId: 'review-scorecard',
+                initialScore: 68.13,
+                finalScore: 76.13,
+                updatedAt: new Date('2026-07-24T07:20:20.000Z'),
+                scorecard: {
+                  minScore: 75,
+                  minimumPassingScore: 75,
+                },
+              },
+            ],
+          },
+        },
+      ]);
+
+      const result = await service.getSubmissionFileStream(
+        {
+          userId: 'passing-submitter',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(prismaMock.reviewSummation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            isFinal: true,
+            isPassing: false,
+            submission: {
+              challengeId: 'challenge-xyz',
+              memberId: 'passing-submitter',
+            },
+          }),
+        }),
+      );
+      expect(s3Send).toHaveBeenCalledTimes(2);
+    });
+
+    it('denies a stale summation when the adjusted Review average is below the passing score', async () => {
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        status: ChallengeStatus.COMPLETED,
+        track: 'Design',
+        metadata: {
+          submissionsViewable: 'true',
+        },
+        winners: [{ userId: 'owner-user', placement: 1 }],
+      });
+      prismaMock.submission.findFirst.mockResolvedValue(null);
+      prismaMock.reviewSummation.findMany.mockResolvedValue([
+        {
+          scorecardId: 'review-scorecard',
+          updatedAt: new Date('2026-07-24T07:18:53.107Z'),
+          submission: {
+            review: [
+              {
+                scorecardId: 'review-scorecard',
+                initialScore: 80,
+                finalScore: 80,
+                updatedAt: new Date('2026-07-24T07:20:20.000Z'),
+                scorecard: {
+                  minScore: 75,
+                  minimumPassingScore: 75,
+                },
+              },
+              {
+                scorecardId: 'review-scorecard',
+                initialScore: 60,
+                finalScore: 60,
+                updatedAt: new Date('2026-07-24T07:20:21.000Z'),
+                scorecard: {
+                  minScore: 75,
+                  minimumPassingScore: 75,
+                },
+              },
+            ],
+          },
+        },
+      ]);
+
+      await expect(
+        service.getSubmissionFileStream(
+          {
+            userId: 'non-passing-submitter',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(s3Send).not.toHaveBeenCalled();
     });
 
     it('matches the exact canonical winner across duplicate owner placements despite completed-without-win status', async () => {
