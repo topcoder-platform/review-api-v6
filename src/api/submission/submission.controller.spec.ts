@@ -61,4 +61,39 @@ describe('SubmissionController', () => {
       ]),
     );
   });
+
+  it('returns a non-cacheable signed download URL without redirecting', async () => {
+    const signedUrl = 'https://signed.example/submission.zip';
+    const authUser = { userId: 'owner-user', isMachine: false };
+    const service = {
+      getSubmissionDownloadUrl: jest.fn().mockResolvedValue(signedUrl),
+    };
+    const controller = new SubmissionController(service as any);
+
+    const result = await controller.getSubmissionDownloadUrl(
+      { user: authUser } as any,
+      'submission-123',
+    );
+
+    expect(service.getSubmissionDownloadUrl).toHaveBeenCalledWith(
+      authUser,
+      'submission-123',
+    );
+    expect(result).toEqual({ url: signedUrl });
+
+    const descriptor = Object.getOwnPropertyDescriptor(
+      SubmissionController.prototype,
+      'getSubmissionDownloadUrl',
+    );
+    expect(
+      Reflect.getMetadata(REDIRECT_METADATA, descriptor?.value as object),
+    ).toBeUndefined();
+    expect(
+      Reflect.getMetadata(HEADERS_METADATA, descriptor?.value as object),
+    ).toEqual(
+      expect.arrayContaining([
+        { name: 'Cache-Control', value: 'private, no-store' },
+      ]),
+    );
+  });
 });
