@@ -14,6 +14,8 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  Redirect,
+  Header,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -403,7 +405,7 @@ export class SubmissionController {
   @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
-    summary: 'Download the submission',
+    summary: 'Get a temporary redirect for downloading the submission',
     description:
       'Roles: Copilot, Admin, User, Reviewer. After challenge completion, the exact metadata value allowAllRegistrantsToDownloadWinningSubmissions=true lets every registered Submitter download only an exact final winning submission and denies non-winners without legacy fallback. Other values require passing-submission eligibility, except non-Design First2Finish challenges retain legacy submitter eligibility. | Scopes: read:submission',
   })
@@ -412,24 +414,28 @@ export class SubmissionController {
     description: 'The ID of the submission',
   })
   @ApiResponse({
-    status: 200,
-    description: 'Submission file',
-    schema: {
-      type: 'string', // Indicate binary data
-      format: 'binary', // Use binary format
+    status: HttpStatus.FOUND,
+    description:
+      'Redirects to a short-lived signed URL for the clean submission file.',
+    headers: {
+      Location: {
+        description: 'Short-lived signed S3 download URL.',
+        schema: { type: 'string', format: 'uri' },
+      },
     },
   })
+  @Header('Cache-Control', 'private, no-store')
+  @Redirect('', HttpStatus.FOUND)
   async downloadSubmission(
     @Req() req: Request,
     @Param('submissionId') submissionId: string,
-  ): Promise<StreamableFile> {
+  ): Promise<{ url: string; statusCode: HttpStatus }> {
     const authUser: JwtUser = req['user'] as JwtUser;
-    const { stream, contentType, fileName } =
-      await this.service.getSubmissionFileStream(authUser, submissionId);
-    return new StreamableFile(stream, {
-      type: contentType || 'application/zip',
-      disposition: `attachment; filename="${fileName}"`,
-    });
+    const url = await this.service.getSubmissionDownloadUrl(
+      authUser,
+      submissionId,
+    );
+    return { url, statusCode: HttpStatus.FOUND };
   }
 
   @Get('/:submissionId/access-audit')

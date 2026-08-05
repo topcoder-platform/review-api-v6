@@ -10,10 +10,17 @@ import { SubmissionService } from './submission.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 
 jest.mock('nanoid', () => ({
   __esModule: true,
   nanoid: () => 'mock-nanoid',
+}));
+
+jest.mock('@aws-sdk/s3-request-presigner', () => ({
+  __esModule: true,
+  getSignedUrl: jest.fn(),
 }));
 
 describe('SubmissionService', () => {
@@ -34,12 +41,15 @@ describe('SubmissionService', () => {
   let originalCleanBucket: string | undefined;
   let originalDmzBucket: string | undefined;
   let originalQuarantineBucket: string | undefined;
+  let originalDownloadUrlExpiresInSeconds: string | undefined;
 
   beforeAll(() => {
     originalBucket = process.env.ARTIFACTS_S3_BUCKET;
     originalCleanBucket = process.env.SUBMISSION_CLEAN_S3_BUCKET;
     originalDmzBucket = process.env.SUBMISSION_DMZ_S3_BUCKET;
     originalQuarantineBucket = process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
+    originalDownloadUrlExpiresInSeconds =
+      process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS;
   });
 
   beforeEach(() => {
@@ -79,6 +89,7 @@ describe('SubmissionService', () => {
     process.env.SUBMISSION_CLEAN_S3_BUCKET = 'unit-test-clean-bucket';
     process.env.SUBMISSION_DMZ_S3_BUCKET = 'unit-test-dmz-bucket';
     process.env.SUBMISSION_QUARANTINE_S3_BUCKET = 'unit-test-quarantine-bucket';
+    delete process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS;
   });
 
   afterEach(() => {
@@ -105,6 +116,12 @@ describe('SubmissionService', () => {
       delete process.env.SUBMISSION_QUARANTINE_S3_BUCKET;
     } else {
       process.env.SUBMISSION_QUARANTINE_S3_BUCKET = originalQuarantineBucket;
+    }
+    if (originalDownloadUrlExpiresInSeconds === undefined) {
+      delete process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS;
+    } else {
+      process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS =
+        originalDownloadUrlExpiresInSeconds;
     }
   });
 
@@ -606,7 +623,9 @@ describe('SubmissionService', () => {
     });
   });
 
-  describe('getSubmissionFileStream', () => {
+  describe('getSubmissionDownloadUrl', () => {
+    const signedUrl = 'https://signed.example/submission.zip';
+    const getSignedUrlMock = getSignedUrl as jest.Mock;
     let prismaMock: {
       challengeResult: { findUnique: jest.Mock };
       reviewSummation: { findMany: jest.Mock };
@@ -614,6 +633,8 @@ describe('SubmissionService', () => {
     };
     let challengeApiServiceMock: { getChallengeDetail: jest.Mock };
     let checkSubmissionSpy: jest.SpyInstance;
+    let recordSubmissionDownloadSpy: jest.SpyInstance;
+    let s3ClientMock: { send: jest.Mock };
 
     beforeEach(() => {
       prismaMock = {
@@ -664,16 +685,13 @@ describe('SubmissionService', () => {
       jest
         .spyOn(service as any, 'parseS3Url')
         .mockReturnValue({ key: 'dummy/submission.zip' });
-      jest
+      recordSubmissionDownloadSpy = jest
         .spyOn(service as any, 'recordSubmissionDownload')
         .mockResolvedValue(undefined);
-      s3Send = jest
-        .fn()
-        .mockResolvedValueOnce({ ContentType: 'application/zip' })
-        .mockResolvedValueOnce({ Body: Readable.from(['payload']) });
-      jest.spyOn(service as any, 'getS3Client').mockReturnValue({
-        send: s3Send,
-      });
+      getSignedUrlMock.mockReset().mockResolvedValue(signedUrl);
+      s3Send = jest.fn().mockResolvedValue({ ContentType: 'application/zip' });
+      s3ClientMock = { send: s3Send };
+      jest.spyOn(service as any, 'getS3Client').mockReturnValue(s3ClientMock);
     });
 
     it('allows screeners to download submissions', async () => {
@@ -681,7 +699,7 @@ describe('SubmissionService', () => {
         { roleName: 'Screener' },
       ]);
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'screener-user',
           isMachine: false,
@@ -690,7 +708,7 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
         'challenge-xyz',
         'screener-user',
@@ -709,7 +727,7 @@ describe('SubmissionService', () => {
         { roleName: 'Checkpoint Screener' },
       ]);
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'checkpoint-screener-user',
           isMachine: false,
@@ -718,7 +736,7 @@ describe('SubmissionService', () => {
         'checkpoint-sub-123',
       );
 
-      expect(result.fileName).toBe('submission-checkpoint-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
         'challenge-xyz',
         'checkpoint-screener-user',
@@ -734,7 +752,7 @@ describe('SubmissionService', () => {
         winners: [{ userId: 'different-owner', placement: 1 }],
       });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'owner-user',
           isMachine: false,
@@ -743,14 +761,186 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
-      expect(
-        resourceApiService.getMemberResourcesRoles,
-      ).not.toHaveBeenCalled();
+      expect(result).toBe(signedUrl);
+      expect(resourceApiService.getMemberResourcesRoles).not.toHaveBeenCalled();
       expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
       expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
       expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
+    });
+
+    it('signs a clean-bucket GetObject without proxying the file through the API', async () => {
+      const authUser = {
+        userId: 'owner-user',
+        isMachine: false,
+        roles: [],
+      } as any;
+
+      const result = await service.getSubmissionDownloadUrl(
+        authUser,
+        'sub-123',
+      );
+
+      expect(result).toBe(signedUrl);
+      expect(s3Send).toHaveBeenCalledTimes(1);
+      expect(s3Send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+      expect(s3Send.mock.calls[0][0].input).toEqual({
+        Bucket: 'unit-test-clean-bucket',
+        Key: 'dummy/submission.zip',
+      });
+      expect(getSignedUrlMock).toHaveBeenCalledTimes(1);
+      const [signedClient, signedCommand, signedOptions] =
+        getSignedUrlMock.mock.calls[0];
+      expect(signedClient).toBe(s3ClientMock);
+      expect(signedCommand).toBeInstanceOf(GetObjectCommand);
+      expect(signedCommand.input).toEqual({
+        Bucket: 'unit-test-clean-bucket',
+        Key: 'dummy/submission.zip',
+        ResponseContentDisposition:
+          'attachment; filename="submission-sub-123.zip"',
+        ResponseContentType: 'application/zip',
+        ResponseCacheControl: 'private, no-store',
+      });
+      expect(signedOptions).toEqual({ expiresIn: 300 });
+      expect(recordSubmissionDownloadSpy).toHaveBeenCalledWith(
+        'sub-123',
+        authUser,
+      );
+      expect(getSignedUrlMock.mock.invocationCallOrder[0]).toBeLessThan(
+        recordSubmissionDownloadSpy.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('uses a configured signed URL lifetime within the allowed range', async () => {
+      process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = '120';
+
+      await service.getSubmissionDownloadUrl(
+        {
+          userId: 'owner-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(getSignedUrlMock.mock.calls[0][2]).toEqual({ expiresIn: 120 });
+    });
+
+    it('falls back to five minutes for an unsafe signed URL lifetime', async () => {
+      process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = '301';
+
+      await service.getSubmissionDownloadUrl(
+        {
+          userId: 'owner-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(getSignedUrlMock.mock.calls[0][2]).toEqual({ expiresIn: 300 });
+    });
+
+    it('uses the ZIP content type when clean object metadata omits it', async () => {
+      s3Send.mockResolvedValueOnce({});
+
+      await service.getSubmissionDownloadUrl(
+        {
+          userId: 'owner-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(getSignedUrlMock.mock.calls[0][1].input).toEqual(
+        expect.objectContaining({ ResponseContentType: 'application/zip' }),
+      );
+    });
+
+    it('sanitizes the submission ID used in the attachment filename', async () => {
+      checkSubmissionSpy.mockResolvedValueOnce({
+        id: 'sub"\r\nunsafe',
+        memberId: 'owner-user',
+        challengeId: 'challenge-xyz',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        placement: null,
+        url: 'https://s3.amazonaws.com/dummy/submission.zip',
+      });
+
+      await service.getSubmissionDownloadUrl(
+        {
+          userId: 'owner-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(getSignedUrlMock.mock.calls[0][1].input).toEqual(
+        expect.objectContaining({
+          ResponseContentDisposition:
+            'attachment; filename="submission-sub___unsafe.zip"',
+        }),
+      );
+    });
+
+    it('does not audit or sign when the clean object cannot be found', async () => {
+      s3Send.mockRejectedValueOnce(new Error('missing object'));
+
+      await expect(
+        service.getSubmissionDownloadUrl(
+          {
+            userId: 'owner-user',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'SUBMISSION_NOT_CLEAN' }),
+      });
+
+      expect(getSignedUrlMock).not.toHaveBeenCalled();
+      expect(recordSubmissionDownloadSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not audit when signing the download URL fails', async () => {
+      getSignedUrlMock.mockRejectedValueOnce(new Error('signing failed'));
+
+      await expect(
+        service.getSubmissionDownloadUrl(
+          {
+            userId: 'owner-user',
+            isMachine: false,
+            roles: [],
+          } as any,
+          'sub-123',
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'S3_DOWNLOAD_URL_FAILED' }),
+      });
+
+      expect(recordSubmissionDownloadSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns the signed URL when access auditing fails', async () => {
+      recordSubmissionDownloadSpy.mockRejectedValueOnce(
+        new Error('audit unavailable'),
+      );
+
+      const result = await service.getSubmissionDownloadUrl(
+        {
+          userId: 'owner-user',
+          isMachine: false,
+          roles: [],
+        } as any,
+        'sub-123',
+      );
+
+      expect(result).toBe(signedUrl);
+      expect(recordSubmissionDownloadSpy).toHaveBeenCalledTimes(1);
     });
 
     it('preserves legacy passing-submitter download behavior when the feature flag is disabled', async () => {
@@ -768,7 +958,7 @@ describe('SubmissionService', () => {
         id: 'passing-sub',
       });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'submitter-user',
           isMachine: false,
@@ -777,7 +967,7 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
         'challenge-xyz',
         'submitter-user',
@@ -797,7 +987,7 @@ describe('SubmissionService', () => {
         },
         select: { id: true },
       });
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('uses an adjusted passing Review score when the stored summation is stale', async () => {
@@ -834,7 +1024,7 @@ describe('SubmissionService', () => {
         },
       ]);
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'passing-submitter',
           isMachine: false,
@@ -843,7 +1033,7 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(prismaMock.reviewSummation.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
@@ -856,7 +1046,7 @@ describe('SubmissionService', () => {
           }),
         }),
       );
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('denies a stale summation when the adjusted Review average is below the passing score', async () => {
@@ -904,7 +1094,7 @@ describe('SubmissionService', () => {
       ]);
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'non-passing-submitter',
             isMachine: false,
@@ -950,7 +1140,7 @@ describe('SubmissionService', () => {
         placement: 1,
       });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'registered-user-without-submission',
           isMachine: false,
@@ -959,7 +1149,7 @@ describe('SubmissionService', () => {
         'winning-submission',
       );
 
-      expect(result.fileName).toBe('submission-winning-submission.zip');
+      expect(result).toBe(signedUrl);
       expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledWith({
         where: {
           challengeId_userId: {
@@ -974,7 +1164,7 @@ describe('SubmissionService', () => {
         },
       });
       expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('denies a passing winner access to a canonical sibling submission when the feature flag is enabled', async () => {
@@ -1015,7 +1205,7 @@ describe('SubmissionService', () => {
       });
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'passing-winner-requester',
             isMachine: false,
@@ -1070,7 +1260,7 @@ describe('SubmissionService', () => {
       prismaMock.submission.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'registered-user-without-passing-submission',
             isMachine: false,
@@ -1115,7 +1305,7 @@ describe('SubmissionService', () => {
         prismaMock.submission.findFirst.mockResolvedValue(null);
 
         await expect(
-          service.getSubmissionFileStream(
+          service.getSubmissionDownloadUrl(
             {
               userId: 'registered-user-without-passing-submission',
               isMachine: false,
@@ -1153,7 +1343,7 @@ describe('SubmissionService', () => {
         winners: [{ userId: 'owner-user', placement: 1, type: 'PLACEMENT' }],
       });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'registered-user',
           isMachine: false,
@@ -1162,10 +1352,10 @@ describe('SubmissionService', () => {
         'legacy-winning-submission',
       );
 
-      expect(result.fileName).toBe('submission-legacy-winning-submission.zip');
+      expect(result).toBe(signedUrl);
       expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledTimes(1);
       expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it.each([
@@ -1203,7 +1393,7 @@ describe('SubmissionService', () => {
         prismaMock.submission.findFirst.mockResolvedValue(null);
 
         await expect(
-          service.getSubmissionFileStream(
+          service.getSubmissionDownloadUrl(
             {
               userId: 'registered-user-without-legacy-eligibility',
               isMachine: false,
@@ -1251,7 +1441,7 @@ describe('SubmissionService', () => {
       });
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'passing-winner-requester',
             isMachine: false,
@@ -1282,7 +1472,7 @@ describe('SubmissionService', () => {
         id: 'requester-passing-submission',
       });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'passing-registered-user',
           isMachine: false,
@@ -1291,7 +1481,7 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(prismaMock.challengeResult.findUnique).not.toHaveBeenCalled();
       expect(prismaMock.submission.findFirst).toHaveBeenCalledWith({
         where: {
@@ -1301,7 +1491,7 @@ describe('SubmissionService', () => {
         },
         select: { id: true },
       });
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('does not treat a checkpoint winner as a final winning submission', async () => {
@@ -1320,7 +1510,7 @@ describe('SubmissionService', () => {
       prismaMock.submission.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'registered-user-without-passing-submission',
             isMachine: false,
@@ -1356,7 +1546,7 @@ describe('SubmissionService', () => {
         prismaMock.submission.findFirst.mockResolvedValue(null);
 
         await expect(
-          service.getSubmissionFileStream(
+          service.getSubmissionDownloadUrl(
             {
               userId: 'registered-user-without-passing-submission',
               isMachine: false,
@@ -1378,7 +1568,7 @@ describe('SubmissionService', () => {
       ]);
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'unregistered-user',
             isMachine: false,
@@ -1412,7 +1602,7 @@ describe('SubmissionService', () => {
         placement: 1,
       });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'registered-user',
           isMachine: false,
@@ -1421,9 +1611,9 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('uses passing-submitter eligibility for Design challenges when legacy visibility is disabled', async () => {
@@ -1441,7 +1631,7 @@ describe('SubmissionService', () => {
       });
       prismaMock.submission.findFirst.mockResolvedValue({ id: 'passing-sub' });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'passing-registered-user',
           isMachine: false,
@@ -1450,9 +1640,9 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(prismaMock.submission.findFirst).toHaveBeenCalledTimes(1);
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('denies a non-passing Design submitter when the new flag is disabled regardless of legacy visibility', async () => {
@@ -1471,7 +1661,7 @@ describe('SubmissionService', () => {
       prismaMock.submission.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'non-passing-registered-user',
             isMachine: false,
@@ -1505,7 +1695,7 @@ describe('SubmissionService', () => {
       );
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'failed-first2finish-submitter',
             isMachine: false,
@@ -1536,7 +1726,7 @@ describe('SubmissionService', () => {
         { roleName: 'Manager' },
       ]);
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'manager-user',
           isMachine: false,
@@ -1545,10 +1735,10 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
       expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('denies submitters when the challenge is not completed', async () => {
@@ -1565,7 +1755,7 @@ describe('SubmissionService', () => {
       });
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'submitter-user',
             isMachine: false,
@@ -1590,7 +1780,7 @@ describe('SubmissionService', () => {
         id: 'own-submission',
       });
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'submitter-user',
           isMachine: false,
@@ -1599,7 +1789,7 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(resourceApiService.getMemberResourcesRoles).toHaveBeenCalledWith(
         'challenge-xyz',
         'submitter-user',
@@ -1615,7 +1805,7 @@ describe('SubmissionService', () => {
         },
         select: { id: true },
       });
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
 
     it('denies a First2Finish submitter a non-winner without legacy fallback when the feature flag is enabled', async () => {
@@ -1636,7 +1826,7 @@ describe('SubmissionService', () => {
       });
 
       await expect(
-        service.getSubmissionFileStream(
+        service.getSubmissionDownloadUrl(
           {
             userId: 'first2finish-submitter',
             isMachine: false,
@@ -1671,7 +1861,7 @@ describe('SubmissionService', () => {
       });
       prismaMock.submission.findFirst.mockResolvedValue(null);
 
-      const result = await service.getSubmissionFileStream(
+      const result = await service.getSubmissionDownloadUrl(
         {
           userId: 'registered-first2finish-user',
           isMachine: false,
@@ -1680,10 +1870,10 @@ describe('SubmissionService', () => {
         'sub-123',
       );
 
-      expect(result.fileName).toBe('submission-sub-123.zip');
+      expect(result).toBe(signedUrl);
       expect(prismaMock.challengeResult.findUnique).toHaveBeenCalledTimes(1);
       expect(prismaMock.submission.findFirst).not.toHaveBeenCalled();
-      expect(s3Send).toHaveBeenCalledTimes(2);
+      expect(s3Send).toHaveBeenCalledTimes(1);
     });
   });
 

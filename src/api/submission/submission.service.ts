@@ -51,6 +51,7 @@ import {
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable, PassThrough } from 'stream';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
@@ -222,6 +223,30 @@ const REVIEW_ACCESS_ROLE_KEYWORDS = [
 
 const SUBMISSION_SCAN_RETRY_AGE_MS = 10 * 60 * 1000;
 const SUBMISSION_SCAN_RETRY_BATCH_SIZE = 100;
+const DEFAULT_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = 300;
+const MIN_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = 60;
+const MAX_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = 300;
+
+/**
+ * Resolves the lifetime of a presigned submission download URL.
+ * Invalid values fall back to five minutes so configuration cannot
+ * accidentally create long-lived download credentials.
+ *
+ * @returns The signed URL lifetime in seconds, between 60 and 300.
+ */
+function getSubmissionDownloadUrlExpiresInSeconds(): number {
+  const configured = Number(
+    process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS,
+  );
+  if (
+    Number.isInteger(configured) &&
+    configured >= MIN_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS &&
+    configured <= MAX_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS
+  ) {
+    return configured;
+  }
+  return DEFAULT_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS;
+}
 
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {
@@ -1277,7 +1302,8 @@ export class SubmissionService {
   }
 
   /**
-   * Streams the original submission file from the clean S3 bucket.
+   * Creates a short-lived URL for downloading the original submission file
+   * directly from the clean S3 bucket.
    *
    * Authorization rules:
    * - M2M tokens: require scope read:submission or all:submission
@@ -1289,20 +1315,20 @@ export class SubmissionService {
    *   passing-submission eligibility, except non-Design First2Finish challenges
    *   retain legacy submitter eligibility.
    *
-   * The file is always fetched from the configured clean bucket, never from DMZ.
-   * The S3 key is derived from the submission.url.
+   * The signed URL always targets the configured clean bucket, never DMZ. The
+   * S3 key is derived from the submission.url.
    *
    * @param authUser - Authenticated member or machine requesting the file.
-   * @param submissionId - Submission whose clean artifact should be streamed.
-   * @returns The readable file stream and response filename/content type.
+   * @param submissionId - Submission whose clean artifact should be downloaded.
+   * @returns A presigned S3 GET URL that expires after at most five minutes.
    * @throws ForbiddenException when the requester is not eligible to download.
    * @throws NotFoundException when the submission row or its download URL is missing.
    * @throws InternalServerErrorException when storage configuration or access fails.
    */
-  async getSubmissionFileStream(
+  async getSubmissionDownloadUrl(
     authUser: JwtUser,
     submissionId: string,
-  ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
+  ): Promise<string> {
     const submission = await this.checkSubmission(submissionId, authUser);
 
     // Authorization
@@ -1459,25 +1485,24 @@ export class SubmissionService {
     }
 
     try {
-      const resp = await s3.send(
-        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      const safeSubmissionId = submission.id.replace(
+        /[^A-Za-z0-9_-]/g,
+        '_',
       );
-      const body = (resp as any).Body;
-      let stream: Readable;
-      if (body && typeof body.pipe === 'function') {
-        stream = body as Readable;
-      } else if (
-        body &&
-        typeof body.getReader === 'function' &&
-        (Readable as any).fromWeb
-      ) {
-        stream = (Readable as any).fromWeb(body);
-      } else if (Buffer.isBuffer(body)) {
-        stream = Readable.from(body);
-      } else {
-        throw new Error('Unsupported S3 Body stream type');
-      }
-      // Record access audit (best-effort; do not block download on failure)
+      const fileName = `submission-${safeSubmissionId}.zip`;
+      const downloadUrl = await getSignedUrl(
+        s3,
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentDisposition: `attachment; filename="${fileName}"`,
+          ResponseContentType: contentType,
+          ResponseCacheControl: 'private, no-store',
+        }),
+        { expiresIn: getSubmissionDownloadUrlExpiresInSeconds() },
+      );
+
+      // Record URL issuance (best-effort; do not block download on failure)
       try {
         await this.recordSubmissionDownload(submission.id, authUser);
       } catch (e) {
@@ -1485,15 +1510,14 @@ export class SubmissionService {
           `Failed to record submission access audit for ${submission.id}: ${(e as Error)?.message}`,
         );
       }
-      const fileName = `submission-${submission.id}.zip`;
-      return { stream, contentType, fileName };
+      return downloadUrl;
     } catch (err) {
       this.logger.error(
-        `Failed to download submission from clean S3. submissionId=${submissionId} bucket=${bucket} key=${key} err=${(err as Error)?.message}`,
+        `Failed to create submission download URL. submissionId=${submissionId} bucket=${bucket} key=${key} err=${(err as Error)?.message}`,
       );
       throw new InternalServerErrorException({
-        message: 'Failed to download submission from storage',
-        code: 'S3_DOWNLOAD_FAILED',
+        message: 'Failed to create submission download URL',
+        code: 'S3_DOWNLOAD_URL_FAILED',
         details: { submissionId },
       });
     }
@@ -2079,7 +2103,13 @@ export class SubmissionService {
   }
 
   /**
-   * Create an audit record for a submission download
+   * Records that submission download access was granted or initiated. This
+   * does not prove that the client completed the file transfer.
+   *
+   * @param submissionId - Submission for which download access was granted.
+   * @param authUser - User or M2M client that requested the download.
+   * @returns A promise that resolves after the audit row is stored.
+   * @throws Prisma errors when the audit row cannot be persisted.
    */
   private async recordSubmissionDownload(
     submissionId: string,
