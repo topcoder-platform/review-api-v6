@@ -230,6 +230,87 @@ describe('KafkaConsumerService configuration', () => {
 
     random.mockRestore();
   });
+
+  it('resumes committed offsets and starts new topics at the latest offset', async () => {
+    const registry = {
+      getAllTopics: jest
+        .fn()
+        .mockReturnValue(['submission.notification.create']),
+    } as unknown as KafkaHandlerRegistry;
+    const service = new KafkaConsumerService(options, registry);
+    const stream = Object.assign(new EventEmitter(), {
+      close: jest.fn().mockResolvedValue(undefined),
+      async *[Symbol.asyncIterator]() {
+        return;
+      },
+    });
+    const consumerClient = createConsumerClientDouble();
+    const producerClient = createProducerClientDouble();
+    consumerClient.consume.mockResolvedValue(stream);
+    ConsumerMock.mockReturnValue(consumerClient);
+    ProducerMock.mockReturnValue(producerClient);
+
+    service.connect();
+    await (
+      service as unknown as {
+        startConsumer: () => Promise<void>;
+      }
+    ).startConsumer();
+
+    expect(consumerClient.consume).toHaveBeenCalledWith({
+      topics: ['submission.notification.create'],
+      autocommit: false,
+      mode: 'committed',
+      fallbackMode: 'latest',
+    });
+
+    await service.disconnect();
+  });
+
+  it('retries handler failures even when DLQ publishing is disabled', async () => {
+    const handler = {
+      handle: jest.fn().mockRejectedValue(new Error('Bus unavailable')),
+    };
+    const registry = {
+      getHandler: jest.fn().mockReturnValue(handler),
+    } as unknown as KafkaHandlerRegistry;
+    const service = new KafkaConsumerService(
+      {
+        ...options,
+        dlq: {
+          enabled: false,
+          topicSuffix: '.dlq',
+          maxRetries: 2,
+        },
+      },
+      registry,
+    );
+    jest
+      .spyOn(
+        service as unknown as {
+          wait: (delay: number) => Promise<void>;
+        },
+        'wait',
+      )
+      .mockResolvedValue(undefined);
+    const message = {
+      key: Buffer.from('submission-confirmation:submission-1'),
+      value: Buffer.from('{"payload":{"id":"submission-1"}}'),
+      headers: new Map<Buffer, Buffer>(),
+      topic: 'submission.notification.create',
+      partition: 1,
+      timestamp: 123n,
+      offset: 456n,
+      metadata: {},
+      commit: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn(),
+    } as unknown as Message<Buffer, Buffer, Buffer, Buffer>;
+
+    await service.processMessage(message.topic, message.partition, message);
+
+    expect(handler.handle).toHaveBeenCalledTimes(3);
+    expect(message.commit).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('KafkaConsumerService recovery', () => {

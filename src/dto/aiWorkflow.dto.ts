@@ -17,8 +17,10 @@ import {
   Max,
   IsEmpty,
   IsBoolean,
+  IsEnum,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { ReviewMethod } from '@prisma/client';
 
 const trimTransformer = ({ value }: { value: unknown }): string | undefined =>
   typeof value === 'string' ? value.trim() : undefined;
@@ -67,6 +69,11 @@ export class CreateAiWorkflowDto {
   @IsOptional()
   @IsBoolean()
   disabled?: boolean;
+
+  @ApiProperty({ required: false, enum: ReviewMethod, default: ReviewMethod.AI_ASSISTED })
+  @IsOptional()
+  @IsEnum(ReviewMethod)
+  reviewMethod?: ReviewMethod;
 
   @ApiProperty({ required: false, default: 1800, minimum: 30 })
   @IsOptional()

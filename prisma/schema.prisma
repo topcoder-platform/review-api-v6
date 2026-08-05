@@ -447,12 +447,30 @@ model submission {
   aiReviewDecisions   aiReviewDecision[]
   auditLogs           reviewAudit[]
   accessAudits        submissionAccessAudit[]
+  confirmationEmail   submissionConfirmationEmail?
 
   @@index([memberId])
   @@index([challengeId])
   @@index([legacySubmissionId])
   @@index([challengeId, memberId, status])
   @@index([submittedDate])
+}
+
+/// Durable submission-confirmation request created atomically with a member submission.
+model submissionConfirmationEmail {
+  submissionId        String    @id @db.VarChar(14)
+  processingStartedAt DateTime?
+  processingToken     String?   @db.VarChar(36)
+  publishedAt         DateTime?
+  nextAttemptAt       DateTime  @default(now())
+  attemptCount        Int       @default(0)
+  lastError           String?   @db.Text
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  submission submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([publishedAt, nextAttemptAt, processingStartedAt, createdAt], map: "submissionConfirmationEmail_pending_idx")
 }
 
 enum ReviewOpportunityStatus {
@@ -699,6 +717,11 @@ enum AiReviewDecisionEscalationStatus {
   REJECTED
 }
 
+enum ReviewMethod {
+  AI_ASSISTED
+  DETERMINISTIC
+}
+
 model aiWorkflow {
   id          String   @id @default(dbgenerated("nanoid()")) @db.VarChar(14)
   name        String   @unique @db.VarChar
@@ -709,6 +732,7 @@ model aiWorkflow {
   gitOwnerRepo  String   @db.VarChar
   scorecardId String   @db.VarChar(14)
   timeoutSeconds Int?   @default(1800)
+  reviewMethod ReviewMethod @default(AI_ASSISTED)
   disabled    Boolean  @default(false)
   createdAt   DateTime @default(now()) @db.Timestamp(3)
   createdBy   String?  @db.Text
@@ -790,6 +814,7 @@ model aiReviewConfig {
   version             Int          @default(1)
   minPassingThreshold  Decimal      @db.Decimal(5, 2)
   autoFinalize         Boolean      @default(false)
+  instantReview        Boolean      @default(false)
   mode                 AiReviewMode @default(AI_GATING)
   formula             Json?
 

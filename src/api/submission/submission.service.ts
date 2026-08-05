@@ -51,6 +51,7 @@ import {
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable, PassThrough } from 'stream';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
@@ -81,7 +82,6 @@ type SubmissionDownloadCandidate = {
 
 const ALLOW_ALL_REGISTRANTS_TO_DOWNLOAD_WINNING_SUBMISSIONS_METADATA_KEY =
   'allowAllRegistrantsToDownloadWinningSubmissions';
-const SUBMISSIONS_VIEWABLE_METADATA_KEY = 'submissionsViewable';
 const NON_WINNING_SUBMISSION_STATUSES: SubmissionStatus[] = [
   SubmissionStatus.FAILED_SCREENING,
   SubmissionStatus.FAILED_REVIEW,
@@ -223,6 +223,30 @@ const REVIEW_ACCESS_ROLE_KEYWORDS = [
 
 const SUBMISSION_SCAN_RETRY_AGE_MS = 10 * 60 * 1000;
 const SUBMISSION_SCAN_RETRY_BATCH_SIZE = 100;
+const DEFAULT_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = 300;
+const MIN_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = 60;
+const MAX_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS = 300;
+
+/**
+ * Resolves the lifetime of a presigned submission download URL.
+ * Invalid values fall back to five minutes so configuration cannot
+ * accidentally create long-lived download credentials.
+ *
+ * @returns The signed URL lifetime in seconds, between 60 and 300.
+ */
+function getSubmissionDownloadUrlExpiresInSeconds(): number {
+  const configured = Number(
+    process.env.SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS,
+  );
+  if (
+    Number.isInteger(configured) &&
+    configured >= MIN_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS &&
+    configured <= MAX_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS
+  ) {
+    return configured;
+  }
+  return DEFAULT_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS;
+}
 
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {
@@ -1278,7 +1302,8 @@ export class SubmissionService {
   }
 
   /**
-   * Streams the original submission file from the clean S3 bucket.
+   * Creates a short-lived URL for downloading the original submission file
+   * directly from the clean S3 bucket.
    *
    * Authorization rules:
    * - M2M tokens: require scope read:submission or all:submission
@@ -1286,24 +1311,24 @@ export class SubmissionService {
    *   eligible reviewers, copilots, or managers.
    * - When `allowAllRegistrantsToDownloadWinningSubmissions` is exactly
    *   `"true"`, every registered Submitter may download only an exact final
-   *   winning submission after completion. Other metadata values retain legacy
-   *   passing or First2Finish eligibility. Design challenges additionally
-   *   require `submissionsViewable` to be true.
+   *   winning submission after completion. Other metadata values require
+   *   passing-submission eligibility, except non-Design First2Finish challenges
+   *   retain legacy submitter eligibility.
    *
-   * The file is always fetched from the configured clean bucket, never from DMZ.
-   * The S3 key is derived from the submission.url.
+   * The signed URL always targets the configured clean bucket, never DMZ. The
+   * S3 key is derived from the submission.url.
    *
    * @param authUser - Authenticated member or machine requesting the file.
-   * @param submissionId - Submission whose clean artifact should be streamed.
-   * @returns The readable file stream and response filename/content type.
+   * @param submissionId - Submission whose clean artifact should be downloaded.
+   * @returns A presigned S3 GET URL that expires after at most five minutes.
    * @throws ForbiddenException when the requester is not eligible to download.
    * @throws NotFoundException when the submission row or its download URL is missing.
    * @throws InternalServerErrorException when storage configuration or access fails.
    */
-  async getSubmissionFileStream(
+  async getSubmissionDownloadUrl(
     authUser: JwtUser,
     submissionId: string,
-  ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
+  ): Promise<string> {
     const submission = await this.checkSubmission(submissionId, authUser);
 
     // Authorization
@@ -1460,25 +1485,24 @@ export class SubmissionService {
     }
 
     try {
-      const resp = await s3.send(
-        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      const safeSubmissionId = submission.id.replace(
+        /[^A-Za-z0-9_-]/g,
+        '_',
       );
-      const body = (resp as any).Body;
-      let stream: Readable;
-      if (body && typeof body.pipe === 'function') {
-        stream = body as Readable;
-      } else if (
-        body &&
-        typeof body.getReader === 'function' &&
-        (Readable as any).fromWeb
-      ) {
-        stream = (Readable as any).fromWeb(body);
-      } else if (Buffer.isBuffer(body)) {
-        stream = Readable.from(body);
-      } else {
-        throw new Error('Unsupported S3 Body stream type');
-      }
-      // Record access audit (best-effort; do not block download on failure)
+      const fileName = `submission-${safeSubmissionId}.zip`;
+      const downloadUrl = await getSignedUrl(
+        s3,
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentDisposition: `attachment; filename="${fileName}"`,
+          ResponseContentType: contentType,
+          ResponseCacheControl: 'private, no-store',
+        }),
+        { expiresIn: getSubmissionDownloadUrlExpiresInSeconds() },
+      );
+
+      // Record URL issuance (best-effort; do not block download on failure)
       try {
         await this.recordSubmissionDownload(submission.id, authUser);
       } catch (e) {
@@ -1486,15 +1510,14 @@ export class SubmissionService {
           `Failed to record submission access audit for ${submission.id}: ${(e as Error)?.message}`,
         );
       }
-      const fileName = `submission-${submission.id}.zip`;
-      return { stream, contentType, fileName };
+      return downloadUrl;
     } catch (err) {
       this.logger.error(
-        `Failed to download submission from clean S3. submissionId=${submissionId} bucket=${bucket} key=${key} err=${(err as Error)?.message}`,
+        `Failed to create submission download URL. submissionId=${submissionId} bucket=${bucket} key=${key} err=${(err as Error)?.message}`,
       );
       throw new InternalServerErrorException({
-        message: 'Failed to download submission from storage',
-        code: 'S3_DOWNLOAD_FAILED',
+        message: 'Failed to create submission download URL',
+        code: 'S3_DOWNLOAD_URL_FAILED',
         details: { submissionId },
       });
     }
@@ -1504,13 +1527,12 @@ export class SubmissionService {
    * Evaluates post-challenge download access for a registered Submitter.
    *
    * This method is used only after the caller has been confirmed to hold the
-   * challenge's Submitter resource role. The challenge must be completed. For
-   * Design challenges, `submissionsViewable` is an outer gate. Once that gate
-   * passes, exact `"true"` makes the requested target decisive: it must be the
-   * exact canonical result for a recorded placement winner (or carry matching
-   * legacy placement data), and a non-winner fails closed without legacy
-   * fallback. Other metadata values retain the legacy First2Finish or
-   * passing-submission eligibility behavior.
+   * challenge's Submitter resource role. The challenge must be completed. Exact
+   * `"true"` makes the requested target decisive: it must be the exact canonical
+   * result for a recorded placement winner (or carry matching legacy placement
+   * data), and a non-winner fails closed without legacy fallback. Other metadata
+   * values require passing-submission eligibility, except non-Design
+   * First2Finish challenges retain legacy submitter eligibility.
    *
    * @param challengeId - Challenge containing the requested submission.
    * @param requesterMemberId - Registered Submitter requesting the download.
@@ -1532,19 +1554,15 @@ export class SubmissionService {
     }
 
     if (
-      this.isDesignChallenge(challenge) &&
-      !this.isSubmissionsViewableAfterChallengeEnd(challenge)
-    ) {
-      return false;
-    }
-
-    if (
       this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge)
     ) {
       return this.isWinningSubmission(challengeId, challenge, submission);
     }
 
-    if (this.isFirst2FinishChallenge(challenge)) {
+    if (
+      this.isFirst2FinishChallenge(challenge) &&
+      !this.isDesignChallenge(challenge)
+    ) {
       const memberSubmission = await this.prisma.submission.findFirst({
         where: {
           challengeId,
@@ -1567,14 +1585,133 @@ export class SubmissionService {
       },
       select: { id: true },
     });
-    return Boolean(passingSubmission);
+    if (passingSubmission) {
+      return true;
+    }
+
+    return this.hasPassingStaleReviewSummation(
+      challengeId,
+      requesterMemberId,
+    );
+  }
+
+  /**
+   * Rechecks a demonstrably stale, non-passing final Review summation.
+   *
+   * Completed, committed Review and Iterative Review scores for the same
+   * submission and scorecard are averaged only when a review was updated after
+   * its final summation. The current average is compared with the scorecard's
+   * minimum passing score, with its legacy minimum score as fallback.
+   *
+   * @param challengeId - Challenge containing the requester's submissions.
+   * @param memberId - Registered Submitter whose passing score is required.
+   * @returns True when a stale summation now has a passing Review average.
+   * @throws Error when summations or current review scores cannot be read.
+   */
+  private async hasPassingStaleReviewSummation(
+    challengeId: string,
+    memberId: string,
+  ): Promise<boolean> {
+    const reviewScorecardTypes = [
+      ScorecardType.REVIEW,
+      ScorecardType.ITERATIVE_REVIEW,
+    ];
+    const reviewScorecardWhere = {
+      type: {
+        in: reviewScorecardTypes,
+      },
+    };
+    const completedReviewWhere = {
+      committed: true,
+      status: ReviewStatus.COMPLETED,
+      scorecard: reviewScorecardWhere,
+    };
+    const summations = await this.prisma.reviewSummation.findMany({
+      where: {
+        isFinal: true,
+        isPassing: false,
+        scorecard: reviewScorecardWhere,
+        submission: {
+          challengeId,
+          memberId,
+        },
+      },
+      select: {
+        scorecardId: true,
+        updatedAt: true,
+        submission: {
+          select: {
+            review: {
+              where: completedReviewWhere,
+              select: {
+                scorecardId: true,
+                initialScore: true,
+                finalScore: true,
+                updatedAt: true,
+                scorecard: {
+                  select: {
+                    minScore: true,
+                    minimumPassingScore: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return summations.some((summation) => {
+      if (!summation.scorecardId) {
+        return false;
+      }
+
+      const matchingReviews = summation.submission.review.filter(
+        (review) => review.scorecardId === summation.scorecardId,
+      );
+      if (
+        !matchingReviews.length ||
+        !matchingReviews.some(
+          (review) => review.updatedAt > summation.updatedAt,
+        )
+      ) {
+        return false;
+      }
+
+      const scores = matchingReviews
+        .map((review) => review.finalScore ?? review.initialScore)
+        .filter(
+          (score): score is number =>
+            typeof score === 'number' && Number.isFinite(score),
+        );
+      if (!scores.length) {
+        return false;
+      }
+
+      const scorecard = matchingReviews[0].scorecard;
+      const minimumPassingScore = Number.isFinite(
+        scorecard.minimumPassingScore,
+      )
+        ? scorecard.minimumPassingScore
+        : Number.isFinite(scorecard.minScore)
+          ? scorecard.minScore
+          : null;
+      if (minimumPassingScore === null) {
+        return false;
+      }
+
+      const total = scores.reduce((sum, score) => sum + score, 0);
+      const aggregateScore = Math.round((total / scores.length) * 100) / 100;
+      return aggregateScore >= minimumPassingScore;
+    });
   }
 
   /**
    * Determines whether a challenge belongs to the Design track.
    *
-   * The current track name is preferred, while the legacy track is checked so
-   * migrated Design challenges receive the same visibility gate.
+   * The current track name is preferred, while the legacy track is also checked
+   * so migrated Design First2Finish challenges use passing-submission
+   * eligibility.
    *
    * @param challenge - Challenge metadata returned by the challenge service.
    * @returns True when either current or legacy track is named Design.
@@ -1586,26 +1723,6 @@ export class SubmissionService {
         String(track ?? '')
           .trim()
           .toLowerCase() === 'design',
-    );
-  }
-
-  /**
-   * Reads the existing Design submission-visibility setting.
-   *
-   * Existing challenge data and clients historically treat the string value
-   * case-insensitively, so this gate preserves that behavior.
-   *
-   * @param challenge - Challenge containing the metadata record.
-   * @returns True only when `submissionsViewable` represents true.
-   * @throws Never.
-   */
-  private isSubmissionsViewableAfterChallengeEnd(
-    challenge: ChallengeData,
-  ): boolean {
-    return (
-      String(challenge.metadata?.[SUBMISSIONS_VIEWABLE_METADATA_KEY] ?? '')
-        .trim()
-        .toLowerCase() === 'true'
     );
   }
 
@@ -1986,7 +2103,13 @@ export class SubmissionService {
   }
 
   /**
-   * Create an audit record for a submission download
+   * Records that submission download access was granted or initiated. This
+   * does not prove that the client completed the file transfer.
+   *
+   * @param submissionId - Submission for which download access was granted.
+   * @param authUser - User or M2M client that requested the download.
+   * @returns A promise that resolves after the audit row is stored.
+   * @throws Prisma errors when the audit row cannot be persisted.
    */
   private async recordSubmissionDownload(
     submissionId: string,
@@ -2666,7 +2789,6 @@ export class SubmissionService {
       'review',
       'checkpoint review',
       'iterative review',
-      'approval',
     ]).has(normalizedPhaseName);
   }
 
@@ -2843,6 +2965,15 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Publishes the canonical submission-created event after persistence.
+   *
+   * @param submission Persisted submission fields used to build the public event payload.
+   * @returns A promise that resolves after Bus API accepts the event.
+   * @throws InternalServerErrorException when Bus API publication fails.
+   * Used by createSubmission to trigger downstream scanning, automation, and
+   * submission-confirmation consumers with stable per-submission ordering.
+   */
   private async publishSubmissionCreateEvent(
     submission: SubmissionBusPayloadSource,
   ): Promise<void> {
@@ -2887,6 +3018,7 @@ export class SubmissionService {
     await this.eventBusService.publish(
       'submission.notification.create',
       payload,
+      `submission:${submission.id}`,
     );
     this.logger.log(
       `Published submission.notification.create event for submission ${submission.id}`,
@@ -3447,6 +3579,9 @@ export class SubmissionService {
           type: body.type as SubmissionType,
           virusScan: false,
           eventRaised: false,
+          confirmationEmail: {
+            create: {},
+          },
         },
       });
       this.logger.log(`Submission created with ID: ${data.id}`);

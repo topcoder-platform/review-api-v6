@@ -14,6 +14,8 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  Redirect,
+  Header,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -403,33 +405,89 @@ export class SubmissionController {
   @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
   @Scopes(Scope.ReadSubmission)
   @ApiOperation({
-    summary: 'Download the submission',
+    summary: 'Get a temporary redirect for downloading the submission',
     description:
-      'Roles: Copilot, Admin, User, Reviewer. After challenge completion, the exact metadata value allowAllRegistrantsToDownloadWinningSubmissions=true lets every registered Submitter download only an exact final winning submission and denies non-winners without legacy fallback. Other values retain legacy passing or First2Finish eligibility. Design challenges also require submissionsViewable. | Scopes: read:submission',
+      'Roles: Copilot, Admin, User, Reviewer. After challenge completion, the exact metadata value allowAllRegistrantsToDownloadWinningSubmissions=true lets every registered Submitter download only an exact final winning submission and denies non-winners without legacy fallback. Other values require passing-submission eligibility, except non-Design First2Finish challenges retain legacy submitter eligibility. Browser XHR/fetch clients should use /submissions/{submissionId}/download-url to avoid a cross-origin redirect. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
     description: 'The ID of the submission',
   })
   @ApiResponse({
-    status: 200,
-    description: 'Submission file',
-    schema: {
-      type: 'string', // Indicate binary data
-      format: 'binary', // Use binary format
+    status: HttpStatus.FOUND,
+    description:
+      'Redirects to a short-lived signed URL for the clean submission file.',
+    headers: {
+      Location: {
+        description: 'Short-lived signed S3 download URL.',
+        schema: { type: 'string', format: 'uri' },
+      },
     },
   })
+  @Header('Cache-Control', 'private, no-store')
+  @Redirect('', HttpStatus.FOUND)
   async downloadSubmission(
     @Req() req: Request,
     @Param('submissionId') submissionId: string,
-  ): Promise<StreamableFile> {
+  ): Promise<{ url: string; statusCode: HttpStatus }> {
     const authUser: JwtUser = req['user'] as JwtUser;
-    const { stream, contentType, fileName } =
-      await this.service.getSubmissionFileStream(authUser, submissionId);
-    return new StreamableFile(stream, {
-      type: contentType || 'application/zip',
-      disposition: `attachment; filename="${fileName}"`,
-    });
+    const url = await this.service.getSubmissionDownloadUrl(
+      authUser,
+      submissionId,
+    );
+    return { url, statusCode: HttpStatus.FOUND };
+  }
+
+  /**
+   * Issues a short-lived signed submission download URL as JSON without an
+   * HTTP redirect. Browser clients use this endpoint before making a separate
+   * request to clean submission storage.
+   *
+   * @param req - Request containing the authenticated user or machine token.
+   * @param submissionId - ID of the submission to download.
+   * @returns An object containing the authorized short-lived download URL.
+   * @throws ForbiddenException when the requester cannot download the submission.
+   * @throws NotFoundException when the submission or clean object is unavailable.
+   * @throws InternalServerErrorException when URL signing cannot be completed.
+   */
+  @Get('/:submissionId/download-url')
+  @Roles(UserRole.Copilot, UserRole.Admin, UserRole.User, UserRole.Reviewer)
+  @Scopes(Scope.ReadSubmission)
+  @ApiOperation({
+    summary: 'Get a temporary URL for downloading the submission',
+    description:
+      'Roles: Copilot, Admin, User, Reviewer. Returns a short-lived clean-storage URL as JSON so browser clients can start a separate download without following a cross-origin API redirect. The same submission download authorization rules apply as for /submissions/{submissionId}/download. | Scopes: read:submission',
+  })
+  @ApiParam({
+    name: 'submissionId',
+    description: 'The ID of the submission',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Short-lived signed URL for the clean submission file.',
+    schema: {
+      type: 'object',
+      required: ['url'],
+      properties: {
+        url: {
+          type: 'string',
+          format: 'uri',
+          description: 'Short-lived signed S3 download URL.',
+        },
+      },
+    },
+  })
+  @Header('Cache-Control', 'private, no-store')
+  async getSubmissionDownloadUrl(
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
+  ): Promise<{ url: string }> {
+    const authUser: JwtUser = req['user'] as JwtUser;
+    const url = await this.service.getSubmissionDownloadUrl(
+      authUser,
+      submissionId,
+    );
+    return { url };
   }
 
   @Get('/:submissionId/access-audit')

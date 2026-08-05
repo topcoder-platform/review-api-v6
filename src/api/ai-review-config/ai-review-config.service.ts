@@ -84,6 +84,7 @@ type AiReviewConfigRecord = {
   minPassingThreshold: Prisma.Decimal | number | string | null;
   mode: PrismaAiReviewMode;
   autoFinalize: boolean;
+  instantReview: boolean;
   formula: Prisma.JsonValue | null;
   templateId: string | null;
   createdAt: Date;
@@ -137,6 +138,7 @@ export class AiReviewConfigService {
           : 0,
       mode: this.mapModeToResponse(config.mode),
       autoFinalize: config.autoFinalize,
+      instantReview: config.instantReview,
       formula,
       templateId: config.templateId,
       createdAt: config.createdAt,
@@ -393,6 +395,7 @@ export class AiReviewConfigService {
       minPassingThreshold: number;
       mode: PrismaAiReviewMode;
       autoFinalize: boolean;
+      instantReview: boolean;
       formula?: Prisma.InputJsonValue;
       templateId?: string;
       workflows: CreateAiReviewConfigDto['workflows'];
@@ -401,6 +404,7 @@ export class AiReviewConfigService {
       minPassingThreshold: dto.minPassingThreshold,
       mode: dto.mode as PrismaAiReviewMode,
       autoFinalize: dto.autoFinalize,
+      instantReview: dto.instantReview ?? false,
       formula:
         dto.formula != null
           ? (dto.formula as Prisma.InputJsonValue)
@@ -439,6 +443,7 @@ export class AiReviewConfigService {
             ? (dto.formula as Prisma.InputJsonValue)
             : (template.formula as Prisma.InputJsonValue | undefined),
         templateId: template.id,
+        instantReview: dto.instantReview ?? false,
         workflows: dto.workflows.length
           ? dto.workflows
           : template.workflows.map((w) => ({
@@ -467,6 +472,7 @@ export class AiReviewConfigService {
           minPassingThreshold: configData.minPassingThreshold,
           mode: configData.mode,
           autoFinalize: configData.autoFinalize,
+          instantReview: configData.instantReview,
           formula: configData.formula,
           templateId: configData.templateId,
         },
@@ -553,6 +559,8 @@ export class AiReviewConfigService {
       configData.mode = rest.mode as PrismaAiReviewMode;
     if (rest.autoFinalize !== undefined)
       configData.autoFinalize = rest.autoFinalize;
+    if (rest.instantReview !== undefined)
+      configData.instantReview = rest.instantReview;
     if (rest.formula !== undefined)
       configData.formula = rest.formula as Prisma.InputJsonValue;
 
