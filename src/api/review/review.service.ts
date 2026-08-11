@@ -38,6 +38,10 @@ import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
+import {
+  isSubmissionRankEligible,
+  resolveReviewSubmissionRankLimit,
+} from 'src/shared/utils/submission-limit.util';
 
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {
@@ -1126,11 +1130,12 @@ export class ReviewService {
         id: string;
         challengeId: string | null;
         memberId: string | null;
-        isLatest: boolean | null;
+        type: SubmissionType;
+        submissionRank: bigint | number | null;
       } | null = null;
       let challengeId: string | undefined;
       let submissionMemberId: string | null = null;
-      let submissionIsLatest = false;
+      let submissionRank: number | null = null;
 
       if (normalizedSubmissionId) {
         const submissions = await this.prisma.$queryRaw<
@@ -1138,11 +1143,12 @@ export class ReviewService {
             id: string;
             challengeId: string | null;
             memberId: string | null;
-            isLatest: boolean | null;
+            type: SubmissionType;
+            submissionRank: bigint | number | null;
           }>
         >(Prisma.sql`
           WITH target AS (
-            SELECT s."challengeId"
+            SELECT s."challengeId", s."type"
             FROM "submission" s
             WHERE s."id" = ${normalizedSubmissionId}
           )
@@ -1150,27 +1156,30 @@ export class ReviewService {
             ranked."id",
             ranked."challengeId",
             ranked."memberId",
-            ranked."isLatest"
+            ranked."type",
+            ranked."submissionRank"
           FROM (
             SELECT
               s."id",
               s."challengeId",
               s."memberId",
-              CASE
-                WHEN ROW_NUMBER() OVER (
-                  PARTITION BY COALESCE(s."memberId", s."id")
-                  ORDER BY
-                    s."submittedDate" DESC NULLS LAST,
-                    s."createdAt" DESC NULLS LAST,
-                    s."updatedAt" DESC NULLS LAST,
-                    s."id" DESC
-                ) = 1 THEN TRUE
-                ELSE FALSE
-              END AS "isLatest"
+              s."type",
+              ROW_NUMBER() OVER (
+                PARTITION BY COALESCE(s."memberId", s."id"), s."type"
+                ORDER BY
+                  s."submittedDate" DESC NULLS LAST,
+                  s."createdAt" DESC NULLS LAST,
+                  s."updatedAt" DESC NULLS LAST,
+                  s."id" DESC
+              ) AS "submissionRank"
             FROM "submission" s
             WHERE s."challengeId" IS NOT DISTINCT FROM (
               SELECT target."challengeId" FROM target
             )
+              AND s."type" IS NOT DISTINCT FROM (
+                SELECT target."type" FROM target
+              )
+              AND (s."status" IS NULL OR s."status" <> 'DELETED')
           ) ranked
           WHERE ranked."id" = ${normalizedSubmissionId}
         `);
@@ -1196,7 +1205,10 @@ export class ReviewService {
         submissionMemberId = submission.memberId
           ? String(submission.memberId)
           : null;
-        submissionIsLatest = Boolean(submission.isLatest);
+        const numericSubmissionRank = Number(submission.submissionRank);
+        submissionRank = Number.isInteger(numericSubmissionRank)
+          ? numericSubmissionRank
+          : null;
       }
 
       const reviewType = await this.prisma.reviewType.findUnique({
@@ -1452,23 +1464,49 @@ export class ReviewService {
 
       if (
         submission &&
-        this.shouldEnforceLatestSubmissionForReview(
+        submissionMemberId &&
+        !this.isSubmissionRankEligibleForReview(
           reviewType.name,
           challenge,
-        ) &&
-        submissionMemberId &&
-        !submissionIsLatest
+          submissionRank,
+        )
       ) {
+        const submissionLimit = resolveReviewSubmissionRankLimit(challenge);
         throw new BadRequestException({
           message:
-            'Reviews can only be created for the most recent submission per member when the challenge does not allow unlimited submissions.',
+            submissionLimit === 1
+              ? 'Reviews can only be created for the most recent submission per member for this challenge.'
+              : `Reviews can only be created for the latest ${submissionLimit} submissions per member for this challenge.`,
           code: 'SUBMISSION_NOT_LATEST',
           details: {
             submissionId: body.submissionId,
             challengeId,
             memberId: submissionMemberId,
             reviewType: reviewType.name,
-            isLatest: submissionIsLatest,
+            submissionRank,
+            submissionLimit,
+          },
+        });
+      }
+
+      const hasScreeningPhase = (challenge?.phases ?? []).some(
+        (phase) => this.normalizePhaseName(phase?.name) === 'screening',
+      );
+      if (
+        submission &&
+        this.normalizePhaseName(reviewTypeName) === 'review' &&
+        hasScreeningPhase &&
+        !(await this.hasPassedScreeningReview(submission.id))
+      ) {
+        throw new BadRequestException({
+          message:
+            'A submission must pass Screening before a Review can be created.',
+          code: 'SUBMISSION_SCREENING_NOT_PASSED',
+          details: {
+            submissionId: submission.id,
+            challengeId,
+            reviewType: reviewTypeName,
+            requiredScorecardType: ScorecardType.SCREENING,
           },
         });
       }
@@ -4691,28 +4729,67 @@ export class ReviewService {
       : null;
   }
 
-  private shouldEnforceLatestSubmissionForReview(
+  /**
+   * Checks a submission's newest-first member rank before review creation.
+   *
+   * @param reviewTypeName - Review type being created.
+   * @param challenge - Challenge track and submission-limit metadata.
+   * @param submissionRank - One-based rank within the member and submission type.
+   * @returns True for non-screening review types or an eligible ranked submission.
+   * @throws Never.
+   */
+  private isSubmissionRankEligibleForReview(
     reviewTypeName: string | null | undefined,
     challenge: ChallengeData | null | undefined,
+    submissionRank: number | null,
   ): boolean {
     if (!this.isScreeningOrReviewType(reviewTypeName)) {
-      return false;
-    }
-
-    if (!challenge) {
       return true;
     }
 
-    const submissionLimit = (
-      challenge.metadata as Record<string, unknown> | undefined
-    )?.['submissionLimit'];
+    return isSubmissionRankEligible(
+      submissionRank,
+      resolveReviewSubmissionRankLimit(challenge),
+    );
+  }
 
-    const unlimited = this.extractSubmissionLimitUnlimited(submissionLimit);
-    if (unlimited === true) {
-      return false;
-    }
+  /**
+   * Checks whether a completed Screening review meets its scorecard threshold.
+   *
+   * The review and scorecard join avoids depending on member-review challenge
+   * configuration because screening can be managed by Autopilot. Legacy passed
+   * or approved review statuses remain accepted.
+   *
+   * @param submissionId - Submission advancing to the standard Review phase.
+   * @returns True when the submission has a passing Screening result.
+   * @throws Error when the review database query fails.
+   */
+  private async hasPassedScreeningReview(
+    submissionId: string,
+  ): Promise<boolean> {
+    const rows = await this.prisma.$queryRaw<Array<{ passed: boolean }>>(
+      Prisma.sql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM "review" r
+          INNER JOIN "scorecard" sc ON sc."id" = r."scorecardId"
+          WHERE r."submissionId" = ${submissionId}
+            AND sc."type" = ${ScorecardType.SCREENING}
+            AND (
+              (
+                UPPER((r."status")::text) = 'COMPLETED'
+                AND GREATEST(
+                  COALESCE(r."finalScore", 0),
+                  COALESCE(r."initialScore", 0)
+                ) >= COALESCE(sc."minimumPassingScore", sc."minScore", 50)
+              )
+              OR UPPER((r."status")::text) IN ('PASSED', 'APPROVED')
+            )
+        ) AS "passed"
+      `,
+    );
 
-    return this.challengeHasSubmissionLimit(challenge);
+    return rows[0]?.passed === true;
   }
 
   private isScreeningOrReviewType(
@@ -4739,200 +4816,6 @@ export class ReviewService {
     }
 
     return false;
-  }
-
-  private challengeHasSubmissionLimit(
-    challenge: ChallengeData | null | undefined,
-  ): boolean {
-    if (!challenge?.metadata) {
-      return true;
-    }
-
-    const rawValue = challenge.metadata['submissionLimit'];
-    if (rawValue == null) {
-      return true;
-    }
-
-    let parsed: unknown = rawValue;
-
-    if (typeof rawValue === 'string') {
-      const trimmed = rawValue.trim();
-      if (!trimmed) {
-        return true;
-      }
-
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        const numeric = Number(trimmed);
-        if (Number.isFinite(numeric) && numeric > 0) {
-          return true;
-        }
-        const normalized = trimmed.toLowerCase();
-        if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
-          return false;
-        }
-        return true;
-      }
-    }
-
-    if (typeof parsed === 'number') {
-      return Number.isFinite(parsed) && parsed > 0;
-    }
-
-    if (typeof parsed === 'string') {
-      const numeric = Number(parsed);
-      if (Number.isFinite(numeric) && numeric > 0) {
-        return true;
-      }
-      const normalized = parsed.trim().toLowerCase();
-      if (['unlimited', 'false', '0', 'no', 'none'].includes(normalized)) {
-        return false;
-      }
-      return true;
-    }
-
-    if (parsed && typeof parsed === 'object') {
-      const unlimited = this.parseBooleanFlag((parsed as any).unlimited);
-      if (unlimited === true) {
-        return false;
-      }
-
-      const candidates = [
-        (parsed as any).count,
-        (parsed as any).max,
-        (parsed as any).maximum,
-        (parsed as any).limitCount,
-        (parsed as any).value,
-      ];
-
-      for (const candidate of candidates) {
-        if (candidate === undefined || candidate === null) {
-          continue;
-        }
-        const numeric = Number(candidate);
-        if (Number.isFinite(numeric) && numeric > 0) {
-          return true;
-        }
-      }
-
-      const limitFlag = this.parseBooleanFlag((parsed as any).limit);
-      if (limitFlag === true) {
-        return true;
-      }
-      if (limitFlag === false) {
-        return false;
-      }
-      return true;
-    }
-
-    return true;
-  }
-
-  private extractSubmissionLimitUnlimited(value: unknown): boolean | null {
-    if (value == null) {
-      return null;
-    }
-
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        return null;
-      }
-
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return this.coerceLooseBoolean(
-            (parsed as Record<string, unknown>).unlimited,
-          );
-        }
-        return this.coerceLooseBoolean(parsed);
-      } catch {
-        return this.coerceLooseBoolean(trimmed);
-      }
-    }
-
-    if (typeof value === 'object' && !Array.isArray(value)) {
-      return this.coerceLooseBoolean(
-        (value as Record<string, unknown>).unlimited,
-      );
-    }
-
-    return this.coerceLooseBoolean(value);
-  }
-
-  private coerceLooseBoolean(value: unknown): boolean | null {
-    if (value == null) {
-      return null;
-    }
-
-    if (value === true || value === false) {
-      return value;
-    }
-
-    if (value instanceof Boolean) {
-      return value.valueOf();
-    }
-
-    if (value instanceof Number) {
-      return this.coerceLooseBoolean(value.valueOf());
-    }
-
-    let candidate: string;
-
-    if (typeof value === 'string') {
-      candidate = value;
-    } else if (value instanceof String) {
-      candidate = value.valueOf();
-    } else if (typeof value === 'number') {
-      if (!Number.isFinite(value)) {
-        return null;
-      }
-      candidate = value.toString();
-    } else if (typeof value === 'bigint') {
-      candidate = value.toString();
-    } else {
-      return null;
-    }
-
-    const normalized = candidate.trim().toLowerCase();
-    if (!normalized) {
-      return null;
-    }
-    if (normalized === 'true') {
-      return true;
-    }
-    if (normalized === 'false') {
-      return false;
-    }
-    return null;
-  }
-
-  private parseBooleanFlag(value: unknown): boolean | null {
-    if (typeof value === 'boolean') {
-      return value;
-    }
-    if (typeof value === 'string') {
-      const normalized = value.trim().toLowerCase();
-      if (['true', 'yes', '1'].includes(normalized)) {
-        return true;
-      }
-      if (['false', 'no', '0'].includes(normalized)) {
-        return false;
-      }
-      return null;
-    }
-    if (typeof value === 'number') {
-      if (value === 1) {
-        return true;
-      }
-      if (value === 0) {
-        return false;
-      }
-      return null;
-    }
-    return null;
   }
 
   async deleteReview(authUser: JwtUser | undefined, reviewId: string) {
