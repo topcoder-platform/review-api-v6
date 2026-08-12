@@ -394,9 +394,9 @@ describe('SubmissionService', () => {
           virusScan: true,
         }),
       });
-      expect(
-        prisma.submission.create.mock.calls[0][0].data,
-      ).not.toHaveProperty('confirmationEmail');
+      expect(prisma.submission.create.mock.calls[0][0].data).not.toHaveProperty(
+        'confirmationEmail',
+      );
     });
 
     it('rejects validation upload requests without file contents', async () => {
@@ -4035,6 +4035,300 @@ describe('SubmissionService', () => {
     });
   });
 
+  describe('createSubmission finite Design limits', () => {
+    let transactionClient: {
+      $executeRaw: jest.Mock;
+      submission: {
+        count: jest.Mock;
+        create: jest.Mock;
+      };
+    };
+    let prismaMock: {
+      $transaction: jest.Mock;
+      submission: {
+        create: jest.Mock;
+      };
+    };
+    let createService: SubmissionService;
+
+    const limitedDesignChallenge = {
+      id: 'challenge-limited-design',
+      legacy: {},
+      metadata: {
+        submissionLimit: JSON.stringify({
+          count: '2',
+          limit: 'true',
+          unlimited: 'false',
+        }),
+      },
+      status: ChallengeStatus.ACTIVE,
+      track: 'Design',
+      type: 'Challenge',
+    };
+    const submissionBody = {
+      challengeId: 'challenge-limited-design',
+      memberId: '1001',
+      type: SubmissionType.CONTEST_SUBMISSION,
+      url: 'https://example.com/submission.zip',
+    };
+    const submissionData = {
+      ...submissionBody,
+      isFileSubmission: true,
+      status: SubmissionStatus.ACTIVE,
+      virusScan: false,
+    };
+
+    beforeEach(() => {
+      transactionClient = {
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        submission: {
+          count: jest.fn().mockResolvedValue(1),
+          create: jest.fn().mockResolvedValue({ id: 'created-submission' }),
+        },
+      };
+      prismaMock = {
+        $transaction: jest.fn((callback) => callback(transactionClient)),
+        submission: {
+          create: jest.fn().mockResolvedValue({ id: 'uncapped-submission' }),
+        },
+      };
+      createService = new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+    });
+
+    it('locks, counts, and creates in one transaction while below the limit', async () => {
+      await expect(
+        (createService as any).createSubmissionWithLimit(
+          limitedDesignChallenge,
+          submissionBody,
+          submissionData,
+        ),
+      ).resolves.toEqual({ id: 'created-submission' });
+
+      expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+      expect(transactionClient.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(transactionClient.submission.count).toHaveBeenCalledWith({
+        where: {
+          challengeId: submissionBody.challengeId,
+          memberId: submissionBody.memberId,
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: { not: SubmissionStatus.DELETED },
+        },
+      });
+      expect(transactionClient.submission.create).toHaveBeenCalledWith({
+        data: submissionData,
+      });
+      expect(prismaMock.submission.create).not.toHaveBeenCalled();
+      expect(
+        transactionClient.$executeRaw.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        transactionClient.submission.count.mock.invocationCallOrder[0],
+      );
+      expect(
+        transactionClient.submission.count.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        transactionClient.submission.create.mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each(['count', 'max', 'maximum', 'limitCount', 'value'])(
+      'atomically enforces the legacy finite %s alias',
+      async (countField) => {
+        const challenge = {
+          ...limitedDesignChallenge,
+          metadata: {
+            submissionLimit: JSON.stringify({
+              [countField]: '2',
+              limit: 'yes',
+              unlimited: 'no',
+            }),
+          },
+        };
+
+        await expect(
+          (createService as any).createSubmissionWithLimit(
+            challenge,
+            submissionBody,
+            submissionData,
+          ),
+        ).resolves.toEqual({ id: 'created-submission' });
+
+        expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+        expect(transactionClient.$executeRaw).toHaveBeenCalledTimes(1);
+        expect(transactionClient.submission.count).toHaveBeenCalledTimes(1);
+        expect(transactionClient.submission.create).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('rejects atomically when the finite limit is already reached', async () => {
+      transactionClient.submission.count.mockResolvedValue(2);
+
+      await expect(
+        (createService as any).createSubmissionWithLimit(
+          limitedDesignChallenge,
+          submissionBody,
+          submissionData,
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'SUBMISSION_LIMIT_REACHED',
+          details: expect.objectContaining({
+            submissionLimit: 2,
+            existingSubmissionCount: 2,
+          }),
+        }),
+      });
+
+      expect(transactionClient.submission.create).not.toHaveBeenCalled();
+    });
+
+    it('counts checkpoint and contest submissions independently', async () => {
+      const checkpointBody = {
+        ...submissionBody,
+        type: SubmissionType.CHECKPOINT_SUBMISSION,
+      };
+
+      await (createService as any).createSubmissionWithLimit(
+        limitedDesignChallenge,
+        checkpointBody,
+        { ...submissionData, type: SubmissionType.CHECKPOINT_SUBMISSION },
+      );
+
+      expect(transactionClient.submission.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          challengeId: submissionBody.challengeId,
+          memberId: submissionBody.memberId,
+          type: SubmissionType.CHECKPOINT_SUBMISSION,
+        }),
+      });
+      const advisoryLock = transactionClient.$executeRaw.mock.calls[0][0] as {
+        strings: string[];
+        values: unknown[];
+      };
+      expect(advisoryLock.strings.join(' ')).toContain('pg_advisory_xact_lock');
+      expect(advisoryLock.values).toContain(
+        `design-submission-limit:${submissionBody.challengeId}:${submissionBody.memberId}:${SubmissionType.CHECKPOINT_SUBMISSION}`,
+      );
+    });
+
+    it.each([
+      {
+        description: 'missing Design metadata',
+        challenge: { ...limitedDesignChallenge, metadata: undefined },
+      },
+      {
+        description: 'malformed Design metadata',
+        challenge: {
+          ...limitedDesignChallenge,
+          metadata: { submissionLimit: '{invalid' },
+        },
+      },
+      {
+        description: 'contradictory Design metadata',
+        challenge: {
+          ...limitedDesignChallenge,
+          metadata: {
+            submissionLimit: JSON.stringify({
+              max: '2',
+              limit: 'yes',
+              unlimited: 1,
+            }),
+          },
+        },
+      },
+      {
+        description: 'explicitly unlimited Design metadata',
+        challenge: {
+          ...limitedDesignChallenge,
+          metadata: {
+            submissionLimit: JSON.stringify({
+              max: '2',
+              limit: 'no',
+              unlimited: 'yes',
+            }),
+          },
+        },
+      },
+      {
+        description: 'non-Design challenge',
+        challenge: { ...limitedDesignChallenge, track: 'Development' },
+      },
+    ])('leaves creation uncapped for $description', async ({ challenge }) => {
+      await expect(
+        (createService as any).createSubmissionWithLimit(
+          challenge,
+          submissionBody,
+          submissionData,
+        ),
+      ).resolves.toEqual({ id: 'uncapped-submission' });
+
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: submissionData,
+      });
+    });
+
+    it('serializes competing requests for the final available slot', async () => {
+      let storedSubmissionCount = 1;
+      let lockTail = Promise.resolve();
+      prismaMock.$transaction.mockImplementation(async (callback) => {
+        const previousLock = lockTail;
+        let releaseLock: () => void = () => undefined;
+        lockTail = new Promise<void>((resolve) => {
+          releaseLock = resolve;
+        });
+        await previousLock;
+
+        const serializedClient = {
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          submission: {
+            count: jest.fn().mockImplementation(() => storedSubmissionCount),
+            create: jest.fn().mockImplementation(() => {
+              storedSubmissionCount += 1;
+              return { id: `submission-${storedSubmissionCount}` };
+            }),
+          },
+        };
+
+        try {
+          return await callback(serializedClient);
+        } finally {
+          releaseLock();
+        }
+      });
+
+      const results = await Promise.allSettled([
+        (createService as any).createSubmissionWithLimit(
+          limitedDesignChallenge,
+          submissionBody,
+          submissionData,
+        ),
+        (createService as any).createSubmissionWithLimit(
+          limitedDesignChallenge,
+          submissionBody,
+          submissionData,
+        ),
+      ]);
+
+      expect(
+        results.filter((result) => result.status === 'fulfilled'),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === 'rejected'),
+      ).toHaveLength(1);
+      expect(storedSubmissionCount).toBe(2);
+    });
+  });
+
   describe('ensurePendingReviewsForSubmission', () => {
     it('creates pending reviews for open phases using challenge reviewer configuration', async () => {
       const prismaMock = {
@@ -4143,6 +4437,353 @@ describe('SubmissionService', () => {
         }),
       );
     });
+
+    it.each([
+      {
+        phaseName: 'Screening',
+        reviewTypeName: 'Screening',
+        scorecardType: ScorecardType.SCREENING,
+        submissionType: SubmissionType.CONTEST_SUBMISSION,
+      },
+      {
+        phaseName: 'Checkpoint Screening',
+        reviewTypeName: 'Checkpoint Screening',
+        scorecardType: ScorecardType.CHECKPOINT_SCREENING,
+        submissionType: SubmissionType.CHECKPOINT_SUBMISSION,
+      },
+    ])(
+      'creates $phaseName reviews for a Design submission within latest X',
+      async ({ phaseName, reviewTypeName, scorecardType, submissionType }) => {
+        const prismaMock = {
+          submission: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'submission-ranked',
+              challengeId: 'challenge-ranked',
+              memberId: 'member-ranked',
+              type: submissionType,
+              virusScan: true,
+            }),
+          },
+          scorecard: {
+            findMany: jest
+              .fn()
+              .mockResolvedValue([
+                { id: 'scorecard-ranked', type: scorecardType },
+              ]),
+          },
+          reviewType: {
+            findMany: jest
+              .fn()
+              .mockResolvedValue([
+                { id: 'review-type-ranked', name: reviewTypeName },
+              ]),
+          },
+          review: {
+            createMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
+          aiReviewConfig: {
+            findFirst: jest.fn().mockResolvedValue(null),
+          },
+          $queryRaw: jest
+            .fn()
+            .mockResolvedValue([{ submissionRank: BigInt(2) }]),
+        };
+        const challengePrismaMock = {
+          $queryRaw: jest.fn().mockResolvedValue([
+            {
+              scorecardId: 'scorecard-ranked',
+              templatePhaseId: 'phase-template-ranked',
+              challengePhaseId: 'challenge-phase-ranked',
+              phaseName,
+            },
+          ]),
+        };
+        const challengeApiServiceMock = {
+          getChallengeDetail: jest.fn().mockResolvedValue({
+            id: 'challenge-ranked',
+            track: 'Design',
+            metadata: {
+              submissionLimit: JSON.stringify({
+                count: '2',
+                limit: 'true',
+                unlimited: 'false',
+              }),
+            },
+            phases: [
+              {
+                id: 'challenge-phase-ranked',
+                name: phaseName,
+                isOpen: true,
+              },
+            ],
+          }),
+        };
+        const resourceApiServiceMock = {
+          getResources: jest.fn().mockResolvedValue([
+            {
+              id: 'resource-ranked',
+              challengeId: 'challenge-ranked',
+              memberId: 'reviewer-ranked',
+              memberHandle: 'reviewerRanked',
+              roleId: 'role-ranked',
+              phaseId: 'challenge-phase-ranked',
+              createdBy: 'system',
+              created: new Date().toISOString(),
+            },
+          ]),
+          getResourceRoles: jest.fn().mockResolvedValue({
+            'role-ranked': { id: 'role-ranked', name: reviewTypeName },
+          }),
+        };
+        const pendingReviewService = new SubmissionService(
+          prismaMock as any,
+          {} as any,
+          challengePrismaMock as any,
+          challengeApiServiceMock as any,
+          resourceApiServiceMock as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+        );
+
+        await expect(
+          pendingReviewService.ensurePendingReviewsForSubmission(
+            'submission-ranked',
+            { triggerSource: 'unit-test' },
+          ),
+        ).resolves.toBe(1);
+
+        const rankQuery = prismaMock.$queryRaw.mock.calls[0][0] as {
+          strings: string[];
+          values: unknown[];
+        };
+        expect(rankQuery.strings.join(' ')).toContain(
+          'PARTITION BY COALESCE(s."memberId", s."id"), s."type"',
+        );
+        expect(rankQuery.strings.join(' ')).toContain(
+          's."status" IS NULL OR s."status" <> \'DELETED\'',
+        );
+        expect(rankQuery.values).toContain(submissionType);
+        expect(prismaMock.review.createMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.arrayContaining([
+              expect.objectContaining({ submissionId: 'submission-ranked' }),
+            ]),
+          }),
+        );
+      },
+    );
+
+    it('skips a Design screening submission outside latest X', async () => {
+      const prismaMock = {
+        submission: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'submission-too-old',
+            challengeId: 'challenge-ranked',
+            memberId: 'member-ranked',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            virusScan: true,
+          }),
+        },
+        scorecard: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: 'scorecard-screening', type: ScorecardType.SCREENING },
+            ]),
+        },
+        reviewType: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: 'type-screening', name: 'Screening' }]),
+        },
+        review: { createMany: jest.fn() },
+        aiReviewConfig: {
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        $queryRaw: jest.fn().mockResolvedValue([{ submissionRank: BigInt(3) }]),
+      };
+      const pendingReviewService = new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        {
+          $queryRaw: jest.fn().mockResolvedValue([
+            {
+              scorecardId: 'scorecard-screening',
+              templatePhaseId: 'template-screening',
+              challengePhaseId: 'phase-screening',
+              phaseName: 'Screening',
+            },
+          ]),
+        } as any,
+        {
+          getChallengeDetail: jest.fn().mockResolvedValue({
+            id: 'challenge-ranked',
+            track: 'Design',
+            metadata: {
+              submissionLimit: JSON.stringify({
+                count: '2',
+                limit: 'true',
+                unlimited: 'false',
+              }),
+            },
+            phases: [
+              { id: 'phase-screening', name: 'Screening', isOpen: true },
+            ],
+          }),
+        } as any,
+        {
+          getResources: jest.fn().mockResolvedValue([]),
+          getResourceRoles: jest.fn().mockResolvedValue({}),
+        } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await expect(
+        pendingReviewService.ensurePendingReviewsForSubmission(
+          'submission-too-old',
+          { triggerSource: 'unit-test' },
+        ),
+      ).resolves.toBe(0);
+      expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        phaseName: 'Review',
+        precedingPhaseName: 'Screening',
+        scorecardType: ScorecardType.REVIEW,
+        screeningScorecardType: ScorecardType.SCREENING,
+        submissionType: SubmissionType.CONTEST_SUBMISSION,
+      },
+      {
+        phaseName: 'Checkpoint Review',
+        precedingPhaseName: 'Checkpoint Screening',
+        scorecardType: ScorecardType.CHECKPOINT_REVIEW,
+        screeningScorecardType: ScorecardType.CHECKPOINT_SCREENING,
+        submissionType: SubmissionType.CHECKPOINT_SUBMISSION,
+      },
+    ])(
+      'requires a passing $precedingPhaseName before $phaseName creation',
+      async ({
+        phaseName,
+        precedingPhaseName,
+        scorecardType,
+        screeningScorecardType,
+        submissionType,
+      }) => {
+        const prismaMock = {
+          submission: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'submission-screened',
+              challengeId: 'challenge-screened',
+              memberId: null,
+              type: submissionType,
+              virusScan: true,
+            }),
+          },
+          scorecard: {
+            findMany: jest
+              .fn()
+              .mockResolvedValue([
+                { id: 'scorecard-review', type: scorecardType },
+              ]),
+          },
+          reviewType: {
+            findMany: jest
+              .fn()
+              .mockResolvedValue([{ id: 'review-type', name: phaseName }]),
+          },
+          review: {
+            createMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
+          aiReviewConfig: {
+            findFirst: jest.fn().mockResolvedValue(null),
+          },
+          $queryRaw: jest.fn().mockResolvedValue([{ passed: true }]),
+        };
+        const challengePrismaMock = {
+          $queryRaw: jest.fn().mockResolvedValue([
+            {
+              scorecardId: 'scorecard-review',
+              templatePhaseId: 'template-review',
+              challengePhaseId: 'phase-review',
+              phaseName,
+            },
+          ]),
+        };
+        const challengeApiServiceMock = {
+          getChallengeDetail: jest.fn().mockResolvedValue({
+            id: 'challenge-screened',
+            track: 'Design',
+            phases: [
+              {
+                id: 'phase-screening',
+                name: precedingPhaseName,
+                isOpen: false,
+              },
+              { id: 'phase-review', name: phaseName, isOpen: true },
+            ],
+          }),
+        };
+        const resourceApiServiceMock = {
+          getResources: jest.fn().mockResolvedValue([
+            {
+              id: 'resource-review',
+              challengeId: 'challenge-screened',
+              memberId: 'reviewer',
+              memberHandle: 'reviewer',
+              roleId: 'role-review',
+              phaseId: 'phase-review',
+              createdBy: 'system',
+              created: new Date().toISOString(),
+            },
+          ]),
+          getResourceRoles: jest.fn().mockResolvedValue({
+            'role-review': { id: 'role-review', name: phaseName },
+          }),
+        };
+        const pendingReviewService = new SubmissionService(
+          prismaMock as any,
+          {} as any,
+          challengePrismaMock as any,
+          challengeApiServiceMock as any,
+          resourceApiServiceMock as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+        );
+
+        await expect(
+          pendingReviewService.ensurePendingReviewsForSubmission(
+            'submission-screened',
+            { triggerSource: 'unit-test' },
+          ),
+        ).resolves.toBe(1);
+
+        const passingQuery = prismaMock.$queryRaw.mock.calls[0][0] as {
+          strings: string[];
+          values: unknown[];
+        };
+        expect(passingQuery.strings.join(' ')).toContain('sc."type" =');
+        expect(passingQuery.values).toContain(screeningScorecardType);
+
+        prismaMock.review.createMany.mockClear();
+        prismaMock.$queryRaw.mockResolvedValue([{ passed: false }]);
+        await expect(
+          pendingReviewService.ensurePendingReviewsForSubmission(
+            'submission-screened',
+            { triggerSource: 'unit-test' },
+          ),
+        ).resolves.toBe(0);
+        expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+      },
+    );
 
     it('skips approval pending creation because autopilot owns winner selection', async () => {
       const prismaMock = {

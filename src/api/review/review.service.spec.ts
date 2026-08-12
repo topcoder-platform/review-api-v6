@@ -9,6 +9,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { ScorecardType, SubmissionType } from '@prisma/client';
 
 describe('ReviewService.createReview authorization checks', () => {
   const prismaMock = {
@@ -163,7 +164,8 @@ describe('ReviewService.createReview authorization checks', () => {
         id: 'submission-1',
         challengeId: 'challenge-1',
         memberId: null,
-        isLatest: true,
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(1),
       },
     ]);
     prismaMock.reviewType.findUnique.mockResolvedValue({
@@ -212,7 +214,8 @@ describe('ReviewService.createReview authorization checks', () => {
         id: 'submission-older',
         challengeId: 'challenge-1',
         memberId: 'member-1',
-        isLatest: false,
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(2),
       },
     ]);
 
@@ -231,7 +234,8 @@ describe('ReviewService.createReview authorization checks', () => {
         id: submissionId,
         challengeId: 'challenge-1',
         memberId: 'member-1',
-        isLatest: true,
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(1),
       },
     ]);
 
@@ -255,6 +259,216 @@ describe('ReviewService.createReview authorization checks', () => {
     } finally {
       computeSpy.mockRestore();
     }
+  });
+
+  it('allows a standard Review after the submission passes Screening', async () => {
+    const submissionId = 'submission-screening-passed';
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([
+        {
+          id: submissionId,
+          challengeId: 'challenge-1',
+          memberId: 'member-1',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          submissionRank: BigInt(1),
+        },
+      ])
+      .mockResolvedValueOnce([{ passed: true }]);
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      phases: [
+        { id: 'phase-screening', name: 'Screening', isOpen: false },
+        ...baseChallengeDetail.phases,
+      ],
+    });
+
+    const request = buildReviewRequest({ submissionId });
+    const reviewCreateResult = buildReviewModel(request);
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue(reviewCreateResult);
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await expect(
+        service.createReview(baseAuthUser, request),
+      ).resolves.toMatchObject({ submissionId });
+    } finally {
+      computeSpy.mockRestore();
+    }
+
+    const screeningQuery = prismaMock.$queryRaw.mock.calls[1][0] as {
+      strings: string[];
+      values: unknown[];
+    };
+    expect(screeningQuery.strings.join(' ')).toContain('sc."type" =');
+    expect(screeningQuery.values).toContain(ScorecardType.SCREENING);
+  });
+
+  it.each([
+    ['failed', [{ passed: false }]],
+    ['missing', []],
+  ])(
+    'rejects a standard Review when the Screening result is %s',
+    async (_description, screeningRows) => {
+      const submissionId = 'submission-screening-not-passed';
+      prismaMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: submissionId,
+            challengeId: 'challenge-1',
+            memberId: 'member-1',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            submissionRank: BigInt(1),
+          },
+        ])
+        .mockResolvedValueOnce(screeningRows);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        ...baseChallengeDetail,
+        phases: [
+          { id: 'phase-screening', name: 'Screening', isOpen: false },
+          ...baseChallengeDetail.phases,
+        ],
+      });
+
+      await expect(
+        service.createReview(
+          baseAuthUser,
+          buildReviewRequest({ submissionId }),
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'SUBMISSION_SCREENING_NOT_PASSED',
+          details: expect.objectContaining({
+            submissionId,
+            requiredScorecardType: ScorecardType.SCREENING,
+          }),
+        }),
+      });
+      expect(prismaMock.review.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('allows the second-newest submission for a Design challenge limited to two', async () => {
+    const submissionId = 'submission-second-newest';
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: submissionId,
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(2),
+      },
+    ]);
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      track: 'Design',
+      metadata: {
+        submissionLimit: JSON.stringify({
+          maximum: '2',
+          limit: 'yes',
+          unlimited: 'no',
+        }),
+      },
+    });
+
+    const request = buildReviewRequest({ submissionId });
+    const reviewCreateResult = buildReviewModel(request);
+    prismaMock.review.create.mockResolvedValue(reviewCreateResult);
+    prismaMock.review.update.mockResolvedValue(reviewCreateResult);
+    const computeSpy = jest
+      .spyOn(service as any, 'computeScoresFromItems')
+      .mockResolvedValue({ initialScore: null, finalScore: null });
+
+    try {
+      await expect(
+        service.createReview(baseAuthUser, request),
+      ).resolves.toMatchObject({ submissionId });
+    } finally {
+      computeSpy.mockRestore();
+    }
+
+    const rankSql = prismaMock.$queryRaw.mock.calls[0][0] as {
+      strings: string[];
+    };
+    const rankSqlText = rankSql.strings.join(' ');
+    expect(rankSqlText).toContain(
+      'PARTITION BY COALESCE(s."memberId", s."id"), s."type"',
+    );
+    expect(rankSqlText).toContain('s."type" IS NOT DISTINCT FROM');
+    expect(rankSqlText).toContain(
+      's."status" IS NULL OR s."status" <> \'DELETED\'',
+    );
+  });
+
+  it('rejects a Design submission outside a finite latest-X limit', async () => {
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: 'submission-third-newest',
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(3),
+      },
+    ]);
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      track: 'Design',
+      metadata: {
+        submissionLimit: JSON.stringify({
+          count: '2',
+          limit: 'true',
+          unlimited: 'false',
+        }),
+      },
+    });
+
+    await expect(
+      service.createReview(
+        baseAuthUser,
+        buildReviewRequest({ submissionId: 'submission-third-newest' }),
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'SUBMISSION_NOT_LATEST',
+        details: expect.objectContaining({
+          submissionRank: 3,
+          submissionLimit: 2,
+        }),
+      }),
+    });
+  });
+
+  it('keeps Development challenges latest-only even with unlimited metadata', async () => {
+    prismaMock.$queryRaw.mockResolvedValue([
+      {
+        id: 'development-older',
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(2),
+      },
+    ]);
+    challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+      ...baseChallengeDetail,
+      metadata: {
+        submissionLimit: JSON.stringify({
+          count: '',
+          limit: 'false',
+          unlimited: 'true',
+        }),
+      },
+    });
+
+    await expect(
+      service.createReview(
+        baseAuthUser,
+        buildReviewRequest({ submissionId: 'development-older' }),
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'SUBMISSION_NOT_LATEST' }),
+    });
   });
 
   it('allows Post-Mortem review creation without submission when phase is open', async () => {
@@ -333,12 +547,14 @@ describe('ReviewService.createReview authorization checks', () => {
         id: submissionId,
         challengeId: 'challenge-1',
         memberId: 'member-1',
-        isLatest: false,
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(2),
       },
     ]);
 
     challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
       ...baseChallengeDetail,
+      track: 'Design',
       metadata: {
         submissionLimit: { unlimited: 'TRUE' },
       },
@@ -373,12 +589,14 @@ describe('ReviewService.createReview authorization checks', () => {
         id: submissionId,
         challengeId: 'challenge-1',
         memberId: 'member-1',
-        isLatest: false,
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(2),
       },
     ]);
 
     challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
       ...baseChallengeDetail,
+      track: 'Design',
       metadata: {
         submissionLimit: { unlimited: true },
       },
@@ -413,7 +631,8 @@ describe('ReviewService.createReview authorization checks', () => {
         id: submissionId,
         challengeId: 'challenge-1',
         memberId: null,
-        isLatest: false,
+        type: SubmissionType.CONTEST_SUBMISSION,
+        submissionRank: BigInt(2),
       },
     ]);
 
