@@ -1,0 +1,30 @@
+{
+  "name": "@topcoder/review-api-v6-prisma-client",
+  "version": "1.0.0",
+  "description": "Generated review-api-v6 Prisma client with a version-stable connection factory",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.js",
+      "default": "./index.js"
+    },
+    "./generated": {
+      "types": "./generated/index.d.ts",
+      "require": "./generated/index.js",
+      "default": "./generated/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "generated",
+    "index.js",
+    "index.d.ts",
+    "README.md"
+  ],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  }
+}

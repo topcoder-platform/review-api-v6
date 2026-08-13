@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -14,7 +15,9 @@ import {
 import {
   CreateReviewOpportunityDto,
   QueryReviewOpportunityDto,
+  ReviewOpportunityCanApplyReason,
   ReviewOpportunityResponseDto,
+  ReviewOpportunitySearchMetadataDto,
   ReviewOpportunityStatus,
   ReviewOpportunitySummaryDto,
   UpdateReviewOpportunityDto,
@@ -32,6 +35,7 @@ import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.servi
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { Prisma, ReviewApplicationStatus } from '@prisma/client';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 
 type SubmissionPhaseSummary = {
   scheduledEndDate: Date | null;
@@ -57,6 +61,10 @@ type ReviewerTotalRow = {
   total: number | bigint | null;
 };
 
+type ChallengeCandidateRow = {
+  id: string;
+};
+
 @Injectable()
 export class ReviewOpportunityService {
   private readonly logger: Logger = new Logger(ReviewOpportunityService.name);
@@ -70,100 +78,182 @@ export class ReviewOpportunityService {
   ) {}
 
   /**
-   * Search Review Opportunities
-   * @param dto query dto
+   * Searches review opportunities with database pagination and challenge-side
+   * filters. The review database returns only lightweight challenge IDs before
+   * the challenge database applies track, type, submission-count, title, and
+   * active-status rules, avoiding hydration of every opportunity.
+   *
+   * @param dto - Validated search, sort, and pagination filters.
+   * @param authUser - Optional caller used for whitelist and application state.
+   * @returns Page items plus explicit total and page metadata.
+   * @throws BadRequestException when a caller-specific filter has no caller.
+   * @throws InternalServerErrorException when either database query fails.
    */
-  async search(dto: QueryReviewOpportunityDto) {
+  async search(
+    dto: QueryReviewOpportunityDto,
+    authUser?: JwtUser,
+  ): Promise<{
+    items: ReviewOpportunityResponseDto[];
+    metadata: ReviewOpportunitySearchMetadataDto;
+  }> {
     try {
-      // filter data with payment, duration and start date
-      const prismaFilter = {
-        include: { applications: true },
-        where: {
-          AND: [
-            {
-              status: ReviewOpportunityStatus.OPEN,
-            },
-          ] as any[],
-        },
-      };
-      if (dto.paymentFrom) {
-        prismaFilter.where.AND.push({ basePayment: { gte: dto.paymentFrom } });
-      }
-      if (dto.paymentTo) {
-        prismaFilter.where.AND.push({ basePayment: { lte: dto.paymentTo } });
-      }
-      if (dto.durationFrom) {
-        prismaFilter.where.AND.push({ duration: { gte: dto.durationFrom } });
-      }
-      if (dto.durationTo) {
-        prismaFilter.where.AND.push({ duration: { lte: dto.durationTo } });
-      }
-      if (dto.startDateFrom) {
-        prismaFilter.where.AND.push({ startDate: { gte: dto.startDateFrom } });
-      }
-      if (dto.startDateTo) {
-        prismaFilter.where.AND.push({ startDate: { lte: dto.startDateTo } });
-      }
-      // query data from db
-      const entityList =
-        await this.prisma.reviewOpportunity.findMany(prismaFilter);
-      const challengeMap = await this.buildChallengeMap(entityList);
       const trackFilterIds = await this.resolveTrackFilters(dto.tracks);
       const typeFilterIds = await this.resolveTypeFilters(dto.types);
+      const userId = this.getUserId(authUser);
+      if (
+        (dto.appliedByMe !== undefined || dto.applicationStatuses?.length) &&
+        !userId
+      ) {
+        throw new BadRequestException({
+          message: 'Authentication is required for application filters.',
+          code: 'REVIEW_OPPORTUNITY_APPLICATION_FILTER_AUTH_REQUIRED',
+        });
+      }
 
-      // build result with challenge data
-      let responseList = this.buildResponseList(entityList, challengeMap);
-      // only include opportunities whose challenges are ACTIVE
-      responseList = responseList.filter((r) => {
-        const challenge = challengeMap.get(r.challengeId);
-        return !!challenge && challenge.status === ChallengeStatus.ACTIVE;
-      });
-      // filter with challenge fields
-      if (dto.numSubmissionsFrom) {
-        responseList = responseList.filter(
-          (r) => (r.submissions ?? 0) >= (dto.numSubmissionsFrom ?? 0),
+      const where: Prisma.reviewOpportunityWhereInput = {
+        status: {
+          in: (dto.statuses?.length
+            ? dto.statuses
+            : [ReviewOpportunityStatus.OPEN]) as any,
+        },
+      };
+      if (dto.paymentFrom !== undefined || dto.paymentTo !== undefined) {
+        where.basePayment = {
+          ...(dto.paymentFrom !== undefined ? { gte: dto.paymentFrom } : {}),
+          ...(dto.paymentTo !== undefined ? { lte: dto.paymentTo } : {}),
+        };
+      }
+      if (dto.durationFrom !== undefined || dto.durationTo !== undefined) {
+        where.duration = {
+          ...(dto.durationFrom !== undefined ? { gte: dto.durationFrom } : {}),
+          ...(dto.durationTo !== undefined ? { lte: dto.durationTo } : {}),
+        };
+      }
+      if (dto.startDateFrom || dto.startDateTo) {
+        where.startDate = {
+          ...(dto.startDateFrom ? { gte: new Date(dto.startDateFrom) } : {}),
+          ...(dto.startDateTo ? { lte: new Date(dto.startDateTo) } : {}),
+        };
+      }
+      if (dto.opportunityTypes?.length) {
+        where.type = { in: dto.opportunityTypes as any };
+      }
+      if (dto.challengeIds?.length) {
+        where.challengeId = { in: dto.challengeIds };
+      }
+      if (
+        userId &&
+        (dto.appliedByMe === true || dto.applicationStatuses?.length)
+      ) {
+        where.applications = {
+          some: {
+            userId,
+            ...(dto.applicationStatuses?.length
+              ? { status: { in: dto.applicationStatuses as any } }
+              : {}),
+          },
+        };
+      } else if (userId && dto.appliedByMe === false) {
+        where.applications = { none: { userId } };
+      }
+
+      const opportunityChallengeRows =
+        await this.prisma.reviewOpportunity.findMany({
+          where,
+          select: { challengeId: true },
+          distinct: ['challengeId'],
+        });
+      const opportunityChallengeIds = opportunityChallengeRows.map(
+        (row) => row.challengeId,
+      );
+      if (!opportunityChallengeIds.length) {
+        return this.emptySearchResult(dto);
+      }
+
+      const challengeConditions: Prisma.Sql[] = [
+        Prisma.sql`c.id IN (${Prisma.join(
+          opportunityChallengeIds.map((id) => Prisma.sql`${id}`),
+        )})`,
+        Prisma.sql`c.status::text = ${ChallengeStatus.ACTIVE}`,
+      ];
+      if (trackFilterIds.size) {
+        challengeConditions.push(
+          Prisma.sql`c."trackId" IN (${Prisma.join(
+            [...trackFilterIds].map((id) => Prisma.sql`${id}`),
+          )})`,
         );
       }
-      if (dto.numSubmissionsTo) {
-        responseList = responseList.filter(
-          (r) => (r.submissions ?? 0) <= (dto.numSubmissionsTo ?? 0),
+      if (typeFilterIds.size) {
+        challengeConditions.push(
+          Prisma.sql`c."typeId" IN (${Prisma.join(
+            [...typeFilterIds].map((id) => Prisma.sql`${id}`),
+          )})`,
         );
       }
-      if (trackFilterIds.size > 0) {
-        responseList = responseList.filter((r) => {
-          const challenge = challengeMap.get(r.challengeId);
-          if (!challenge) return false;
-          const trackId =
-            challenge.trackId ||
-            this.challengeCatalog.getTrackIdByName(
-              challenge.track || challenge.legacy?.track,
-            );
-          return !!trackId && trackFilterIds.has(trackId);
-        });
+      if (dto.numSubmissionsFrom !== undefined) {
+        challengeConditions.push(
+          Prisma.sql`COALESCE(c."numOfSubmissions", 0) >= ${dto.numSubmissionsFrom}`,
+        );
       }
-      if (typeFilterIds.size > 0) {
-        responseList = responseList.filter((r) => {
-          const challenge = challengeMap.get(r.challengeId);
-          if (!challenge) return false;
-          const typeId =
-            challenge.typeId ||
-            this.challengeCatalog.getTypeIdByName((challenge as any)?.type);
-          return !!typeId && typeFilterIds.has(typeId);
-        });
+      if (dto.numSubmissionsTo !== undefined) {
+        challengeConditions.push(
+          Prisma.sql`COALESCE(c."numOfSubmissions", 0) <= ${dto.numSubmissionsTo}`,
+        );
       }
-      // sort list
-      responseList = [...responseList].sort((a, b) => {
-        return dto.sortOrder === 'asc'
-          ? a[dto.sortBy] - b[dto.sortBy]
-          : b[dto.sortBy] - a[dto.sortBy];
-      });
-      // pagination
-      const start = Math.max(0, dto.offset as number);
-      const end = Math.min(responseList.length, start + (dto.limit as number));
-      responseList = responseList.slice(start, end);
-      // return result
-      return responseList;
+      if (dto.search?.trim()) {
+        challengeConditions.push(
+          Prisma.sql`c.name ILIKE ${`%${dto.search.trim()}%`}`,
+        );
+      }
+
+      const challengeRows = await this.challengePrisma.$queryRaw<
+        ChallengeCandidateRow[]
+      >(Prisma.sql`
+        SELECT c.id
+        FROM "Challenge" c
+        WHERE ${Prisma.join(challengeConditions, ' AND ')}
+      `);
+      const visibleChallengeIds =
+        await this.challengeService.filterChallengeIdsByWhitelist(
+          authUser,
+          challengeRows.map((row) => row.id),
+        );
+      if (!visibleChallengeIds.length) {
+        return this.emptySearchResult(dto);
+      }
+      where.challengeId = { in: visibleChallengeIds };
+
+      const limit = Math.max(1, Number(dto.limit ?? 10));
+      const offset = Math.max(0, Number(dto.offset ?? 0));
+      const orderBy = {
+        [dto.sortBy ?? 'startDate']: dto.sortOrder ?? 'asc',
+      } as Prisma.reviewOpportunityOrderByWithRelationInput;
+      const [entityList, total] = await this.prisma.$transaction([
+        this.prisma.reviewOpportunity.findMany({
+          where,
+          include: { applications: true },
+          orderBy: [orderBy, { id: 'asc' }],
+          skip: offset,
+          take: limit,
+        }),
+        this.prisma.reviewOpportunity.count({ where }),
+      ]);
+      const challengeMap = await this.buildChallengeMap(entityList);
+      const items = this.buildResponseList(entityList, challengeMap, authUser);
+      return {
+        items,
+        metadata: {
+          total,
+          offset,
+          limit,
+          page: Math.floor(offset / limit) + 1,
+          totalPages: total > 0 ? Math.ceil(total / limit) : 0,
+        },
+      };
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `searching review opportunities with filters - payment: ${dto.paymentFrom}-${dto.paymentTo}, duration: ${dto.durationFrom}-${dto.durationTo}`,
@@ -211,6 +301,30 @@ export class ReviewOpportunityService {
     }
 
     return ids;
+  }
+
+  /**
+   * Builds a correctly shaped empty result without querying either database.
+   *
+   * @param dto - Search DTO containing requested pagination values.
+   * @returns Empty items and zeroed total metadata.
+   */
+  private emptySearchResult(dto: QueryReviewOpportunityDto): {
+    items: ReviewOpportunityResponseDto[];
+    metadata: ReviewOpportunitySearchMetadataDto;
+  } {
+    const limit = Math.max(1, Number(dto.limit ?? 10));
+    const offset = Math.max(0, Number(dto.offset ?? 0));
+    return {
+      items: [],
+      metadata: {
+        total: 0,
+        offset,
+        limit,
+        page: Math.floor(offset / limit) + 1,
+        totalPages: 0,
+      },
+    };
   }
 
   private async resolveTypeFilters(types?: string[]): Promise<Set<string>> {
@@ -304,7 +418,7 @@ export class ReviewOpportunityService {
           ...dto,
         },
       });
-      return this.buildResponse(entity, challengeData);
+      return this.buildResponse(entity, challengeData, authUser);
     } catch (error) {
       // Re-throw business logic exceptions as-is
       if (
@@ -329,15 +443,19 @@ export class ReviewOpportunityService {
   /**
    * Get opportunity by id
    * @param id opportunity id
+   * @param authUser optional caller used for whitelist and eligibility checks
    * @returns response dto
    */
-  async get(id: string) {
+  async get(id: string, authUser?: JwtUser) {
     try {
       const entity = await this.checkExists(id);
-      return await this.assembleResult(entity);
+      return await this.assembleResult(entity, authUser);
     } catch (error) {
       // Re-throw NotFoundException from checkExists as-is
-      if (error instanceof NotFoundException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
 
@@ -357,20 +475,30 @@ export class ReviewOpportunityService {
    * Update review opportunity by id
    * @param id opportunity id
    * @param dto update dto
+   * @param authUser optional authenticated caller used for response eligibility
+   * @returns updated and enriched opportunity
    */
-  async update(id: string, dto: UpdateReviewOpportunityDto) {
+  async update(
+    id: string,
+    dto: UpdateReviewOpportunityDto,
+    authUser?: JwtUser,
+  ) {
     try {
       await this.checkExists(id);
-      const entity = await this.prisma.reviewOpportunity.update({
+      await this.prisma.reviewOpportunity.update({
         where: { id },
         data: {
           ...dto,
         },
       });
-      return await this.assembleResult(entity);
+      const entity = await this.checkExists(id);
+      return await this.assembleResult(entity, authUser);
     } catch (error) {
       // Re-throw NotFoundException from checkExists as-is
-      if (error instanceof NotFoundException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
 
@@ -389,18 +517,27 @@ export class ReviewOpportunityService {
   /**
    * Get review opportunities by challenge id
    * @param challengeId challenge id
+   * @param authUser optional caller used for whitelist and eligibility checks
    * @returns review opportunity list
    */
   async getByChallengeId(
     challengeId: string,
+    authUser?: JwtUser,
   ): Promise<ReviewOpportunityResponseDto[]> {
     try {
+      await this.challengeService.ensureChallengeWhitelistAccess(
+        authUser,
+        challengeId,
+      );
       const entityList = await this.prisma.reviewOpportunity.findMany({
         where: { challengeId },
         include: { applications: true },
       });
-      return await this.assembleList(entityList);
+      return await this.assembleList(entityList, authUser);
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `fetching review opportunities for challenge ${challengeId}`,
@@ -697,15 +834,23 @@ export class ReviewOpportunityService {
   /**
    * Get challenge data list and put all data into response.
    * @param entityList prisma data list
+   * @param authUser optional caller used for per-item eligibility
    * @returns response list
    */
   private async assembleList(
     entityList: any[],
+    authUser?: JwtUser,
   ): Promise<ReviewOpportunityResponseDto[]> {
     const challengeMap = await this.buildChallengeMap(entityList);
-    return this.buildResponseList(entityList, challengeMap);
+    return this.buildResponseList(entityList, challengeMap, authUser);
   }
 
+  /**
+   * Hydrates only the unique challenges represented by the current result page.
+   *
+   * @param entityList - Review opportunity rows for one page.
+   * @returns Challenge data keyed by challenge ID.
+   */
   private async buildChallengeMap(
     entityList: any[],
   ): Promise<Map<string, ChallengeData>> {
@@ -732,36 +877,52 @@ export class ReviewOpportunityService {
     return challengeMap;
   }
 
+  /**
+   * Enriches a page of review opportunities with challenge and caller state.
+   *
+   * @param entityList - Review opportunity rows.
+   * @param challengeMap - Hydrated challenges keyed by ID.
+   * @param authUser - Optional caller used for eligibility.
+   * @returns Enriched response items.
+   */
   private buildResponseList(
     entityList: any[],
     challengeMap: Map<string, ChallengeData>,
+    authUser?: JwtUser,
   ): ReviewOpportunityResponseDto[] {
     return (entityList || []).map((e) =>
-      this.buildResponse(e, challengeMap.get(e.challengeId)),
+      this.buildResponse(e, challengeMap.get(e.challengeId), authUser),
     );
   }
 
   /**
    * Get challenge data and put all data into response.
    * @param entity prisma entity
+   * @param authUser optional caller used for whitelist and eligibility checks
    * @returns response dto
    */
-  private async assembleResult(entity): Promise<ReviewOpportunityResponseDto> {
-    const challengeData = await this.challengeService.getChallengeDetail(
+  private async assembleResult(
+    entity,
+    authUser?: JwtUser,
+  ): Promise<ReviewOpportunityResponseDto> {
+    const challengeData = await this.challengeService.getChallengeDetailForUser(
+      authUser,
       entity.challengeId,
     );
-    return this.buildResponse(entity, challengeData);
+    return this.buildResponse(entity, challengeData, authUser);
   }
 
   /**
    * Put all data into response dto.
    * @param entity prisma entity
    * @param challengeData challenge data from api
+   * @param authUser optional caller used for application eligibility
    * @returns response dto
    */
   private buildResponse(
     entity: any,
     challengeData?: ChallengeData,
+    authUser?: JwtUser,
   ): ReviewOpportunityResponseDto {
     const ret = new ReviewOpportunityResponseDto();
     ret.id = entity.id;
@@ -791,22 +952,46 @@ export class ReviewOpportunityService {
       : null;
 
     // review applications
-    if (entity.applications && entity.applications.length > 0) {
-      ret.applications = entity.applications.map((e) => ({
-        id: e.id,
-        opportunityId: entity.id,
-        userId: e.userId,
-        handle: e.handle,
-        role: convertRoleName(e.role),
-        status: e.status,
-        applicationDate: e.createdAt,
-      }));
-    }
+    const applicationResponses = (entity.applications ?? []).map((e) => ({
+      id: e.id,
+      opportunityId: entity.id,
+      userId: e.userId,
+      handle: e.handle,
+      role: convertRoleName(e.role),
+      status: e.status,
+      applicationDate: e.createdAt,
+      openReviews: 0,
+      latestCompletedReviews: 0,
+    }));
+    ret.applications = applicationResponses;
+
+    const userId = this.getUserId(authUser);
+    ret.myApplications = userId
+      ? applicationResponses.filter(
+          (application) => String(application.userId) === userId,
+        )
+      : [];
+    ret.approvedApplicationCount = applicationResponses.filter(
+      (application) => application.status === ReviewApplicationStatus.APPROVED,
+    ).length;
+    ret.remainingPositions = Math.max(
+      0,
+      Number(entity.openPositions ?? 0) - ret.approvedApplicationCount,
+    );
+    ret.canApplyReason = this.resolveCanApplyReason(
+      entity,
+      challengeData,
+      authUser,
+      ret.myApplications.length > 0,
+      ret.remainingPositions,
+    );
+    ret.canApply =
+      ret.canApplyReason === ReviewOpportunityCanApplyReason.CAN_APPLY;
 
     // payments
     ret.payments = [];
     const paymentConfig = CommonConfig.reviewPaymentConfig;
-    const rolePaymentMap = paymentConfig[entity.type];
+    const rolePaymentMap = paymentConfig[entity.type] ?? {};
     for (const role of Object.keys(rolePaymentMap)) {
       if (rolePaymentMap[role]) {
         ret.payments.push({
@@ -817,6 +1002,62 @@ export class ReviewOpportunityService {
       }
     }
     return ret;
+  }
+
+  /**
+   * Resolves the authenticated member ID used for caller-specific filters.
+   * Machine identities deliberately have no application identity.
+   *
+   * @param authUser - Optional JWT caller.
+   * @returns Normalized member ID, or null for anonymous/M2M callers.
+   */
+  private getUserId(authUser?: JwtUser): string | null {
+    if (authUser?.isMachine || authUser?.userId == null) {
+      return null;
+    }
+    const userId = String(authUser.userId).trim();
+    return userId || null;
+  }
+
+  /**
+   * Produces a stable eligibility reason for the opportunity application CTA.
+   *
+   * @param entity - Review opportunity and included applications.
+   * @param challenge - Associated challenge, when it could be loaded.
+   * @param authUser - Optional JWT caller.
+   * @param alreadyApplied - Whether this member has any application on the row.
+   * @param remainingPositions - Approved-capacity remainder.
+   * @returns Stable can-apply reason code.
+   */
+  private resolveCanApplyReason(
+    entity: any,
+    challenge: ChallengeData | undefined,
+    authUser: JwtUser | undefined,
+    alreadyApplied: boolean,
+    remainingPositions: number,
+  ): ReviewOpportunityCanApplyReason {
+    if (!this.getUserId(authUser)) {
+      return ReviewOpportunityCanApplyReason.NOT_AUTHENTICATED;
+    }
+    const roles = (authUser?.roles ?? []).map((role) =>
+      String(role).trim().toLowerCase(),
+    );
+    if (!roles.includes(String(UserRole.Reviewer).toLowerCase())) {
+      return ReviewOpportunityCanApplyReason.NOT_REVIEWER;
+    }
+    if (entity.status !== ReviewOpportunityStatus.OPEN) {
+      return ReviewOpportunityCanApplyReason.OPPORTUNITY_CLOSED;
+    }
+    if (!challenge || challenge.status !== ChallengeStatus.ACTIVE) {
+      return ReviewOpportunityCanApplyReason.CHALLENGE_NOT_ACTIVE;
+    }
+    if (alreadyApplied) {
+      return ReviewOpportunityCanApplyReason.ALREADY_APPLIED;
+    }
+    if (remainingPositions <= 0) {
+      return ReviewOpportunityCanApplyReason.NO_OPEN_POSITIONS;
+    }
+    return ReviewOpportunityCanApplyReason.CAN_APPLY;
   }
 
   private findLatestSubmissionPhase(

@@ -54,6 +54,7 @@ import { SortDto } from '../../dto/sort.dto';
 import { SubmissionService } from './submission.service';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
+import { SubmissionPreviewService } from 'src/shared/modules/global/submission-preview.service';
 
 @ApiTags('Submissions')
 @ApiBearerAuth()
@@ -61,7 +62,10 @@ import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audi
 export class SubmissionController {
   private readonly logger: LoggerService;
 
-  constructor(private readonly service: SubmissionService) {
+  constructor(
+    private readonly service: SubmissionService,
+    private readonly submissionPreviewService: SubmissionPreviewService,
+  ) {
     this.logger = LoggerService.forRoot('SubmissionController');
   }
 
@@ -344,6 +348,57 @@ export class SubmissionController {
       paginationDto,
       sortDto,
     );
+  }
+
+  @Get('/:submissionId/preview')
+  @ApiOperation({
+    summary: 'View a released Design submission preview',
+    description:
+      'Public-safe redirect to an immutable Payload asset. Challenge whitelist access is enforced for anonymous and authenticated callers. Checkpoint previews remain unavailable until Checkpoint Review has an actual end time; contest previews remain unavailable until Review has an actual end time. Every absent, failed, or not-yet-released preview returns the same 404 response.',
+  })
+  @ApiParam({
+    name: 'submissionId',
+    description: 'The submission whose preview should be displayed',
+  })
+  @ApiResponse({
+    status: HttpStatus.FOUND,
+    description: 'Redirects to the immutable public Payload asset URL.',
+    headers: {
+      Location: {
+        description: 'Public preview image URL.',
+        schema: { type: 'string', format: 'uri' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'The caller cannot access the challenge whitelist.',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'The preview is absent or has not reached its release gate.',
+  })
+  @Header('Cache-Control', 'private, no-store')
+  @Redirect('', HttpStatus.FOUND)
+  /**
+   * Redirects to a released preview after public visibility checks.
+   *
+   * @param req - Optional authenticated request used for whitelist access.
+   * @param submissionId - Submission whose preview is requested.
+   * @returns A 302 redirect descriptor for Nest.
+   * @throws ForbiddenException when whitelist access is denied.
+   * @throws NotFoundException while the preview is unavailable.
+   */
+  async getSubmissionPreview(
+    @Req() req: Request,
+    @Param('submissionId') submissionId: string,
+  ): Promise<{ url: string; statusCode: HttpStatus }> {
+    const authUser = req['user'] as JwtUser | undefined;
+    const url = await this.submissionPreviewService.getVisiblePreviewUrl(
+      authUser,
+      submissionId,
+    );
+    return { url, statusCode: HttpStatus.FOUND };
   }
 
   @Get('/:submissionId')

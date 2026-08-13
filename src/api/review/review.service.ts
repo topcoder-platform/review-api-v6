@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ForbiddenException,
   HttpException,
+  Optional,
 } from '@nestjs/common';
 import {
   ReviewItemRequestDto,
@@ -42,6 +43,7 @@ import {
   isSubmissionRankEligible,
   resolveReviewSubmissionRankLimit,
 } from 'src/shared/utils/submission-limit.util';
+import { SubmissionPreviewService } from 'src/shared/modules/global/submission-preview.service';
 
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {
@@ -87,6 +89,8 @@ export class ReviewService {
     private readonly memberPrisma: MemberPrismaService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly eventBusService: EventBusService,
+    @Optional()
+    private readonly submissionPreviewService?: SubmissionPreviewService,
   ) {
     this.logger = LoggerService.forRoot('ReviewService');
   }
@@ -671,6 +675,29 @@ export class ReviewService {
     } catch (error) {
       this.logger.error(
         `[recordReviewAuditEntry] Failed to persist audit entry for review ${reviewId}`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * Durably queues a preview candidate when a completed review is a passing
+   * Screening result. The worker verifies the Design track so this lifecycle
+   * hook has no challenge-service dependency. Queue failures are logged and
+   * intentionally do not roll back an already-completed review.
+   *
+   * @param reviewId - Review whose completion may unlock preview processing.
+   * @returns A promise that resolves after the eligibility check is persisted.
+   */
+  private async enqueueSubmissionPreview(reviewId: string): Promise<void> {
+    if (!this.submissionPreviewService) {
+      return;
+    }
+    try {
+      await this.submissionPreviewService.enqueueFromCompletedReview(reviewId);
+    } catch (error) {
+      this.logger.error(
+        `[enqueueSubmissionPreview] Failed to queue preview from review ${reviewId}`,
         error,
       );
     }
@@ -1744,6 +1771,7 @@ export class ReviewService {
 
       this.logger.log(`Review created with ID: ${reviewToReturn.id}`);
       if (reviewToReturn.status === ReviewStatus.COMPLETED) {
+        await this.enqueueSubmissionPreview(reviewToReturn.id);
         await this.publishReviewCompletedEvent(reviewToReturn.id);
       }
       const flattenedAppeals: any[] = [];
@@ -2366,6 +2394,7 @@ export class ReviewService {
         existingReview.status !== ReviewStatus.COMPLETED &&
         data.status === ReviewStatus.COMPLETED
       ) {
+        await this.enqueueSubmissionPreview(id);
         await this.publishReviewCompletedEvent(id);
       }
       const responsePayload = {

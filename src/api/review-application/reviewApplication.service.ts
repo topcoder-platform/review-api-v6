@@ -1,13 +1,20 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { Prisma, ReviewOpportunityType } from '@prisma/client';
+import {
+  Prisma,
+  ReviewOpportunityStatus,
+  ReviewOpportunityType,
+} from '@prisma/client';
 import {
   CreateReviewApplicationDto,
+  QueryMyReviewApplicationDto,
+  ReviewApplicationListMetadataDto,
   ReviewApplicationResponseDto,
   ReviewApplicationRole,
   ReviewApplicationRoleOpportunityTypeMap,
@@ -25,6 +32,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { MemberService } from 'src/shared/modules/global/member.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
 const RECENT_REVIEW_WINDOW_DAYS = 60;
 const RESOURCE_CREATED_TOPIC = 'challenge.action.resource.create';
@@ -78,10 +86,17 @@ export class ReviewApplicationService {
   ) {}
 
   /**
-   * Create review application
-   * @param authUser auth user
-   * @param dto create data
-   * @returns response dto
+   * Creates a review application after enforcing challenge visibility,
+   * opportunity state, role compatibility, capacity, and uniqueness.
+   *
+   * @param authUser - Authenticated reviewer.
+   * @param dto - Opportunity and requested review role.
+   * @returns Created pending review application.
+   * @throws BadRequestException for an unknown opportunity or role mismatch.
+   * @throws ConflictException for closed/full/inactive/duplicate applications.
+   * @throws ForbiddenException when the challenge whitelist denies the caller.
+   * @throws NotFoundException when the linked challenge no longer exists.
+   * @throws InternalServerErrorException when a dependency fails unexpectedly.
    */
   async create(
     authUser: JwtUser,
@@ -94,11 +109,43 @@ export class ReviewApplicationService {
       // make sure review opportunity exists
       const opportunity = await this.prisma.reviewOpportunity.findUnique({
         where: { id: dto.opportunityId },
+        include: {
+          applications: {
+            select: { status: true },
+          },
+        },
       });
       if (!opportunity || !opportunity.id) {
         throw new BadRequestException(
           `Review opportunity with ID ${dto.opportunityId} doesn't exist`,
         );
+      }
+      if (opportunity.status !== ReviewOpportunityStatus.OPEN) {
+        throw new ConflictException({
+          message: 'This review opportunity is no longer open.',
+          code: 'REVIEW_OPPORTUNITY_CLOSED',
+        });
+      }
+      const challenge = await this.challengeService.getChallengeDetailForUser(
+        authUser,
+        opportunity.challengeId,
+      );
+      if (challenge.status !== ChallengeStatus.ACTIVE) {
+        throw new ConflictException({
+          message:
+            'Applications are closed because the challenge is not active.',
+          code: 'REVIEW_OPPORTUNITY_CHALLENGE_NOT_ACTIVE',
+        });
+      }
+      const approvedCount = opportunity.applications.filter(
+        (application) =>
+          application.status === ReviewApplicationStatus.APPROVED,
+      ).length;
+      if (approvedCount >= opportunity.openPositions) {
+        throw new ConflictException({
+          message: 'All reviewer positions have been filled.',
+          code: 'REVIEW_OPPORTUNITY_FULL',
+        });
       }
       // make sure application role matches
       if (
@@ -135,7 +182,9 @@ export class ReviewApplicationService {
       // Re-throw business logic exceptions as-is
       if (
         error instanceof BadRequestException ||
-        error instanceof ConflictException
+        error instanceof ConflictException ||
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException
       ) {
         throw error;
       }
@@ -190,6 +239,64 @@ export class ReviewApplicationService {
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `fetching review applications for user ${userId}`,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  /**
+   * Lists one member's review applications with database filtering, ordering,
+   * and an explicit total for the Opportunities UI.
+   *
+   * @param userId - Authenticated member ID.
+   * @param dto - Application status, role, opportunity, and page filters.
+   * @returns Filtered application page and pagination metadata.
+   * @throws InternalServerErrorException when the database query fails.
+   */
+  async listByUserPaginated(
+    userId: string,
+    dto: QueryMyReviewApplicationDto,
+  ): Promise<{
+    items: ReviewApplicationResponseDto[];
+    metadata: ReviewApplicationListMetadataDto;
+  }> {
+    try {
+      const where: Prisma.reviewApplicationWhereInput = {
+        userId,
+        ...(dto.statuses?.length
+          ? { status: { in: dto.statuses as any } }
+          : {}),
+        ...(dto.roles?.length ? { role: { in: dto.roles as any } } : {}),
+        ...(dto.opportunityId ? { opportunityId: dto.opportunityId } : {}),
+      };
+      const page = dto.page ?? 1;
+      const perPage = dto.perPage ?? 10;
+      const [entities, total] = await this.prisma.$transaction([
+        this.prisma.reviewApplication.findMany({
+          where,
+          orderBy: [{ createdAt: dto.sortOrder ?? 'desc' }, { id: 'asc' }],
+          skip: (page - 1) * perPage,
+          take: perPage,
+        }),
+        this.prisma.reviewApplication.count({ where }),
+      ]);
+      return {
+        items: entities.map((entity) => this.buildResponse(entity)),
+        metadata: {
+          total,
+          page,
+          perPage,
+          totalPages: total > 0 ? Math.ceil(total / perPage) : 0,
+        },
+      };
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `fetching paginated review applications for user ${userId}`,
       );
       throw new InternalServerErrorException({
         message: errorResponse.message,

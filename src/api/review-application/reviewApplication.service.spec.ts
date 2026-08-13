@@ -15,14 +15,22 @@ describe('ReviewApplicationService', () => {
   let service: ReviewApplicationService;
 
   const prismaMock = {
+    $transaction: jest.fn(),
+    reviewOpportunity: {
+      findUnique: jest.fn(),
+    },
     reviewApplication: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
       update: jest.fn(),
     },
   };
 
   const challengeServiceMock = {
     getChallengeDetail: jest.fn(),
+    getChallengeDetailForUser: jest.fn(),
   };
 
   const challengePrismaMock = {
@@ -67,6 +75,9 @@ describe('ReviewApplicationService', () => {
       }),
     );
     prismaMock.reviewApplication.update.mockResolvedValue({ id: 'app-1' });
+    prismaMock.$transaction.mockImplementation((operations) =>
+      Promise.all(operations),
+    );
     memberServiceMock.getUserEmails.mockResolvedValue([
       { userId: '1001', email: 'reviewer@example.com', handle: 'reviewer' },
     ]);
@@ -328,5 +339,43 @@ describe('ReviewApplicationService', () => {
         }),
       }),
     );
+  });
+
+  it('returns a filtered current-user application page with a total', async () => {
+    prismaMock.reviewApplication.findMany.mockResolvedValue([
+      {
+        id: 'app-1',
+        opportunityId: 'opportunity-1',
+        userId: '1001',
+        handle: 'reviewer-one',
+        role: ReviewApplicationRole.REVIEWER,
+        status: ReviewApplicationStatus.PENDING,
+        createdAt: new Date('2026-08-10T00:00:00Z'),
+      },
+    ]);
+    prismaMock.reviewApplication.count.mockResolvedValue(11);
+
+    const result = await service.listByUserPaginated('1001', {
+      statuses: [ReviewApplicationStatus.PENDING],
+      page: 2,
+      perPage: 10,
+      sortOrder: 'desc',
+    });
+
+    expect(prismaMock.reviewApplication.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: '1001',
+        status: { in: [ReviewApplicationStatus.PENDING] },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      skip: 10,
+      take: 10,
+    });
+    expect(result.metadata).toEqual({
+      total: 11,
+      page: 2,
+      perPage: 10,
+      totalPages: 2,
+    });
   });
 });

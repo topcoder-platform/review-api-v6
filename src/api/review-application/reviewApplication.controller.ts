@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import {
@@ -19,6 +20,7 @@ import {
 import { OkResponse, ResponseDto } from 'src/dto/common.dto';
 import {
   CreateReviewApplicationDto,
+  QueryMyReviewApplicationDto,
   ReviewApplicationResponseDto,
 } from 'src/dto/reviewApplication.dto';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -46,6 +48,8 @@ export class ReviewApplicationController {
   })
   @ApiResponse({ status: 400, description: 'Bad Request' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 409, description: 'Opportunity unavailable' })
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Post()
   @ApiBearerAuth()
@@ -73,6 +77,40 @@ export class ReviewApplicationController {
   @Roles(UserRole.Admin)
   async searchPending() {
     return OkResponse(await this.service.listPending());
+  }
+
+  @ApiOperation({
+    summary: "List the authenticated member's review applications",
+    description:
+      'Roles: Admin, Reviewer, User. Supports status, role, opportunity, date ordering, and database pagination.',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Application page with total, page, perPage, and totalPages metadata.',
+    type: ResponseDto<ReviewApplicationResponseDto[]>,
+  })
+  @ApiBearerAuth()
+  @Roles(UserRole.Admin, UserRole.Reviewer, UserRole.User)
+  @Get('/me')
+  /**
+   * Lists the authenticated member's applications with pagination.
+   *
+   * @param req - Authenticated request containing the member ID.
+   * @param dto - Validated application filters and page settings.
+   * @returns Standard API response containing applications and total metadata.
+   */
+  async getMine(
+    @Req() req: Request,
+    @Query() dto: QueryMyReviewApplicationDto,
+  ) {
+    const authUser = req['user'] as JwtUser;
+    const userId = String(authUser.userId);
+    const { items, metadata } = await this.service.listByUserPaginated(
+      userId,
+      dto,
+    );
+    return OkResponse(items, 200, metadata as unknown as Record<string, any>);
   }
 
   @ApiOperation({
