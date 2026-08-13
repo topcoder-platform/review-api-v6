@@ -1604,7 +1604,6 @@ describe('ReviewService.getReviews reviewer visibility', () => {
       publish: jest.fn(),
       sendEmail: jest.fn(),
     };
-
     resourcePrismaMock = {
       resource: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -3963,6 +3962,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
   let memberPrismaMock: any;
   let challengeApiServiceMock: any;
   let eventBusServiceMock: any;
+  let submissionPreviewServiceMock: any;
   let service: ReviewService;
   let recomputeSpy: jest.SpyInstance;
 
@@ -4041,6 +4041,9 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       publish: jest.fn(),
       sendEmail: jest.fn(),
     };
+    submissionPreviewServiceMock = {
+      enqueueFromCompletedReview: jest.fn().mockResolvedValue(true),
+    };
 
     service = new ReviewService(
       prismaMock,
@@ -4050,6 +4053,7 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
       memberPrismaMock,
       challengeApiServiceMock,
       eventBusServiceMock,
+      submissionPreviewServiceMock,
     );
 
     recomputeSpy = jest
@@ -4350,6 +4354,9 @@ describe('ReviewService.updateReview challenge status enforcement', () => {
     } as any);
 
     expect(eventBusServiceMock.publish).toHaveBeenCalledTimes(1);
+    expect(
+      submissionPreviewServiceMock.enqueueFromCompletedReview,
+    ).toHaveBeenCalledWith('review-1');
     expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
       'review.action.completed',
       expect.objectContaining({

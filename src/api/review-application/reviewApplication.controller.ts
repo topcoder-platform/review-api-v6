@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import {
@@ -16,9 +17,11 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { OkResponse, ResponseDto } from 'src/dto/common.dto';
 import {
   CreateReviewApplicationDto,
+  QueryMyReviewApplicationDto,
   ReviewApplicationResponseDto,
 } from 'src/dto/reviewApplication.dto';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -46,6 +49,8 @@ export class ReviewApplicationController {
   })
   @ApiResponse({ status: 400, description: 'Bad Request' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 409, description: 'Opportunity unavailable' })
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Post()
   @ApiBearerAuth()
@@ -73,6 +78,40 @@ export class ReviewApplicationController {
   @Roles(UserRole.Admin)
   async searchPending() {
     return OkResponse(await this.service.listPending());
+  }
+
+  @ApiOperation({
+    summary: "List the authenticated member's review applications",
+    description:
+      'Roles: Admin, Reviewer, User. Supports status, role, opportunity, date ordering, and database pagination.',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Application page with total, page, perPage, and totalPages metadata.',
+    type: ResponseDto<ReviewApplicationResponseDto[]>,
+  })
+  @ApiBearerAuth()
+  @Roles(UserRole.Admin, UserRole.Reviewer, UserRole.User)
+  @Get('/me')
+  /**
+   * Lists the authenticated member's applications with pagination.
+   *
+   * @param req - Authenticated request containing the member ID.
+   * @param dto - Validated application filters and page settings.
+   * @returns Standard API response containing applications and total metadata.
+   */
+  async getMine(
+    @Req() req: Request,
+    @Query() dto: QueryMyReviewApplicationDto,
+  ) {
+    const authUser = req['user'] as JwtUser;
+    const userId = String(authUser.userId);
+    const { items, metadata } = await this.service.listByUserPaginated(
+      userId,
+      dto,
+    );
+    return OkResponse(items, 200, metadata as unknown as Record<string, any>);
   }
 
   @ApiOperation({
@@ -110,7 +149,7 @@ export class ReviewApplicationController {
   @ApiOperation({
     summary: 'Get applications by opportunity ID',
     description:
-      'All users should be able to see full list. Including anonymous.',
+      'Returns the public applicant panel to anonymous or authenticated callers only when the linked challenge is visible under whitelist, group, and task access rules.',
   })
   @ApiParam({
     name: 'opportunityId',
@@ -118,14 +157,34 @@ export class ReviewApplicationController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Review application details',
+    description:
+      'Review application identities and public reviewer assignment metrics for a caller-visible opportunity.',
     type: ResponseDto<ReviewApplicationResponseDto[]>,
   })
-  @ApiResponse({ status: 404, description: 'Not Found' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'The opportunity is missing or its linked challenge is not visible to the caller.',
+  })
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Get('/opportunity/:opportunityId')
-  async getByOpportunityId(@Param('opportunityId') opportunityId: string) {
-    return OkResponse(await this.service.listByOpportunity(opportunityId));
+  /**
+   * Returns a visible opportunity's applicant panel with optional caller auth.
+   *
+   * @param req - Request carrying an optional validated JWT user.
+   * @param opportunityId - Review opportunity identifier.
+   * @returns Standard response containing public applicant rows.
+   * @throws NotFoundException when the opportunity is missing or hidden by
+   * linked-challenge visibility.
+   */
+  async getByOpportunityId(
+    @Req() req: Request,
+    @Param('opportunityId') opportunityId: string,
+  ) {
+    const authUser = req['user'] as JwtUser | undefined;
+    return OkResponse(
+      await this.service.listByOpportunity(opportunityId, authUser),
+    );
   }
 
   @ApiOperation({

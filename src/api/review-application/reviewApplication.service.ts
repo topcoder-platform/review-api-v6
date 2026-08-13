@@ -1,17 +1,24 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { Prisma, ReviewOpportunityType } from '@prisma/client';
+import {
+  Prisma,
+  ReviewOpportunityStatus,
+  ReviewOpportunityType,
+} from '@prisma/client';
 import {
   CreateReviewApplicationDto,
+  QueryMyReviewApplicationDto,
+  ReviewApplicationListMetadataDto,
   ReviewApplicationResponseDto,
   ReviewApplicationRole,
-  ReviewApplicationRoleOpportunityTypeMap,
   ReviewApplicationStatus,
+  getReviewApplicationRoles,
 } from 'src/dto/reviewApplication.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
@@ -25,15 +32,13 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { MemberService } from 'src/shared/modules/global/member.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import {
+  RECENT_REVIEW_WINDOW_DAYS,
+  resolveReviewerMetrics,
+} from 'src/shared/modules/global/reviewer-metrics.util';
 
-const RECENT_REVIEW_WINDOW_DAYS = 60;
 const RESOURCE_CREATED_TOPIC = 'challenge.action.resource.create';
-
-interface ReviewerMetricsRow {
-  memberId: string;
-  openReviews: bigint;
-  latestCompletedReviews: bigint;
-}
 
 interface RecentReviewAssignmentRow {
   memberId: string;
@@ -78,10 +83,19 @@ export class ReviewApplicationService {
   ) {}
 
   /**
-   * Create review application
-   * @param authUser auth user
-   * @param dto create data
-   * @returns response dto
+   * Creates a review application after enforcing challenge visibility,
+   * opportunity state, role compatibility, capacity, and uniqueness.
+   * The database uniqueness constraint remains authoritative when concurrent
+   * requests both pass the optimistic duplicate pre-check.
+   *
+   * @param authUser - Authenticated reviewer.
+   * @param dto - Opportunity and requested review role.
+   * @returns Created pending review application.
+   * @throws BadRequestException for an unknown opportunity or role mismatch.
+   * @throws ConflictException for closed/full/inactive/duplicate applications.
+   * @throws ForbiddenException when the challenge whitelist denies the caller.
+   * @throws NotFoundException when the linked challenge no longer exists.
+   * @throws InternalServerErrorException when a dependency fails unexpectedly.
    */
   async create(
     authUser: JwtUser,
@@ -89,21 +103,52 @@ export class ReviewApplicationService {
   ): Promise<ReviewApplicationResponseDto> {
     const userId = String(authUser.userId);
     const handle = authUser.handle as string;
+    const duplicateApplicationMessage = `User ${userId} has already submitted an application for opportunity ${dto.opportunityId} with role ${dto.role}`;
 
     try {
       // make sure review opportunity exists
       const opportunity = await this.prisma.reviewOpportunity.findUnique({
         where: { id: dto.opportunityId },
+        include: {
+          applications: {
+            select: { status: true },
+          },
+        },
       });
       if (!opportunity || !opportunity.id) {
         throw new BadRequestException(
           `Review opportunity with ID ${dto.opportunityId} doesn't exist`,
         );
       }
+      if (opportunity.status !== ReviewOpportunityStatus.OPEN) {
+        throw new ConflictException({
+          message: 'This review opportunity is no longer open.',
+          code: 'REVIEW_OPPORTUNITY_CLOSED',
+        });
+      }
+      const challenge = await this.challengeService.getChallengeDetailForUser(
+        authUser,
+        opportunity.challengeId,
+      );
+      if (challenge.status !== ChallengeStatus.ACTIVE) {
+        throw new ConflictException({
+          message:
+            'Applications are closed because the challenge is not active.',
+          code: 'REVIEW_OPPORTUNITY_CHALLENGE_NOT_ACTIVE',
+        });
+      }
+      const approvedCount = opportunity.applications.filter(
+        (application) =>
+          application.status === ReviewApplicationStatus.APPROVED,
+      ).length;
+      if (approvedCount >= opportunity.openPositions) {
+        throw new ConflictException({
+          message: 'All reviewer positions have been filled.',
+          code: 'REVIEW_OPPORTUNITY_FULL',
+        });
+      }
       // make sure application role matches
-      if (
-        ReviewApplicationRoleOpportunityTypeMap[dto.role] !== opportunity.type
-      ) {
+      if (!getReviewApplicationRoles(opportunity.type).includes(dto.role)) {
         throw new BadRequestException(
           `Review application role ${dto.role} doesn't match opportunity type ${opportunity.type}`,
         );
@@ -117,9 +162,7 @@ export class ReviewApplicationService {
         },
       });
       if (existing && existing.length > 0) {
-        throw new ConflictException(
-          `User ${userId} has already submitted an application for opportunity ${dto.opportunityId} with role ${dto.role}`,
-        );
+        throw new ConflictException(duplicateApplicationMessage);
       }
       const entity = await this.prisma.reviewApplication.create({
         data: {
@@ -132,10 +175,22 @@ export class ReviewApplicationService {
       });
       return this.buildResponse(entity);
     } catch (error) {
+      // The application insert is the only write in this block. A P2002 here
+      // is the composite opportunity/member/role constraint closing a race in
+      // which concurrent requests both passed the duplicate pre-check.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(duplicateApplicationMessage);
+      }
+
       // Re-throw business logic exceptions as-is
       if (
         error instanceof BadRequestException ||
-        error instanceof ConflictException
+        error instanceof ConflictException ||
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException
       ) {
         throw error;
       }
@@ -200,14 +255,103 @@ export class ReviewApplicationService {
   }
 
   /**
-   * Get all review applications of a review opportunity
-   * @param opportunityId opportunity id
-   * @returns all applications
+   * Lists one member's review applications with database filtering, ordering,
+   * and an explicit total for the Opportunities UI.
+   *
+   * @param userId - Authenticated member ID.
+   * @param dto - Application status, role, opportunity, and page filters.
+   * @returns Filtered application page and pagination metadata.
+   * @throws InternalServerErrorException when the database query fails.
+   */
+  async listByUserPaginated(
+    userId: string,
+    dto: QueryMyReviewApplicationDto,
+  ): Promise<{
+    items: ReviewApplicationResponseDto[];
+    metadata: ReviewApplicationListMetadataDto;
+  }> {
+    try {
+      const where: Prisma.reviewApplicationWhereInput = {
+        userId,
+        ...(dto.statuses?.length
+          ? { status: { in: dto.statuses as any } }
+          : {}),
+        ...(dto.roles?.length ? { role: { in: dto.roles as any } } : {}),
+        ...(dto.opportunityId ? { opportunityId: dto.opportunityId } : {}),
+      };
+      const page = dto.page ?? 1;
+      const perPage = dto.perPage ?? 10;
+      const [entities, total] = await this.prisma.$transaction([
+        this.prisma.reviewApplication.findMany({
+          where,
+          orderBy: [{ createdAt: dto.sortOrder ?? 'desc' }, { id: 'asc' }],
+          skip: (page - 1) * perPage,
+          take: perPage,
+        }),
+        this.prisma.reviewApplication.count({ where }),
+      ]);
+      return {
+        items: entities.map((entity) => this.buildResponse(entity)),
+        metadata: {
+          total,
+          page,
+          perPage,
+          totalPages: total > 0 ? Math.ceil(total / perPage) : 0,
+        },
+      };
+    } catch (error) {
+      const errorResponse = this.prismaErrorService.handleError(
+        error,
+        `fetching paginated review applications for user ${userId}`,
+      );
+      throw new InternalServerErrorException({
+        message: errorResponse.message,
+        code: errorResponse.code,
+        details: errorResponse.details,
+      });
+    }
+  }
+
+  /**
+   * Lists the public applicant panel for an opportunity only after enforcing
+   * the linked challenge's canonical whitelist, group, and task visibility.
+   * Applicant assignment metrics are resolved in one batched query.
+   *
+   * @param opportunityId - Review opportunity identifier.
+   * @param authUser - Optional caller used by the challenge visibility gate.
+   * @returns Applications for a caller-visible opportunity.
+   * @throws NotFoundException when the opportunity does not exist or its
+   * linked challenge is hidden; both cases use the same response contract.
+   * @throws InternalServerErrorException when application or metric storage fails.
    */
   async listByOpportunity(
     opportunityId: string,
+    authUser?: JwtUser,
   ): Promise<ReviewApplicationResponseDto[]> {
     try {
+      const unavailableResponse = {
+        message: 'Review opportunity was not found.',
+        code: 'REVIEW_OPPORTUNITY_NOT_FOUND',
+      };
+      const opportunity = await this.prisma.reviewOpportunity.findUnique({
+        where: { id: opportunityId },
+        select: { challengeId: true },
+      });
+      if (!opportunity) {
+        throw new NotFoundException(unavailableResponse);
+      }
+      try {
+        await this.challengeService.ensureChallengeWhitelistAccess(
+          authUser,
+          opportunity.challengeId,
+        );
+      } catch (error) {
+        if (error instanceof ForbiddenException) {
+          throw new NotFoundException(unavailableResponse);
+        }
+        throw error;
+      }
+
       const entityList = await this.prisma.reviewApplication.findMany({
         where: { opportunityId },
       });
@@ -225,12 +369,18 @@ export class ReviewApplicationService {
         ),
       );
 
-      const reviewerMetrics = await this.getReviewerMetrics(userIds);
+      const reviewerMetrics = await resolveReviewerMetrics(
+        this.challengePrisma,
+        userIds,
+      );
 
       return entityList.map((entity) =>
         this.buildResponse(entity, reviewerMetrics.get(String(entity.userId))),
       );
     } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `fetching review applications for opportunity ${opportunityId}`,
@@ -241,76 +391,6 @@ export class ReviewApplicationService {
         details: errorResponse.details,
       });
     }
-  }
-
-  private async getReviewerMetrics(
-    userIds: string[],
-  ): Promise<
-    Map<string, { openReviews: number; latestCompletedReviews: number }>
-  > {
-    const metrics = new Map<
-      string,
-      { openReviews: number; latestCompletedReviews: number }
-    >();
-
-    const normalizedIds = Array.from(
-      new Set(
-        userIds
-          .map((id) => id?.trim())
-          .filter((id): id is string => Boolean(id && id.length > 0)),
-      ),
-    );
-
-    if (!normalizedIds.length) {
-      return metrics;
-    }
-
-    const memberIdList = Prisma.join(
-      normalizedIds.map((id) => Prisma.sql`${id}`),
-    );
-    const recentThreshold = new Date();
-    recentThreshold.setDate(
-      recentThreshold.getDate() - RECENT_REVIEW_WINDOW_DAYS,
-    );
-
-    const metricsQuery = Prisma.sql`
-      SELECT
-        r."memberId" AS "memberId",
-        COUNT(DISTINCT CASE WHEN c.status = 'ACTIVE' THEN c.id END)::bigint AS "openReviews",
-        COUNT(
-          DISTINCT CASE
-            WHEN c.status IN ('COMPLETED', 'CANCELLED_FAILED_REVIEW')
-             AND c."updatedAt" >= ${recentThreshold}
-            THEN c.id
-          END
-        )::bigint AS "latestCompletedReviews"
-      FROM resources."Resource" r
-      INNER JOIN challenges."Challenge" c
-        ON c.id = r."challengeId"
-      INNER JOIN resources."ResourceRole" rr
-        ON rr.id = r."roleId"
-      WHERE r."memberId" IN (${memberIdList})
-        AND LOWER(rr.name) LIKE '%reviewer%'
-      GROUP BY r."memberId"
-    `;
-
-    const rows =
-      await this.challengePrisma.$queryRaw<ReviewerMetricsRow[]>(metricsQuery);
-
-    rows.forEach((row) => {
-      metrics.set(row.memberId, {
-        openReviews: Number(row.openReviews),
-        latestCompletedReviews: Number(row.latestCompletedReviews),
-      });
-    });
-
-    normalizedIds
-      .filter((id) => !metrics.has(id))
-      .forEach((id) =>
-        metrics.set(id, { openReviews: 0, latestCompletedReviews: 0 }),
-      );
-
-    return metrics;
   }
 
   /**

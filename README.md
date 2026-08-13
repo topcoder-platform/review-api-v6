@@ -1,5 +1,16 @@
 # Topcoder Review API
 
+## Opportunities experience additions
+
+- [Design submission previews](docs/SUBMISSION_PREVIEWS.md) documents the
+  Screening-triggered extraction pipeline, release gates, S3 configuration,
+  retry behavior, and public redirect endpoint.
+- [Review opportunity API](docs/REVIEW_OPPORTUNITIES.md) documents the
+  metadata-first search and current-member application endpoints used by
+  platform-ui.
+- [`@topcoder/review-api-v6-prisma-client`](packages/review-prisma-client/README.md)
+  is the supported external Prisma client boundary for opportunities-api-v6.
+
 Review API built on modern frameworks for managing all review-related Topcoder needs.
 
 Use Node.js 26.5.0 (see `.nvmrc`) and pnpm 11.15.1 for local development and builds.
@@ -69,6 +80,7 @@ export POSTGRES_SCHEMA="prod_schema"
 ```
 
 This allows you to:
+
 - Use different schemas for different environments (development, testing, production)
 - Isolate data for different instances of the application
 - Improve security by separating schemas based on environment

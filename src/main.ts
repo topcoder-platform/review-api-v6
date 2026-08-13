@@ -45,6 +45,7 @@ async function bootstrap() {
           /^https?:\/\/([a-zA-Z0-9-]+\.)*topcoder\.com(:\d+)?$/,
         ],
     methods: 'GET, POST, OPTIONS, PUT, DELETE, PATCH',
+    exposedHeaders: 'X-Total-Count, X-Page, X-Per-Page, X-Total-Pages',
   };
   app.use(cors(corsConfig));
   logger.log('CORS configuration applied');

@@ -125,6 +125,96 @@ describe('SubmissionService', () => {
     }
   });
 
+  describe('stripSubmitterSubmissionDetails', () => {
+    it('continues sanitizing later challenges after a reviewer-visible row', () => {
+      const submissions = [
+        {
+          id: 'reviewer-visible',
+          challengeId: 'reviewer-challenge',
+          memberId: 'other-member',
+          url: 'https://example.com/reviewer.zip',
+          review: [
+            {
+              reviewItems: [{ id: 'item-1' }],
+              initialScore: 90,
+              finalScore: 92,
+            },
+          ],
+        },
+        {
+          id: 'must-be-sanitized',
+          challengeId: 'unprivileged-challenge',
+          memberId: 'other-member',
+          url: 'https://example.com/private.zip',
+          initialScore: 80,
+          finalScore: 81,
+          aiDecisionScore: 0.9,
+          aiDecisionStatus: 'PASS',
+          reviewSummation: { aggregateScore: 81 },
+          review: [
+            {
+              reviewItems: [{ id: 'item-2' }],
+              initialScore: 80,
+              finalScore: 81,
+            },
+          ],
+        },
+      ];
+      const reviewerSummary = {
+        hasCopilot: false,
+        hasManager: false,
+        hasReviewer: true,
+        hasSubmitter: false,
+        reviewerResourceIds: [],
+      };
+      const noAccessSummary = {
+        hasCopilot: false,
+        hasManager: false,
+        hasReviewer: false,
+        hasSubmitter: false,
+        reviewerResourceIds: [],
+      };
+
+      (service as any).stripSubmitterSubmissionDetails(
+        {
+          userId: 'requester',
+          roles: [UserRole.User],
+          isMachine: false,
+        },
+        submissions,
+        {
+          requesterUserId: 'requester',
+          roleSummaryByChallenge: new Map([
+            ['reviewer-challenge', reviewerSummary],
+            ['unprivileged-challenge', noAccessSummary],
+          ]),
+          challengeDetailsById: new Map([
+            [
+              'reviewer-challenge',
+              { status: ChallengeStatus.ACTIVE, type: 'Challenge' },
+            ],
+            [
+              'unprivileged-challenge',
+              { status: ChallengeStatus.ACTIVE, type: 'Challenge' },
+            ],
+          ]),
+        },
+      );
+
+      expect(submissions[0].url).toBe('https://example.com/reviewer.zip');
+      expect(submissions[0].review[0].reviewItems).toEqual([{ id: 'item-1' }]);
+      expect(submissions[1].url).toBeNull();
+      expect(submissions[1].review[0].reviewItems).toBeUndefined();
+      expect(submissions[1].review[0].initialScore).toBeNull();
+      expect(submissions[1].review[0].finalScore).toBeNull();
+      expect(submissions[1]).not.toHaveProperty('reviewSummation');
+      expect(submissions[1]).not.toHaveProperty('initialScore');
+      expect(submissions[1]).not.toHaveProperty('finalScore');
+      expect(submissions[1]).not.toHaveProperty('aiDecisionScore');
+      expect(submissions[1]).not.toHaveProperty('aiDecisionStatus');
+    });
+  });
+
   describe('retryStaleSubmissionScanRequests', () => {
     const createRetryService = (
       submissions: Array<{

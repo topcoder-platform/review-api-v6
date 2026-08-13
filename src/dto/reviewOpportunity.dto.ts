@@ -6,6 +6,7 @@ import {
 } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsIn,
   IsNotEmpty,
@@ -14,12 +15,24 @@ import {
   IsPositive,
   IsString,
   IsUUID,
+  Max,
+  MaxLength,
   Min,
 } from 'class-validator';
-import { ReviewApplicationResponseDto } from './reviewApplication.dto';
+import type {
+  ReviewApplicationRole,
+  ReviewApplicationResponseDto,
+  ReviewApplicationStatus,
+} from './reviewApplication.dto';
 import { Expose, Transform } from 'class-transformer';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 
+/**
+ * Normalizes one scalar or repeated query parameter into trimmed strings.
+ *
+ * @param input - Raw query parameter value supplied by Express.
+ * @returns Non-empty normalized strings.
+ */
 const toNormalizedStrings = (input: unknown): string[] => {
   if (Array.isArray(input)) {
     return input
@@ -36,6 +49,12 @@ const toNormalizedStrings = (input: unknown): string[] => {
   return [];
 };
 
+/**
+ * Merges aliases for a repeated query parameter without duplicate values.
+ *
+ * @param inputs - Scalar or repeated values from supported query aliases.
+ * @returns Unique normalized values in first-seen order.
+ */
 const mergeNormalizedStrings = (...inputs: unknown[]): string[] => {
   const unique = new Set<string>();
   for (const input of inputs) {
@@ -44,6 +63,20 @@ const mergeNormalizedStrings = (...inputs: unknown[]): string[] => {
     }
   }
   return [...unique];
+};
+
+/**
+ * Converts a query-string boolean into a real boolean for class validation.
+ *
+ * @param value - Raw query parameter value.
+ * @returns Parsed boolean, or the original value so validation can reject it.
+ */
+const toBoolean = (value: unknown): unknown => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return value;
+  if (value.toLowerCase() === 'true' || value === '1') return true;
+  if (value.toLowerCase() === 'false' || value === '0') return false;
+  return value;
 };
 
 export enum ReviewOpportunityStatus {
@@ -66,12 +99,30 @@ export enum ReviewOpportunityType {
   SCENARIOS_REVIEW = 'SCENARIOS_REVIEW',
 }
 
+/** Stable reason codes used to render review-application eligibility. */
+export enum ReviewOpportunityCanApplyReason {
+  CAN_APPLY = 'CAN_APPLY',
+  NOT_AUTHENTICATED = 'NOT_AUTHENTICATED',
+  NOT_REVIEWER = 'NOT_REVIEWER',
+  OPPORTUNITY_CLOSED = 'OPPORTUNITY_CLOSED',
+  CHALLENGE_NOT_ACTIVE = 'CHALLENGE_NOT_ACTIVE',
+  ALREADY_APPLIED = 'ALREADY_APPLIED',
+  NO_OPEN_POSITIONS = 'NO_OPEN_POSITIONS',
+}
+
 const opportunityAllType = [
   ReviewOpportunityType.REGULAR_REVIEW,
   ReviewOpportunityType.COMPONENT_DEV_REVIEW,
   ReviewOpportunityType.SPEC_REVIEW,
   ReviewOpportunityType.ITERATIVE_REVIEW,
   ReviewOpportunityType.SCENARIOS_REVIEW,
+];
+
+const reviewApplicationStatuses = [
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'CANCELLED',
 ];
 
 export class CreateReviewOpportunityDto {
@@ -169,6 +220,54 @@ export class ReviewPaymentDto {
   payment: number;
 }
 
+/**
+ * Public challenge context embedded in a review-opportunity response. The
+ * `overview` value mirrors `description` so clients migrating from the legacy
+ * review application can render either field without another API call.
+ */
+export class ReviewOpportunityChallengeDataDto {
+  @ApiProperty({ description: 'Legacy numeric challenge identifier' })
+  id: number;
+
+  @ApiProperty({ description: 'Challenge name' })
+  name: string;
+
+  @ApiProperty({ description: 'Legacy alias for the challenge name' })
+  title: string;
+
+  @ApiProperty({ description: 'Challenge Markdown description' })
+  description: string;
+
+  @ApiProperty({
+    description: 'Alias of description used by opportunity detail clients',
+  })
+  overview: string;
+
+  @ApiProperty({ description: 'Challenge type name' })
+  type: string;
+
+  @ApiProperty({ description: 'Challenge type identifier' })
+  typeId: string;
+
+  @ApiProperty({ description: 'Challenge track name' })
+  track: string;
+
+  @ApiProperty({ description: 'Challenge track identifier' })
+  trackId: string;
+
+  @ApiProperty({ description: 'Legacy challenge sub-track name' })
+  subTrack: string;
+
+  @ApiProperty({ description: 'Challenge technology tags', type: [String] })
+  technologies: string[];
+
+  @ApiProperty({ description: 'Challenge data contract version' })
+  version: string;
+
+  @ApiProperty({ description: 'Challenge platform labels', type: [String] })
+  platforms: string[];
+}
+
 export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   @ApiProperty({
     description: 'Review opportunity id',
@@ -190,12 +289,15 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
 
   @ApiProperty({
     description:
-      'Challenge data including id, title, track, subTrack, technologies, platforms',
+      'Challenge context including Markdown description for the opportunity detail page',
+    type: ReviewOpportunityChallengeDataDto,
+    nullable: true,
   })
-  challengeData: Record<string, string | number | string[]> | null;
+  challengeData: ReviewOpportunityChallengeDataDto | null;
 
   @ApiProperty({
-    description: 'Review applications on this opportunity',
+    description:
+      'Review applications visible in this response: caller-only on list/search routes and the public applicant panel on detail routes after linked-challenge visibility succeeds',
   })
   applications: ReviewApplicationResponseDto[] | null;
 
@@ -203,6 +305,78 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
     description: 'Review payments',
   })
   payments: ReviewPaymentDto[] | null;
+
+  @ApiProperty({
+    description:
+      'Whether the current caller can submit a review application now',
+    example: true,
+  })
+  canApply: boolean;
+
+  @ApiProperty({
+    description: 'Stable explanation for the canApply value',
+    enum: ReviewOpportunityCanApplyReason,
+    example: ReviewOpportunityCanApplyReason.CAN_APPLY,
+  })
+  canApplyReason: ReviewOpportunityCanApplyReason;
+
+  @ApiProperty({
+    description: 'Applications belonging to the authenticated caller only',
+    type: 'array',
+    items: { type: 'object' },
+  })
+  myApplications: ReviewApplicationResponseDto[];
+
+  @ApiProperty({
+    description:
+      'Public-safe total number of applications in every status; applicant identities remain caller-scoped on list routes and are returned by detail routes only for caller-visible challenges',
+    example: 4,
+  })
+  applicationCount: number;
+
+  @ApiProperty({
+    description: 'Number of approved applications occupying reviewer spots',
+    example: 1,
+  })
+  approvedApplicationCount: number;
+
+  @ApiProperty({
+    description: 'Reviewer positions not yet occupied by approved applications',
+    example: 2,
+  })
+  remainingPositions: number;
+
+  @ApiProperty({
+    description: 'Review application roles accepted for this opportunity type',
+    type: [String],
+  })
+  applicationRoles: ReviewApplicationRole[];
+
+  @ApiProperty({
+    description: 'Preferred role for a one-click application action',
+  })
+  defaultApplicationRole: ReviewApplicationRole;
+}
+
+/** Pagination metadata returned by metadata-first opportunity searches. */
+export class ReviewOpportunitySearchMetadataDto {
+  @ApiProperty({ description: 'Total rows matching all filters', example: 42 })
+  total: number;
+
+  @ApiProperty({ description: 'Zero-based row offset', example: 0 })
+  offset: number;
+
+  @ApiProperty({ description: 'Maximum rows returned', example: 10 })
+  limit: number;
+
+  @ApiProperty({
+    description: 'One-based page derived from offset',
+    example: 1,
+  })
+  page: number;
+
+  @ApiProperty({ description: 'Total number of pages', example: 5 })
+  totalPages: number;
 }
 
 export class ReviewOpportunitySummaryDto {
@@ -304,6 +478,25 @@ export class QueryReviewOpportunitySummaryDto {
 }
 
 export class QueryReviewOpportunityDto {
+  @ApiPropertyOptional({
+    description: 'Case-insensitive challenge name search',
+    example: 'dashboard',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Restrict results to challenge IDs',
+    type: [String],
+  })
+  @Transform(({ value }) => toNormalizedStrings(value))
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  challengeIds?: string[];
+
   @Transform(({ value }) => parseInt(value, 10))
   @IsNumber()
   @Min(0)
@@ -346,13 +539,13 @@ export class QueryReviewOpportunityDto {
 
   @Transform(({ value }) => parseInt(value, 10))
   @IsNumber()
-  @IsPositive()
+  @Min(0)
   @IsOptional()
   numSubmissionsFrom: number | undefined;
 
   @Transform(({ value }) => parseInt(value, 10))
   @IsNumber()
-  @IsPositive()
+  @Min(0)
   @IsOptional()
   numSubmissionsTo: number | undefined;
 
@@ -384,7 +577,60 @@ export class QueryReviewOpportunityDto {
   @IsOptional()
   types: string[] | undefined;
 
-  @IsIn(['basePayment', 'duration', 'startDate'])
+  @ApiPropertyOptional({
+    description: 'Review opportunity types',
+    enum: opportunityAllType,
+    isArray: true,
+  })
+  @Transform(({ value }) => toNormalizedStrings(value))
+  @IsArray()
+  @IsIn(opportunityAllType, { each: true })
+  @IsOptional()
+  opportunityTypes?: ReviewOpportunityType[];
+
+  @ApiPropertyOptional({
+    description:
+      'Opportunity statuses. Omit to preserve the historical OPEN-only default.',
+    enum: opportunityAllStatus,
+    isArray: true,
+  })
+  @Expose({ name: 'status' })
+  @Transform(({ value, obj }): ReviewOpportunityStatus[] | undefined => {
+    const sourceObj = obj as Record<string, unknown> | undefined;
+    const values = mergeNormalizedStrings(
+      value,
+      sourceObj?.statuses,
+      sourceObj?.status,
+    );
+    return values.length ? (values as ReviewOpportunityStatus[]) : undefined;
+  })
+  @IsArray()
+  @IsIn(opportunityAllStatus, { each: true })
+  @IsOptional()
+  statuses?: ReviewOpportunityStatus[];
+
+  @ApiPropertyOptional({
+    description:
+      'Return only opportunities with (true) or without (false) an application by the authenticated caller',
+  })
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  @IsOptional()
+  appliedByMe?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter the authenticated caller application by status; implies appliedByMe=true',
+    enum: reviewApplicationStatuses,
+    isArray: true,
+  })
+  @Transform(({ value }) => toNormalizedStrings(value))
+  @IsArray()
+  @IsIn(reviewApplicationStatuses, { each: true })
+  @IsOptional()
+  applicationStatuses?: ReviewApplicationStatus[];
+
+  @IsIn(['basePayment', 'duration', 'startDate', 'openPositions'])
   @IsString()
   @IsOptional()
   sortBy: string = 'startDate';
@@ -397,6 +643,7 @@ export class QueryReviewOpportunityDto {
   @Transform(({ value }) => parseInt(value, 10))
   @IsNumber()
   @IsPositive()
+  @Max(100)
   @IsOptional()
   limit: number | undefined = 10;
 
