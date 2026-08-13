@@ -24,6 +24,7 @@ describe('ReviewOpportunityService search', () => {
     $transaction: jest.fn(),
   } as any;
   const challengeServiceMock = {
+    ensureChallengeWhitelistAccess: jest.fn(),
     filterChallengeIdsByWhitelist: jest.fn(),
     getChallengeSummaries: jest.fn(),
     getChallengeDetailForUser: jest.fn(),
@@ -53,6 +54,9 @@ describe('ReviewOpportunityService search', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    challengeServiceMock.ensureChallengeWhitelistAccess.mockResolvedValue(
+      undefined,
+    );
     prismaMock.$transaction.mockImplementation((operations) =>
       Promise.all(operations),
     );
@@ -260,6 +264,18 @@ describe('ReviewOpportunityService search', () => {
       name: 'Review Detail Challenge',
       status: ChallengeStatus.ACTIVE,
     });
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      {
+        memberId: 'reviewer-1',
+        openReviews: 2n,
+        latestCompletedReviews: 8n,
+      },
+      {
+        memberId: 'reviewer-2',
+        openReviews: 4n,
+        latestCompletedReviews: 5n,
+      },
+    ]);
 
     const result = await service.get('opportunity-detail');
 
@@ -268,8 +284,21 @@ describe('ReviewOpportunityService search', () => {
         applicationCount: 2,
         approvedApplicationCount: 1,
         remainingPositions: 1,
+        applications: [
+          expect.objectContaining({
+            userId: 'reviewer-1',
+            openReviews: 2,
+            latestCompletedReviews: 8,
+          }),
+          expect.objectContaining({
+            userId: 'reviewer-2',
+            openReviews: 4,
+            latestCompletedReviews: 5,
+          }),
+        ],
       }),
     );
+    expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(1);
     expect(prismaMock.reviewOpportunity.findUnique).toHaveBeenCalledWith({
       where: { id: 'opportunity-detail' },
       include: {
@@ -277,6 +306,103 @@ describe('ReviewOpportunityService search', () => {
         _count: { select: { applications: true } },
       },
     });
+  });
+
+  it('hydrates challenge-route applicant metrics in one batch', async () => {
+    const authUser = {
+      userId: 'group-member',
+      roles: [UserRole.Reviewer],
+      isMachine: false,
+    };
+    prismaMock.reviewOpportunity.findMany.mockResolvedValue([
+      {
+        id: 'opportunity-1',
+        challengeId: 'challenge-group',
+        status: ReviewOpportunityStatus.OPEN,
+        type: ReviewOpportunityType.REGULAR_REVIEW,
+        openPositions: 2,
+        startDate: new Date('2026-08-20T00:00:00Z'),
+        duration: 86400,
+        basePayment: 150,
+        incrementalPayment: 25,
+        applications: [
+          {
+            id: 'application-1',
+            userId: 'reviewer-1',
+            handle: 'reviewer-one',
+            role: 'REVIEWER',
+            status: ReviewApplicationStatus.PENDING,
+            createdAt: new Date('2026-08-13T00:00:00Z'),
+          },
+        ],
+        _count: { applications: 1 },
+      },
+      {
+        id: 'opportunity-2',
+        challengeId: 'challenge-group',
+        status: ReviewOpportunityStatus.OPEN,
+        type: ReviewOpportunityType.REGULAR_REVIEW,
+        openPositions: 1,
+        startDate: new Date('2026-08-21T00:00:00Z'),
+        duration: 86400,
+        basePayment: 100,
+        incrementalPayment: 20,
+        applications: [
+          {
+            id: 'application-2',
+            userId: 'reviewer-2',
+            handle: 'reviewer-two',
+            role: 'REVIEWER',
+            status: ReviewApplicationStatus.APPROVED,
+            createdAt: new Date('2026-08-12T00:00:00Z'),
+          },
+        ],
+        _count: { applications: 1 },
+      },
+    ]);
+    challengeServiceMock.getChallengeSummaries.mockResolvedValue([
+      {
+        id: 'challenge-group',
+        name: 'Group Review Challenge',
+        status: ChallengeStatus.ACTIVE,
+      },
+    ]);
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      {
+        memberId: 'reviewer-1',
+        openReviews: 1n,
+        latestCompletedReviews: 6n,
+      },
+      {
+        memberId: 'reviewer-2',
+        openReviews: 3n,
+        latestCompletedReviews: 9n,
+      },
+    ]);
+
+    const result = await service.getByChallengeId(
+      'challenge-group',
+      authUser,
+    );
+
+    expect(
+      challengeServiceMock.ensureChallengeWhitelistAccess,
+    ).toHaveBeenCalledWith(authUser, 'challenge-group');
+    expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(result[0].applications?.[0]).toEqual(
+      expect.objectContaining({
+        userId: 'reviewer-1',
+        openReviews: 1,
+        latestCompletedReviews: 6,
+      }),
+    );
+    expect(result[1].applications?.[0]).toEqual(
+      expect.objectContaining({
+        userId: 'reviewer-2',
+        openReviews: 3,
+        latestCompletedReviews: 9,
+      }),
+    );
   });
 
   it('applies authenticated member application filters in the database', async () => {

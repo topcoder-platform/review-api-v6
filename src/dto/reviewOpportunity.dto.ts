@@ -297,7 +297,7 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
 
   @ApiProperty({
     description:
-      'Review applications visible in this response: caller-only on list/search routes and complete on the single-opportunity detail route',
+      'Review applications visible in this response: caller-only on list/search routes and the public applicant panel on detail routes after linked-challenge visibility succeeds',
   })
   applications: ReviewApplicationResponseDto[] | null;
 
@@ -329,7 +329,7 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
 
   @ApiProperty({
     description:
-      'Public-safe total number of applications in every status; applicant identities remain caller-scoped on list routes',
+      'Public-safe total number of applications in every status; applicant identities remain caller-scoped on list routes and are returned by detail routes only for caller-visible challenges',
     example: 4,
   })
   applicationCount: number;

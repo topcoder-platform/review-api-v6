@@ -3,7 +3,10 @@ jest.mock('nanoid', () => ({
   nanoid: () => 'mock-nanoid',
 }));
 
-import { ConflictException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Prisma, ReviewOpportunityType } from '@prisma/client';
 import {
   ReviewApplicationRole,
@@ -31,6 +34,7 @@ describe('ReviewApplicationService', () => {
   };
 
   const challengeServiceMock = {
+    ensureChallengeWhitelistAccess: jest.fn(),
     getChallengeDetail: jest.fn(),
     getChallengeDetailForUser: jest.fn(),
   };
@@ -85,6 +89,9 @@ describe('ReviewApplicationService', () => {
     ]);
     eventBusServiceMock.publish.mockResolvedValue(undefined);
     eventBusServiceMock.sendEmail.mockResolvedValue(undefined);
+    challengeServiceMock.ensureChallengeWhitelistAccess.mockResolvedValue(
+      undefined,
+    );
     prismaErrorServiceMock.handleError.mockImplementation((error) => ({
       code: 'TEST_ERROR',
       details: error,
@@ -379,6 +386,138 @@ describe('ReviewApplicationService', () => {
       perPage: 10,
       totalPages: 2,
     });
+  });
+
+  it.each(['whitelist', 'group', 'task'])(
+    'does not expose applications for an anonymous caller blocked by a %s restriction',
+    async (restriction) => {
+      prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+        challengeId: `challenge-hidden-${restriction}`,
+      });
+      challengeServiceMock.ensureChallengeWhitelistAccess.mockRejectedValueOnce(
+        new ForbiddenException('Challenge is hidden'),
+      );
+
+      await expect(
+        service.listByOpportunity(`opportunity-hidden-${restriction}`),
+      ).rejects.toMatchObject({
+        status: 404,
+        response: {
+          message: 'Review opportunity was not found.',
+          code: 'REVIEW_OPPORTUNITY_NOT_FOUND',
+        },
+      });
+
+      expect(
+        challengeServiceMock.ensureChallengeWhitelistAccess,
+      ).toHaveBeenCalledWith(undefined, `challenge-hidden-${restriction}`);
+      expect(prismaMock.reviewApplication.findMany).not.toHaveBeenCalled();
+      expect(challengePrismaMock.$queryRaw).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns 404 before challenge or applicant queries for a missing opportunity', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.listByOpportunity('opportunity-missing'),
+    ).rejects.toMatchObject({
+      status: 404,
+      response: {
+        message: 'Review opportunity was not found.',
+        code: 'REVIEW_OPPORTUNITY_NOT_FOUND',
+      },
+    });
+
+    expect(
+      challengeServiceMock.ensureChallengeWhitelistAccess,
+    ).not.toHaveBeenCalled();
+    expect(prismaMock.reviewApplication.findMany).not.toHaveBeenCalled();
+    expect(challengePrismaMock.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('keeps anonymous access for a visible public opportunity', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      challengeId: 'challenge-public',
+    });
+    prismaMock.reviewApplication.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.listByOpportunity('opportunity-public'),
+    ).resolves.toEqual([]);
+
+    expect(
+      challengeServiceMock.ensureChallengeWhitelistAccess,
+    ).toHaveBeenCalledWith(undefined, 'challenge-public');
+    expect(prismaMock.reviewApplication.findMany).toHaveBeenCalledWith({
+      where: { opportunityId: 'opportunity-public' },
+    });
+    expect(challengePrismaMock.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('returns real metrics in one batch for a group member viewing an accessible opportunity', async () => {
+    const authUser = {
+      userId: 'group-member',
+      roles: [] as any,
+      isMachine: false,
+    };
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      challengeId: 'challenge-group-visible',
+    });
+    prismaMock.reviewApplication.findMany.mockResolvedValue([
+      {
+        id: 'application-1',
+        opportunityId: 'opportunity-group-visible',
+        userId: '1001',
+        handle: 'reviewer-one',
+        role: ReviewApplicationRole.REVIEWER,
+        status: ReviewApplicationStatus.PENDING,
+        createdAt: new Date('2026-08-13T00:00:00Z'),
+      },
+      {
+        id: 'application-2',
+        opportunityId: 'opportunity-group-visible',
+        userId: '1002',
+        handle: 'reviewer-two',
+        role: ReviewApplicationRole.REVIEWER,
+        status: ReviewApplicationStatus.APPROVED,
+        createdAt: new Date('2026-08-12T00:00:00Z'),
+      },
+    ]);
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      {
+        memberId: '1001',
+        openReviews: 3n,
+        latestCompletedReviews: 7n,
+      },
+      {
+        memberId: '1002',
+        openReviews: 1n,
+        latestCompletedReviews: 4n,
+      },
+    ]);
+
+    const result = await service.listByOpportunity(
+      'opportunity-group-visible',
+      authUser,
+    );
+
+    expect(
+      challengeServiceMock.ensureChallengeWhitelistAccess,
+    ).toHaveBeenCalledWith(authUser, 'challenge-group-visible');
+    expect(challengePrismaMock.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(result).toEqual([
+      expect.objectContaining({
+        userId: '1001',
+        openReviews: 3,
+        latestCompletedReviews: 7,
+      }),
+      expect.objectContaining({
+        userId: '1002',
+        openReviews: 1,
+        latestCompletedReviews: 4,
+      }),
+    ]);
   });
 
   it('accepts the Reviewer role for a scenarios review opportunity', async () => {

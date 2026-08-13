@@ -17,6 +17,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { OkResponse, ResponseDto } from 'src/dto/common.dto';
 import {
   CreateReviewApplicationDto,
@@ -148,7 +149,7 @@ export class ReviewApplicationController {
   @ApiOperation({
     summary: 'Get applications by opportunity ID',
     description:
-      'All users should be able to see full list. Including anonymous.',
+      'Returns the public applicant panel to anonymous or authenticated callers only when the linked challenge is visible under whitelist, group, and task access rules.',
   })
   @ApiParam({
     name: 'opportunityId',
@@ -156,14 +157,34 @@ export class ReviewApplicationController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Review application details',
+    description:
+      'Review application identities and public reviewer assignment metrics for a caller-visible opportunity.',
     type: ResponseDto<ReviewApplicationResponseDto[]>,
   })
-  @ApiResponse({ status: 404, description: 'Not Found' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'The opportunity is missing or its linked challenge is not visible to the caller.',
+  })
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Get('/opportunity/:opportunityId')
-  async getByOpportunityId(@Param('opportunityId') opportunityId: string) {
-    return OkResponse(await this.service.listByOpportunity(opportunityId));
+  /**
+   * Returns a visible opportunity's applicant panel with optional caller auth.
+   *
+   * @param req - Request carrying an optional validated JWT user.
+   * @param opportunityId - Review opportunity identifier.
+   * @returns Standard response containing public applicant rows.
+   * @throws NotFoundException when the opportunity is missing or hidden by
+   * linked-challenge visibility.
+   */
+  async getByOpportunityId(
+    @Req() req: Request,
+    @Param('opportunityId') opportunityId: string,
+  ) {
+    const authUser = req['user'] as JwtUser | undefined;
+    return OkResponse(
+      await this.service.listByOpportunity(opportunityId, authUser),
+    );
   }
 
   @ApiOperation({

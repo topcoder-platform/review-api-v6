@@ -33,15 +33,12 @@ import { MemberService } from 'src/shared/modules/global/member.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import {
+  RECENT_REVIEW_WINDOW_DAYS,
+  resolveReviewerMetrics,
+} from 'src/shared/modules/global/reviewer-metrics.util';
 
-const RECENT_REVIEW_WINDOW_DAYS = 60;
 const RESOURCE_CREATED_TOPIC = 'challenge.action.resource.create';
-
-interface ReviewerMetricsRow {
-  memberId: string;
-  openReviews: bigint;
-  latestCompletedReviews: bigint;
-}
 
 interface RecentReviewAssignmentRow {
   memberId: string;
@@ -316,14 +313,45 @@ export class ReviewApplicationService {
   }
 
   /**
-   * Get all review applications of a review opportunity
-   * @param opportunityId opportunity id
-   * @returns all applications
+   * Lists the public applicant panel for an opportunity only after enforcing
+   * the linked challenge's canonical whitelist, group, and task visibility.
+   * Applicant assignment metrics are resolved in one batched query.
+   *
+   * @param opportunityId - Review opportunity identifier.
+   * @param authUser - Optional caller used by the challenge visibility gate.
+   * @returns Applications for a caller-visible opportunity.
+   * @throws NotFoundException when the opportunity does not exist or its
+   * linked challenge is hidden; both cases use the same response contract.
+   * @throws InternalServerErrorException when application or metric storage fails.
    */
   async listByOpportunity(
     opportunityId: string,
+    authUser?: JwtUser,
   ): Promise<ReviewApplicationResponseDto[]> {
     try {
+      const unavailableResponse = {
+        message: 'Review opportunity was not found.',
+        code: 'REVIEW_OPPORTUNITY_NOT_FOUND',
+      };
+      const opportunity = await this.prisma.reviewOpportunity.findUnique({
+        where: { id: opportunityId },
+        select: { challengeId: true },
+      });
+      if (!opportunity) {
+        throw new NotFoundException(unavailableResponse);
+      }
+      try {
+        await this.challengeService.ensureChallengeWhitelistAccess(
+          authUser,
+          opportunity.challengeId,
+        );
+      } catch (error) {
+        if (error instanceof ForbiddenException) {
+          throw new NotFoundException(unavailableResponse);
+        }
+        throw error;
+      }
+
       const entityList = await this.prisma.reviewApplication.findMany({
         where: { opportunityId },
       });
@@ -341,12 +369,18 @@ export class ReviewApplicationService {
         ),
       );
 
-      const reviewerMetrics = await this.getReviewerMetrics(userIds);
+      const reviewerMetrics = await resolveReviewerMetrics(
+        this.challengePrisma,
+        userIds,
+      );
 
       return entityList.map((entity) =>
         this.buildResponse(entity, reviewerMetrics.get(String(entity.userId))),
       );
     } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `fetching review applications for opportunity ${opportunityId}`,
@@ -357,76 +391,6 @@ export class ReviewApplicationService {
         details: errorResponse.details,
       });
     }
-  }
-
-  private async getReviewerMetrics(
-    userIds: string[],
-  ): Promise<
-    Map<string, { openReviews: number; latestCompletedReviews: number }>
-  > {
-    const metrics = new Map<
-      string,
-      { openReviews: number; latestCompletedReviews: number }
-    >();
-
-    const normalizedIds = Array.from(
-      new Set(
-        userIds
-          .map((id) => id?.trim())
-          .filter((id): id is string => Boolean(id && id.length > 0)),
-      ),
-    );
-
-    if (!normalizedIds.length) {
-      return metrics;
-    }
-
-    const memberIdList = Prisma.join(
-      normalizedIds.map((id) => Prisma.sql`${id}`),
-    );
-    const recentThreshold = new Date();
-    recentThreshold.setDate(
-      recentThreshold.getDate() - RECENT_REVIEW_WINDOW_DAYS,
-    );
-
-    const metricsQuery = Prisma.sql`
-      SELECT
-        r."memberId" AS "memberId",
-        COUNT(DISTINCT CASE WHEN c.status = 'ACTIVE' THEN c.id END)::bigint AS "openReviews",
-        COUNT(
-          DISTINCT CASE
-            WHEN c.status IN ('COMPLETED', 'CANCELLED_FAILED_REVIEW')
-             AND c."updatedAt" >= ${recentThreshold}
-            THEN c.id
-          END
-        )::bigint AS "latestCompletedReviews"
-      FROM resources."Resource" r
-      INNER JOIN challenges."Challenge" c
-        ON c.id = r."challengeId"
-      INNER JOIN resources."ResourceRole" rr
-        ON rr.id = r."roleId"
-      WHERE r."memberId" IN (${memberIdList})
-        AND LOWER(rr.name) LIKE '%reviewer%'
-      GROUP BY r."memberId"
-    `;
-
-    const rows =
-      await this.challengePrisma.$queryRaw<ReviewerMetricsRow[]>(metricsQuery);
-
-    rows.forEach((row) => {
-      metrics.set(row.memberId, {
-        openReviews: Number(row.openReviews),
-        latestCompletedReviews: Number(row.latestCompletedReviews),
-      });
-    });
-
-    normalizedIds
-      .filter((id) => !metrics.has(id))
-      .forEach((id) =>
-        metrics.set(id, { openReviews: 0, latestCompletedReviews: 0 }),
-      );
-
-    return metrics;
   }
 
   /**

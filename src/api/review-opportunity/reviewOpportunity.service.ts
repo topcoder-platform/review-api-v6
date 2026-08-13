@@ -37,6 +37,10 @@ import { ChallengePrismaService } from 'src/shared/modules/global/challenge-pris
 import { Prisma, ReviewApplicationStatus } from '@prisma/client';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
+import {
+  resolveReviewerMetrics,
+  ReviewerMetrics,
+} from 'src/shared/modules/global/reviewer-metrics.util';
 
 type SubmissionPhaseSummary = {
   scheduledEndDate: Date | null;
@@ -918,7 +922,18 @@ export class ReviewOpportunityService {
     authUser?: JwtUser,
   ): Promise<ReviewOpportunityResponseDto[]> {
     const challengeMap = await this.buildChallengeMap(entityList);
-    return this.buildResponseList(entityList, challengeMap, authUser);
+    const reviewerMetrics = await resolveReviewerMetrics(
+      this.challengePrisma,
+      entityList.flatMap((entity) =>
+        (entity.applications ?? []).map((application) => application.userId),
+      ),
+    );
+    return this.buildResponseList(
+      entityList,
+      challengeMap,
+      authUser,
+      reviewerMetrics,
+    );
   }
 
   /**
@@ -959,15 +974,22 @@ export class ReviewOpportunityService {
    * @param entityList - Review opportunity rows.
    * @param challengeMap - Hydrated challenges keyed by ID.
    * @param authUser - Optional caller used for eligibility.
+   * @param reviewerMetrics - Optional public-safe assignment totals by member.
    * @returns Enriched response items.
    */
   private buildResponseList(
     entityList: any[],
     challengeMap: Map<string, ChallengeData>,
     authUser?: JwtUser,
+    reviewerMetrics?: Map<string, ReviewerMetrics>,
   ): ReviewOpportunityResponseDto[] {
     return (entityList || []).map((e) =>
-      this.buildResponse(e, challengeMap.get(e.challengeId), authUser),
+      this.buildResponse(
+        e,
+        challengeMap.get(e.challengeId),
+        authUser,
+        reviewerMetrics,
+      ),
     );
   }
 
@@ -985,7 +1007,16 @@ export class ReviewOpportunityService {
       authUser,
       entity.challengeId,
     );
-    return this.buildResponse(entity, challengeData, authUser);
+    const reviewerMetrics = await resolveReviewerMetrics(
+      this.challengePrisma,
+      (entity.applications ?? []).map((application) => application.userId),
+    );
+    return this.buildResponse(
+      entity,
+      challengeData,
+      authUser,
+      reviewerMetrics,
+    );
   }
 
   /**
@@ -993,12 +1024,14 @@ export class ReviewOpportunityService {
    * @param entity prisma entity
    * @param challengeData challenge data from api
    * @param authUser optional caller used for application eligibility
+   * @param reviewerMetrics public-safe assignment totals keyed by applicant ID
    * @returns response dto
    */
   private buildResponse(
     entity: any,
     challengeData?: ChallengeData,
     authUser?: JwtUser,
+    reviewerMetrics?: Map<string, ReviewerMetrics>,
   ): ReviewOpportunityResponseDto {
     const ret = new ReviewOpportunityResponseDto();
     ret.id = entity.id;
@@ -1033,17 +1066,20 @@ export class ReviewOpportunityService {
     ret.defaultApplicationRole = ret.applicationRoles[0];
 
     // review applications
-    const applicationResponses = (entity.applications ?? []).map((e) => ({
-      id: e.id,
-      opportunityId: entity.id,
-      userId: e.userId,
-      handle: e.handle,
-      role: convertRoleName(e.role),
-      status: e.status,
-      applicationDate: e.createdAt,
-      openReviews: 0,
-      latestCompletedReviews: 0,
-    }));
+    const applicationResponses = (entity.applications ?? []).map((e) => {
+      const metrics = reviewerMetrics?.get(String(e.userId));
+      return {
+        id: e.id,
+        opportunityId: entity.id,
+        userId: e.userId,
+        handle: e.handle,
+        role: convertRoleName(e.role),
+        status: e.status,
+        applicationDate: e.createdAt,
+        openReviews: metrics?.openReviews ?? 0,
+        latestCompletedReviews: metrics?.latestCompletedReviews ?? 0,
+      };
+    });
     ret.applications = applicationResponses;
 
     const userId = this.getUserId(authUser);

@@ -76,9 +76,20 @@ anonymous callers). `applicationCount` and `approvedApplicationCount` are
 separate database aggregate counts: the former is every application status and
 the latter is only approved applications occupying capacity. This gives public
 cards an accurate total without exposing applicant identity or downloading
-every applicant. The single-opportunity detail route retains the complete
-application panel for the explicit detail click and exposes the same aggregate
-fields.
+every applicant. The single-opportunity and challenge-detail routes retain the
+public applicant panel for the explicit detail click, but only after the linked
+challenge passes the same whitelist, group, and task visibility boundary used
+by search. Each panel resolves `openReviews` and 60-day
+`latestCompletedReviews` totals in one batched query rather than returning
+placeholder values or issuing one query per applicant.
+
+`GET /review-applications/opportunity/{opportunityId}` remains compatible with
+anonymous callers for visible public opportunities. It first resolves the
+linked challenge and applies that same visibility boundary before querying any
+application rows. A missing opportunity returns `404`; a caller denied by a
+challenge whitelist, group restriction, or task assignment receives the same
+`404` response, preventing opportunity-ID probing and never returning applicant
+identities or metrics.
 
 Challenge card data for a result page is hydrated with one batch projection;
 detail-only phases, workflows, metadata, and winners are loaded only when a
