@@ -97,4 +97,8 @@ and `sortOrder`; its metadata is `total`, `page`, `perPage`, and `totalPages`.
 `POST /review-applications` remains compatible with
 `{ "opportunityId": "...", "role": "REVIEWER" }`, while now failing closed
 for a closed opportunity, inactive or inaccessible challenge, duplicate
-application, or filled approved capacity.
+application, or filled approved capacity. The database composite uniqueness
+constraint on opportunity, member, and role is authoritative for concurrent
+duplicate requests; the losing request receives the same HTTP 409 conflict as
+a duplicate found by the pre-check. Applications are created as `PENDING`, so
+they do not consume or overfill the approved-position capacity.

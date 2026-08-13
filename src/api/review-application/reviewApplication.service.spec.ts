@@ -3,7 +3,8 @@ jest.mock('nanoid', () => ({
   nanoid: () => 'mock-nanoid',
 }));
 
-import { ReviewOpportunityType } from '@prisma/client';
+import { ConflictException } from '@nestjs/common';
+import { Prisma, ReviewOpportunityType } from '@prisma/client';
 import {
   ReviewApplicationRole,
   ReviewApplicationStatus,
@@ -423,5 +424,119 @@ describe('ReviewApplicationService', () => {
         role: ReviewApplicationRole.REVIEWER,
       }),
     );
+  });
+
+  it('returns conflict for one of two concurrent duplicate applications', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      id: 'opportunity-concurrent',
+      challengeId: 'challenge-concurrent',
+      type: ReviewOpportunityType.REGULAR_REVIEW,
+      status: 'OPEN',
+      openPositions: 2,
+      applications: [],
+    });
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-concurrent',
+      status: ChallengeStatus.ACTIVE,
+    });
+    prismaMock.reviewApplication.findMany.mockResolvedValue([]);
+
+    const uniqueConstraintError = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed on the fields: (`opportunityId`,`userId`,`role`)',
+      {
+        code: 'P2002',
+        clientVersion: '6.19.3',
+        meta: {
+          modelName: 'reviewApplication',
+          target: ['opportunityId', 'userId', 'role'],
+        },
+      },
+    );
+    let insertCount = 0;
+    prismaMock.reviewApplication.create.mockImplementation(() => {
+      insertCount += 1;
+      if (insertCount === 1) {
+        return Promise.resolve({
+          id: 'application-concurrent',
+          opportunityId: 'opportunity-concurrent',
+          userId: '1001',
+          handle: 'reviewer-one',
+          role: ReviewApplicationRole.REVIEWER,
+          status: ReviewApplicationStatus.PENDING,
+          createdAt: new Date('2026-08-13T00:00:00.000Z'),
+        });
+      }
+      return Promise.reject(uniqueConstraintError);
+    });
+
+    const authUser = {
+      userId: '1001',
+      handle: 'reviewer-one',
+      roles: [] as any,
+      isMachine: false,
+    };
+    const dto = {
+      opportunityId: 'opportunity-concurrent',
+      role: ReviewApplicationRole.REVIEWER,
+    };
+    const results = await Promise.allSettled([
+      service.create(authUser, dto),
+      service.create(authUser, dto),
+    ]);
+
+    expect(results[0]).toEqual(
+      expect.objectContaining({ status: 'fulfilled' }),
+    );
+    expect(results[1]).toEqual(expect.objectContaining({ status: 'rejected' }));
+    const rejectedResult = results[1] as PromiseRejectedResult;
+    expect(rejectedResult.reason).toBeInstanceOf(ConflictException);
+    expect((rejectedResult.reason as ConflictException).getStatus()).toBe(409);
+    expect((rejectedResult.reason as ConflictException).getResponse()).toEqual(
+      expect.objectContaining({
+        message:
+          'User 1001 has already submitted an application for opportunity opportunity-concurrent with role REVIEWER',
+      }),
+    );
+    expect(prismaMock.reviewApplication.findMany).toHaveBeenCalledTimes(2);
+    expect(prismaMock.reviewApplication.create).toHaveBeenCalledTimes(2);
+    expect(prismaErrorServiceMock.handleError).not.toHaveBeenCalled();
+  });
+
+  it('rejects member apply when approved applications fill capacity', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      id: 'opportunity-full',
+      challengeId: 'challenge-full',
+      type: ReviewOpportunityType.REGULAR_REVIEW,
+      status: 'OPEN',
+      openPositions: 1,
+      applications: [{ status: ReviewApplicationStatus.APPROVED }],
+    });
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-full',
+      status: ChallengeStatus.ACTIVE,
+    });
+
+    await expect(
+      service.create(
+        {
+          userId: '1002',
+          handle: 'reviewer-two',
+          roles: [] as any,
+          isMachine: false,
+        },
+        {
+          opportunityId: 'opportunity-full',
+          role: ReviewApplicationRole.REVIEWER,
+        },
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        response: {
+          message: 'All reviewer positions have been filled.',
+          code: 'REVIEW_OPPORTUNITY_FULL',
+        },
+      }),
+    );
+    expect(prismaMock.reviewApplication.create).not.toHaveBeenCalled();
   });
 });

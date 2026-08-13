@@ -88,6 +88,8 @@ export class ReviewApplicationService {
   /**
    * Creates a review application after enforcing challenge visibility,
    * opportunity state, role compatibility, capacity, and uniqueness.
+   * The database uniqueness constraint remains authoritative when concurrent
+   * requests both pass the optimistic duplicate pre-check.
    *
    * @param authUser - Authenticated reviewer.
    * @param dto - Opportunity and requested review role.
@@ -104,6 +106,7 @@ export class ReviewApplicationService {
   ): Promise<ReviewApplicationResponseDto> {
     const userId = String(authUser.userId);
     const handle = authUser.handle as string;
+    const duplicateApplicationMessage = `User ${userId} has already submitted an application for opportunity ${dto.opportunityId} with role ${dto.role}`;
 
     try {
       // make sure review opportunity exists
@@ -162,9 +165,7 @@ export class ReviewApplicationService {
         },
       });
       if (existing && existing.length > 0) {
-        throw new ConflictException(
-          `User ${userId} has already submitted an application for opportunity ${dto.opportunityId} with role ${dto.role}`,
-        );
+        throw new ConflictException(duplicateApplicationMessage);
       }
       const entity = await this.prisma.reviewApplication.create({
         data: {
@@ -177,6 +178,16 @@ export class ReviewApplicationService {
       });
       return this.buildResponse(entity);
     } catch (error) {
+      // The application insert is the only write in this block. A P2002 here
+      // is the composite opportunity/member/role constraint closing a race in
+      // which concurrent requests both passed the duplicate pre-check.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(duplicateApplicationMessage);
+      }
+
       // Re-throw business logic exceptions as-is
       if (
         error instanceof BadRequestException ||
