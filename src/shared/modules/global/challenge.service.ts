@@ -1,8 +1,15 @@
+import { HttpService } from '@nestjs/axios';
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { firstValueFrom } from 'rxjs';
+import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { ChallengePrismaService } from './challenge-prisma.service';
-import { JwtUser } from './jwt.service';
+import { isAdmin, JwtUser } from './jwt.service';
+import { M2MService } from './m2m.service';
+
+const GROUP_MEMBERSHIP_CACHE_MS = 60_000;
+const MAX_GROUP_MEMBERSHIP_CACHE_ENTRIES = 1_000;
 
 export class PhaseData {
   id: string;
@@ -28,6 +35,7 @@ export class ChallengeWinnerData {
 export class ChallengeData {
   id: string;
   name: string;
+  description?: string | undefined;
   // v6 identifiers
   typeId?: string | undefined;
   trackId?: string | undefined;
@@ -65,6 +73,7 @@ export class WorkflowData {
 interface ChallengeRow {
   id: string;
   name: string;
+  description: string | null;
   status: string;
   typeId: string | null;
   trackId: string | null;
@@ -75,6 +84,16 @@ interface ChallengeRow {
   createdBy: string | null;
   updatedAt: Date;
   updatedBy: string | null;
+}
+
+interface ChallengeSummaryRow extends ChallengeRow {
+  legacyTrack: string | null;
+  legacySubTrack: string | null;
+  legacySystemId: number | null;
+  typeName: string | null;
+  trackName: string | null;
+  trackAbbreviation: string | null;
+  trackEnum: string | null;
 }
 
 interface ChallengeLegacyRow {
@@ -120,6 +139,18 @@ interface ChallengeUserWhitelistRow {
   userId: string;
 }
 
+interface ChallengeGroupRow {
+  id: string;
+  groups: string[] | null;
+  taskIsTask: boolean;
+  hasMemberAccess: boolean;
+}
+
+interface GroupMembershipCacheEntry {
+  groupIds: Set<string>;
+  expiresAt: number;
+}
+
 interface ChallengeAggregate {
   challenge: ChallengeRow;
   legacy?: ChallengeLegacyRow;
@@ -134,8 +165,23 @@ interface ChallengeAggregate {
 @Injectable()
 export class ChallengeApiService {
   private readonly logger: Logger = new Logger(ChallengeApiService.name);
+  private readonly groupMembershipCache = new Map<
+    string,
+    GroupMembershipCacheEntry
+  >();
 
-  constructor(private readonly challengePrisma: ChallengePrismaService) {}
+  /**
+   * Creates the challenge visibility reader.
+   *
+   * @param challengePrisma challenge database connection
+   * @param httpService HTTP client used to resolve a member's complete group tree
+   * @param m2mService service token provider for the groups API
+   */
+  constructor(
+    private readonly challengePrisma: ChallengePrismaService,
+    private readonly httpService?: HttpService,
+    private readonly m2mService?: M2MService,
+  ) {}
 
   /**
    * Determine whether challenge whitelist checks apply for a request.
@@ -150,9 +196,13 @@ export class ChallengeApiService {
   }
 
   /**
-   * Filter challenge ids by the current challenge user whitelist state.
-   * Challenges with no whitelist rows stay visible. Evaluation failures fail
-   * closed and return an empty list for interactive callers.
+   * Filter challenge ids by both the challenge user whitelist and challenge
+   * group membership. The historical method name is retained for API
+   * consumers, but this is the canonical review-api challenge visibility
+   * boundary. Anonymous callers see only ungrouped challenges; ordinary users
+   * see ungrouped challenges plus their complete group tree. Admin and M2M
+   * callers bypass group filtering, while interactive whitelist checks still
+   * apply to admins. Evaluation failures fail closed for restricted records.
    *
    * @param authUser the authenticated request user, if any
    * @param challengeIds challenge ids to filter
@@ -195,14 +245,227 @@ export class ChallengeApiService {
           .map((row) => row.challengeId),
       );
 
-      return ids.filter(
+      const whitelistVisibleIds = ids.filter(
         (id) => !restrictedIds.has(id) || allowedRestrictedIds.has(id),
       );
+      return this.filterChallengeIdsByGroups(authUser, whitelistVisibleIds);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Challenge whitelist evaluation failed: ${message}`);
       return [];
     }
+  }
+
+  /**
+   * Applies challenge group visibility to already whitelist-visible ids.
+   *
+   * @param authUser authenticated caller, if any
+   * @param challengeIds ids that passed user-whitelist filtering
+   * @returns ids whose group restriction is visible to the caller
+   */
+  private async filterChallengeIdsByGroups(
+    authUser: JwtUser | null | undefined,
+    challengeIds: string[],
+  ): Promise<string[]> {
+    if (
+      !challengeIds.length ||
+      authUser?.isMachine ||
+      (authUser && isAdmin(authUser))
+    ) {
+      return challengeIds;
+    }
+
+    let rows: ChallengeGroupRow[];
+    try {
+      rows = await this.challengePrisma.$queryRaw<ChallengeGroupRow[]>(
+        Prisma.sql`
+          SELECT
+            c.id,
+            c.groups,
+            c."taskIsTask",
+            EXISTS (
+              SELECT 1
+              FROM "MemberChallengeAccess" access
+              WHERE access."challengeId" = c.id
+                AND access."memberId" = ${String(authUser?.userId ?? '')}
+            ) AS "hasMemberAccess"
+          FROM "Challenge" c
+          WHERE c.id IN (${Prisma.join(
+            challengeIds.map((id) => Prisma.sql`${id}`),
+          )})
+        `,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Challenge group visibility query failed: ${this.errorMessage(error)}`,
+      );
+      return [];
+    }
+
+    const groupsByChallenge = new Map(
+      rows.map((row) => [
+        row.id,
+        Array.isArray(row.groups)
+          ? row.groups.map((group) => String(group).trim()).filter(Boolean)
+          : [],
+      ]),
+    );
+    const memberAccessByChallenge = new Map(
+      rows.map((row) => [row.id, row.hasMemberAccess === true]),
+    );
+    const taskVisibleByChallenge = new Map(
+      rows.map((row) => [
+        row.id,
+        row.taskIsTask !== true || row.hasMemberAccess === true,
+      ]),
+    );
+    const publicIds = challengeIds.filter(
+      (id) =>
+        groupsByChallenge.has(id) &&
+        (groupsByChallenge.get(id) ?? []).length === 0 &&
+        taskVisibleByChallenge.get(id) === true,
+    );
+    if (!authUser?.userId) {
+      return publicIds;
+    }
+
+    const memberGroups = await this.getMemberGroupIds(String(authUser.userId));
+    if (!memberGroups) {
+      return publicIds;
+    }
+    return challengeIds.filter((id) => {
+      if (!groupsByChallenge.has(id)) return false;
+      const challengeGroups = groupsByChallenge.get(id) ?? [];
+      return (
+        taskVisibleByChallenge.get(id) === true &&
+        (memberAccessByChallenge.get(id) === true ||
+          challengeGroups.length === 0 ||
+          challengeGroups.some((groupId) => memberGroups.has(groupId)))
+      );
+    });
+  }
+
+  /**
+   * Loads and briefly caches every group id in a member's ancestor tree.
+   * Failures return null so callers can retain public challenges while hiding
+   * all group-restricted records.
+   *
+   * @param userId Topcoder member identifier
+   * @returns accessible group ids, or null when membership cannot be verified
+   */
+  private async getMemberGroupIds(userId: string): Promise<Set<string> | null> {
+    const now = Date.now();
+    const cached = this.groupMembershipCache.get(userId);
+    if (cached && cached.expiresAt > now) {
+      return cached.groupIds;
+    }
+    if (!this.httpService || !this.m2mService) {
+      this.logger.warn('Groups API dependencies are unavailable.');
+      return null;
+    }
+
+    try {
+      const token = await this.m2mService.getM2MToken();
+      const baseUrl = CommonConfig.apis.groupsApiUrl.replace(/\/$/, '');
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `${baseUrl}/memberGroups/${encodeURIComponent(userId)}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            params: { uuid: true },
+          },
+        ),
+      );
+      const groupIds = this.normalizeGroupIds(response.data);
+      this.pruneGroupMembershipCache(now);
+      this.groupMembershipCache.set(userId, {
+        groupIds,
+        expiresAt: now + GROUP_MEMBERSHIP_CACHE_MS,
+      });
+      return groupIds;
+    } catch (error) {
+      this.logger.warn(
+        `Groups API membership lookup failed: ${this.errorMessage(error)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Extracts group identifiers from the compatibility shapes returned by
+   * groups-api-v6, including ancestor and nested response containers.
+   *
+   * @param payload unknown groups API response body
+   * @returns normalized group identifiers
+   */
+  private normalizeGroupIds(payload: unknown): Set<string> {
+    const ids = new Set<string>();
+    const visit = (value: unknown, depth: number): void => {
+      if (value == null || depth > 8) return;
+      if (typeof value === 'string' || typeof value === 'number') {
+        const normalized = String(value).trim();
+        if (normalized && normalized !== 'null' && normalized !== 'undefined') {
+          ids.add(normalized);
+        }
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((entry) => visit(entry, depth + 1));
+        return;
+      }
+      if (typeof value !== 'object') return;
+      const record = value as Record<string, unknown>;
+      ['id', 'groupId', 'oldId', 'legacyId', 'uuid'].forEach((key) => {
+        if (record[key] != null) visit(record[key], depth + 1);
+      });
+      [
+        'data',
+        'result',
+        'content',
+        'path',
+        'pathIds',
+        'pathGroupIds',
+        'parentGroups',
+        'ancestors',
+        'ancestorGroupIds',
+        'subGroups',
+        'children',
+        'groupIds',
+        'membershipGroupIds',
+      ].forEach((key) => {
+        if (record[key] != null) visit(record[key], depth + 1);
+      });
+    };
+    visit(payload, 0);
+    return ids;
+  }
+
+  /**
+   * Removes expired group membership entries and bounds cache memory.
+   *
+   * @param now current epoch time in milliseconds
+   * @returns nothing
+   */
+  private pruneGroupMembershipCache(now: number): void {
+    for (const [key, entry] of this.groupMembershipCache) {
+      if (entry.expiresAt <= now) this.groupMembershipCache.delete(key);
+    }
+    if (this.groupMembershipCache.size >= MAX_GROUP_MEMBERSHIP_CACHE_ENTRIES) {
+      const oldestKey = this.groupMembershipCache.keys().next().value as
+        | string
+        | undefined;
+      if (oldestKey) this.groupMembershipCache.delete(oldestKey);
+    }
+  }
+
+  /**
+   * Converts an unknown visibility error to operator-safe text.
+   *
+   * @param error unknown thrown value
+   * @returns diagnostic message
+   */
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 
   /**
@@ -272,12 +535,112 @@ export class ChallengeApiService {
     return results;
   }
 
+  /**
+   * Hydrates the lightweight challenge projection needed by opportunity list
+   * cards in one database query. Detail-only phases, workflows, metadata, and
+   * winners are intentionally deferred until a user opens a specific item.
+   *
+   * @param challengeIds challenge identifiers represented on the current page
+   * @returns challenge card data in the caller-provided identifier order
+   * @throws Error when the challenge database query fails
+   */
+  async getChallengeSummaries(
+    challengeIds: string[],
+  ): Promise<ChallengeData[]> {
+    const ids = Array.from(
+      new Set(
+        challengeIds
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+    if (!ids.length) {
+      return [];
+    }
+
+    try {
+      const rows = await this.challengePrisma.$queryRaw<ChallengeSummaryRow[]>(
+        Prisma.sql`
+          SELECT
+            c.id,
+            c.name,
+            c.description,
+            c.status::text AS status,
+            c."typeId",
+            c."trackId",
+            c."numOfSubmissions",
+            c.tags,
+            c."legacyId",
+            c."createdAt",
+            c."createdBy",
+            c."updatedAt",
+            c."updatedBy",
+            legacy.track AS "legacyTrack",
+            legacy."subTrack" AS "legacySubTrack",
+            legacy."legacySystemId" AS "legacySystemId",
+            challenge_type.name AS "typeName",
+            challenge_track.name AS "trackName",
+            challenge_track.abbreviation AS "trackAbbreviation",
+            challenge_track.track::text AS "trackEnum"
+          FROM "Challenge" c
+          LEFT JOIN "ChallengeLegacy" legacy
+            ON legacy."challengeId" = c.id
+          LEFT JOIN "ChallengeType" challenge_type
+            ON challenge_type.id = c."typeId"
+          LEFT JOIN "ChallengeTrack" challenge_track
+            ON challenge_track.id = c."trackId"
+          WHERE c.id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}`))})
+        `,
+      );
+      const byId = new Map<string, ChallengeData>(
+        rows.map((row) => [
+          row.id,
+          {
+            id: row.id,
+            name: row.name,
+            description: row.description ?? undefined,
+            typeId: row.typeId ?? undefined,
+            trackId: row.trackId ?? undefined,
+            type: row.typeName ?? undefined,
+            legacy:
+              row.legacyTrack || row.legacySubTrack
+                ? {
+                    track: row.legacyTrack ?? undefined,
+                    subTrack: row.legacySubTrack ?? undefined,
+                  }
+                : undefined,
+            status: (row.status as ChallengeStatus) ?? ChallengeStatus.NEW,
+            numOfSubmissions: row.numOfSubmissions ?? 0,
+            track:
+              row.trackName ??
+              row.trackAbbreviation ??
+              row.legacyTrack ??
+              row.trackEnum ??
+              '',
+            legacyId: row.legacyId ?? row.legacySystemId ?? 0,
+            tags: row.tags ?? undefined,
+          } as ChallengeData,
+        ]),
+      );
+      return ids
+        .map((id) => byId.get(id))
+        .filter((challenge): challenge is ChallengeData => challenge != null);
+    } catch (error) {
+      this.logger.error(
+        `Error retrieving ${ids.length} challenge summaries from database:`,
+        error,
+      );
+      throw new Error('Cannot get data from Challenge DB.');
+    }
+  }
+
   async getChallengeDetail(challengeId: string): Promise<ChallengeData> {
     try {
       const [challenge] = await this.challengePrisma.$queryRaw<ChallengeRow[]>`
         SELECT
           id,
           name,
+          description,
           status::text AS status,
           "typeId",
           "trackId",
@@ -450,6 +813,7 @@ export class ChallengeApiService {
     return {
       id: challenge.id,
       name: challenge.name,
+      description: challenge.description ?? undefined,
       typeId: challenge.typeId ?? undefined,
       trackId: challenge.trackId ?? undefined,
       type: type?.name ?? undefined,

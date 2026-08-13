@@ -11,6 +11,7 @@ import {
   convertRoleName,
   ReviewApplicationRole,
   ReviewApplicationRoleIds,
+  getReviewApplicationRoles,
 } from 'src/dto/reviewApplication.dto';
 import {
   CreateReviewOpportunityDto,
@@ -63,6 +64,7 @@ type ReviewerTotalRow = {
 
 type ChallengeCandidateRow = {
   id: string;
+  status: string;
 };
 
 @Injectable()
@@ -81,7 +83,9 @@ export class ReviewOpportunityService {
    * Searches review opportunities with database pagination and challenge-side
    * filters. The review database returns only lightweight challenge IDs before
    * the challenge database applies track, type, submission-count, title, and
-   * active-status rules, avoiding hydration of every opportunity.
+   * lifecycle rules, avoiding hydration of every opportunity. Open work still
+   * requires an ACTIVE challenge, while closed/cancelled history remains
+   * discoverable after the challenge completes.
    *
    * @param dto - Validated search, sort, and pagination filters.
    * @param authUser - Optional caller used for whitelist and application state.
@@ -174,7 +178,6 @@ export class ReviewOpportunityService {
         Prisma.sql`c.id IN (${Prisma.join(
           opportunityChallengeIds.map((id) => Prisma.sql`${id}`),
         )})`,
-        Prisma.sql`c.status::text = ${ChallengeStatus.ACTIVE}`,
       ];
       if (trackFilterIds.size) {
         challengeConditions.push(
@@ -209,7 +212,7 @@ export class ReviewOpportunityService {
       const challengeRows = await this.challengePrisma.$queryRaw<
         ChallengeCandidateRow[]
       >(Prisma.sql`
-        SELECT c.id
+        SELECT c.id, c.status::text AS status
         FROM "Challenge" c
         WHERE ${Prisma.join(challengeConditions, ' AND ')}
       `);
@@ -221,6 +224,39 @@ export class ReviewOpportunityService {
       if (!visibleChallengeIds.length) {
         return this.emptySearchResult(dto);
       }
+      const requestedStatuses = dto.statuses?.length
+        ? dto.statuses
+        : [ReviewOpportunityStatus.OPEN];
+      const activeVisibleIds = challengeRows
+        .filter(
+          (row) =>
+            row.status === ChallengeStatus.ACTIVE &&
+            visibleChallengeIds.includes(row.id),
+        )
+        .map((row) => row.id);
+      const nonOpenStatuses = requestedStatuses.filter(
+        (status) => status !== ReviewOpportunityStatus.OPEN,
+      );
+      if (requestedStatuses.includes(ReviewOpportunityStatus.OPEN)) {
+        where.AND = [
+          ...(Array.isArray(where.AND)
+            ? where.AND
+            : where.AND
+              ? [where.AND]
+              : []),
+          {
+            OR: [
+              ...(nonOpenStatuses.length
+                ? [{ status: { in: nonOpenStatuses as any } }]
+                : []),
+              {
+                status: ReviewOpportunityStatus.OPEN,
+                challengeId: { in: activeVisibleIds },
+              },
+            ],
+          },
+        ];
+      }
       where.challengeId = { in: visibleChallengeIds };
 
       const limit = Math.max(1, Number(dto.limit ?? 10));
@@ -231,7 +267,16 @@ export class ReviewOpportunityService {
       const [entityList, total] = await this.prisma.$transaction([
         this.prisma.reviewOpportunity.findMany({
           where,
-          include: { applications: true },
+          include: {
+            applications: userId ? { where: { userId } } : false,
+            _count: {
+              select: {
+                applications: {
+                  where: { status: ReviewApplicationStatus.APPROVED },
+                },
+              },
+            },
+          },
           orderBy: [orderBy, { id: 'asc' }],
           skip: offset,
           take: limit,
@@ -867,7 +912,7 @@ export class ReviewOpportunityService {
     }
 
     const challengeList =
-      await this.challengeService.getChallenges(challengeIdList);
+      await this.challengeService.getChallengeSummaries(challengeIdList);
     const challengeMap = new Map<string, ChallengeData>();
     for (const challenge of challengeList) {
       if (challenge?.id) {
@@ -939,8 +984,11 @@ export class ReviewOpportunityService {
     ret.challengeData = challengeData
       ? {
           id: challengeData.legacyId,
+          name: challengeData.name,
           title: challengeData.name,
-          type: (challengeData as any)?.type || '',
+          description: challengeData.description ?? '',
+          overview: challengeData.description ?? '',
+          type: challengeData.type ?? '',
           typeId: challengeData.typeId ?? '',
           track: challengeData.legacy?.track || challengeData.track || '',
           trackId: challengeData.trackId ?? '',
@@ -950,6 +998,8 @@ export class ReviewOpportunityService {
           platforms: [''],
         }
       : null;
+    ret.applicationRoles = getReviewApplicationRoles(entity.type);
+    ret.defaultApplicationRole = ret.applicationRoles[0];
 
     // review applications
     const applicationResponses = (entity.applications ?? []).map((e) => ({
@@ -971,9 +1021,13 @@ export class ReviewOpportunityService {
           (application) => String(application.userId) === userId,
         )
       : [];
-    ret.approvedApplicationCount = applicationResponses.filter(
-      (application) => application.status === ReviewApplicationStatus.APPROVED,
-    ).length;
+    ret.approvedApplicationCount = Number(
+      entity._count?.applications ??
+        applicationResponses.filter(
+          (application) =>
+            application.status === ReviewApplicationStatus.APPROVED,
+        ).length,
+    );
     ret.remainingPositions = Math.max(
       0,
       Number(entity.openPositions ?? 0) - ret.approvedApplicationCount,

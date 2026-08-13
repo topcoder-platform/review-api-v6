@@ -40,6 +40,9 @@ import {
   SubmissionResponseDto,
   SubmissionRequestDto,
   ManualSubmissionUploadRequestDto,
+  ReleasedSubmissionPreviewDto,
+  ReleasedSubmissionPreviewPageDto,
+  ReleasedSubmissionPreviewQueryDto,
   SubmissionPutRequestDto,
   SubmissionUpdateRequestDto,
 } from 'src/dto/submission.dto';
@@ -347,6 +350,43 @@ export class SubmissionController {
       queryDto,
       paginationDto,
       sortDto,
+    );
+  }
+
+  @Get('/previews')
+  @ApiOperation({
+    summary: 'List released Design submission previews for a challenge',
+    description:
+      'Public-safe gallery endpoint. It returns only completed, passing Screening previews after Review has actually ended, or completed, passing Checkpoint Screening previews after Checkpoint Review has actually ended. Challenge whitelist and group visibility are enforced before any preview state is disclosed.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Paginated released preview gallery.',
+    type: ReleasedSubmissionPreviewPageDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'The caller cannot access the challenge.',
+  })
+  @Header('Cache-Control', 'private, no-store')
+  /**
+   * Returns released preview asset URLs without requiring access to the
+   * protected submission-list endpoint.
+   *
+   * @param req optional authenticated caller used for challenge visibility
+   * @param query validated challenge and pagination parameters
+   * @returns released preview cards and pagination metadata
+   * @throws ForbiddenException when challenge visibility denies the caller
+   */
+  async listSubmissionPreviews(
+    @Req() req: Request,
+    @Query() query: ReleasedSubmissionPreviewQueryDto,
+  ): Promise<PaginatedResponse<ReleasedSubmissionPreviewDto>> {
+    return this.submissionPreviewService.listVisiblePreviews(
+      req['user'] as JwtUser | undefined,
+      query.challengeId,
+      query.page,
+      query.perPage,
     );
   }
 

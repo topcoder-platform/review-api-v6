@@ -681,10 +681,12 @@ export class ReviewService {
   }
 
   /**
-   * Durably queues a preview candidate when a completed review is a passing
-   * Screening result. The worker verifies the Design track so this lifecycle
-   * hook has no challenge-service dependency. Queue failures are logged and
-   * intentionally do not roll back an already-completed review.
+   * Best-effort queues a preview candidate when a completed review is a
+   * passing Screening result. The worker verifies the Design track so this
+   * lifecycle hook has no challenge-service dependency. Queue failures are
+   * logged and intentionally do not roll back an already-completed review;
+   * the scheduled preview reconciler later recreates any missing job from the
+   * committed review state.
    *
    * @param reviewId - Review whose completion may unlock preview processing.
    * @returns A promise that resolves after the eligibility check is persisted.

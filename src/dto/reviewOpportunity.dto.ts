@@ -20,6 +20,7 @@ import {
   Min,
 } from 'class-validator';
 import type {
+  ReviewApplicationRole,
   ReviewApplicationResponseDto,
   ReviewApplicationStatus,
 } from './reviewApplication.dto';
@@ -219,6 +220,54 @@ export class ReviewPaymentDto {
   payment: number;
 }
 
+/**
+ * Public challenge context embedded in a review-opportunity response. The
+ * `overview` value mirrors `description` so clients migrating from the legacy
+ * review application can render either field without another API call.
+ */
+export class ReviewOpportunityChallengeDataDto {
+  @ApiProperty({ description: 'Legacy numeric challenge identifier' })
+  id: number;
+
+  @ApiProperty({ description: 'Challenge name' })
+  name: string;
+
+  @ApiProperty({ description: 'Legacy alias for the challenge name' })
+  title: string;
+
+  @ApiProperty({ description: 'Challenge Markdown description' })
+  description: string;
+
+  @ApiProperty({
+    description: 'Alias of description used by opportunity detail clients',
+  })
+  overview: string;
+
+  @ApiProperty({ description: 'Challenge type name' })
+  type: string;
+
+  @ApiProperty({ description: 'Challenge type identifier' })
+  typeId: string;
+
+  @ApiProperty({ description: 'Challenge track name' })
+  track: string;
+
+  @ApiProperty({ description: 'Challenge track identifier' })
+  trackId: string;
+
+  @ApiProperty({ description: 'Legacy challenge sub-track name' })
+  subTrack: string;
+
+  @ApiProperty({ description: 'Challenge technology tags', type: [String] })
+  technologies: string[];
+
+  @ApiProperty({ description: 'Challenge data contract version' })
+  version: string;
+
+  @ApiProperty({ description: 'Challenge platform labels', type: [String] })
+  platforms: string[];
+}
+
 export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   @ApiProperty({
     description: 'Review opportunity id',
@@ -240,12 +289,15 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
 
   @ApiProperty({
     description:
-      'Challenge data including id, title, track, subTrack, technologies, platforms',
+      'Challenge context including Markdown description for the opportunity detail page',
+    type: ReviewOpportunityChallengeDataDto,
+    nullable: true,
   })
-  challengeData: Record<string, string | number | string[]> | null;
+  challengeData: ReviewOpportunityChallengeDataDto | null;
 
   @ApiProperty({
-    description: 'Review applications on this opportunity',
+    description:
+      'Review applications visible in this response: caller-only on list/search routes and complete on the single-opportunity detail route',
   })
   applications: ReviewApplicationResponseDto[] | null;
 
@@ -286,6 +338,17 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
     example: 2,
   })
   remainingPositions: number;
+
+  @ApiProperty({
+    description: 'Review application roles accepted for this opportunity type',
+    type: [String],
+  })
+  applicationRoles: ReviewApplicationRole[];
+
+  @ApiProperty({
+    description: 'Preferred role for a one-click application action',
+  })
+  defaultApplicationRole: ReviewApplicationRole;
 }
 
 /** Pagination metadata returned by metadata-first opportunity searches. */

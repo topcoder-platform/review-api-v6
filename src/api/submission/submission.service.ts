@@ -6182,7 +6182,7 @@ export class SubmissionService {
       }
 
       if (roleSummary.hasReviewer) {
-        return;
+        continue;
       }
 
       if (Array.isArray((submission as any).review)) {

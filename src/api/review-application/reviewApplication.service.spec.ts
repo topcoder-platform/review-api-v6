@@ -9,6 +9,7 @@ import {
   ReviewApplicationStatus,
 } from 'src/dto/reviewApplication.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { ReviewApplicationService } from './reviewApplication.service';
 
 describe('ReviewApplicationService', () => {
@@ -377,5 +378,50 @@ describe('ReviewApplicationService', () => {
       perPage: 10,
       totalPages: 2,
     });
+  });
+
+  it('accepts the Reviewer role for a scenarios review opportunity', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      id: 'opportunity-scenarios',
+      challengeId: 'challenge-scenarios',
+      type: ReviewOpportunityType.SCENARIOS_REVIEW,
+      status: 'OPEN',
+      openPositions: 1,
+      applications: [],
+    });
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-scenarios',
+      status: ChallengeStatus.ACTIVE,
+    });
+    prismaMock.reviewApplication.findMany.mockResolvedValue([]);
+    prismaMock.reviewApplication.create.mockResolvedValue({
+      id: 'application-scenarios',
+      opportunityId: 'opportunity-scenarios',
+      userId: '1001',
+      handle: 'reviewer-one',
+      role: ReviewApplicationRole.REVIEWER,
+      status: ReviewApplicationStatus.PENDING,
+      createdAt: new Date('2026-08-13T00:00:00.000Z'),
+    });
+
+    await expect(
+      service.create(
+        {
+          userId: '1001',
+          handle: 'reviewer-one',
+          roles: [] as any,
+          isMachine: false,
+        },
+        {
+          opportunityId: 'opportunity-scenarios',
+          role: ReviewApplicationRole.REVIEWER,
+        },
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 'application-scenarios',
+        role: ReviewApplicationRole.REVIEWER,
+      }),
+    );
   });
 });

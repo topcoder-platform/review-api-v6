@@ -44,21 +44,39 @@ export const ReviewApplicationRoleIds: Record<ReviewApplicationRole, number> = {
   REVIEWER: 9,
 };
 
-// read from review_application_role_lu.review_auction_type_id
-export const ReviewApplicationRoleOpportunityTypeMap: Record<
-  ReviewApplicationRole,
-  PrismaReviewOpportunityType
+/** Roles that can be requested for each review opportunity type. */
+export const ReviewApplicationRolesByOpportunityType: Record<
+  PrismaReviewOpportunityType,
+  ReviewApplicationRole[]
 > = {
-  PRIMARY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
-  SECONDARY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
-  PRIMARY_FAILURE_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
-  ACCURACY_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
-  STRESS_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
-  FAILURE_REVIEWER: ReviewOpportunityType.COMPONENT_DEV_REVIEW,
-  SPECIFICATION_REVIEWER: ReviewOpportunityType.SPEC_REVIEW,
-  ITERATIVE_REVIEWER: ReviewOpportunityType.ITERATIVE_REVIEW,
-  REVIEWER: ReviewOpportunityType.REGULAR_REVIEW,
+  [ReviewOpportunityType.REGULAR_REVIEW]: [ReviewApplicationRole.REVIEWER],
+  [ReviewOpportunityType.SCENARIOS_REVIEW]: [ReviewApplicationRole.REVIEWER],
+  [ReviewOpportunityType.ITERATIVE_REVIEW]: [
+    ReviewApplicationRole.ITERATIVE_REVIEWER,
+  ],
+  [ReviewOpportunityType.SPEC_REVIEW]: [
+    ReviewApplicationRole.SPECIFICATION_REVIEWER,
+  ],
+  [ReviewOpportunityType.COMPONENT_DEV_REVIEW]: [
+    ReviewApplicationRole.PRIMARY_FAILURE_REVIEWER,
+    ReviewApplicationRole.FAILURE_REVIEWER,
+    ReviewApplicationRole.ACCURACY_REVIEWER,
+    ReviewApplicationRole.STRESS_REVIEWER,
+    ReviewApplicationRole.PRIMARY_REVIEWER,
+    ReviewApplicationRole.SECONDARY_REVIEWER,
+  ],
 };
+
+/**
+ * Resolves the application roles accepted by one opportunity type.
+ *
+ * @param opportunityType review opportunity classification
+ * @returns accepted roles in preferred UI order
+ */
+export const getReviewApplicationRoles = (
+  opportunityType: PrismaReviewOpportunityType,
+): ReviewApplicationRole[] =>
+  ReviewApplicationRolesByOpportunityType[opportunityType] ?? [];
 
 const allReviewApplicationRole = Object.values(ReviewApplicationRole);
 

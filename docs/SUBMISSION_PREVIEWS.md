@@ -2,11 +2,12 @@
 
 Review API extracts an optional root-level `preview.jpg` or `preview.png` from
 a Design submission ZIP after the submission passes Screening. Checkpoint
-submissions use a passing Checkpoint Screening result. Review completion itself
-durably enqueues a candidate without depending on challenge-api; the scheduled
-worker verifies the Design track and performs S3 and ZIP work. A challenge or
-storage outage therefore cannot roll back a completed review or lose its retry
-state.
+submissions use a passing Checkpoint Screening result. Review completion
+best-effort enqueues a candidate without depending on challenge-api; the
+scheduled worker verifies the Design track and performs S3 and ZIP work. A
+bounded state reconciler also discovers passing submissions with no queue row,
+so a transient enqueue failure or pre-pipeline Screening result is recovered
+without rolling back the completed review.
 
 ## Processing and idempotency
 
@@ -22,6 +23,13 @@ recorded as `MISSING`; unsafe and structurally invalid archives become terminal
 `FAILED` jobs. Each claimed batch is processed sequentially to cap temporary
 disk, network, and decompression pressure. Operators can inspect `lastError`
 for a stable code and detail.
+
+Before each retry batch, the worker scans at most
+`SUBMISSION_PREVIEW_RECONCILE_BATCH_SIZE` active file submissions whose matching
+Screening review is completed and passing but whose preview job is absent. It
+uses a duplicate-safe bulk insert, making continuous backfill safe across
+multiple replicas. A reconciliation outage is logged but does not block retry
+of already-durable jobs.
 
 Run migration `20260813100000_add_submission_preview` before deploying workers.
 
@@ -59,6 +67,7 @@ Common optional variables and defaults:
 - `PAYLOAD_S3_PREFIX=media`
 - `SUBMISSION_PREVIEW_S3_PREFIX=submission-previews`
 - `PAYLOAD_S3_REGION`, falling back to `AWS_REGION`
+- `SUBMISSION_PREVIEW_RECONCILE_BATCH_SIZE=25` (maximum 250)
 - the bounded size/count/retry variables listed in `.env.sample`
 
 The ECS/task role needs `s3:GetObject` and `s3:HeadObject` on the clean
@@ -69,13 +78,21 @@ release gate.
 
 ## Public endpoint and release gate
 
+`GET /v6/submissions/previews?challengeId={uuid}&page=1&perPage=20` is the
+public-safe gallery endpoint used by Opportunities. It returns only released
+preview cards as `{ data, meta: { page, perPage, totalCount, totalPages } }`;
+each card includes the submission `id`, `type`, `submittedDate`, immutable
+`previewUrl`, and a best-effort `submitterHandle`. It never exposes ZIP URLs,
+scores, member email, queued jobs, missing preview state, or pre-release
+screening outcomes. The protected general submission list remains unchanged.
+
 `GET /v6/submissions/{submissionId}/preview` returns `302 Found` to the
 immutable Payload asset URL only when all checks pass:
 
 - the preview job is `READY`;
 - the submission still has a completed, passing matching Screening review;
-- the challenge is Design and visible to the caller under the challenge user
-  whitelist;
+- the challenge is Design and visible to the caller under both the challenge
+  user whitelist and challenge group membership rules;
 - a contest submission's `Review` phase has an `actualEndTime` in the past, or
   a checkpoint submission's `Checkpoint Review` phase does.
 

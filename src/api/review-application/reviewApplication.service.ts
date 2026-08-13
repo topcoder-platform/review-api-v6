@@ -17,8 +17,8 @@ import {
   ReviewApplicationListMetadataDto,
   ReviewApplicationResponseDto,
   ReviewApplicationRole,
-  ReviewApplicationRoleOpportunityTypeMap,
   ReviewApplicationStatus,
+  getReviewApplicationRoles,
 } from 'src/dto/reviewApplication.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
@@ -148,9 +148,7 @@ export class ReviewApplicationService {
         });
       }
       // make sure application role matches
-      if (
-        ReviewApplicationRoleOpportunityTypeMap[dto.role] !== opportunity.type
-      ) {
+      if (!getReviewApplicationRoles(opportunity.type).includes(dto.role)) {
         throw new BadRequestException(
           `Review application role ${dto.role} doesn't match opportunity type ${opportunity.type}`,
         );

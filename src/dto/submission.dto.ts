@@ -1,12 +1,17 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  IsInt,
   IsString,
   IsNotEmpty,
   IsOptional,
   IsDateString,
   IsIn,
   IsUrl,
+  IsUUID,
+  Max,
+  Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 import { ReviewResponseDto } from './review.dto';
 
@@ -25,6 +30,78 @@ export enum SubmissionStatus {
   DELETED = 'DELETED',
   FAILED_CHECKPOINT_SCREENING = 'FAILED_CHECKPOINT_SCREENING',
   FAILED_CHECKPOINT_REVIEW = 'FAILED_CHECKPOINT_REVIEW',
+}
+
+/** Query for the public-safe, phase-gated Design preview gallery. */
+export class ReleasedSubmissionPreviewQueryDto {
+  @ApiProperty({ description: 'Owning v6 challenge UUID' })
+  @IsUUID()
+  challengeId: string;
+
+  @ApiProperty({ description: 'One-based page', default: 1, required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @ApiProperty({
+    description: 'Preview cards per page',
+    default: 20,
+    maximum: 100,
+    required: false,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  perPage = 20;
+}
+
+/** A released Design submission preview safe for gallery display. */
+export class ReleasedSubmissionPreviewDto {
+  @ApiProperty({ description: 'Submission identifier' })
+  id: string;
+
+  @ApiProperty({ description: 'Contest or checkpoint submission type' })
+  type: string;
+
+  @ApiProperty({ description: 'Submission timestamp', nullable: true })
+  submittedDate: Date | null;
+
+  @ApiProperty({ description: 'Public immutable preview asset URL' })
+  previewUrl: string;
+
+  @ApiProperty({
+    description: 'Public submitter handle when member lookup succeeds',
+    required: false,
+  })
+  submitterHandle?: string;
+}
+
+/** Pagination metadata for the released preview gallery. */
+export class ReleasedSubmissionPreviewMetadataDto {
+  @ApiProperty({ description: 'One-based current page' })
+  page: number;
+
+  @ApiProperty({ description: 'Preview cards requested per page' })
+  perPage: number;
+
+  @ApiProperty({ description: 'Total released preview cards' })
+  totalCount: number;
+
+  @ApiProperty({ description: 'Total released preview pages' })
+  totalPages: number;
+}
+
+/** Exact response envelope for the released preview gallery. */
+export class ReleasedSubmissionPreviewPageDto {
+  @ApiProperty({ type: [ReleasedSubmissionPreviewDto] })
+  data: ReleasedSubmissionPreviewDto[];
+
+  @ApiProperty({ type: ReleasedSubmissionPreviewMetadataDto })
+  meta: ReleasedSubmissionPreviewMetadataDto;
 }
 
 export class SubmissionQueryDto {

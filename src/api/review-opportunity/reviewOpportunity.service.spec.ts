@@ -24,7 +24,7 @@ describe('ReviewOpportunityService search', () => {
   } as any;
   const challengeServiceMock = {
     filterChallengeIdsByWhitelist: jest.fn(),
-    getChallenges: jest.fn(),
+    getChallengeSummaries: jest.fn(),
     getChallengeDetailForUser: jest.fn(),
   } as any;
   const challengeCatalogMock = {
@@ -75,30 +75,25 @@ describe('ReviewOpportunityService search', () => {
       duration: 86400,
       basePayment: 150,
       incrementalPayment: 25,
-      applications: [
-        {
-          id: 'application-1',
-          userId: 'reviewer-2',
-          handle: 'other-reviewer',
-          role: 'REVIEWER',
-          status: ReviewApplicationStatus.APPROVED,
-          createdAt: new Date('2026-08-10T00:00:00Z'),
-        },
-      ],
+      applications: [],
+      _count: { applications: 1 },
     };
     prismaMock.reviewOpportunity.findMany
       .mockResolvedValueOnce([{ challengeId: 'challenge-1' }])
       .mockResolvedValueOnce([opportunity]);
     prismaMock.reviewOpportunity.count.mockResolvedValue(1);
-    challengePrismaMock.$queryRaw.mockResolvedValue([{ id: 'challenge-1' }]);
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      { id: 'challenge-1', status: ChallengeStatus.ACTIVE },
+    ]);
     challengeServiceMock.filterChallengeIdsByWhitelist.mockResolvedValue([
       'challenge-1',
     ]);
-    challengeServiceMock.getChallenges.mockResolvedValue([
+    challengeServiceMock.getChallengeSummaries.mockResolvedValue([
       {
         id: 'challenge-1',
         legacyId: 123,
         name: 'Design Dashboard',
+        description: '# Review the dashboard',
         status: ChallengeStatus.ACTIVE,
         track: 'Design',
         numOfSubmissions: 4,
@@ -128,6 +123,30 @@ describe('ReviewOpportunityService search', () => {
         myApplications: [],
         approvedApplicationCount: 1,
         remainingPositions: 1,
+        applicationRoles: ['REVIEWER'],
+        defaultApplicationRole: 'REVIEWER',
+      }),
+    );
+    expect(result.items[0].challengeData).toEqual(
+      expect.objectContaining({
+        name: 'Design Dashboard',
+        title: 'Design Dashboard',
+        description: '# Review the dashboard',
+        overview: '# Review the dashboard',
+      }),
+    );
+    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        include: {
+          applications: { where: { userId: 'reviewer-1' } },
+          _count: {
+            select: {
+              applications: {
+                where: { status: ReviewApplicationStatus.APPROVED },
+              },
+            },
+          },
+        },
       }),
     );
   });
@@ -183,5 +202,57 @@ describe('ReviewOpportunityService search', () => {
     );
 
     expect(reason).toBe(ReviewOpportunityCanApplyReason.NOT_REVIEWER);
+  });
+
+  it('keeps closed opportunities discoverable after the challenge completes', async () => {
+    const opportunity = {
+      id: 'opportunity-closed',
+      challengeId: 'challenge-completed',
+      status: ReviewOpportunityStatus.CLOSED,
+      type: ReviewOpportunityType.REGULAR_REVIEW,
+      openPositions: 1,
+      startDate: new Date('2026-07-20T00:00:00Z'),
+      duration: 86400,
+      basePayment: 100,
+      incrementalPayment: 0,
+      applications: [],
+    };
+    prismaMock.reviewOpportunity.findMany
+      .mockResolvedValueOnce([{ challengeId: 'challenge-completed' }])
+      .mockResolvedValueOnce([opportunity]);
+    prismaMock.reviewOpportunity.count.mockResolvedValue(1);
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      { id: 'challenge-completed', status: ChallengeStatus.COMPLETED },
+    ]);
+    challengeServiceMock.filterChallengeIdsByWhitelist.mockResolvedValue([
+      'challenge-completed',
+    ]);
+    challengeServiceMock.getChallengeSummaries.mockResolvedValue([
+      {
+        id: 'challenge-completed',
+        legacyId: 456,
+        name: 'Completed Design Challenge',
+        status: ChallengeStatus.COMPLETED,
+      },
+    ]);
+    const query = dto();
+    query.statuses = [ReviewOpportunityStatus.CLOSED];
+
+    const result = await service.search(query, {
+      userId: 'reviewer-1',
+      handle: 'reviewer-one',
+      roles: [UserRole.Reviewer],
+      isMachine: false,
+    });
+
+    expect(result.metadata.total).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        id: 'opportunity-closed',
+        status: ReviewOpportunityStatus.CLOSED,
+        canApplyReason: ReviewOpportunityCanApplyReason.OPPORTUNITY_CLOSED,
+      }),
+    );
   });
 });

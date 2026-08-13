@@ -12,6 +12,7 @@ import {
   SubmissionPreviewStatus,
   SubmissionStatus,
   SubmissionType,
+  Prisma,
 } from '@prisma/client';
 import { createHash } from 'crypto';
 import { createWriteStream } from 'fs';
@@ -23,6 +24,7 @@ import { pipeline } from 'stream/promises';
 import * as yauzl from 'yauzl';
 import { ChallengeApiService, ChallengeData } from './challenge.service';
 import { JwtUser } from './jwt.service';
+import { MemberService } from './member.service';
 import { PrismaService } from './prisma.service';
 
 const DEFAULT_MAX_ARCHIVE_BYTES = 250 * 1024 * 1024;
@@ -32,6 +34,7 @@ const DEFAULT_MAX_ZIP_ENTRIES = 10_000;
 const DEFAULT_MAX_COMPRESSION_RATIO = 100;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_RETRY_BATCH_SIZE = 10;
+const DEFAULT_RECONCILE_BATCH_SIZE = 25;
 const PROCESSING_LEASE_MS = 15 * 60 * 1000;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -56,6 +59,39 @@ type ScreeningReviewSummary = {
     minimumPassingScore: number;
   };
 };
+
+type ReleasedPreviewRow = {
+  id: string;
+  type: SubmissionType;
+  submittedDate: Date | null;
+  createdAt: Date;
+  memberId: string | null;
+  objectKey: string;
+};
+
+type PreviewReconciliationRow = {
+  submissionId: string;
+};
+
+/** A released submission preview returned to the Opportunities gallery. */
+export interface ReleasedSubmissionPreview {
+  id: string;
+  type: SubmissionType;
+  submittedDate: Date | null;
+  previewUrl: string;
+  submitterHandle?: string;
+}
+
+/** Paginated public-safe preview gallery result. */
+export interface ReleasedSubmissionPreviewPage {
+  data: ReleasedSubmissionPreview[];
+  meta: {
+    page: number;
+    perPage: number;
+    totalCount: number;
+    totalPages: number;
+  };
+}
 
 /**
  * A classified preview-processing failure. Retryable failures are scheduled
@@ -143,10 +179,12 @@ export class SubmissionPreviewService {
    *
    * @param prisma - Review database client used for jobs and review state.
    * @param challengeApiService - Challenge reader used for track and phase gates.
+   * @param memberService - Optional member reader used only for public handles.
    */
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeApiService: ChallengeApiService,
+    private readonly memberService?: MemberService,
   ) {}
 
   /**
@@ -220,8 +258,10 @@ export class SubmissionPreviewService {
   }
 
   /**
-   * Runs the bounded retry worker once per minute. An in-process overlap guard
-   * complements the database lease used across multiple API replicas.
+   * Runs bounded missing-job reconciliation and the retry worker once per
+   * minute. An in-process overlap guard complements the database lease used
+   * across multiple API replicas. Reconciliation failure never prevents
+   * already-durable jobs from running.
    *
    * @returns A promise that resolves after the due batch has been attempted.
    */
@@ -232,6 +272,13 @@ export class SubmissionPreviewService {
     }
     this.retryWorkerRunning = true;
     try {
+      try {
+        await this.reconcileEligiblePreviewJobs();
+      } catch (error) {
+        this.logger.error(
+          `Preview reconciliation failed; existing jobs will still run: ${this.errorMessage(error)}`,
+        );
+      }
       const maxAttempts = this.getPositiveIntegerConfig(
         'SUBMISSION_PREVIEW_MAX_ATTEMPTS',
         DEFAULT_MAX_ATTEMPTS,
@@ -276,6 +323,70 @@ export class SubmissionPreviewService {
     } finally {
       this.retryWorkerRunning = false;
     }
+  }
+
+  /**
+   * Recreates missing preview jobs from authoritative submission, review, and
+   * scorecard state. This bounded reconciliation closes the gap between a
+   * committed Screening result and the best-effort lifecycle enqueue, and it
+   * also backfills eligible submissions that predate the preview pipeline.
+   * Duplicate rows are ignored so the method is safe across API replicas.
+   *
+   * @returns Number of preview jobs inserted during this reconciliation pass.
+   * @throws Error when the review database query or insert fails; the caller
+   * logs the failure and continues processing already-durable jobs.
+   */
+  async reconcileEligiblePreviewJobs(): Promise<number> {
+    const batchSize = this.getPositiveIntegerConfig(
+      'SUBMISSION_PREVIEW_RECONCILE_BATCH_SIZE',
+      DEFAULT_RECONCILE_BATCH_SIZE,
+      1,
+      250,
+    );
+    const candidates = await this.prisma.$queryRaw<
+      PreviewReconciliationRow[]
+    >(Prisma.sql`
+      SELECT DISTINCT s.id AS "submissionId"
+      FROM submission s
+      INNER JOIN review r ON r."submissionId" = s.id
+      INNER JOIN scorecard sc ON sc.id = r."scorecardId"
+      LEFT JOIN "submissionPreview" preview
+        ON preview."submissionId" = s.id
+      WHERE preview."submissionId" IS NULL
+        AND s.status::text = ${SubmissionStatus.ACTIVE}
+        AND s."challengeId" IS NOT NULL
+        AND s."virusScan" = TRUE
+        AND s."isFileSubmission" = TRUE
+        AND s.url IS NOT NULL
+        AND r.status::text = ${ReviewStatus.COMPLETED}
+        AND (
+          (
+            s.type::text = ${SubmissionType.CONTEST_SUBMISSION}
+            AND sc.type::text = ${ScorecardType.SCREENING}
+          )
+          OR (
+            s.type::text = ${SubmissionType.CHECKPOINT_SUBMISSION}
+            AND sc.type::text = ${ScorecardType.CHECKPOINT_SCREENING}
+          )
+        )
+        AND GREATEST(r."initialScore", r."finalScore") >=
+          COALESCE(sc."minimumPassingScore", sc."minScore")
+      ORDER BY s.id ASC
+      LIMIT ${batchSize}
+    `);
+    if (!candidates.length) {
+      return 0;
+    }
+    const result = await this.prisma.submissionPreview.createMany({
+      data: candidates.map(({ submissionId }) => ({ submissionId })),
+      skipDuplicates: true,
+    });
+    if (result.count > 0) {
+      this.logger.log(
+        `Reconciled ${result.count} missing submission preview job(s).`,
+      );
+    }
+    return result.count;
   }
 
   /**
@@ -598,6 +709,169 @@ export class SubmissionPreviewService {
     }
 
     return this.buildPublicAssetUrl(record.preview.objectKey);
+  }
+
+  /**
+   * Lists only released, passing Design submission previews for one challenge.
+   * This endpoint is safe for anonymous Opportunities pages: challenge
+   * whitelist and group access are checked first, the relevant phase must have
+   * an actual end time, and neither screening state nor queued preview state is
+   * disclosed before release.
+   *
+   * @param authUser optional caller used for challenge visibility
+   * @param challengeId owning v6 challenge UUID
+   * @param page one-based result page
+   * @param perPage bounded page size
+   * @returns released preview cards and total metadata
+   * @throws ForbiddenException when challenge visibility denies the caller
+   * @throws Error when challenge or review storage cannot be read
+   */
+  async listVisiblePreviews(
+    authUser: JwtUser | undefined,
+    challengeId: string,
+    page: number,
+    perPage: number,
+  ): Promise<ReleasedSubmissionPreviewPage> {
+    const challenge = await this.challengeApiService.getChallengeDetailForUser(
+      authUser,
+      challengeId,
+    );
+    if (!this.isDesignChallenge(challenge)) {
+      return this.emptyPreviewPage(page, perPage);
+    }
+
+    const visibleTypes: SubmissionType[] = [];
+    if (this.hasPhaseActuallyCompleted(challenge, 'review')) {
+      visibleTypes.push(SubmissionType.CONTEST_SUBMISSION);
+    }
+    if (this.hasPhaseActuallyCompleted(challenge, 'checkpoint review')) {
+      visibleTypes.push(SubmissionType.CHECKPOINT_SUBMISSION);
+    }
+    if (!visibleTypes.length) {
+      return this.emptyPreviewPage(page, perPage);
+    }
+
+    const offset = (page - 1) * perPage;
+    const eligibleWhere = Prisma.sql`
+      s."challengeId" = ${challengeId}
+      AND s."status" <> ${SubmissionStatus.DELETED}::"SubmissionStatus"
+      AND s."type" IN (${Prisma.join(visibleTypes)})
+      AND p."status" = ${SubmissionPreviewStatus.READY}::"SubmissionPreviewStatus"
+      AND p."objectKey" IS NOT NULL
+      AND EXISTS (
+        SELECT 1
+        FROM "review" r
+        INNER JOIN "scorecard" sc ON sc."id" = r."scorecardId"
+        WHERE r."submissionId" = s."id"
+          AND r."status" = ${ReviewStatus.COMPLETED}::"ReviewStatus"
+          AND (
+            (s."type" = ${SubmissionType.CONTEST_SUBMISSION}::"SubmissionType"
+              AND sc."type" = ${ScorecardType.SCREENING}::"ScorecardType")
+            OR
+            (s."type" = ${SubmissionType.CHECKPOINT_SUBMISSION}::"SubmissionType"
+              AND sc."type" = ${ScorecardType.CHECKPOINT_SCREENING}::"ScorecardType")
+          )
+          AND GREATEST(
+            COALESCE(r."finalScore", 0),
+            COALESCE(r."initialScore", 0)
+          ) >= COALESCE(sc."minimumPassingScore", sc."minScore", 50)
+      )
+    `;
+
+    const [rows, countRows] = await this.prisma.$transaction([
+      this.prisma.$queryRaw<ReleasedPreviewRow[]>(Prisma.sql`
+        SELECT
+          s."id",
+          s."type",
+          s."submittedDate",
+          s."createdAt",
+          s."memberId",
+          p."objectKey"
+        FROM "submission" s
+        INNER JOIN "submissionPreview" p ON p."submissionId" = s."id"
+        WHERE ${eligibleWhere}
+        ORDER BY s."submittedDate" DESC NULLS LAST, s."createdAt" DESC, s."id" ASC
+        LIMIT ${perPage}
+        OFFSET ${offset}
+      `),
+      this.prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS "total"
+        FROM "submission" s
+        INNER JOIN "submissionPreview" p ON p."submissionId" = s."id"
+        WHERE ${eligibleWhere}
+      `),
+    ]);
+
+    const handleByMemberId = await this.loadPreviewHandles(rows);
+    const totalCount = Number(countRows[0]?.total ?? 0n);
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        submittedDate: row.submittedDate ?? row.createdAt,
+        previewUrl: this.buildPublicAssetUrl(row.objectKey),
+        ...(row.memberId && handleByMemberId.has(row.memberId)
+          ? { submitterHandle: handleByMemberId.get(row.memberId) }
+          : {}),
+      })),
+      meta: {
+        page,
+        perPage,
+        totalCount,
+        totalPages: totalCount === 0 ? 0 : Math.ceil(totalCount / perPage),
+      },
+    };
+  }
+
+  /**
+   * Resolves public member handles for a gallery page without making member
+   * storage availability a prerequisite for preview display.
+   *
+   * @param rows released preview database rows
+   * @returns member-id to handle mapping
+   */
+  private async loadPreviewHandles(
+    rows: ReleasedPreviewRow[],
+  ): Promise<Map<string, string>> {
+    const memberIds = Array.from(
+      new Set(
+        rows
+          .map((row) => row.memberId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    if (!memberIds.length || !this.memberService) return new Map();
+    try {
+      const members = await this.memberService.getUserEmails(memberIds);
+      return new Map(
+        members
+          .filter((member) => member.handle)
+          .map((member) => [String(member.userId), member.handle]),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve preview submitter handles: ${this.errorMessage(error)}`,
+      );
+      return new Map();
+    }
+  }
+
+  /**
+   * Creates consistent empty pagination metadata when no preview type is
+   * released yet.
+   *
+   * @param page requested page
+   * @param perPage requested page size
+   * @returns empty preview page
+   */
+  private emptyPreviewPage(
+    page: number,
+    perPage: number,
+  ): ReleasedSubmissionPreviewPage {
+    return {
+      data: [],
+      meta: { page, perPage, totalCount: 0, totalPages: 0 },
+    };
   }
 
   /**

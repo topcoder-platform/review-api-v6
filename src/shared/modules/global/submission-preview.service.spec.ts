@@ -75,17 +75,21 @@ describe('SubmissionPreviewService', () => {
     submission: { findUnique: jest.fn() },
     submissionPreview: {
       upsert: jest.fn(),
+      createMany: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
       updateMany: jest.fn(),
       update: jest.fn(),
     },
     $transaction: jest.fn(),
+    $queryRaw: jest.fn(),
   } as any;
   const challengeServiceMock = {
     getChallengeDetail: jest.fn(),
+    getChallengeDetailForUser: jest.fn(),
     ensureChallengeWhitelistAccess: jest.fn(),
   } as any;
+  const memberServiceMock = { getUserEmails: jest.fn() } as any;
   let service: SubmissionPreviewService;
   let sourceSend: jest.Mock;
   let payloadSend: jest.Mock;
@@ -122,13 +126,22 @@ describe('SubmissionPreviewService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prismaMock.$queryRaw.mockResolvedValue([]);
+    prismaMock.submissionPreview.createMany.mockResolvedValue({ count: 0 });
     process.env.SUBMISSION_CLEAN_S3_BUCKET = 'clean-bucket';
     process.env.PAYLOAD_S3_BUCKET = 'payload-bucket';
     process.env.PAYLOAD_S3_PREFIX = 'media';
     process.env.PAYLOAD_S3_PUBLIC_URL = 'https://assets.topcoder-dev.com';
     sourceSend = jest.fn();
     payloadSend = jest.fn();
-    service = new SubmissionPreviewService(prismaMock, challengeServiceMock);
+    service = new SubmissionPreviewService(
+      prismaMock,
+      challengeServiceMock,
+      memberServiceMock,
+    );
+    prismaMock.$transaction.mockImplementation((operations) =>
+      Promise.all(operations),
+    );
     challengeServiceMock.getChallengeDetail.mockResolvedValue({
       id: 'challenge-1',
       track: 'Design',
@@ -201,6 +214,38 @@ describe('SubmissionPreviewService', () => {
       }),
     );
     expect(processSpy).toHaveBeenCalledWith('stale-submission');
+  });
+
+  it('reconciles missing jobs from completed passing screening state', async () => {
+    prismaMock.$queryRaw.mockResolvedValue([
+      { submissionId: 'missed-submission-1' },
+      { submissionId: 'legacy-submission-2' },
+    ]);
+    prismaMock.submissionPreview.createMany.mockResolvedValue({ count: 2 });
+
+    await expect(service.reconcileEligiblePreviewJobs()).resolves.toBe(2);
+
+    expect(prismaMock.submissionPreview.createMany).toHaveBeenCalledWith({
+      data: [
+        { submissionId: 'missed-submission-1' },
+        { submissionId: 'legacy-submission-2' },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('continues existing preview retries when reconciliation is unavailable', async () => {
+    prismaMock.$queryRaw.mockRejectedValue(new Error('temporary DB outage'));
+    prismaMock.submissionPreview.findMany.mockResolvedValue([
+      { submissionId: 'durable-submission' },
+    ]);
+    const processSpy = jest
+      .spyOn(service, 'processSubmissionPreview')
+      .mockResolvedValue(true);
+
+    await service.processDuePreviews();
+
+    expect(processSpy).toHaveBeenCalledWith('durable-submission');
   });
 
   it('publishes a validated root preview to the Payload asset prefix', async () => {
@@ -606,5 +651,67 @@ describe('SubmissionPreviewService', () => {
     expect(
       challengeServiceMock.ensureChallengeWhitelistAccess,
     ).not.toHaveBeenCalled();
+  });
+
+  it('lists only phase-released preview assets with pagination metadata', async () => {
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-1',
+      track: 'Design',
+      phases: [
+        {
+          name: 'Review',
+          isOpen: false,
+          actualEndTime: '2026-08-12T00:00:00.000Z',
+        },
+      ],
+    });
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([
+        {
+          id: 'submission-01',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          submittedDate: new Date('2026-08-11T00:00:00.000Z'),
+          createdAt: new Date('2026-08-10T00:00:00.000Z'),
+          memberId: '1001',
+          objectKey: 'media/submission-previews/token/preview.png',
+        },
+      ])
+      .mockResolvedValueOnce([{ total: 1n }]);
+    memberServiceMock.getUserEmails.mockResolvedValue([
+      { userId: '1001', handle: 'designer', email: 'private@example.com' },
+    ]);
+
+    await expect(
+      service.listVisiblePreviews(undefined, 'challenge-1', 1, 20),
+    ).resolves.toEqual({
+      data: [
+        {
+          id: 'submission-01',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          submittedDate: new Date('2026-08-11T00:00:00.000Z'),
+          previewUrl:
+            'https://assets.topcoder-dev.com/media/submission-previews/token/preview.png',
+          submitterHandle: 'designer',
+        },
+      ],
+      meta: { page: 1, perPage: 20, totalCount: 1, totalPages: 1 },
+    });
+    expect(memberServiceMock.getUserEmails).toHaveBeenCalledWith(['1001']);
+  });
+
+  it('does not query preview state before the release phase actually ends', async () => {
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-1',
+      track: 'Design',
+      phases: [{ name: 'Review', isOpen: false }],
+    });
+
+    await expect(
+      service.listVisiblePreviews(undefined, 'challenge-1', 1, 20),
+    ).resolves.toEqual({
+      data: [],
+      meta: { page: 1, perPage: 20, totalCount: 0, totalPages: 0 },
+    });
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
   });
 });

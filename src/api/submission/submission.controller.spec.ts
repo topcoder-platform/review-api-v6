@@ -122,4 +122,39 @@ describe('SubmissionController', () => {
       statusCode: HttpStatus.FOUND,
     });
   });
+
+  it('returns a public-safe released preview gallery page', async () => {
+    const page = {
+      data: [
+        {
+          id: 'submission-123',
+          type: 'CONTEST_SUBMISSION',
+          submittedDate: new Date('2026-08-12T00:00:00.000Z'),
+          previewUrl: 'https://assets.example/preview.png',
+        },
+      ],
+      meta: { page: 1, perPage: 20, totalCount: 1, totalPages: 1 },
+    };
+    const previewService = {
+      listVisiblePreviews: jest.fn().mockResolvedValue(page),
+    };
+    const controller = new SubmissionController(
+      {} as any,
+      previewService as any,
+    );
+
+    await expect(
+      controller.listSubmissionPreviews({ user: undefined } as any, {
+        challengeId: 'challenge-123',
+        page: 1,
+        perPage: 20,
+      }),
+    ).resolves.toEqual(page);
+    expect(previewService.listVisiblePreviews).toHaveBeenCalledWith(
+      undefined,
+      'challenge-123',
+      1,
+      20,
+    );
+  });
 });
