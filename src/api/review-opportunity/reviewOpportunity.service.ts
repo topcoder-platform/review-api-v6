@@ -271,9 +271,7 @@ export class ReviewOpportunityService {
             applications: userId ? { where: { userId } } : false,
             _count: {
               select: {
-                applications: {
-                  where: { status: ReviewApplicationStatus.APPROVED },
-                },
+                applications: true,
               },
             },
           },
@@ -283,8 +281,35 @@ export class ReviewOpportunityService {
         }),
         this.prisma.reviewOpportunity.count({ where }),
       ]);
-      const challengeMap = await this.buildChallengeMap(entityList);
-      const items = this.buildResponseList(entityList, challengeMap, authUser);
+      const pageIds = entityList.map((entity) => entity.id);
+      const approvedCountRows = pageIds.length
+        ? await this.prisma.reviewOpportunity.findMany({
+            where: { id: { in: pageIds } },
+            select: {
+              id: true,
+              _count: {
+                select: {
+                  applications: {
+                    where: { status: ReviewApplicationStatus.APPROVED },
+                  },
+                },
+              },
+            },
+          })
+        : [];
+      const approvedCountById = new Map(
+        approvedCountRows.map((row) => [row.id, row._count.applications]),
+      );
+      const countedEntityList = entityList.map((entity) => ({
+        ...entity,
+        approvedApplicationCount: approvedCountById.get(entity.id) ?? 0,
+      }));
+      const challengeMap = await this.buildChallengeMap(countedEntityList);
+      const items = this.buildResponseList(
+        countedEntityList,
+        challengeMap,
+        authUser,
+      );
       return {
         items,
         metadata: {
@@ -576,7 +601,10 @@ export class ReviewOpportunityService {
       );
       const entityList = await this.prisma.reviewOpportunity.findMany({
         where: { challengeId },
-        include: { applications: true },
+        include: {
+          applications: true,
+          _count: { select: { applications: true } },
+        },
       });
       return await this.assembleList(entityList, authUser);
     } catch (error) {
@@ -850,7 +878,10 @@ export class ReviewOpportunityService {
     try {
       const existing = await this.prisma.reviewOpportunity.findUnique({
         where: { id },
-        include: { applications: true },
+        include: {
+          applications: true,
+          _count: { select: { applications: true } },
+        },
       });
       if (!existing || !existing.id) {
         throw new NotFoundException(
@@ -1021,8 +1052,11 @@ export class ReviewOpportunityService {
           (application) => String(application.userId) === userId,
         )
       : [];
+    ret.applicationCount = Number(
+      entity._count?.applications ?? applicationResponses.length,
+    );
     ret.approvedApplicationCount = Number(
-      entity._count?.applications ??
+      entity.approvedApplicationCount ??
         applicationResponses.filter(
           (application) =>
             application.status === ReviewApplicationStatus.APPROVED,

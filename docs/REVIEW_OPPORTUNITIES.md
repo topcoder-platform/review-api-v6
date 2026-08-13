@@ -65,16 +65,20 @@ Every opportunity item adds:
   `OPPORTUNITY_CLOSED`, `CHALLENGE_NOT_ACTIVE`, `ALREADY_APPLIED`, or
   `NO_OPEN_POSITIONS`;
 - `myApplications`, containing only the caller's applications;
-- `approvedApplicationCount` and `remainingPositions`.
+- `applicationCount`, the public-safe total across all application statuses;
+- `approvedApplicationCount` and `remainingPositions`;
 - `applicationRoles` and `defaultApplicationRole`, which let a one-click UI
   submit the correct specialized role for regular, scenarios, iterative,
   specification, or component-development review work.
 
 Search/list responses include only the caller's application rows (or none for
-anonymous callers), while `approvedApplicationCount` is calculated in the
-database. This avoids downloading every applicant for every list card. The
-single-opportunity detail route retains the complete application panel for the
-explicit detail click.
+anonymous callers). `applicationCount` and `approvedApplicationCount` are
+separate database aggregate counts: the former is every application status and
+the latter is only approved applications occupying capacity. This gives public
+cards an accurate total without exposing applicant identity or downloading
+every applicant. The single-opportunity detail route retains the complete
+application panel for the explicit detail click and exposes the same aggregate
+fields.
 
 Challenge card data for a result page is hydrated with one batch projection;
 detail-only phases, workflows, metadata, and winners are loaded only when a

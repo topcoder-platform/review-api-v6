@@ -18,6 +18,7 @@ describe('ReviewOpportunityService search', () => {
   const prismaMock = {
     reviewOpportunity: {
       findMany: jest.fn(),
+      findUnique: jest.fn(),
       count: jest.fn(),
     },
     $transaction: jest.fn(),
@@ -76,11 +77,14 @@ describe('ReviewOpportunityService search', () => {
       basePayment: 150,
       incrementalPayment: 25,
       applications: [],
-      _count: { applications: 1 },
+      _count: { applications: 4 },
     };
     prismaMock.reviewOpportunity.findMany
       .mockResolvedValueOnce([{ challengeId: 'challenge-1' }])
-      .mockResolvedValueOnce([opportunity]);
+      .mockResolvedValueOnce([opportunity])
+      .mockResolvedValueOnce([
+        { id: 'opportunity-1', _count: { applications: 1 } },
+      ]);
     prismaMock.reviewOpportunity.count.mockResolvedValue(1);
     challengePrismaMock.$queryRaw.mockResolvedValue([
       { id: 'challenge-1', status: ChallengeStatus.ACTIVE },
@@ -121,6 +125,7 @@ describe('ReviewOpportunityService search', () => {
         canApply: true,
         canApplyReason: ReviewOpportunityCanApplyReason.CAN_APPLY,
         myApplications: [],
+        applicationCount: 4,
         approvedApplicationCount: 1,
         remainingPositions: 1,
         applicationRoles: ['REVIEWER'],
@@ -135,10 +140,25 @@ describe('ReviewOpportunityService search', () => {
         overview: '# Review the dashboard',
       }),
     );
-    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenLastCalledWith(
+    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({
         include: {
           applications: { where: { userId: 'reviewer-1' } },
+          _count: {
+            select: {
+              applications: true,
+            },
+          },
+        },
+      }),
+    );
+    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenNthCalledWith(
+      3,
+      {
+        where: { id: { in: ['opportunity-1'] } },
+        select: {
+          id: true,
           _count: {
             select: {
               applications: {
@@ -147,8 +167,116 @@ describe('ReviewOpportunityService search', () => {
             },
           },
         },
+      },
+    );
+  });
+
+  it('returns anonymous aggregate counts without loading applicant rows', async () => {
+    const opportunity = {
+      id: 'opportunity-public',
+      challengeId: 'challenge-public',
+      status: ReviewOpportunityStatus.OPEN,
+      type: ReviewOpportunityType.REGULAR_REVIEW,
+      openPositions: 3,
+      startDate: new Date('2026-08-20T00:00:00Z'),
+      duration: 86400,
+      basePayment: 150,
+      incrementalPayment: 25,
+      _count: { applications: 7 },
+    };
+    prismaMock.reviewOpportunity.findMany
+      .mockResolvedValueOnce([{ challengeId: 'challenge-public' }])
+      .mockResolvedValueOnce([opportunity])
+      .mockResolvedValueOnce([
+        { id: 'opportunity-public', _count: { applications: 2 } },
+      ]);
+    prismaMock.reviewOpportunity.count.mockResolvedValue(1);
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      { id: 'challenge-public', status: ChallengeStatus.ACTIVE },
+    ]);
+    challengeServiceMock.filterChallengeIdsByWhitelist.mockResolvedValue([
+      'challenge-public',
+    ]);
+    challengeServiceMock.getChallengeSummaries.mockResolvedValue([
+      {
+        id: 'challenge-public',
+        name: 'Public Review Challenge',
+        status: ChallengeStatus.ACTIVE,
+      },
+    ]);
+
+    const result = await service.search(dto());
+
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        applications: [],
+        myApplications: [],
+        applicationCount: 7,
+        approvedApplicationCount: 2,
+        remainingPositions: 1,
       }),
     );
+    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        include: expect.objectContaining({ applications: false }),
+      }),
+    );
+  });
+
+  it('returns the same total and approved aggregates on detail responses', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      id: 'opportunity-detail',
+      challengeId: 'challenge-detail',
+      status: ReviewOpportunityStatus.OPEN,
+      type: ReviewOpportunityType.REGULAR_REVIEW,
+      openPositions: 2,
+      startDate: new Date('2026-08-20T00:00:00Z'),
+      duration: 86400,
+      basePayment: 150,
+      incrementalPayment: 25,
+      _count: { applications: 2 },
+      applications: [
+        {
+          id: 'application-approved',
+          userId: 'reviewer-1',
+          handle: 'reviewer-one',
+          role: 'REVIEWER',
+          status: ReviewApplicationStatus.APPROVED,
+          createdAt: new Date('2026-08-13T00:00:00Z'),
+        },
+        {
+          id: 'application-pending',
+          userId: 'reviewer-2',
+          handle: 'reviewer-two',
+          role: 'REVIEWER',
+          status: ReviewApplicationStatus.PENDING,
+          createdAt: new Date('2026-08-14T00:00:00Z'),
+        },
+      ],
+    });
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-detail',
+      name: 'Review Detail Challenge',
+      status: ChallengeStatus.ACTIVE,
+    });
+
+    const result = await service.get('opportunity-detail');
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        applicationCount: 2,
+        approvedApplicationCount: 1,
+        remainingPositions: 1,
+      }),
+    );
+    expect(prismaMock.reviewOpportunity.findUnique).toHaveBeenCalledWith({
+      where: { id: 'opportunity-detail' },
+      include: {
+        applications: true,
+        _count: { select: { applications: true } },
+      },
+    });
   });
 
   it('applies authenticated member application filters in the database', async () => {
@@ -216,10 +344,14 @@ describe('ReviewOpportunityService search', () => {
       basePayment: 100,
       incrementalPayment: 0,
       applications: [],
+      _count: { applications: 3 },
     };
     prismaMock.reviewOpportunity.findMany
       .mockResolvedValueOnce([{ challengeId: 'challenge-completed' }])
-      .mockResolvedValueOnce([opportunity]);
+      .mockResolvedValueOnce([opportunity])
+      .mockResolvedValueOnce([
+        { id: 'opportunity-closed', _count: { applications: 1 } },
+      ]);
     prismaMock.reviewOpportunity.count.mockResolvedValue(1);
     challengePrismaMock.$queryRaw.mockResolvedValue([
       { id: 'challenge-completed', status: ChallengeStatus.COMPLETED },

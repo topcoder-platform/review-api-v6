@@ -328,6 +328,13 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   myApplications: ReviewApplicationResponseDto[];
 
   @ApiProperty({
+    description:
+      'Public-safe total number of applications in every status; applicant identities remain caller-scoped on list routes',
+    example: 4,
+  })
+  applicationCount: number;
+
+  @ApiProperty({
     description: 'Number of approved applications occupying reviewer spots',
     example: 1,
   })
