@@ -35,6 +35,11 @@ import { Scopes } from 'src/shared/decorators/scopes.decorator';
 import { Scope } from 'src/shared/enums/scopes.enum';
 import { Request, Response } from 'express';
 
+/**
+ * Exposes public and authenticated review-opportunity discovery endpoints.
+ * The controller validates filters, delegates ordering and pagination to the
+ * service, and preserves both legacy array and metadata-envelope responses.
+ */
 @ApiTags('Review Opportunity')
 @Controller('/review-opportunities')
 export class ReviewOpportunityController {
@@ -118,7 +123,13 @@ export class ReviewOpportunityController {
   @ApiQuery({
     name: 'sortBy',
     description: 'sorting field',
-    enum: ['basePayment', 'duration', 'startDate', 'openPositions'],
+    enum: [
+      'basePayment',
+      'createdAt',
+      'duration',
+      'startDate',
+      'openPositions',
+    ],
     type: 'string',
     example: 'basePayment',
     default: 'startDate',
@@ -158,6 +169,15 @@ export class ReviewOpportunityController {
   @ApiResponse({ status: 400, description: 'Bad Request' })
   @ApiResponse({ status: 500, description: 'Internal Error' })
   @Get()
+  /**
+   * Returns a legacy bare-array review-opportunity page with pagination headers.
+   *
+   * @param req Request carrying an optional authenticated user.
+   * @param response response used to publish pagination headers.
+   * @param dto validated filters, including `createdAt` descending sort support.
+   * @returns review-opportunity rows for the requested page.
+   * @throws Propagates validation and service search errors.
+   */
   async search(
     @Req() req: Request,
     @Res({ passthrough: true }) response: Response,
