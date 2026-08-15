@@ -175,6 +175,41 @@ describe('ReviewOpportunityService search', () => {
     );
   });
 
+  it('sorts newest opportunities by creation date before database pagination', async () => {
+    prismaMock.reviewOpportunity.findMany
+      .mockResolvedValueOnce([{ challengeId: 'challenge-1' }])
+      .mockResolvedValueOnce([]);
+    prismaMock.reviewOpportunity.count.mockResolvedValue(0);
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      { id: 'challenge-1', status: ChallengeStatus.ACTIVE },
+    ]);
+    challengeServiceMock.filterChallengeIdsByWhitelist.mockResolvedValue([
+      'challenge-1',
+    ]);
+
+    await service.search({
+      ...dto(),
+      limit: 5,
+      offset: 10,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        skip: 10,
+        take: 5,
+      }),
+    );
+    const pagedWhere =
+      prismaMock.reviewOpportunity.findMany.mock.calls[1][0].where;
+    expect(prismaMock.reviewOpportunity.count).toHaveBeenCalledWith({
+      where: pagedWhere,
+    });
+  });
+
   it('returns anonymous aggregate counts without loading applicant rows', async () => {
     const opportunity = {
       id: 'opportunity-public',

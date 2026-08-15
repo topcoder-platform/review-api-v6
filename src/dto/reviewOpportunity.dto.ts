@@ -477,6 +477,11 @@ export class QueryReviewOpportunitySummaryDto {
   sortOrder: string = 'desc';
 }
 
+/**
+ * Validated filters for public and member review-opportunity searches.
+ * The `createdAt` sort supports the Opportunities UI's authored newest-first
+ * order, while `startDate` preserves the legacy default.
+ */
 export class QueryReviewOpportunityDto {
   @ApiPropertyOptional({
     description: 'Case-insensitive challenge name search',
@@ -630,7 +635,7 @@ export class QueryReviewOpportunityDto {
   @IsOptional()
   applicationStatuses?: ReviewApplicationStatus[];
 
-  @IsIn(['basePayment', 'duration', 'startDate', 'openPositions'])
+  @IsIn(['basePayment', 'createdAt', 'duration', 'startDate', 'openPositions'])
   @IsString()
   @IsOptional()
   sortBy: string = 'startDate';
