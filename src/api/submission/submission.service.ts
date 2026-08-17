@@ -5620,7 +5620,7 @@ export class SubmissionService {
     ];
 
     if (queryDto.type) {
-      filters.push(Prisma.sql`"type" = ${queryDto.type}`);
+      filters.push(Prisma.sql`"type" = ${queryDto.type}::"SubmissionType"`);
     }
     if (queryDto.url) {
       filters.push(Prisma.sql`"url" = ${queryDto.url}`);
@@ -5713,7 +5713,7 @@ export class SubmissionService {
     ];
 
     if (queryDto.type) {
-      filters.push(Prisma.sql`"type" = ${queryDto.type}`);
+      filters.push(Prisma.sql`"type" = ${queryDto.type}::"SubmissionType"`);
     }
     if (queryDto.url) {
       filters.push(Prisma.sql`"url" = ${queryDto.url}`);
