@@ -2839,7 +2839,7 @@ export class SubmissionService {
           ) AS "submissionRank"
         FROM "submission" s
         WHERE s."challengeId" = ${challengeId}
-          AND s."type" = ${submissionType}
+          AND s."type" = ${submissionType}::"SubmissionType"
           AND (s."status" IS NULL OR s."status" <> 'DELETED')
       ) ranked
       WHERE ranked."id" = ${submissionId}
