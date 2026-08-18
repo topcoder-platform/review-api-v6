@@ -30,6 +30,7 @@ import { SubmissionVirusScanRetryService } from './submission-virus-scan-retry.s
 import { SubmissionNotificationCreateHandler } from '../kafka/handlers/submission-notification-create.handler';
 import { SubmissionConfirmationEmailService } from './submission-confirmation-email.service';
 import { SubmissionConfirmationEmailRetryService } from './submission-confirmation-email-retry.service';
+import { SubmissionPreviewService } from './submission-preview.service';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -71,6 +72,7 @@ import { SubmissionConfirmationEmailRetryService } from './submission-confirmati
     SubmissionNotificationCreateHandler,
     SubmissionConfirmationEmailService,
     SubmissionConfirmationEmailRetryService,
+    SubmissionPreviewService,
     AiPhaseOpenedHandler,
     SubmissionVirusScanRetryService,
   ],
@@ -99,6 +101,7 @@ import { SubmissionConfirmationEmailRetryService } from './submission-confirmati
     SubmissionScanCompleteHandler,
     SubmissionNotificationCreateHandler,
     SubmissionConfirmationEmailService,
+    SubmissionPreviewService,
     AiPhaseOpenedHandler,
   ],
 })

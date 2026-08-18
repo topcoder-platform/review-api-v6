@@ -33,7 +33,7 @@ describe('SubmissionController', () => {
     const service = {
       getSubmissionDownloadUrl: jest.fn().mockResolvedValue(signedUrl),
     };
-    const controller = new SubmissionController(service as any);
+    const controller = new SubmissionController(service as any, {} as any);
 
     const result = await controller.downloadSubmission(
       { user: authUser } as any,
@@ -68,7 +68,7 @@ describe('SubmissionController', () => {
     const service = {
       getSubmissionDownloadUrl: jest.fn().mockResolvedValue(signedUrl),
     };
-    const controller = new SubmissionController(service as any);
+    const controller = new SubmissionController(service as any, {} as any);
 
     const result = await controller.getSubmissionDownloadUrl(
       { user: authUser } as any,
@@ -94,6 +94,67 @@ describe('SubmissionController', () => {
       expect.arrayContaining([
         { name: 'Cache-Control', value: 'private, no-store' },
       ]),
+    );
+  });
+
+  it('returns a public preview redirect resolved through the phase gate', async () => {
+    const previewService = {
+      getVisiblePreviewUrl: jest
+        .fn()
+        .mockResolvedValue('https://assets.example/preview.png'),
+    };
+    const controller = new SubmissionController(
+      {} as any,
+      previewService as any,
+    );
+
+    const result = await controller.getSubmissionPreview(
+      { user: undefined } as any,
+      'submission-123',
+    );
+
+    expect(previewService.getVisiblePreviewUrl).toHaveBeenCalledWith(
+      undefined,
+      'submission-123',
+    );
+    expect(result).toEqual({
+      url: 'https://assets.example/preview.png',
+      statusCode: HttpStatus.FOUND,
+    });
+  });
+
+  it('returns a public-safe released preview gallery page', async () => {
+    const page = {
+      data: [
+        {
+          id: 'submission-123',
+          type: 'CONTEST_SUBMISSION',
+          submittedDate: new Date('2026-08-12T00:00:00.000Z'),
+          previewUrl: 'https://assets.example/preview.png',
+        },
+      ],
+      meta: { page: 1, perPage: 20, totalCount: 1, totalPages: 1 },
+    };
+    const previewService = {
+      listVisiblePreviews: jest.fn().mockResolvedValue(page),
+    };
+    const controller = new SubmissionController(
+      {} as any,
+      previewService as any,
+    );
+
+    await expect(
+      controller.listSubmissionPreviews({ user: undefined } as any, {
+        challengeId: 'challenge-123',
+        page: 1,
+        perPage: 20,
+      }),
+    ).resolves.toEqual(page);
+    expect(previewService.listVisiblePreviews).toHaveBeenCalledWith(
+      undefined,
+      'challenge-123',
+      1,
+      20,
     );
   });
 });

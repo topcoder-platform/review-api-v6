@@ -57,6 +57,12 @@ import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
 import { Prisma } from '@prisma/client';
 import type { Express } from 'express';
+import {
+  isDesignTrackChallenge,
+  isSubmissionRankEligible,
+  parseSubmissionLimitCount,
+  resolveReviewSubmissionRankLimit,
+} from 'src/shared/utils/submission-limit.util';
 
 type SubmissionMinimal = {
   id: string;
@@ -91,6 +97,10 @@ const NON_WINNING_SUBMISSION_STATUSES: SubmissionStatus[] = [
   SubmissionStatus.FAILED_CHECKPOINT_REVIEW,
   SubmissionStatus.AI_FAILED_REVIEW,
 ];
+const DESIGN_LIMITED_SUBMISSION_TYPES = new Set<SubmissionType>([
+  SubmissionType.CONTEST_SUBMISSION,
+  SubmissionType.CHECKPOINT_SUBMISSION,
+]);
 
 /**
  * Parses optional boolean-like query parameters used by submission listing filters.
@@ -639,6 +649,7 @@ export class SubmissionService {
       select: {
         id: true,
         challengeId: true,
+        memberId: true,
         type: true,
         virusScan: true,
       },
@@ -690,6 +701,18 @@ export class SubmissionService {
     const challenge = await this.challengeApiService.getChallengeDetail(
       submission.challengeId,
     );
+    const submissionRankLimit = resolveReviewSubmissionRankLimit(challenge);
+    const submissionRank =
+      submission.memberId && submissionRankLimit !== null
+        ? await this.resolveSubmissionRankForReview(
+            submission.id,
+            submission.challengeId,
+            submission.type,
+          )
+        : null;
+    const isRankEligible =
+      !submission.memberId ||
+      isSubmissionRankEligible(submissionRank, submissionRankLimit);
     const autopilotManagedIterativeReview =
       this.isFirst2FinishChallenge(challenge);
 
@@ -734,6 +757,36 @@ export class SubmissionService {
         `[ensurePendingReviewsForSubmission] No member reviewer configs found for challenge ${submission.challengeId}. source=${source}`,
       );
       return 0;
+    }
+
+    const challengeHasPhase = (phaseName: string): boolean =>
+      (challenge?.phases ?? []).some(
+        (phase) => this.normalizePhaseName(phase?.name) === phaseName,
+      );
+    const openConfiguredPhase = (phaseName: string): boolean =>
+      reviewerConfigs.some(
+        (config) =>
+          this.normalizePhaseName(config.phaseName) === phaseName &&
+          openPhaseIds.has(String(config.challengePhaseId ?? '').trim()),
+      );
+
+    let hasPassedScreening = true;
+    if (openConfiguredPhase('review') && challengeHasPhase('screening')) {
+      hasPassedScreening = await this.hasPassedScreeningReview(
+        submission.id,
+        ScorecardType.SCREENING,
+      );
+    }
+
+    let hasPassedCheckpointScreening = true;
+    if (
+      openConfiguredPhase('checkpoint review') &&
+      challengeHasPhase('checkpoint screening')
+    ) {
+      hasPassedCheckpointScreening = await this.hasPassedScreeningReview(
+        submission.id,
+        ScorecardType.CHECKPOINT_SCREENING,
+      );
     }
 
     const scorecardIds = Array.from(
@@ -803,6 +856,21 @@ export class SubmissionService {
       }
 
       if (!this.isReviewPhaseSupportedForPendingCreation(normalizedPhaseName)) {
+        continue;
+      }
+
+      if (!isRankEligible) {
+        continue;
+      }
+
+      if (normalizedPhaseName === 'review' && !hasPassedScreening) {
+        continue;
+      }
+
+      if (
+        normalizedPhaseName === 'checkpoint review' &&
+        !hasPassedCheckpointScreening
+      ) {
         continue;
       }
 
@@ -2740,6 +2808,90 @@ export class SubmissionService {
     );
   }
 
+  /**
+   * Resolves a submission's newest-first rank for its member and exact type.
+   *
+   * @param submissionId - Submission whose review eligibility is being checked.
+   * @param challengeId - Challenge containing the submission.
+   * @param submissionType - Contest or checkpoint type ranked independently.
+   * @returns The one-based rank, or null when the non-deleted submission is not found.
+   * @throws Error when the review database query fails.
+   */
+  private async resolveSubmissionRankForReview(
+    submissionId: string,
+    challengeId: string,
+    submissionType: SubmissionType,
+  ): Promise<number | null> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{ submissionRank: bigint | number | null }>
+    >(Prisma.sql`
+      SELECT ranked."submissionRank"
+      FROM (
+        SELECT
+          s."id",
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(s."memberId", s."id"), s."type"
+            ORDER BY
+              s."submittedDate" DESC NULLS LAST,
+              s."createdAt" DESC NULLS LAST,
+              s."updatedAt" DESC NULLS LAST,
+              s."id" DESC
+          ) AS "submissionRank"
+        FROM "submission" s
+        WHERE s."challengeId" = ${challengeId}
+          AND s."type" = ${submissionType}::"SubmissionType"
+          AND (s."status" IS NULL OR s."status" <> 'DELETED')
+      ) ranked
+      WHERE ranked."id" = ${submissionId}
+    `);
+
+    const numericRank = Number(rows[0]?.submissionRank);
+    return Number.isInteger(numericRank) && numericRank > 0
+      ? numericRank
+      : null;
+  }
+
+  /**
+   * Checks whether a submission passed one of the configured screening scorecards.
+   *
+   * Completed reviews use the greater of final and initial score and the same
+   * scorecard threshold fallback as autopilot. Legacy passed or approved review
+   * statuses are also accepted.
+   *
+   * @param submissionId - Submission advancing to Review or Checkpoint Review.
+   * @param screeningScorecardType - Screening scorecard type for the preceding phase.
+   * @returns True when a screening review of that type has passed.
+   * @throws Error when the review database query fails.
+   */
+  private async hasPassedScreeningReview(
+    submissionId: string,
+    screeningScorecardType: ScorecardType,
+  ): Promise<boolean> {
+    const rows = await this.prisma.$queryRaw<Array<{ passed: boolean }>>(
+      Prisma.sql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM "review" r
+          INNER JOIN "scorecard" sc ON sc."id" = r."scorecardId"
+          WHERE r."submissionId" = ${submissionId}
+            AND sc."type" = ${screeningScorecardType}
+            AND (
+              (
+                UPPER((r."status")::text) = 'COMPLETED'
+                AND GREATEST(
+                  COALESCE(r."finalScore", 0),
+                  COALESCE(r."initialScore", 0)
+                ) >= COALESCE(sc."minimumPassingScore", sc."minScore", 50)
+              )
+              OR UPPER((r."status")::text) IN ('PASSED', 'APPROVED')
+            )
+        ) AS "passed"
+      `,
+    );
+
+    return rows[0]?.passed === true;
+  }
+
   private getAllowedManualUploadPhaseNames(
     submissionType: SubmissionType,
   ): string[] {
@@ -3336,6 +3488,85 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Creates a submission while atomically enforcing a finite Design limit.
+   *
+   * The transaction-scoped advisory lock serializes submissions for the same
+   * challenge, member, and exact submission type across service instances.
+   * Contest and checkpoint submissions therefore use independent limits, while
+   * unlimited Design challenges, other tracks, and other submission types keep
+   * the normal creation path.
+   *
+   * @param challenge - Challenge data used to resolve track and limit metadata.
+   * @param body - Validated submission request identifying the member and type.
+   * @param data - Prisma submission payload to persist.
+   * @returns The newly created submission.
+   * @throws BadRequestException when the member has reached the finite limit.
+   * @throws Error when locking, counting, or persistence fails.
+   */
+  private async createSubmissionWithLimit(
+    challenge: ChallengeData,
+    body: SubmissionRequestDto,
+    data: Prisma.submissionCreateArgs['data'],
+  ) {
+    const submissionType = body.type as SubmissionType;
+    const submissionLimit = isDesignTrackChallenge(challenge)
+      ? parseSubmissionLimitCount(
+          challenge.metadata?.submissionLimit as unknown,
+        )
+      : null;
+
+    if (
+      submissionLimit === null ||
+      !DESIGN_LIMITED_SUBMISSION_TYPES.has(submissionType)
+    ) {
+      return this.prisma.submission.create({ data });
+    }
+
+    const lockKey = [
+      'design-submission-limit',
+      body.challengeId,
+      body.memberId,
+      submissionType,
+    ].join(':');
+
+    return this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw(
+        Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`,
+      );
+
+      const existingSubmissionCount = await transaction.submission.count({
+        where: {
+          challengeId: body.challengeId,
+          memberId: body.memberId,
+          type: submissionType,
+          status: { not: SubmissionStatus.DELETED },
+        },
+      });
+
+      if (existingSubmissionCount >= submissionLimit) {
+        const message =
+          submissionLimit === 1
+            ? "This challenge allows only one submission, and you've already submitted. To replace it, delete your existing submission first."
+            : `This challenge allows only ${submissionLimit} submissions, and you've already reached that limit. To replace one, delete an existing submission first.`;
+
+        throw new BadRequestException({
+          message,
+          code: 'SUBMISSION_LIMIT_REACHED',
+          details: {
+            challengeId: body.challengeId,
+            memberId: body.memberId,
+            submissionType,
+            submissionLimit,
+            existingSubmissionCount,
+          },
+        });
+      }
+
+      return transaction.submission.create({ data });
+    });
+  }
+
   async createSubmission(
     authUser: JwtUser,
     body: SubmissionRequestDto,
@@ -3564,26 +3795,29 @@ export class SubmissionService {
         }
       }
 
-      const data = await this.prisma.submission.create({
-        data: {
-          ...body,
-          isFileSubmission,
-          // populate commonly expected fields on create
-          submittedDate: body.submittedDate
-            ? new Date(body.submittedDate)
-            : new Date(),
-          systemFileName,
-          fileType,
-          viewCount: 0,
-          status: SubmissionStatus.ACTIVE,
-          type: body.type as SubmissionType,
-          virusScan: false,
-          eventRaised: false,
-          confirmationEmail: {
-            create: {},
-          },
+      const submissionData: Prisma.submissionCreateArgs['data'] = {
+        ...body,
+        isFileSubmission,
+        // populate commonly expected fields on create
+        submittedDate: body.submittedDate
+          ? new Date(body.submittedDate)
+          : new Date(),
+        systemFileName,
+        fileType,
+        viewCount: 0,
+        status: SubmissionStatus.ACTIVE,
+        type: body.type as SubmissionType,
+        virusScan: false,
+        eventRaised: false,
+        confirmationEmail: {
+          create: {},
         },
-      });
+      };
+      const data = await this.createSubmissionWithLimit(
+        challengeDetails,
+        body,
+        submissionData,
+      );
       this.logger.log(`Submission created with ID: ${data.id}`);
       if (isFileSubmission) {
         await this.publishSubmissionScanEvent(data);
@@ -3641,6 +3875,9 @@ export class SubmissionService {
       await this.stripIsLatestForUnlimitedChallenges([data]);
       return this.buildResponse(data);
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `creating submission for challengeId: ${body.challengeId}, memberId: ${body.memberId}`,
@@ -5383,7 +5620,7 @@ export class SubmissionService {
     ];
 
     if (queryDto.type) {
-      filters.push(Prisma.sql`"type" = ${queryDto.type}`);
+      filters.push(Prisma.sql`"type" = ${queryDto.type}::"SubmissionType"`);
     }
     if (queryDto.url) {
       filters.push(Prisma.sql`"url" = ${queryDto.url}`);
@@ -5476,7 +5713,7 @@ export class SubmissionService {
     ];
 
     if (queryDto.type) {
-      filters.push(Prisma.sql`"type" = ${queryDto.type}`);
+      filters.push(Prisma.sql`"type" = ${queryDto.type}::"SubmissionType"`);
     }
     if (queryDto.url) {
       filters.push(Prisma.sql`"url" = ${queryDto.url}`);
@@ -5945,7 +6182,7 @@ export class SubmissionService {
       }
 
       if (roleSummary.hasReviewer) {
-        return;
+        continue;
       }
 
       if (Array.isArray((submission as any).review)) {
