@@ -398,6 +398,7 @@ export class MyReviewService {
             ) AS winners
           FROM challenges."ChallengeWinner" w
           WHERE w."challengeId" = c.id
+          AND w.type = 'PLACEMENT'
         ) cw ON TRUE
       `,
     );
