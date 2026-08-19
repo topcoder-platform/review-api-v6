@@ -648,7 +648,7 @@ export class QueryReviewOpportunityDto {
   @Transform(({ value }) => parseInt(value, 10))
   @IsNumber()
   @IsPositive()
-  @Max(100)
+  @Max(1000)
   @IsOptional()
   limit: number | undefined = 10;
 
