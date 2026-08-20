@@ -40,7 +40,7 @@ import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-cat
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { basename } from 'path';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 import {
@@ -141,6 +141,20 @@ function parseOptionalBooleanQuery(
     code: 'INVALID_BOOLEAN_QUERY_PARAMETER',
     details: { fieldName, value },
   });
+}
+
+/**
+ * Computes the SHA-256 digest of an uploaded submission file's contents.
+ * @param file Multer file whose in-memory buffer holds the uploaded contents.
+ * @returns Lowercase hex digest (64 characters), or null when no file buffer is present.
+ * @throws This function does not throw.
+ * Used by the submission upload flows to persist a content identifier before the file reaches S3.
+ */
+function computeFileSha256(file?: Express.Multer.File): string | null {
+  if (!file?.buffer || file.buffer.length === 0) {
+    return null;
+  }
+  return createHash('sha256').update(file.buffer).digest('hex');
 }
 
 export type SubmissionScanRetryOptions = {
@@ -291,6 +305,8 @@ const REVIEW_SUMMATION_RESPONSE_SELECT = {
 
 type CreateSubmissionOptions = {
   allowPrivilegedPostSubmissionUpload?: boolean;
+  /** Pre-computed SHA-256 digest of the file contents, used when the caller hashed before its own upload. */
+  sha256Hash?: string | null;
 };
 
 type SubmissionDmzUploadResult = {
@@ -489,6 +505,9 @@ export class SubmissionService {
       }
     }
 
+    // Hash the raw buffer before it is streamed to S3
+    const sha256Hash = computeFileSha256(file);
+
     const dmzUpload = await this.uploadSubmissionFileToDmz(
       authUser,
       body,
@@ -512,6 +531,7 @@ export class SubmissionService {
 
     return this.createSubmission(authUser, submissionPayload, file, {
       allowPrivilegedPostSubmissionUpload: true,
+      sha256Hash,
     });
   }
 
@@ -575,6 +595,9 @@ export class SubmissionService {
       });
     }
 
+    // Hash the raw buffer before it is streamed to S3
+    const sha256Hash = computeFileSha256(file);
+
     const cleanUpload = await this.uploadValidationSubmissionFileToClean(
       authUser,
       body,
@@ -605,6 +628,7 @@ export class SubmissionService {
           fileType: cleanUpload.fileType,
           isFileSubmission: true,
           memberId: body.memberId,
+          sha256Hash,
           status: SubmissionStatus.ACTIVE,
           submissionPhaseId: body.submissionPhaseId,
           submittedDate,
@@ -3798,6 +3822,8 @@ export class SubmissionService {
       const submissionData: Prisma.submissionCreateArgs['data'] = {
         ...body,
         isFileSubmission,
+        // Content identifier derived from the uploaded buffer; null for URL-only submissions
+        sha256Hash: options?.sha256Hash ?? computeFileSha256(file),
         // populate commonly expected fields on create
         submittedDate: body.submittedDate
           ? new Date(body.submittedDate)

@@ -490,6 +490,16 @@ export class SubmissionResponseDto {
   isFileSubmission?: boolean;
 
   @ApiProperty({
+    description:
+      'Lowercase hex SHA-256 digest (64 characters) of the uploaded file contents. Null for URL-only submissions.',
+    example: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    required: false,
+    nullable: true,
+    type: String,
+  })
+  sha256Hash?: string | null;
+
+  @ApiProperty({
     description: 'The creation timestamp',
     example: '2023-10-01T00:00:00Z',
   })

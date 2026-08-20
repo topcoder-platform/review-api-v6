@@ -5,6 +5,7 @@ import {
   SubmissionStatus,
   SubmissionType,
 } from '@prisma/client';
+import { createHash } from 'crypto';
 import { Readable } from 'stream';
 import { SubmissionService } from './submission.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -486,6 +487,9 @@ describe('SubmissionService', () => {
       });
       expect(prisma.submission.create.mock.calls[0][0].data).not.toHaveProperty(
         'confirmationEmail',
+      );
+      expect(prisma.submission.create.mock.calls[0][0].data.sha256Hash).toBe(
+        createHash('sha256').update(Buffer.from('zip')).digest('hex'),
       );
     });
 
@@ -3741,7 +3745,11 @@ describe('SubmissionService', () => {
           url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/file.zip',
         }),
         file,
-        { allowPrivilegedPostSubmissionUpload: true },
+        {
+          allowPrivilegedPostSubmissionUpload: true,
+          sha256Hash:
+            'daf4e16539491123bf4112eb538caad1692406c99e79aed45789f25452c22108',
+        },
       );
     });
 
@@ -3788,7 +3796,11 @@ describe('SubmissionService', () => {
           url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/checkpoint.zip',
         }),
         file,
-        { allowPrivilegedPostSubmissionUpload: true },
+        {
+          allowPrivilegedPostSubmissionUpload: true,
+          sha256Hash:
+            'daf4e16539491123bf4112eb538caad1692406c99e79aed45789f25452c22108',
+        },
       );
     });
 
@@ -4122,6 +4134,74 @@ describe('SubmissionService', () => {
         }),
       });
       expect(prismaMock.submission.create).not.toHaveBeenCalled();
+    });
+
+    it('persists the SHA-256 digest of the uploaded file buffer', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        {
+          buffer: Buffer.from('zip-content'),
+          originalname: 'manual-submission.zip',
+          size: 11,
+        } as any,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sha256Hash:
+            'daf4e16539491123bf4112eb538caad1692406c99e79aed45789f25452c22108',
+        }),
+      });
+    });
+
+    it('prefers a pre-computed digest supplied by the caller', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        {
+          buffer: Buffer.from('zip-content'),
+          originalname: 'manual-submission.zip',
+          size: 11,
+        } as any,
+        {
+          allowPrivilegedPostSubmissionUpload: true,
+          sha256Hash: 'a'.repeat(64),
+        },
+      );
+
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: 'a'.repeat(64) }),
+      });
+    });
+
+    it('leaves the digest null for URL-only submissions', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: null }),
+      });
     });
   });
 
