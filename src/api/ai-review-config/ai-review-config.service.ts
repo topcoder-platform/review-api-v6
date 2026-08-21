@@ -545,6 +545,7 @@ export class AiReviewConfigService {
     const challengeId = config.challengeId;
 
     await this.validateCanManageConfigForChallenge(challengeId, authUser);
+    await this.validateNoSubmissionsExistForChallenge(challengeId);
     await this.validateChallengeNotCompleted(challengeId);
     await this.validateNoDecisionsForConfig(id);
     await this.validateNoAiRunsExistForChallenge(challengeId);
