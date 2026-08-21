@@ -283,7 +283,7 @@ export class AiReviewConfigService {
     });
     if (count > 0) {
       throw new ConflictException(
-        `Cannot create AI review config: challenge ${challengeId} already has submissions.`,
+        `Cannot create or update AI review config: challenge ${challengeId} already has submissions.`,
       );
     }
   }
