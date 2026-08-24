@@ -143,18 +143,51 @@ function parseOptionalBooleanQuery(
   });
 }
 
+const submissionHashLogger = new Logger('SubmissionSha256');
+
 /**
  * Computes the SHA-256 digest of an uploaded submission file's contents.
  * @param file Multer file whose in-memory buffer holds the uploaded contents.
+ * @param context Caller label included in diagnostic logs.
  * @returns Lowercase hex digest (64 characters), or null when no file buffer is present.
  * @throws This function does not throw.
  * Used by the submission upload flows to persist a content identifier before the file reaches S3.
  */
-function computeFileSha256(file?: Express.Multer.File): string | null {
-  if (!file?.buffer || file.buffer.length === 0) {
+function computeFileSha256(
+  file?: Express.Multer.File,
+  context = 'unknown',
+): string | null {
+  if (!file) {
+    submissionHashLogger.log(
+      `[${context}] No multipart file on the request (URL-only submission): sha256Hash will be null.`,
+    );
     return null;
   }
-  return createHash('sha256').update(file.buffer).digest('hex');
+
+  // A missing buffer means multer did not use memoryStorage for this route
+  if (!Buffer.isBuffer(file.buffer)) {
+    submissionHashLogger.warn(
+      `[${context}] Uploaded file "${file.originalname ?? 'unnamed'}" has no in-memory buffer ` +
+        `(fieldname=${file.fieldname ?? 'n/a'}, size=${file.size ?? 'n/a'}: ` +
+        `sha256Hash will be null.`,
+    );
+    return null;
+  }
+
+  if (file.buffer.length === 0) {
+    submissionHashLogger.warn(
+      `[${context}] Uploaded file "${file.originalname ?? 'unnamed'}" has an empty buffer ` +
+        `(size=${file.size ?? 'n/a'}): sha256Hash will be null.`,
+    );
+    return null;
+  }
+
+  const digest = createHash('sha256').update(file.buffer).digest('hex');
+  submissionHashLogger.log(
+    `[${context}] Computed sha256Hash=${digest} for file "${file.originalname ?? 'unnamed'}" ` +
+      `(bufferBytes=${file.buffer.length}, reportedSize=${file.size ?? 'n/a'}).`,
+  );
+  return digest;
 }
 
 export type SubmissionScanRetryOptions = {
@@ -506,7 +539,7 @@ export class SubmissionService {
     }
 
     // Hash the raw buffer before it is streamed to S3
-    const sha256Hash = computeFileSha256(file);
+    const sha256Hash = computeFileSha256(file, 'manualUpload');
 
     const dmzUpload = await this.uploadSubmissionFileToDmz(
       authUser,
@@ -596,7 +629,7 @@ export class SubmissionService {
     }
 
     // Hash the raw buffer before it is streamed to S3
-    const sha256Hash = computeFileSha256(file);
+    const sha256Hash = computeFileSha256(file, 'validationUpload');
 
     const cleanUpload = await this.uploadValidationSubmissionFileToClean(
       authUser,
@@ -3819,11 +3852,25 @@ export class SubmissionService {
         }
       }
 
+      // Content identifier derived from the uploaded buffer; null for URL-only submissions
+      const sha256Hash =
+        options?.sha256Hash ?? computeFileSha256(file, 'createSubmission');
+      this.logger.log(
+        `sha256Hash resolution for challenge ${body.challengeId}, member ${body.memberId}: ` +
+          `value=${
+             sha256Hash ? sha256Hash.slice(0, 16) + '...' : 'null'
+           }, source=${
+             options?.sha256Hash !== undefined
+               ? 'caller-supplied'
+               : 'computed-from-buffer'
+          }, hasUploadedFile=${hasUploadedFile}, hasS3Url=${hasS3Url}, ` +
+          `isFileSubmission=${isFileSubmission}, hasBodyUrl=${!!body.url}`,
+      );
+
       const submissionData: Prisma.submissionCreateArgs['data'] = {
         ...body,
         isFileSubmission,
-        // Content identifier derived from the uploaded buffer; null for URL-only submissions
-        sha256Hash: options?.sha256Hash ?? computeFileSha256(file),
+        sha256Hash,
         // populate commonly expected fields on create
         submittedDate: body.submittedDate
           ? new Date(body.submittedDate)
@@ -3844,7 +3891,9 @@ export class SubmissionService {
         body,
         submissionData,
       );
-      this.logger.log(`Submission created with ID: ${data.id}`);
+      this.logger.log(
+        `Submission created with ID: ${data.id} (persisted sha256Hash=${(data as { sha256Hash?: string | null }).sha256Hash ?? 'null'})`,
+      );
       if (isFileSubmission) {
         await this.publishSubmissionScanEvent(data);
       } else {

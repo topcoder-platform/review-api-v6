@@ -124,8 +124,15 @@ export class SubmissionController {
     @UploadedFile() file: Express.Multer.File,
     @Body() body: SubmissionRequestDto,
   ): Promise<SubmissionResponseDto> {
-    console.log(
+    this.logger.debug(
       `Creating submission with request body: ${JSON.stringify(body)}`,
+    );
+    // Diagnostic for sha256Hash: a null digest almost always means no multipart file arrived
+    this.logger.debug(
+      `Creating submission multipart file: present=${!!file}, fieldname=${file?.fieldname ?? 'n/a'}, ` +
+        `originalname=${file?.originalname ?? 'n/a'}, size=${file?.size ?? 'n/a'}, ` +
+        `bufferBytes=${Buffer.isBuffer(file?.buffer) ? file.buffer.length : 'n/a'}, ` +
+        `contentType=${req.headers['content-type'] ?? 'n/a'}`,
     );
     const authUser: JwtUser = req['user'] as JwtUser;
     return this.service.createSubmission(authUser, body, file);
