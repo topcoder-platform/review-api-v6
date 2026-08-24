@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   ReviewStatus,
   ScorecardType,
@@ -5335,6 +5339,307 @@ describe('SubmissionService', () => {
 
       expect(created).toBe(0);
       expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findDuplicateSubmissions', () => {
+    const challengeId = 'challenge-dup-1';
+    const hash = 'a'.repeat(64);
+    let prismaMock: { submission: { findMany: jest.Mock } };
+    let challengeApiServiceMock: { getChallengeSummaries: jest.Mock };
+    let resourceApiServiceMock: { getMemberResourcesRoles: jest.Mock };
+    let duplicateService: SubmissionService;
+
+    const buildService = () =>
+      new SubmissionService(
+        prismaMock as any,
+        {} as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        resourceApiServiceMock as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+    const copilot = {
+      isMachine: false,
+      userId: '1001',
+      roles: [UserRole.User],
+    } as any;
+
+    beforeEach(() => {
+      prismaMock = {
+        submission: {
+          findMany: jest.fn(),
+        },
+      };
+      challengeApiServiceMock = {
+        getChallengeSummaries: jest.fn().mockResolvedValue([
+          { id: challengeId, name: 'Duplicate Detection Challenge' },
+          { id: 'challenge-dup-2', name: 'Another Challenge' },
+        ]),
+      };
+      resourceApiServiceMock = {
+        getMemberResourcesRoles: jest
+          .fn()
+          .mockResolvedValue([{ roleName: 'Copilot' }]),
+      };
+      duplicateService = buildService();
+    });
+
+    it('returns same-challenge duplicates excluding the checked submission', async () => {
+      prismaMock.submission.findMany
+        .mockResolvedValueOnce([
+          { id: 'sub-1', challengeId, sha256Hash: hash.toUpperCase() },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'sub-1',
+            challengeId,
+            memberId: '2001',
+            submittedDate: new Date('2026-01-01T00:00:00Z'),
+            createdAt: new Date('2026-01-01T00:00:00Z'),
+            sha256Hash: hash,
+          },
+          {
+            id: 'sub-2',
+            challengeId,
+            memberId: '2002',
+            submittedDate: new Date('2026-01-03T00:00:00Z'),
+            createdAt: new Date('2026-01-03T00:00:00Z'),
+            sha256Hash: hash,
+          },
+          {
+            id: 'sub-3',
+            challengeId,
+            memberId: '2003',
+            submittedDate: null,
+            createdAt: new Date('2026-01-05T00:00:00Z'),
+            sha256Hash: hash,
+          },
+        ]);
+
+      const result = await duplicateService.findDuplicateSubmissions(
+        copilot,
+        challengeId,
+        { submissionId: ['sub-1'] } as any,
+      );
+
+      expect(result).toEqual({
+        'sub-1': {
+          duplicates: [
+            {
+              submissionId: 'sub-3',
+              challenge: challengeId,
+              challengeTitle: 'Duplicate Detection Challenge',
+              user: '2003',
+              submittedAt: new Date('2026-01-05T00:00:00Z'),
+            },
+            {
+              submissionId: 'sub-2',
+              challenge: challengeId,
+              challengeTitle: 'Duplicate Detection Challenge',
+              user: '2002',
+              submittedAt: new Date('2026-01-03T00:00:00Z'),
+            },
+          ],
+        },
+      });
+      expect(prismaMock.submission.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            sha256Hash: { in: [hash] },
+            challengeId,
+            status: { notIn: [SubmissionStatus.DELETED] },
+          }),
+        }),
+      );
+    });
+
+    it('drops the challenge filter and cross-links requested submissions when crossChallenge is true', async () => {
+      prismaMock.submission.findMany
+        .mockResolvedValueOnce([
+          { id: 'sub-1', challengeId, sha256Hash: hash },
+          { id: 'sub-2', challengeId, sha256Hash: hash },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'sub-1',
+            challengeId,
+            memberId: '2001',
+            submittedDate: new Date('2026-01-01T00:00:00Z'),
+            createdAt: new Date('2026-01-01T00:00:00Z'),
+            sha256Hash: hash,
+          },
+          {
+            id: 'sub-2',
+            challengeId,
+            memberId: '2002',
+            submittedDate: new Date('2026-01-02T00:00:00Z'),
+            createdAt: new Date('2026-01-02T00:00:00Z'),
+            sha256Hash: hash,
+          },
+          {
+            id: 'sub-9',
+            challengeId: 'challenge-dup-2',
+            memberId: '2009',
+            submittedDate: new Date('2026-02-01T00:00:00Z'),
+            createdAt: new Date('2026-02-01T00:00:00Z'),
+            sha256Hash: hash,
+          },
+        ]);
+
+      const result = await duplicateService.findDuplicateSubmissions(
+        copilot,
+        challengeId,
+        { submissionId: ['sub-1', 'sub-2'], crossChallenge: true } as any,
+      );
+
+      expect(
+        result['sub-1'].duplicates.map((entry) => entry.submissionId),
+      ).toEqual(['sub-9', 'sub-2']);
+      expect(
+        result['sub-2'].duplicates.map((entry) => entry.submissionId),
+      ).toEqual(['sub-9', 'sub-1']);
+      expect(result['sub-1'].duplicates[0]).toEqual({
+        submissionId: 'sub-9',
+        challenge: 'challenge-dup-2',
+        challengeTitle: 'Another Challenge',
+        user: '2009',
+        submittedAt: new Date('2026-02-01T00:00:00Z'),
+      });
+      const candidateQuery = prismaMock.submission.findMany.mock.calls[1][0];
+      expect(candidateQuery.where.challengeId).toBeUndefined();
+    });
+
+    it('returns empty duplicates without a candidate query when no digest is stored', async () => {
+      prismaMock.submission.findMany.mockResolvedValueOnce([
+        { id: 'sub-1', challengeId, sha256Hash: null },
+      ]);
+
+      const result = await duplicateService.findDuplicateSubmissions(
+        copilot,
+        challengeId,
+        { submissionId: ['sub-1'] } as any,
+      );
+
+      expect(result).toEqual({ 'sub-1': { duplicates: [] } });
+      expect(prismaMock.submission.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects submissions that belong to another challenge', async () => {
+      prismaMock.submission.findMany.mockResolvedValueOnce([
+        { id: 'sub-1', challengeId, sha256Hash: hash },
+        { id: 'sub-2', challengeId: 'challenge-dup-2', sha256Hash: hash },
+      ]);
+
+      await expect(
+        duplicateService.findDuplicateSubmissions(copilot, challengeId, {
+          submissionId: ['sub-1', 'sub-2'],
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects unknown submission ids', async () => {
+      prismaMock.submission.findMany.mockResolvedValueOnce([]);
+
+      await expect(
+        duplicateService.findDuplicateSubmissions(copilot, challengeId, {
+          submissionId: ['sub-missing'],
+        } as any),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects an empty submissionId list before touching the database', async () => {
+      await expect(
+        duplicateService.findDuplicateSubmissions(copilot, challengeId, {
+          submissionId: [],
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+    });
+
+    it('denies members without a qualifying challenge role', async () => {
+      resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+
+      await expect(
+        duplicateService.findDuplicateSubmissions(copilot, challengeId, {
+          submissionId: ['sub-1'],
+        } as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+    });
+
+    it('allows admins and machines without a challenge resource lookup', async () => {
+      prismaMock.submission.findMany.mockResolvedValue([]);
+
+      for (const authUser of [
+        { isMachine: false, userId: '9', roles: [UserRole.Admin] },
+        { isMachine: true, scopes: ['read:submission'] },
+      ]) {
+        prismaMock.submission.findMany.mockResolvedValueOnce([
+          { id: 'sub-1', challengeId, sha256Hash: null },
+        ]);
+        await expect(
+          duplicateService.findDuplicateSubmissions(
+            authUser as any,
+            challengeId,
+            { submissionId: ['sub-1'] } as any,
+          ),
+        ).resolves.toEqual({ 'sub-1': { duplicates: [] } });
+      }
+
+      expect(
+        resourceApiServiceMock.getMemberResourcesRoles,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('denies machine tokens without a submission read scope', async () => {
+      await expect(
+        duplicateService.findDuplicateSubmissions(
+          { isMachine: true, scopes: ['read:review'] } as any,
+          challengeId,
+          { submissionId: ['sub-1'] } as any,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('still reports duplicates when challenge names cannot be resolved', async () => {
+      challengeApiServiceMock.getChallengeSummaries.mockRejectedValue(
+        new Error('challenge db down'),
+      );
+      prismaMock.submission.findMany
+        .mockResolvedValueOnce([{ id: 'sub-1', challengeId, sha256Hash: hash }])
+        .mockResolvedValueOnce([
+          {
+            id: 'sub-2',
+            challengeId,
+            memberId: '2002',
+            submittedDate: new Date('2026-01-03T00:00:00Z'),
+            createdAt: new Date('2026-01-03T00:00:00Z'),
+            sha256Hash: hash,
+          },
+        ]);
+
+      const result = await duplicateService.findDuplicateSubmissions(
+        copilot,
+        challengeId,
+        { submissionId: ['sub-1'] } as any,
+      );
+
+      expect(result['sub-1'].duplicates).toEqual([
+        {
+          submissionId: 'sub-2',
+          challenge: challengeId,
+          challengeTitle: null,
+          user: '2002',
+          submittedAt: new Date('2026-01-03T00:00:00Z'),
+        },
+      ]);
     });
   });
 });

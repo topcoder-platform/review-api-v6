@@ -25,7 +25,9 @@ import {
   ApiBody,
   ApiBearerAuth,
   ApiConsumes,
+  ApiExtraModels,
   ApiQuery,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -45,6 +47,10 @@ import {
   ReleasedSubmissionPreviewQueryDto,
   SubmissionPutRequestDto,
   SubmissionUpdateRequestDto,
+  SubmissionDuplicateDto,
+  SubmissionDuplicateGroupDto,
+  SubmissionDuplicatesQueryDto,
+  SubmissionDuplicatesResponse,
 } from 'src/dto/submission.dto';
 import {
   // ArtifactsCreateRequestDto,
@@ -781,6 +787,73 @@ export class SubmissionController {
     // Return the actual count of submissions for the challenge
     const authUser: JwtUser = req['user'] as JwtUser;
     return this.service.countSubmissionsForChallenge(authUser, challengeId);
+  }
+
+  /**
+   * Finds submissions sharing the exact SHA-256 digest of the requested
+   * submissions.
+   *
+   * @param req - Request carrying the authenticated user or machine token.
+   * @param challengeId - Challenge that owns every requested submission.
+   * @param query - Requested submission ids and the cross-challenge flag.
+   * @returns Duplicate matches keyed by the requested submission id.
+   * @throws BadRequestException when an id is missing or belongs to another challenge.
+   * @throws ForbiddenException when the caller cannot check duplicates on the challenge.
+   * @throws NotFoundException when a requested submission does not exist.
+   */
+  @Get('/:challengeId/duplicates')
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.Reviewer,
+    UserRole.User,
+  )
+  @Scopes(Scope.ReadSubmission)
+  @ApiOperation({
+    summary: 'Find identical submissions by SHA-256 digest',
+    description:
+      'Roles: Admin, challenge Reviewer/Screener, challenge Copilot, challenge Manager, Project Manager. Every requested submission must belong to the challenge in the path. Deleted submissions and submissions without a stored digest never match. | Scopes: read:submission',
+  })
+  @ApiParam({
+    name: 'challengeId',
+    description: 'The ID of the challenge that owns the requested submissions',
+  })
+  @ApiExtraModels(SubmissionDuplicateDto, SubmissionDuplicateGroupDto)
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description:
+      'Duplicate matches keyed by the requested submission id. Submissions with no digest or no match return an empty list.',
+    schema: {
+      type: 'object',
+      additionalProperties: {
+        $ref: getSchemaPath(SubmissionDuplicateGroupDto),
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description:
+      'No submissionId was supplied, too many were supplied, or one does not belong to the challenge.',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'The caller cannot check duplicates on this challenge.',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'A requested submission does not exist.',
+  })
+  async findDuplicateSubmissions(
+    @Req() req: Request,
+    @Param('challengeId') challengeId: string,
+    @Query() query: SubmissionDuplicatesQueryDto,
+  ): Promise<SubmissionDuplicatesResponse> {
+    this.logger.log(
+      `Checking duplicates for challenge ${challengeId} with filters - ${JSON.stringify(query)}`,
+    );
+    const authUser: JwtUser = req['user'] as JwtUser;
+    return this.service.findDuplicateSubmissions(authUser, challengeId, query);
   }
 
   @Get('/download/:challengeId')
