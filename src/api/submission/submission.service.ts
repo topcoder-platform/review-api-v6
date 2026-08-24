@@ -2376,12 +2376,20 @@ export class SubmissionService {
       }
 
       const hash = createHash('sha256');
+      const maxBytes = resolveSubmissionHashMaxBytes();
       let hashedBytes = 0;
       for await (const chunk of stream) {
         const buffer = Buffer.isBuffer(chunk)
           ? chunk
           : Buffer.from(chunk as string | Uint8Array);
         hashedBytes += buffer.length;
+        if (hashedBytes > maxBytes) {
+           stream.destroy();
+           this.logger.warn(
+             `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: streamed ${hashedBytes} bytes, above the ${maxBytes} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
+           );
+           return null;
+         }
         hash.update(buffer);
       }
 
