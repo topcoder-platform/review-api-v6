@@ -168,7 +168,7 @@ function computeFileSha256(
   if (!Buffer.isBuffer(file.buffer)) {
     submissionHashLogger.warn(
       `[${context}] Uploaded file "${file.originalname ?? 'unnamed'}" has no in-memory buffer ` +
-        `(fieldname=${file.fieldname ?? 'n/a'}, size=${file.size ?? 'n/a'}, path=${(file as { path?: string }).path ?? 'n/a'}): ` +
+        `(fieldname=${file.fieldname ?? 'n/a'}, size=${file.size ?? 'n/a'}: ` +
         `sha256Hash will be null.`,
     );
     return null;
@@ -3857,8 +3857,12 @@ export class SubmissionService {
         options?.sha256Hash ?? computeFileSha256(file, 'createSubmission');
       this.logger.log(
         `sha256Hash resolution for challenge ${body.challengeId}, member ${body.memberId}: ` +
-          `value=${sha256Hash ?? 'null'}, source=${
-            options?.sha256Hash ? 'caller-supplied' : 'computed-from-buffer'
+          `value=${
+             sha256Hash ? sha256Hash.slice(0, 16) + '...' : 'null'
+           }, source=${
+             options?.sha256Hash !== undefined
+               ? 'caller-supplied'
+               : 'computed-from-buffer'
           }, hasUploadedFile=${hasUploadedFile}, hasS3Url=${hasS3Url}, ` +
           `isFileSubmission=${isFileSubmission}, hasBodyUrl=${!!body.url}`,
       );
