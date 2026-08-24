@@ -491,7 +491,7 @@ export class SubmissionResponseDto {
 
   @ApiProperty({
     description:
-      'Lowercase hex SHA-256 digest (64 characters) of the uploaded file contents. Null for URL-only submissions.',
+      'Lowercase hex SHA-256 digest (64 characters) of the submission file contents. Computed from the uploaded buffer, or by reading back the S3 object when the front end uploaded the file directly. Null for non-file submissions and when the digest could not be computed.',
     example: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     required: false,
     nullable: true,
