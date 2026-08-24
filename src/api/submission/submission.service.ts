@@ -159,7 +159,7 @@ function computeFileSha256(
 ): string | null {
   if (!file) {
     submissionHashLogger.log(
-      `[${context}] No multipart file on the request (URL-only submission): sha256Hash will be null.`,
+      `[${context}] No multipart file on the request; falling back to hashing the S3 object when the submission URL points at one.`,
     );
     return null;
   }
@@ -303,6 +303,22 @@ function getSubmissionDownloadUrlExpiresInSeconds(): number {
     return configured;
   }
   return DEFAULT_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS;
+}
+
+const DEFAULT_SUBMISSION_SHA256_MAX_BYTES = 1024 * 1024 * 1024; // 1 GiB
+
+/**
+ * Resolves the largest S3 object the service will download to compute a SHA-256 digest.
+ * Oversized objects are skipped so submission creation is never blocked on a huge transfer.
+ *
+ * @returns The maximum object size in bytes; defaults to 1 GiB when unset or invalid.
+ */
+function resolveSubmissionHashMaxBytes(): number {
+  const configured = Number(process.env.SUBMISSION_SHA256_MAX_BYTES);
+  if (Number.isInteger(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_SUBMISSION_SHA256_MAX_BYTES;
 }
 
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
@@ -2299,6 +2315,99 @@ export class SubmissionService {
   }
 
   /**
+   * Streams an already-uploaded submission object from S3 and computes its SHA-256 digest.
+   * @param url Submission URL pointing at an S3 object, as uploaded by the front end.
+   * @param context Caller label included in diagnostic logs.
+   * @returns Lowercase hex digest (64 characters), or null when the object cannot be hashed.
+   * @throws This method does not throw; hashing failures are logged and yield null.
+   * Used by createSubmission for the URL-only flow where the front end uploads to S3 directly.
+   */
+  private async computeSubmissionUrlSha256(
+    url: string,
+    context = 'unknown',
+  ): Promise<string | null> {
+    const parsed = this.parseS3Url(url);
+    const key = parsed?.key;
+    // The URL carries its own bucket; DMZ is the fallback since that is where new uploads land
+    const bucket = parsed?.bucket ?? process.env.SUBMISSION_DMZ_S3_BUCKET;
+
+    if (!key || !bucket) {
+      this.logger.warn(
+        `[${context}] Cannot hash submission URL: unable to resolve bucket/key (bucket=${bucket ?? 'n/a'}, key=${key ?? 'n/a'}, url=${url}).`,
+      );
+      return null;
+    }
+
+    const s3 = this.getS3Client();
+
+    try {
+      const head = await s3.send(
+        new HeadObjectCommand({ Bucket: bucket, Key: key }),
+      );
+      const contentLength = head.ContentLength ?? null;
+      if (
+        contentLength !== null &&
+        contentLength > resolveSubmissionHashMaxBytes()
+      ) {
+        this.logger.warn(
+          `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: object is ${contentLength} bytes, ` +
+            `above the ${resolveSubmissionHashMaxBytes()} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
+        );
+        return null;
+      }
+
+      const resp = await s3.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
+      const body = (resp as { Body?: unknown }).Body as any;
+      let stream: Readable;
+      if (body && typeof body.pipe === 'function') {
+        stream = body as Readable;
+      } else if (
+        body &&
+        typeof body.getReader === 'function' &&
+        (Readable as any).fromWeb
+      ) {
+        stream = (Readable as any).fromWeb(body);
+      } else if (Buffer.isBuffer(body)) {
+        stream = Readable.from(body);
+      } else {
+        throw new Error('Unsupported S3 Body stream type');
+      }
+
+      const hash = createHash('sha256');
+      let hashedBytes = 0;
+      for await (const chunk of stream) {
+        const buffer = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk as string | Uint8Array);
+        hashedBytes += buffer.length;
+        hash.update(buffer);
+      }
+
+      if (hashedBytes === 0) {
+        this.logger.warn(
+          `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: object body was empty.`,
+        );
+        return null;
+      }
+
+      const digest = hash.digest('hex');
+      this.logger.log(
+        `[${context}] Computed sha256Hash=${digest} from S3 object bucket=${bucket} key=${key} ` +
+          `(hashedBytes=${hashedBytes}, contentLength=${contentLength ?? 'n/a'}).`,
+      );
+      return digest;
+    } catch (error) {
+      this.logger.warn(
+        `[${context}] Failed to compute sha256Hash from S3 object bucket=${bucket} key=${key}: ` +
+          `${error instanceof Error ? error.message : String(error ?? '')}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Parse an S3 URL and return { bucket?, key? }
    * Supports formats:
    * - s3://bucket/key
@@ -3852,18 +3961,34 @@ export class SubmissionService {
         }
       }
 
-      // Content identifier derived from the uploaded buffer; null for URL-only submissions
-      const sha256Hash =
+      // Content identifier for the submission artifact. Preferred source is the multipart
+      // buffer, but the primary flow uploads to S3 on the front end and posts only a URL,
+      // so fall back to streaming the object back out of S3 and hashing that.
+      let sha256Hash =
         options?.sha256Hash ?? computeFileSha256(file, 'createSubmission');
+      let sha256Source =
+        options?.sha256Hash !== undefined
+          ? 'caller-supplied'
+          : sha256Hash
+            ? 'computed-from-buffer'
+            : 'none';
+
+      if (!sha256Hash && hasS3Url && body.url) {
+        sha256Hash = await this.computeSubmissionUrlSha256(
+          body.url,
+          'createSubmission',
+        );
+        sha256Source = sha256Hash
+          ? 'computed-from-s3-object'
+          : 's3-hash-failed';
+      }
+
       this.logger.log(
         `sha256Hash resolution for challenge ${body.challengeId}, member ${body.memberId}: ` +
           `value=${
-             sha256Hash ? sha256Hash.slice(0, 16) + '...' : 'null'
-           }, source=${
-             options?.sha256Hash !== undefined
-               ? 'caller-supplied'
-               : 'computed-from-buffer'
-          }, hasUploadedFile=${hasUploadedFile}, hasS3Url=${hasS3Url}, ` +
+            sha256Hash ? sha256Hash.slice(0, 16) + '...' : 'null'
+          }, source=${sha256Source}, ` +
+          `hasUploadedFile=${hasUploadedFile}, hasS3Url=${hasS3Url}, ` +
           `isFileSubmission=${isFileSubmission}, hasBodyUrl=${!!body.url}`,
       );
 

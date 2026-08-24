@@ -4136,11 +4136,12 @@ describe('SubmissionService', () => {
       expect(prismaMock.submission.create).not.toHaveBeenCalled();
     });
 
-    it('persists the SHA-256 digest of the uploaded file buffer', async () => {
+    it('persists the SHA-256 digest of the uploaded file buffer without reading S3', async () => {
       prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
       challengeApiServiceMock.isPhaseOpen
         .mockResolvedValueOnce(false)
         .mockResolvedValueOnce(true);
+      const getS3ClientSpy = jest.spyOn(createService as any, 'getS3Client');
 
       await createService.createSubmission(
         { isMachine: true } as any,
@@ -4159,6 +4160,7 @@ describe('SubmissionService', () => {
             'daf4e16539491123bf4112eb538caad1692406c99e79aed45789f25452c22108',
         }),
       });
+      expect(getS3ClientSpy).not.toHaveBeenCalled();
     });
 
     it('prefers a pre-computed digest supplied by the caller', async () => {
@@ -4186,11 +4188,20 @@ describe('SubmissionService', () => {
       });
     });
 
-    it('leaves the digest null for URL-only submissions', async () => {
+    it('hashes the S3 object when the front end uploaded the file and posted only a URL', async () => {
       prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
       challengeApiServiceMock.isPhaseOpen
         .mockResolvedValueOnce(false)
         .mockResolvedValueOnce(true);
+      const s3Send = jest
+        .fn()
+        .mockResolvedValueOnce({ ContentLength: 15 })
+        .mockResolvedValueOnce({
+          Body: Readable.from([Buffer.from('s3-object-bytes')]),
+        });
+      jest
+        .spyOn(createService as any, 'getS3Client')
+        .mockReturnValue({ send: s3Send });
 
       await createService.createSubmission(
         { isMachine: true } as any,
@@ -4199,6 +4210,93 @@ describe('SubmissionService', () => {
         { allowPrivilegedPostSubmissionUpload: true },
       );
 
+      expect(s3Send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+      expect(s3Send.mock.calls[1][0]).toBeInstanceOf(GetObjectCommand);
+      expect(s3Send.mock.calls[1][0].input).toMatchObject({
+        Bucket: 'topcoder-dev-submissions-dmz',
+        Key: 'manual-submission.zip',
+      });
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sha256Hash:
+            '5c17556ec22abf759e6da8c9731e4c0533a10c0925dc9aa17fba542b1ec4f1de',
+        }),
+      });
+    });
+
+    it('still creates the submission when the S3 object cannot be hashed', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      jest.spyOn(createService as any, 'getS3Client').mockReturnValue({
+        send: jest.fn().mockRejectedValue(new Error('AccessDenied')),
+      });
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: null }),
+      });
+    });
+
+    it('skips hashing objects larger than the configured byte limit', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      const s3Send = jest.fn().mockResolvedValue({ ContentLength: 1024 });
+      jest
+        .spyOn(createService as any, 'getS3Client')
+        .mockReturnValue({ send: s3Send });
+      process.env.SUBMISSION_SHA256_MAX_BYTES = '512';
+
+      try {
+        await createService.createSubmission(
+          { isMachine: true } as any,
+          createBody() as any,
+          undefined,
+          { allowPrivilegedPostSubmissionUpload: true },
+        );
+      } finally {
+        delete process.env.SUBMISSION_SHA256_MAX_BYTES;
+      }
+
+      expect(s3Send).toHaveBeenCalledTimes(1);
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: null }),
+      });
+    });
+
+    it('leaves the digest null when the submission is not backed by an S3 object', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      const getS3ClientSpy = jest.spyOn(createService as any, 'getS3Client');
+      jest
+        .spyOn(
+          createService as any,
+          'publishFirst2FinishSubmissionEventIfEligible',
+        )
+        .mockResolvedValue(undefined);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        {
+          ...createBody(),
+          url: 'https://wipro.sharepoint.com/sites/x/submission.docx',
+        } as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(getS3ClientSpy).not.toHaveBeenCalled();
       expect(prismaMock.submission.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ sha256Hash: null }),
       });

@@ -439,7 +439,7 @@ model submission {
   esId              String?   @db.Uuid
   submittedDate     DateTime?
 
-  /// Lowercase hex SHA-256 digest of the uploaded file contents; null for URL-only submissions.
+  /// Lowercase hex SHA-256 digest of the submission file contents; null for non-file submissions.
   sha256Hash String? @db.VarChar(64)
 
   createdAt DateTime  @default(now())
