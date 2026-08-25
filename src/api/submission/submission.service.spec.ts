@@ -5337,4 +5337,127 @@ describe('SubmissionService', () => {
       expect(prismaMock.review.createMany).not.toHaveBeenCalled();
     });
   });
+  describe('deleteSubmission phase window', () => {
+    const buildExistingSubmission = (type: SubmissionType) => ({
+      challengeId: 'challenge-delete',
+      id: 'submission-delete',
+      memberId: '1001',
+      type,
+    });
+
+    const buildDeleteService = (
+      type: SubmissionType,
+      isPhaseOpen: jest.Mock,
+    ) => {
+      const prismaMock = {
+        submission: {
+          findUnique: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
+          delete: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
+        },
+        aiWorkflowRun: {
+          findMany: jest.fn().mockResolvedValue([]),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+      };
+      const challengePrismaMock = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+      };
+      const deleteService = new SubmissionService(
+        prismaMock as any,
+        { handleError: jest.fn() } as any,
+        challengePrismaMock as any,
+        { isPhaseOpen } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      return { deleteService, prismaMock };
+    };
+
+    it('rejects a submitter deleting a checkpoint submission once the Checkpoint Submission phase closed', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(false);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CHECKPOINT_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await expect(
+        deleteService.deleteSubmission(
+          { userId: '1001', roles: ['Topcoder User'] } as any,
+          'submission-delete',
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'SUBMISSION_PHASE_CLOSED',
+          details: {
+            challengeId: 'challenge-delete',
+            requiredOpenPhases: ['Checkpoint Submission'],
+            submissionType: SubmissionType.CHECKPOINT_SUBMISSION,
+          },
+        },
+      });
+
+      expect(isPhaseOpen).toHaveBeenCalledWith('challenge-delete', [
+        'Checkpoint Submission',
+      ]);
+      expect(prismaMock.submission.delete).not.toHaveBeenCalled();
+    });
+
+    it('rejects a submitter deleting a contest submission once the Submission phase closed', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(false);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CONTEST_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await expect(
+        deleteService.deleteSubmission(
+          { userId: '1001', roles: ['Topcoder User'] } as any,
+          'submission-delete',
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(isPhaseOpen).toHaveBeenCalledWith('challenge-delete', [
+        'Submission',
+        'Topgear Submission',
+      ]);
+      expect(prismaMock.submission.delete).not.toHaveBeenCalled();
+    });
+
+    it('allows a submitter to delete while the matching submission phase is open', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(true);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CHECKPOINT_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await deleteService.deleteSubmission(
+        { userId: '1001', roles: ['Topcoder User'] } as any,
+        'submission-delete',
+      );
+
+      expect(prismaMock.submission.delete).toHaveBeenCalledWith({
+        where: { id: 'submission-delete' },
+      });
+    });
+
+    it('does not apply the phase window to admins', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(false);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CHECKPOINT_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await deleteService.deleteSubmission(
+        { userId: '2002', roles: ['administrator'] } as any,
+        'submission-delete',
+      );
+
+      expect(isPhaseOpen).not.toHaveBeenCalled();
+      expect(prismaMock.submission.delete).toHaveBeenCalled();
+    });
+  });
 });
