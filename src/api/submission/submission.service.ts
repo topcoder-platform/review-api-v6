@@ -5079,6 +5079,13 @@ export class SubmissionService {
             },
           });
         }
+
+        if (existing.challengeId) {
+          await this.validateSubmissionDeletionPhaseWindow(
+            existing.challengeId,
+            existing.type,
+          );
+        }
       }
       const TERMINAL_STATUSES = [
         'COMPLETED',
@@ -5143,6 +5150,9 @@ export class SubmissionService {
       if (error instanceof ForbiddenException) {
         throw error;
       }
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `deleting submission with ID: ${id}`,
@@ -5159,6 +5169,76 @@ export class SubmissionService {
         message: errorResponse.message,
         code: errorResponse.code,
         details: errorResponse.details,
+      });
+    }
+  }
+
+  /**
+   * Returns the submission phase names that must be open for a submission type to be managed
+   * by its submitter. Mirrors the phase precedence enforced when the submission is created.
+   *
+   * @param submissionType - Type of the submission being managed.
+   * @returns The challenge phase names that create submissions of that type.
+   */
+  private getSubmissionPhaseNamesForType(
+    submissionType: SubmissionType,
+  ): string[] {
+    if (submissionType === SubmissionType.CHECKPOINT_SUBMISSION) {
+      return ['Checkpoint Submission'];
+    }
+
+    if (submissionType === SubmissionType.STUDIO_FINAL_FIX_SUBMISSION) {
+      return ['Final Fix'];
+    }
+
+    return ['Submission', 'Topgear Submission'];
+  }
+
+  /**
+   * Validates that a submitter is still allowed to delete their own submission.
+   *
+   * Submitters may only delete a submission while the phase that created it is open, so a
+   * checkpoint submission stops being deletable once the Checkpoint Submission phase ends -
+   * even though the Submission phase opens right after it and the checkpoint submission is
+   * already being screened/reviewed. Admins and M2M callers bypass this check, and an
+   * unavailable Challenge API is logged and allowed through, matching submission creation.
+   *
+   * Used by deleteSubmission for non-admin, non-machine callers.
+   *
+   * @param challengeId - Challenge the submission belongs to.
+   * @param submissionType - Type of the submission being deleted.
+   * @throws BadRequestException when the matching submission phase is already closed.
+   */
+  private async validateSubmissionDeletionPhaseWindow(
+    challengeId: string,
+    submissionType: SubmissionType,
+  ): Promise<void> {
+    const requiredOpenPhases =
+      this.getSubmissionPhaseNamesForType(submissionType);
+
+    let submissionPhaseOpen: boolean;
+    try {
+      submissionPhaseOpen = await this.challengeApiService.isPhaseOpen(
+        challengeId,
+        requiredOpenPhases,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Could not validate submission deletion phase for challenge ${challengeId}: ${message}. Proceeding with submission deletion.`,
+      );
+      return;
+    }
+
+    if (!submissionPhaseOpen) {
+      throw new BadRequestException({
+        message: `Submissions cannot be deleted for challenge ${challengeId}. The ${requiredOpenPhases.join(' or ')} phase is not currently open.`,
+        code: 'SUBMISSION_PHASE_CLOSED',
+        details: {
+          challengeId,
+          submissionType,
+          requiredOpenPhases,
+        },
       });
     }
   }

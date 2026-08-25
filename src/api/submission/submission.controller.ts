@@ -486,8 +486,10 @@ export class SubmissionController {
   @Scopes(Scope.DeleteSubmission)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Delete a submission',
-    description: 'Roles: Admin, User | Scopes: delete:submission',
+    summary:
+      'Delete a submission (submitters only while the phase that created it is open)',
+    description:
+      'Roles: Admin, User | Scopes: delete:submission. Submitters can only delete their own submission while the matching submission phase (Submission, Checkpoint Submission, or Final Fix) is still open. Admins and M2M tokens are not restricted by the phase window.',
   })
   @ApiParam({
     name: 'submissionId',
@@ -496,6 +498,10 @@ export class SubmissionController {
   @ApiResponse({
     status: 204,
     description: 'Submission deleted successfully.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'The submission phase is already closed.',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Submission not found.' })
