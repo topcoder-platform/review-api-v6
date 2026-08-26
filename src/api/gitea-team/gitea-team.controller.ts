@@ -29,7 +29,7 @@ export class GiteaTeamController {
     summary: 'Search Gitea teams by name',
     description:
       'Roles: Admin, Copilot, Project Manager | Scopes: read:gitea-team. ' +
-      'Searches every Gitea organization, so each match is returned with the ' +
+      'Searches the configured Gitea organizations, so each match is returned with the ' +
       'organization owning it; team names are only unique within an organization.',
   })
   @ApiResponse({

@@ -10,13 +10,6 @@ import { Api, Repository, User } from 'src/shared/clients/gitea/gitea.client';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { CommonConfig } from 'src/shared/config/common.config';
 
-/** How long the Gitea organization list is reused across team searches. */
-const ORGANIZATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
-/** Page size used when listing Gitea organizations. */
-const ORGANIZATIONS_PAGE_SIZE = 50;
-/** Safety bound on organization pages, so a paging bug cannot loop forever. */
-const ORGANIZATIONS_MAX_PAGES = 20;
-
 export interface GiteaUserProvisionInput {
   /** Topcoder handle, used verbatim as the Gitea username. */
   handle: string;
@@ -51,10 +44,6 @@ export interface ActionDispatchWorkflowResponse {
 export class GiteaService {
   private readonly logger: Logger = new Logger(GiteaService.name);
   private readonly giteaClient: Api<any>;
-  private organizationsCache?: {
-    loadedAt: number;
-    organizations: string[];
-  };
 
   /**
    * Initializes the Gitea client with the base URL and authorization token.
@@ -368,18 +357,18 @@ export class GiteaService {
   }
 
   /**
-   * Searches every Gitea organization for teams matching a keyword.
+   * Searches the configured Gitea organizations for teams matching a keyword.
    *
    * Team names are only unique within an organization, so each match is
    * returned with the organization owning it and callers keep the numeric team
-   * id. Organizations are cached briefly because the list changes rarely and a
-   * typeahead calls this on every keystroke. A single organization failing its
-   * search never hides the matches found in the others.
+   * id. The organizations searched come from configuration
+   * (`GITEA_ORGANIZATIONS`). A single organization failing its search never
+   * hides the matches found in the others.
    *
    * @param keyword Free text matched against team names.
    * @param limit Maximum number of matches to return.
    * @returns Matches ordered with exact name matches first, then by name.
-   * @throws Propagates only a failure to list the organizations.
+   * @throws This method does not throw; per-organization failures are logged.
    */
   async searchTeams(keyword: string, limit: number): Promise<GiteaTeamMatch[]> {
     const normalizedKeyword = keyword.trim();
@@ -387,7 +376,14 @@ export class GiteaService {
       return [];
     }
 
-    const organizations = await this.listOrganizations();
+    const organizations = CommonConfig.gitea.organizations;
+    if (organizations.length === 0) {
+      this.logger.warn(
+        'No Gitea organizations are configured (GITEA_ORGANIZATIONS), so no team can be found.',
+      );
+      return [];
+    }
+
     const matchesPerOrg = await Promise.all(
       organizations.map((organization) =>
         this.searchOrganizationTeams(organization, normalizedKeyword, limit),
@@ -454,48 +450,6 @@ export class GiteaService {
       );
       return [];
     }
-  }
-
-  /**
-   * Lists every Gitea organization, memoized for a short period.
-   *
-   * @returns The organization names known to Gitea.
-   * @throws Propagates Gitea API failures when the cache is cold.
-   */
-  private async listOrganizations(): Promise<string[]> {
-    const now = Date.now();
-    if (
-      this.organizationsCache &&
-      now - this.organizationsCache.loadedAt < ORGANIZATIONS_CACHE_TTL_MS
-    ) {
-      return this.organizationsCache.organizations;
-    }
-
-    const organizations: string[] = [];
-    for (let page = 1; page <= ORGANIZATIONS_MAX_PAGES; page += 1) {
-      const response = await this.giteaClient.orgs.orgGetAll({
-        page,
-        limit: ORGANIZATIONS_PAGE_SIZE,
-      });
-      const pageOrganizations = (response.data ?? []).flatMap(
-        (organization) => {
-          const name = organization.name || organization.username;
-          return name ? [name] : [];
-        },
-      );
-      organizations.push(...pageOrganizations);
-
-      if ((response.data?.length ?? 0) < ORGANIZATIONS_PAGE_SIZE) {
-        this.organizationsCache = { loadedAt: now, organizations };
-        return organizations;
-      }
-    }
-
-    this.logger.warn(
-      `Stopped listing Gitea organizations after ${ORGANIZATIONS_MAX_PAGES} pages; team search may miss organizations.`,
-    );
-    this.organizationsCache = { loadedAt: now, organizations };
-    return organizations;
   }
 
   async downloadWorkflowRunArtifact(

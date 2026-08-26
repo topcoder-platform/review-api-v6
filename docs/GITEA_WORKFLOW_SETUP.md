@@ -7,6 +7,10 @@ New environment properties were added to support Gitea Workflows. These new prop
 - GITEA_AUTH_SOURCE_ID - id of the "Topcoder" authentication source in Gitea, used when provisioning
   accounts for challenge registrants (defaults to `1`)
 - GITEA_USER_VISIBILITY - visibility applied to provisioned Gitea accounts (defaults to `public`)
+- GITEA_ORGANIZATIONS - comma separated Gitea organizations searched by `GET /gitea/teams`, the
+  team lookup backing the challenge editor's Gitea Teams field (defaults to `topcoder`). Team names
+  are only unique within an organization, so every organization teams may be picked from has to be
+  listed here.
 
 These new properties are added in .env.sample.
 

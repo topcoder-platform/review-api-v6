@@ -1,3 +1,4 @@
+import { CommonConfig } from 'src/shared/config/common.config';
 import { GiteaService } from './gitea.service';
 
 describe('GiteaService.searchTeams', () => {
@@ -7,25 +8,24 @@ describe('GiteaService.searchTeams', () => {
     description,
   });
 
-  let adminGetAllOrgs: jest.Mock;
   let teamSearch: jest.Mock;
   let service: GiteaService;
+  const configuredOrganizations = CommonConfig.gitea.organizations;
 
-  const withOrgs = (...orgs: string[]) =>
-    adminGetAllOrgs.mockImplementation(({ page }: { page: number }) =>
-      Promise.resolve({
-        data: page === 1 ? orgs.map((name) => ({ name })) : [],
-      }),
-    );
+  const withOrgs = (...orgs: string[]) => {
+    CommonConfig.gitea.organizations = orgs;
+  };
 
   beforeEach(() => {
-    adminGetAllOrgs = jest.fn();
     teamSearch = jest.fn().mockResolvedValue({ data: { data: [] } });
     service = new GiteaService();
     (service as unknown as { giteaClient: unknown }).giteaClient = {
-      admin: { adminGetAllOrgs },
       orgs: { teamSearch },
     };
+  });
+
+  afterEach(() => {
+    CommonConfig.gitea.organizations = configuredOrganizations;
   });
 
   it('searches every organization and qualifies each match with its org', async () => {
@@ -128,20 +128,17 @@ describe('GiteaService.searchTeams', () => {
     });
   });
 
-  it('reuses the organization list across searches', async () => {
-    withOrgs('topcoder');
-
-    await service.searchTeams('one', 20);
-    await service.searchTeams('two', 20);
-
-    expect(adminGetAllOrgs).toHaveBeenCalledTimes(1);
-    expect(teamSearch).toHaveBeenCalledTimes(2);
-  });
-
   it('performs no Gitea calls for a blank keyword', async () => {
     withOrgs('topcoder');
 
     expect(await service.searchTeams('   ', 20)).toEqual([]);
-    expect(adminGetAllOrgs).not.toHaveBeenCalled();
+    expect(teamSearch).not.toHaveBeenCalled();
+  });
+
+  it('finds nothing when no organization is configured', async () => {
+    withOrgs();
+
+    expect(await service.searchTeams('reviewers', 20)).toEqual([]);
+    expect(teamSearch).not.toHaveBeenCalled();
   });
 });
