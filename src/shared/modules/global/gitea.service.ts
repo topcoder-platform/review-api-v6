@@ -323,25 +323,47 @@ export class GiteaService {
   /**
    * Adds a Gitea user to a Gitea team.
    *
-   * @param teamId Numeric Gitea team identifier.
+   * @param teamId Gitea team identifier as configured on the challenge.
    * @param username Gitea username to add.
    * @returns Nothing.
    * @throws Propagates Gitea API failures.
    */
-  async addTeamMember(teamId: number, username: string): Promise<void> {
-    await this.giteaClient.teams.orgAddTeamMember(teamId, username);
+  async addTeamMember(teamId: string, username: string): Promise<void> {
+    await this.giteaClient.teams.orgAddTeamMember(
+      GiteaService.toClientTeamId(teamId),
+      username,
+    );
   }
 
   /**
    * Removes a Gitea user from a Gitea team.
    *
-   * @param teamId Numeric Gitea team identifier.
+   * @param teamId Gitea team identifier as configured on the challenge.
    * @param username Gitea username to remove.
    * @returns Nothing.
    * @throws Propagates Gitea API failures.
    */
-  async removeTeamMember(teamId: number, username: string): Promise<void> {
-    await this.giteaClient.teams.orgRemoveTeamMember(teamId, username);
+  async removeTeamMember(teamId: string, username: string): Promise<void> {
+    await this.giteaClient.teams.orgRemoveTeamMember(
+      GiteaService.toClientTeamId(teamId),
+      username,
+    );
+  }
+
+  /**
+   * Adapts a challenge-configured team id to the generated client signature.
+   *
+   * The generated client types `/teams/{id}` as a number because that is what
+   * the Gitea swagger declares, but the identifier is interpolated into the
+   * request path verbatim and Topcoder challenges configure opaque team
+   * identifiers, so the value is passed through unchanged.
+   *
+   * @param teamId Gitea team identifier as configured on the challenge.
+   * @returns The same identifier, typed for the generated client.
+   * @throws This function never throws.
+   */
+  private static toClientTeamId(teamId: string): number {
+    return teamId as unknown as number;
   }
 
   async downloadWorkflowRunArtifact(

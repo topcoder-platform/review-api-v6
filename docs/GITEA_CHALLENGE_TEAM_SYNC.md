@@ -9,11 +9,14 @@ Work Manager writes the configuration into challenge metadata under the `gitea`
 key. The value is a JSON object holding a list of unique Gitea team ids:
 
 ```json
-{ "teams": ["12", "34"] }
+{ "teams": ["my-team", "other.team_1"] }
 ```
 
-Team ids are not validated when the challenge is saved. Values that are not
-positive integers, or that point at teams which no longer exist, are logged and
+A Gitea team id may only contain alphanumeric characters, dashes (`-`),
+underscores (`_`) and dots (`.`).
+
+Team ids are not validated when the challenge is saved. Values that contain any
+other character, or that point at teams which do not exist, are logged and
 skipped here.
 
 ## Kafka topics

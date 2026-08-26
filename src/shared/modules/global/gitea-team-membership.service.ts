@@ -5,6 +5,11 @@ import { GiteaService } from './gitea.service';
 import { MemberService } from './member.service';
 
 /**
+ * Characters Gitea accepts in a team identifier.
+ */
+const GITEA_TEAM_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
  * Shape of the `gitea` challenge metadata value maintained by Work Manager.
  */
 interface GiteaChallengeMetadata {
@@ -15,7 +20,7 @@ interface GiteaChallengeMetadata {
  * Outcome of a single team membership attempt, aggregated for logging.
  */
 export interface GiteaTeamSyncResult {
-  teamId: number;
+  teamId: string;
   succeeded: boolean;
   error?: string;
 }
@@ -32,7 +37,7 @@ export interface GiteaMembershipMember {
  * Keeps Gitea team membership in sync with challenge registrations.
  *
  * Work Manager stores a list of Gitea team ids under the challenge metadata
- * key `gitea` (`{"teams":["12","34"]}`). Registrations add the member to each
+ * key `gitea` (`{"teams":["my-team","other.team"]}`). Registrations add the member to each
  * team and unregistrations remove them. Every Gitea call is isolated so a
  * misconfigured or stale team id never blocks the remaining teams, and each
  * attempt is logged with its result.
@@ -109,10 +114,10 @@ export class GiteaTeamMembershipService {
    * Reads the challenge metadata and extracts the configured Gitea team ids.
    *
    * @param challengeId Challenge whose metadata is inspected.
-   * @returns Unique, numeric team ids. Empty when unset or unparseable.
+   * @returns Unique, well-formed team ids. Empty when unset or unparseable.
    * @throws This method does not throw; lookup failures are logged.
    */
-  private async resolveTeamIds(challengeId: string): Promise<number[]> {
+  private async resolveTeamIds(challengeId: string): Promise<string[]> {
     let rawValue: string | null | undefined;
     try {
       const challenge =
@@ -144,7 +149,7 @@ export class GiteaTeamMembershipService {
       return [];
     }
 
-    const teamIds: number[] = [];
+    const teamIds: string[] = [];
     for (const entry of parsed.teams) {
       const teamId = this.toTeamId(entry);
       if (teamId === undefined) {
@@ -202,28 +207,26 @@ export class GiteaTeamMembershipService {
   }
 
   /**
-   * Normalizes a configured team id to a positive integer.
+   * Normalizes a configured team id.
+   *
+   * A Gitea team id may only contain alphanumeric characters, dashes,
+   * underscores and dots; anything else cannot address a team and is rejected.
    *
    * @param value Raw team id from challenge metadata.
-   * @returns The numeric team id, or undefined when the value is invalid.
+   * @returns The trimmed team id, or undefined when the value is invalid.
    * @throws This method does not throw.
    */
-  private toTeamId(value: unknown): number | undefined {
+  private toTeamId(value: unknown): string | undefined {
     const normalized =
       typeof value === 'string'
         ? value.trim()
-        : typeof value === 'number'
-          ? value
+        : typeof value === 'number' && Number.isFinite(value)
+          ? String(value)
           : undefined;
-    if (normalized === undefined || normalized === '') {
+    if (!normalized || !GITEA_TEAM_ID_PATTERN.test(normalized)) {
       return undefined;
     }
-
-    const teamId = Number(normalized);
-    if (!Number.isInteger(teamId) || teamId <= 0) {
-      return undefined;
-    }
-    return teamId;
+    return normalized;
   }
 
   /**
@@ -294,8 +297,8 @@ export class GiteaTeamMembershipService {
    * @throws This method does not throw.
    */
   private async runForEachTeam(
-    teamIds: number[],
-    operation: (teamId: number) => Promise<void>,
+    teamIds: string[],
+    operation: (teamId: string) => Promise<void>,
   ): Promise<GiteaTeamSyncResult[]> {
     const results: GiteaTeamSyncResult[] = [];
     for (const teamId of teamIds) {
