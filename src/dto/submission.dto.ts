@@ -1,5 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
+  IsBoolean,
   IsInt,
   IsString,
   IsNotEmpty,
@@ -11,7 +15,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 import { ReviewResponseDto } from './review.dto';
 
@@ -564,3 +568,137 @@ export class SubmissionResponseDto {
   })
   submissionCount?: number;
 }
+
+/** Maximum number of submission ids accepted per duplicate-detection request. */
+export const MAX_DUPLICATE_CHECK_SUBMISSION_IDS = 100;
+
+/**
+ * Normalizes a scalar, comma-separated, or repeated query parameter into
+ * unique trimmed strings in first-seen order.
+ *
+ * @param input - Raw query parameter value supplied by Express.
+ * @returns Unique non-empty normalized strings.
+ */
+const toUniqueQueryStrings = (input: unknown): unknown => {
+  if (input === undefined || input === null) {
+    return input;
+  }
+
+  const raw = Array.isArray(input) ? input : [input];
+  const unique = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== 'string') {
+      // Leave unexpected shapes untouched so class-validator can reject them.
+      return input;
+    }
+    for (const value of entry.split(',')) {
+      const trimmed = value.trim();
+      if (trimmed) {
+        unique.add(trimmed);
+      }
+    }
+  }
+  return [...unique];
+};
+
+/**
+ * Converts a query-string boolean into a real boolean for class validation.
+ *
+ * @param value - Raw query parameter value.
+ * @returns Parsed boolean, or the original value so validation can reject it.
+ */
+const toQueryBoolean = (value: unknown): unknown => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  return value;
+};
+
+/** Query filters for the SHA-256 duplicate-submission lookup. */
+export class SubmissionDuplicatesQueryDto {
+  @ApiProperty({
+    name: 'submissionId',
+    description:
+      'One or many submission ids to check for duplicates. Repeat the parameter or pass a comma-separated list. Every id must belong to the challenge in the path.',
+    type: [String],
+    required: true,
+    example: ['CbgrlhpRMzh6j-', 'a1B2c3D4e5F6g7'],
+  })
+  @Transform(({ value }) => toUniqueQueryStrings(value))
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(MAX_DUPLICATE_CHECK_SUBMISSION_IDS)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  submissionId: string[];
+
+  @ApiProperty({
+    name: 'crossChallenge',
+    description:
+      'When true, duplicates are searched across every challenge. When false (default), the search is limited to the challenge in the path.',
+    required: false,
+    default: false,
+    type: Boolean,
+  })
+  @IsOptional()
+  @Transform(({ value }) => toQueryBoolean(value))
+  @IsBoolean()
+  crossChallenge?: boolean = false;
+}
+
+/** A submission sharing the exact SHA-256 digest of the checked submission. */
+export class SubmissionDuplicateDto {
+  @ApiProperty({
+    description: 'The id of the duplicate submission',
+    example: 'CbgrlhpRMzh6j-',
+  })
+  submissionId: string;
+
+  @ApiProperty({
+    description: 'The challenge the duplicate submission belongs to',
+    nullable: true,
+    type: String,
+  })
+  challenge: string | null;
+
+  @ApiProperty({
+    description:
+      'The name of the challenge the duplicate submission belongs to, when it could be resolved',
+    nullable: true,
+    type: String,
+  })
+  challengeTitle: string | null;
+
+  @ApiProperty({
+    description: 'The member id that created the duplicate submission',
+    nullable: true,
+    type: String,
+  })
+  user: string | null;
+
+  @ApiProperty({
+    description:
+      'When the duplicate submission was submitted, falling back to its creation timestamp',
+    nullable: true,
+    type: Date,
+  })
+  submittedAt: Date | null;
+}
+
+/** Duplicate matches found for a single checked submission. */
+export class SubmissionDuplicateGroupDto {
+  @ApiProperty({
+    description:
+      'Submissions with the same SHA-256 digest, newest first. Empty when the submission has no digest or no match.',
+    type: [SubmissionDuplicateDto],
+  })
+  duplicates: SubmissionDuplicateDto[];
+}
+
+/** Duplicate matches keyed by the requested submission id. */
+export type SubmissionDuplicatesResponse = Record<
+  string,
+  SubmissionDuplicateGroupDto
+>;
