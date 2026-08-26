@@ -5,6 +5,7 @@ import {
   SubmissionStatus,
   SubmissionType,
 } from '@prisma/client';
+import { createHash } from 'crypto';
 import { Readable } from 'stream';
 import { SubmissionService } from './submission.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
@@ -486,6 +487,9 @@ describe('SubmissionService', () => {
       });
       expect(prisma.submission.create.mock.calls[0][0].data).not.toHaveProperty(
         'confirmationEmail',
+      );
+      expect(prisma.submission.create.mock.calls[0][0].data.sha256Hash).toBe(
+        createHash('sha256').update(Buffer.from('zip')).digest('hex'),
       );
     });
 
@@ -3741,7 +3745,11 @@ describe('SubmissionService', () => {
           url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/file.zip',
         }),
         file,
-        { allowPrivilegedPostSubmissionUpload: true },
+        {
+          allowPrivilegedPostSubmissionUpload: true,
+          sha256Hash:
+            'daf4e16539491123bf4112eb538caad1692406c99e79aed45789f25452c22108',
+        },
       );
     });
 
@@ -3788,7 +3796,11 @@ describe('SubmissionService', () => {
           url: 'https://s3.amazonaws.com/topcoder-dev-submissions-dmz/manual/challenge/member/checkpoint.zip',
         }),
         file,
-        { allowPrivilegedPostSubmissionUpload: true },
+        {
+          allowPrivilegedPostSubmissionUpload: true,
+          sha256Hash:
+            'daf4e16539491123bf4112eb538caad1692406c99e79aed45789f25452c22108',
+        },
       );
     });
 
@@ -4122,6 +4134,172 @@ describe('SubmissionService', () => {
         }),
       });
       expect(prismaMock.submission.create).not.toHaveBeenCalled();
+    });
+
+    it('persists the SHA-256 digest of the uploaded file buffer without reading S3', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      const getS3ClientSpy = jest.spyOn(createService as any, 'getS3Client');
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        {
+          buffer: Buffer.from('zip-content'),
+          originalname: 'manual-submission.zip',
+          size: 11,
+        } as any,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sha256Hash:
+            'daf4e16539491123bf4112eb538caad1692406c99e79aed45789f25452c22108',
+        }),
+      });
+      expect(getS3ClientSpy).not.toHaveBeenCalled();
+    });
+
+    it('prefers a pre-computed digest supplied by the caller', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        {
+          buffer: Buffer.from('zip-content'),
+          originalname: 'manual-submission.zip',
+          size: 11,
+        } as any,
+        {
+          allowPrivilegedPostSubmissionUpload: true,
+          sha256Hash: 'a'.repeat(64),
+        },
+      );
+
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: 'a'.repeat(64) }),
+      });
+    });
+
+    it('hashes the S3 object when the front end uploaded the file and posted only a URL', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      const s3Send = jest
+        .fn()
+        .mockResolvedValueOnce({ ContentLength: 15 })
+        .mockResolvedValueOnce({
+          Body: Readable.from([Buffer.from('s3-object-bytes')]),
+        });
+      jest
+        .spyOn(createService as any, 'getS3Client')
+        .mockReturnValue({ send: s3Send });
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(s3Send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+      expect(s3Send.mock.calls[1][0]).toBeInstanceOf(GetObjectCommand);
+      expect(s3Send.mock.calls[1][0].input).toMatchObject({
+        Bucket: 'topcoder-dev-submissions-dmz',
+        Key: 'manual-submission.zip',
+      });
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sha256Hash:
+            '5c17556ec22abf759e6da8c9731e4c0533a10c0925dc9aa17fba542b1ec4f1de',
+        }),
+      });
+    });
+
+    it('still creates the submission when the S3 object cannot be hashed', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      jest.spyOn(createService as any, 'getS3Client').mockReturnValue({
+        send: jest.fn().mockRejectedValue(new Error('AccessDenied')),
+      });
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        createBody() as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: null }),
+      });
+    });
+
+    it('skips hashing objects larger than the configured byte limit', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      const s3Send = jest.fn().mockResolvedValue({ ContentLength: 1024 });
+      jest
+        .spyOn(createService as any, 'getS3Client')
+        .mockReturnValue({ send: s3Send });
+      process.env.SUBMISSION_SHA256_MAX_BYTES = '512';
+
+      try {
+        await createService.createSubmission(
+          { isMachine: true } as any,
+          createBody() as any,
+          undefined,
+          { allowPrivilegedPostSubmissionUpload: true },
+        );
+      } finally {
+        delete process.env.SUBMISSION_SHA256_MAX_BYTES;
+      }
+
+      expect(s3Send).toHaveBeenCalledTimes(1);
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: null }),
+      });
+    });
+
+    it('leaves the digest null when the submission is not backed by an S3 object', async () => {
+      prismaMock.submission.create.mockResolvedValue(buildCreatedSubmission());
+      challengeApiServiceMock.isPhaseOpen
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      const getS3ClientSpy = jest.spyOn(createService as any, 'getS3Client');
+      jest
+        .spyOn(
+          createService as any,
+          'publishFirst2FinishSubmissionEventIfEligible',
+        )
+        .mockResolvedValue(undefined);
+
+      await createService.createSubmission(
+        { isMachine: true } as any,
+        {
+          ...createBody(),
+          url: 'https://wipro.sharepoint.com/sites/x/submission.docx',
+        } as any,
+        undefined,
+        { allowPrivilegedPostSubmissionUpload: true },
+      );
+
+      expect(getS3ClientSpy).not.toHaveBeenCalled();
+      expect(prismaMock.submission.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sha256Hash: null }),
+      });
     });
   });
 
@@ -5157,6 +5335,129 @@ describe('SubmissionService', () => {
 
       expect(created).toBe(0);
       expect(prismaMock.review.createMany).not.toHaveBeenCalled();
+    });
+  });
+  describe('deleteSubmission phase window', () => {
+    const buildExistingSubmission = (type: SubmissionType) => ({
+      challengeId: 'challenge-delete',
+      id: 'submission-delete',
+      memberId: '1001',
+      type,
+    });
+
+    const buildDeleteService = (
+      type: SubmissionType,
+      isPhaseOpen: jest.Mock,
+    ) => {
+      const prismaMock = {
+        submission: {
+          findUnique: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
+          delete: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
+        },
+        aiWorkflowRun: {
+          findMany: jest.fn().mockResolvedValue([]),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+      };
+      const challengePrismaMock = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+      };
+      const deleteService = new SubmissionService(
+        prismaMock as any,
+        { handleError: jest.fn() } as any,
+        challengePrismaMock as any,
+        { isPhaseOpen } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      return { deleteService, prismaMock };
+    };
+
+    it('rejects a submitter deleting a checkpoint submission once the Checkpoint Submission phase closed', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(false);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CHECKPOINT_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await expect(
+        deleteService.deleteSubmission(
+          { userId: '1001', roles: ['Topcoder User'] } as any,
+          'submission-delete',
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'SUBMISSION_PHASE_CLOSED',
+          details: {
+            challengeId: 'challenge-delete',
+            requiredOpenPhases: ['Checkpoint Submission'],
+            submissionType: SubmissionType.CHECKPOINT_SUBMISSION,
+          },
+        },
+      });
+
+      expect(isPhaseOpen).toHaveBeenCalledWith('challenge-delete', [
+        'Checkpoint Submission',
+      ]);
+      expect(prismaMock.submission.delete).not.toHaveBeenCalled();
+    });
+
+    it('rejects a submitter deleting a contest submission once the Submission phase closed', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(false);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CONTEST_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await expect(
+        deleteService.deleteSubmission(
+          { userId: '1001', roles: ['Topcoder User'] } as any,
+          'submission-delete',
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(isPhaseOpen).toHaveBeenCalledWith('challenge-delete', [
+        'Submission',
+        'Topgear Submission',
+      ]);
+      expect(prismaMock.submission.delete).not.toHaveBeenCalled();
+    });
+
+    it('allows a submitter to delete while the matching submission phase is open', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(true);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CHECKPOINT_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await deleteService.deleteSubmission(
+        { userId: '1001', roles: ['Topcoder User'] } as any,
+        'submission-delete',
+      );
+
+      expect(prismaMock.submission.delete).toHaveBeenCalledWith({
+        where: { id: 'submission-delete' },
+      });
+    });
+
+    it('does not apply the phase window to admins', async () => {
+      const isPhaseOpen = jest.fn().mockResolvedValue(false);
+      const { deleteService, prismaMock } = buildDeleteService(
+        SubmissionType.CHECKPOINT_SUBMISSION,
+        isPhaseOpen,
+      );
+
+      await deleteService.deleteSubmission(
+        { userId: '2002', roles: ['administrator'] } as any,
+        'submission-delete',
+      );
+
+      expect(isPhaseOpen).not.toHaveBeenCalled();
+      expect(prismaMock.submission.delete).toHaveBeenCalled();
     });
   });
 });

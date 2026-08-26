@@ -358,6 +358,7 @@ exports.Prisma.SubmissionScalarFieldEnum = {
   fileType: 'fileType',
   esId: 'esId',
   submittedDate: 'submittedDate',
+  sha256Hash: 'sha256Hash',
   createdAt: 'createdAt',
   createdBy: 'createdBy',
   updatedAt: 'updatedAt',

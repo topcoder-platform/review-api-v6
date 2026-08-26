@@ -124,8 +124,15 @@ export class SubmissionController {
     @UploadedFile() file: Express.Multer.File,
     @Body() body: SubmissionRequestDto,
   ): Promise<SubmissionResponseDto> {
-    console.log(
+    this.logger.debug(
       `Creating submission with request body: ${JSON.stringify(body)}`,
+    );
+    // Diagnostic for sha256Hash: a null digest almost always means no multipart file arrived
+    this.logger.debug(
+      `Creating submission multipart file: present=${!!file}, fieldname=${file?.fieldname ?? 'n/a'}, ` +
+        `originalname=${file?.originalname ?? 'n/a'}, size=${file?.size ?? 'n/a'}, ` +
+        `bufferBytes=${Buffer.isBuffer(file?.buffer) ? file.buffer.length : 'n/a'}, ` +
+        `contentType=${req.headers['content-type'] ?? 'n/a'}`,
     );
     const authUser: JwtUser = req['user'] as JwtUser;
     return this.service.createSubmission(authUser, body, file);
@@ -473,8 +480,10 @@ export class SubmissionController {
   @Scopes(Scope.DeleteSubmission)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Delete a submission',
-    description: 'Roles: Admin, User | Scopes: delete:submission',
+    summary:
+      'Delete a submission (submitters only while the phase that created it is open)',
+    description:
+      'Roles: Admin, User | Scopes: delete:submission. Submitters can only delete their own submission while the matching submission phase (Submission, Checkpoint Submission, or Final Fix) is still open. Admins and M2M tokens are not restricted by the phase window.',
   })
   @ApiParam({
     name: 'submissionId',
@@ -483,6 +492,10 @@ export class SubmissionController {
   @ApiResponse({
     status: 204,
     description: 'Submission deleted successfully.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'The submission phase is already closed.',
   })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Submission not found.' })

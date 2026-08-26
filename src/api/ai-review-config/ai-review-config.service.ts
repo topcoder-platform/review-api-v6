@@ -283,7 +283,7 @@ export class AiReviewConfigService {
     });
     if (count > 0) {
       throw new ConflictException(
-        `Cannot create AI review config: challenge ${challengeId} already has submissions.`,
+        `Cannot create or update AI review config: challenge ${challengeId} already has submissions.`,
       );
     }
   }
@@ -545,6 +545,7 @@ export class AiReviewConfigService {
     const challengeId = config.challengeId;
 
     await this.validateCanManageConfigForChallenge(challengeId, authUser);
+    await this.validateNoSubmissionsExistForChallenge(challengeId);
     await this.validateChallengeNotCompleted(challengeId);
     await this.validateNoDecisionsForConfig(id);
     await this.validateNoAiRunsExistForChallenge(challengeId);

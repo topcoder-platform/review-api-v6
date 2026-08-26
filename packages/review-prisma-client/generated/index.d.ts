@@ -22939,6 +22939,7 @@ export namespace Prisma {
     fileType: string | null
     esId: string | null
     submittedDate: Date | null
+    sha256Hash: string | null
     createdAt: Date | null
     createdBy: string | null
     updatedAt: Date | null
@@ -22974,6 +22975,7 @@ export namespace Prisma {
     fileType: string | null
     esId: string | null
     submittedDate: Date | null
+    sha256Hash: string | null
     createdAt: Date | null
     createdBy: string | null
     updatedAt: Date | null
@@ -23009,6 +23011,7 @@ export namespace Prisma {
     fileType: number
     esId: number
     submittedDate: number
+    sha256Hash: number
     createdAt: number
     createdBy: number
     updatedAt: number
@@ -23070,6 +23073,7 @@ export namespace Prisma {
     fileType?: true
     esId?: true
     submittedDate?: true
+    sha256Hash?: true
     createdAt?: true
     createdBy?: true
     updatedAt?: true
@@ -23105,6 +23109,7 @@ export namespace Prisma {
     fileType?: true
     esId?: true
     submittedDate?: true
+    sha256Hash?: true
     createdAt?: true
     createdBy?: true
     updatedAt?: true
@@ -23140,6 +23145,7 @@ export namespace Prisma {
     fileType?: true
     esId?: true
     submittedDate?: true
+    sha256Hash?: true
     createdAt?: true
     createdBy?: true
     updatedAt?: true
@@ -23262,6 +23268,7 @@ export namespace Prisma {
     fileType: string | null
     esId: string | null
     submittedDate: Date | null
+    sha256Hash: string | null
     createdAt: Date
     createdBy: string | null
     updatedAt: Date | null
@@ -23316,6 +23323,7 @@ export namespace Prisma {
     fileType?: boolean
     esId?: boolean
     submittedDate?: boolean
+    sha256Hash?: boolean
     createdAt?: boolean
     createdBy?: boolean
     updatedAt?: boolean
@@ -23362,6 +23370,7 @@ export namespace Prisma {
     fileType?: boolean
     esId?: boolean
     submittedDate?: boolean
+    sha256Hash?: boolean
     createdAt?: boolean
     createdBy?: boolean
     updatedAt?: boolean
@@ -23398,6 +23407,7 @@ export namespace Prisma {
     fileType?: boolean
     esId?: boolean
     submittedDate?: boolean
+    sha256Hash?: boolean
     createdAt?: boolean
     createdBy?: boolean
     updatedAt?: boolean
@@ -23434,6 +23444,7 @@ export namespace Prisma {
     fileType?: boolean
     esId?: boolean
     submittedDate?: boolean
+    sha256Hash?: boolean
     createdAt?: boolean
     createdBy?: boolean
     updatedAt?: boolean
@@ -23442,7 +23453,7 @@ export namespace Prisma {
     uploadId?: boolean
   }
 
-  export type submissionOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "legacySubmissionId" | "type" | "status" | "screeningScore" | "initialScore" | "finalScore" | "placement" | "userRank" | "markForPurchase" | "prizeId" | "fileSize" | "viewCount" | "systemFileName" | "isFileSubmission" | "thurgoodJobId" | "virusScan" | "eventRaised" | "url" | "memberId" | "challengeId" | "legacyChallengeId" | "submissionPhaseId" | "fileType" | "esId" | "submittedDate" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "legacyUploadId" | "uploadId", ExtArgs["result"]["submission"]>
+  export type submissionOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "legacySubmissionId" | "type" | "status" | "screeningScore" | "initialScore" | "finalScore" | "placement" | "userRank" | "markForPurchase" | "prizeId" | "fileSize" | "viewCount" | "systemFileName" | "isFileSubmission" | "thurgoodJobId" | "virusScan" | "eventRaised" | "url" | "memberId" | "challengeId" | "legacyChallengeId" | "submissionPhaseId" | "fileType" | "esId" | "submittedDate" | "sha256Hash" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "legacyUploadId" | "uploadId", ExtArgs["result"]["submission"]>
   export type submissionInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     upload?: boolean | submission$uploadArgs<ExtArgs>
     review?: boolean | submission$reviewArgs<ExtArgs>
@@ -23504,6 +23515,10 @@ export namespace Prisma {
       fileType: string | null
       esId: string | null
       submittedDate: Date | null
+      /**
+       * Lowercase hex SHA-256 digest of the uploaded file contents; null for URL-only submissions.
+       */
+      sha256Hash: string | null
       createdAt: Date
       createdBy: string | null
       updatedAt: Date | null
@@ -23969,6 +23984,7 @@ export namespace Prisma {
     readonly fileType: FieldRef<"submission", 'String'>
     readonly esId: FieldRef<"submission", 'String'>
     readonly submittedDate: FieldRef<"submission", 'DateTime'>
+    readonly sha256Hash: FieldRef<"submission", 'String'>
     readonly createdAt: FieldRef<"submission", 'DateTime'>
     readonly createdBy: FieldRef<"submission", 'String'>
     readonly updatedAt: FieldRef<"submission", 'DateTime'>
@@ -51390,6 +51406,7 @@ export namespace Prisma {
     fileType: 'fileType',
     esId: 'esId',
     submittedDate: 'submittedDate',
+    sha256Hash: 'sha256Hash',
     createdAt: 'createdAt',
     createdBy: 'createdBy',
     updatedAt: 'updatedAt',
@@ -53567,6 +53584,7 @@ export namespace Prisma {
     fileType?: StringNullableFilter<"submission"> | string | null
     esId?: UuidNullableFilter<"submission"> | string | null
     submittedDate?: DateTimeNullableFilter<"submission"> | Date | string | null
+    sha256Hash?: StringNullableFilter<"submission"> | string | null
     createdAt?: DateTimeFilter<"submission"> | Date | string
     createdBy?: StringNullableFilter<"submission"> | string | null
     updatedAt?: DateTimeNullableFilter<"submission"> | Date | string | null
@@ -53612,6 +53630,7 @@ export namespace Prisma {
     fileType?: SortOrderInput | SortOrder
     esId?: SortOrderInput | SortOrder
     submittedDate?: SortOrderInput | SortOrder
+    sha256Hash?: SortOrderInput | SortOrder
     createdAt?: SortOrder
     createdBy?: SortOrderInput | SortOrder
     updatedAt?: SortOrderInput | SortOrder
@@ -53660,6 +53679,7 @@ export namespace Prisma {
     fileType?: StringNullableFilter<"submission"> | string | null
     esId?: UuidNullableFilter<"submission"> | string | null
     submittedDate?: DateTimeNullableFilter<"submission"> | Date | string | null
+    sha256Hash?: StringNullableFilter<"submission"> | string | null
     createdAt?: DateTimeFilter<"submission"> | Date | string
     createdBy?: StringNullableFilter<"submission"> | string | null
     updatedAt?: DateTimeNullableFilter<"submission"> | Date | string | null
@@ -53705,6 +53725,7 @@ export namespace Prisma {
     fileType?: SortOrderInput | SortOrder
     esId?: SortOrderInput | SortOrder
     submittedDate?: SortOrderInput | SortOrder
+    sha256Hash?: SortOrderInput | SortOrder
     createdAt?: SortOrder
     createdBy?: SortOrderInput | SortOrder
     updatedAt?: SortOrderInput | SortOrder
@@ -53748,6 +53769,7 @@ export namespace Prisma {
     fileType?: StringNullableWithAggregatesFilter<"submission"> | string | null
     esId?: UuidNullableWithAggregatesFilter<"submission"> | string | null
     submittedDate?: DateTimeNullableWithAggregatesFilter<"submission"> | Date | string | null
+    sha256Hash?: StringNullableWithAggregatesFilter<"submission"> | string | null
     createdAt?: DateTimeWithAggregatesFilter<"submission"> | Date | string
     createdBy?: StringNullableWithAggregatesFilter<"submission"> | string | null
     updatedAt?: DateTimeNullableWithAggregatesFilter<"submission"> | Date | string | null
@@ -57152,6 +57174,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -57196,6 +57219,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -57240,6 +57264,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -57284,6 +57309,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -57328,6 +57354,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -57363,6 +57390,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -57397,6 +57425,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -60891,6 +60920,7 @@ export namespace Prisma {
     fileType?: SortOrder
     esId?: SortOrder
     submittedDate?: SortOrder
+    sha256Hash?: SortOrder
     createdAt?: SortOrder
     createdBy?: SortOrder
     updatedAt?: SortOrder
@@ -60938,6 +60968,7 @@ export namespace Prisma {
     fileType?: SortOrder
     esId?: SortOrder
     submittedDate?: SortOrder
+    sha256Hash?: SortOrder
     createdAt?: SortOrder
     createdBy?: SortOrder
     updatedAt?: SortOrder
@@ -60973,6 +61004,7 @@ export namespace Prisma {
     fileType?: SortOrder
     esId?: SortOrder
     submittedDate?: SortOrder
+    sha256Hash?: SortOrder
     createdAt?: SortOrder
     createdBy?: SortOrder
     updatedAt?: SortOrder
@@ -66453,6 +66485,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -66496,6 +66529,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -66676,6 +66710,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -66719,6 +66754,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -67189,6 +67225,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -67232,6 +67269,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -67346,6 +67384,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -67389,6 +67428,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -67632,6 +67672,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -67675,6 +67716,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -67781,6 +67823,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -67824,6 +67867,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -68588,6 +68632,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -68631,6 +68676,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -68690,6 +68736,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -68733,6 +68780,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -68776,6 +68824,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -68819,6 +68868,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -68878,6 +68928,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -68921,6 +68972,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -69110,6 +69162,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -69153,6 +69206,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -69225,6 +69279,7 @@ export namespace Prisma {
     fileType?: StringNullableFilter<"submission"> | string | null
     esId?: UuidNullableFilter<"submission"> | string | null
     submittedDate?: DateTimeNullableFilter<"submission"> | Date | string | null
+    sha256Hash?: StringNullableFilter<"submission"> | string | null
     createdAt?: DateTimeFilter<"submission"> | Date | string
     createdBy?: StringNullableFilter<"submission"> | string | null
     updatedAt?: DateTimeNullableFilter<"submission"> | Date | string | null
@@ -69260,6 +69315,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -69303,6 +69359,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -69362,6 +69419,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -69405,6 +69463,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -69448,6 +69507,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -69491,6 +69551,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -69550,6 +69611,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -69593,6 +69655,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -70323,6 +70386,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -70366,6 +70430,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -70510,6 +70575,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -70553,6 +70619,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -71867,6 +71934,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -71910,6 +71978,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -72046,6 +72115,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -72089,6 +72159,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -73267,6 +73338,7 @@ export namespace Prisma {
     fileType?: string | null
     esId?: string | null
     submittedDate?: Date | string | null
+    sha256Hash?: string | null
     createdAt?: Date | string
     createdBy?: string | null
     updatedAt?: Date | string | null
@@ -73301,6 +73373,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -73344,6 +73417,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -73387,6 +73461,7 @@ export namespace Prisma {
     fileType?: NullableStringFieldUpdateOperationsInput | string | null
     esId?: NullableStringFieldUpdateOperationsInput | string | null
     submittedDate?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    sha256Hash?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     createdBy?: NullableStringFieldUpdateOperationsInput | string | null
     updatedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null

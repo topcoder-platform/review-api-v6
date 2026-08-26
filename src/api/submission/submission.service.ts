@@ -40,7 +40,7 @@ import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-cat
 import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
 import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { basename } from 'path';
 import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
 import {
@@ -141,6 +141,53 @@ function parseOptionalBooleanQuery(
     code: 'INVALID_BOOLEAN_QUERY_PARAMETER',
     details: { fieldName, value },
   });
+}
+
+const submissionHashLogger = new Logger('SubmissionSha256');
+
+/**
+ * Computes the SHA-256 digest of an uploaded submission file's contents.
+ * @param file Multer file whose in-memory buffer holds the uploaded contents.
+ * @param context Caller label included in diagnostic logs.
+ * @returns Lowercase hex digest (64 characters), or null when no file buffer is present.
+ * @throws This function does not throw.
+ * Used by the submission upload flows to persist a content identifier before the file reaches S3.
+ */
+function computeFileSha256(
+  file?: Express.Multer.File,
+  context = 'unknown',
+): string | null {
+  if (!file) {
+    submissionHashLogger.log(
+      `[${context}] No multipart file on the request; falling back to hashing the S3 object when the submission URL points at one.`,
+    );
+    return null;
+  }
+
+  // A missing buffer means multer did not use memoryStorage for this route
+  if (!Buffer.isBuffer(file.buffer)) {
+    submissionHashLogger.warn(
+      `[${context}] Uploaded file "${file.originalname ?? 'unnamed'}" has no in-memory buffer ` +
+        `(fieldname=${file.fieldname ?? 'n/a'}, size=${file.size ?? 'n/a'}: ` +
+        `sha256Hash will be null.`,
+    );
+    return null;
+  }
+
+  if (file.buffer.length === 0) {
+    submissionHashLogger.warn(
+      `[${context}] Uploaded file "${file.originalname ?? 'unnamed'}" has an empty buffer ` +
+        `(size=${file.size ?? 'n/a'}): sha256Hash will be null.`,
+    );
+    return null;
+  }
+
+  const digest = createHash('sha256').update(file.buffer).digest('hex');
+  submissionHashLogger.log(
+    `[${context}] Computed sha256Hash=${digest} for file "${file.originalname ?? 'unnamed'}" ` +
+      `(bufferBytes=${file.buffer.length}, reportedSize=${file.size ?? 'n/a'}).`,
+  );
+  return digest;
 }
 
 export type SubmissionScanRetryOptions = {
@@ -258,6 +305,22 @@ function getSubmissionDownloadUrlExpiresInSeconds(): number {
   return DEFAULT_SUBMISSION_DOWNLOAD_URL_EXPIRES_IN_SECONDS;
 }
 
+const DEFAULT_SUBMISSION_SHA256_MAX_BYTES = 1024 * 1024 * 1024; // 1 GiB
+
+/**
+ * Resolves the largest S3 object the service will download to compute a SHA-256 digest.
+ * Oversized objects are skipped so submission creation is never blocked on a huge transfer.
+ *
+ * @returns The maximum object size in bytes; defaults to 1 GiB when unset or invalid.
+ */
+function resolveSubmissionHashMaxBytes(): number {
+  const configured = Number(process.env.SUBMISSION_SHA256_MAX_BYTES);
+  if (Number.isInteger(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_SUBMISSION_SHA256_MAX_BYTES;
+}
+
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {
     include: {
@@ -291,6 +354,8 @@ const REVIEW_SUMMATION_RESPONSE_SELECT = {
 
 type CreateSubmissionOptions = {
   allowPrivilegedPostSubmissionUpload?: boolean;
+  /** Pre-computed SHA-256 digest of the file contents, used when the caller hashed before its own upload. */
+  sha256Hash?: string | null;
 };
 
 type SubmissionDmzUploadResult = {
@@ -489,6 +554,9 @@ export class SubmissionService {
       }
     }
 
+    // Hash the raw buffer before it is streamed to S3
+    const sha256Hash = computeFileSha256(file, 'manualUpload');
+
     const dmzUpload = await this.uploadSubmissionFileToDmz(
       authUser,
       body,
@@ -512,6 +580,7 @@ export class SubmissionService {
 
     return this.createSubmission(authUser, submissionPayload, file, {
       allowPrivilegedPostSubmissionUpload: true,
+      sha256Hash,
     });
   }
 
@@ -575,6 +644,9 @@ export class SubmissionService {
       });
     }
 
+    // Hash the raw buffer before it is streamed to S3
+    const sha256Hash = computeFileSha256(file, 'validationUpload');
+
     const cleanUpload = await this.uploadValidationSubmissionFileToClean(
       authUser,
       body,
@@ -605,6 +677,7 @@ export class SubmissionService {
           fileType: cleanUpload.fileType,
           isFileSubmission: true,
           memberId: body.memberId,
+          sha256Hash,
           status: SubmissionStatus.ACTIVE,
           submissionPhaseId: body.submissionPhaseId,
           submittedDate,
@@ -2242,6 +2315,107 @@ export class SubmissionService {
   }
 
   /**
+   * Streams an already-uploaded submission object from S3 and computes its SHA-256 digest.
+   * @param url Submission URL pointing at an S3 object, as uploaded by the front end.
+   * @param context Caller label included in diagnostic logs.
+   * @returns Lowercase hex digest (64 characters), or null when the object cannot be hashed.
+   * @throws This method does not throw; hashing failures are logged and yield null.
+   * Used by createSubmission for the URL-only flow where the front end uploads to S3 directly.
+   */
+  private async computeSubmissionUrlSha256(
+    url: string,
+    context = 'unknown',
+  ): Promise<string | null> {
+    const parsed = this.parseS3Url(url);
+    const key = parsed?.key;
+    // The URL carries its own bucket; DMZ is the fallback since that is where new uploads land
+    const bucket = parsed?.bucket ?? process.env.SUBMISSION_DMZ_S3_BUCKET;
+
+    if (!key || !bucket) {
+      this.logger.warn(
+        `[${context}] Cannot hash submission URL: unable to resolve bucket/key (bucket=${bucket ?? 'n/a'}, key=${key ?? 'n/a'}, url=${url}).`,
+      );
+      return null;
+    }
+
+    const s3 = this.getS3Client();
+
+    try {
+      const head = await s3.send(
+        new HeadObjectCommand({ Bucket: bucket, Key: key }),
+      );
+      const contentLength = head.ContentLength ?? null;
+      if (
+        contentLength !== null &&
+        contentLength > resolveSubmissionHashMaxBytes()
+      ) {
+        this.logger.warn(
+          `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: object is ${contentLength} bytes, ` +
+            `above the ${resolveSubmissionHashMaxBytes()} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
+        );
+        return null;
+      }
+
+      const resp = await s3.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
+      const body = (resp as { Body?: unknown }).Body as any;
+      let stream: Readable;
+      if (body && typeof body.pipe === 'function') {
+        stream = body as Readable;
+      } else if (
+        body &&
+        typeof body.getReader === 'function' &&
+        (Readable as any).fromWeb
+      ) {
+        stream = (Readable as any).fromWeb(body);
+      } else if (Buffer.isBuffer(body)) {
+        stream = Readable.from(body);
+      } else {
+        throw new Error('Unsupported S3 Body stream type');
+      }
+
+      const hash = createHash('sha256');
+      const maxBytes = resolveSubmissionHashMaxBytes();
+      let hashedBytes = 0;
+      for await (const chunk of stream) {
+        const buffer = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk as string | Uint8Array);
+        hashedBytes += buffer.length;
+        if (hashedBytes > maxBytes) {
+           stream.destroy();
+           this.logger.warn(
+             `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: streamed ${hashedBytes} bytes, above the ${maxBytes} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
+           );
+           return null;
+         }
+        hash.update(buffer);
+      }
+
+      if (hashedBytes === 0) {
+        this.logger.warn(
+          `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: object body was empty.`,
+        );
+        return null;
+      }
+
+      const digest = hash.digest('hex');
+      this.logger.log(
+        `[${context}] Computed sha256Hash=${digest} from S3 object bucket=${bucket} key=${key} ` +
+          `(hashedBytes=${hashedBytes}, contentLength=${contentLength ?? 'n/a'}).`,
+      );
+      return digest;
+    } catch (error) {
+      this.logger.warn(
+        `[${context}] Failed to compute sha256Hash from S3 object bucket=${bucket} key=${key}: ` +
+          `${error instanceof Error ? error.message : String(error ?? '')}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Parse an S3 URL and return { bucket?, key? }
    * Supports formats:
    * - s3://bucket/key
@@ -3795,9 +3969,41 @@ export class SubmissionService {
         }
       }
 
+      // Content identifier for the submission artifact. Preferred source is the multipart
+      // buffer, but the primary flow uploads to S3 on the front end and posts only a URL,
+      // so fall back to streaming the object back out of S3 and hashing that.
+      let sha256Hash =
+        options?.sha256Hash ?? computeFileSha256(file, 'createSubmission');
+      let sha256Source =
+        options?.sha256Hash !== undefined
+          ? 'caller-supplied'
+          : sha256Hash
+            ? 'computed-from-buffer'
+            : 'none';
+
+      if (!sha256Hash && hasS3Url && body.url) {
+        sha256Hash = await this.computeSubmissionUrlSha256(
+          body.url,
+          'createSubmission',
+        );
+        sha256Source = sha256Hash
+          ? 'computed-from-s3-object'
+          : 's3-hash-failed';
+      }
+
+      this.logger.log(
+        `sha256Hash resolution for challenge ${body.challengeId}, member ${body.memberId}: ` +
+          `value=${
+            sha256Hash ? sha256Hash.slice(0, 16) + '...' : 'null'
+          }, source=${sha256Source}, ` +
+          `hasUploadedFile=${hasUploadedFile}, hasS3Url=${hasS3Url}, ` +
+          `isFileSubmission=${isFileSubmission}, hasBodyUrl=${!!body.url}`,
+      );
+
       const submissionData: Prisma.submissionCreateArgs['data'] = {
         ...body,
         isFileSubmission,
+        sha256Hash,
         // populate commonly expected fields on create
         submittedDate: body.submittedDate
           ? new Date(body.submittedDate)
@@ -3818,7 +4024,9 @@ export class SubmissionService {
         body,
         submissionData,
       );
-      this.logger.log(`Submission created with ID: ${data.id}`);
+      this.logger.log(
+        `Submission created with ID: ${data.id} (persisted sha256Hash=${(data as { sha256Hash?: string | null }).sha256Hash ?? 'null'})`,
+      );
       if (isFileSubmission) {
         await this.publishSubmissionScanEvent(data);
       } else {
@@ -4549,6 +4757,13 @@ export class SubmissionService {
             },
           });
         }
+
+        if (existing.challengeId) {
+          await this.validateSubmissionDeletionPhaseWindow(
+            existing.challengeId,
+            existing.type,
+          );
+        }
       }
       const TERMINAL_STATUSES = [
         'COMPLETED',
@@ -4613,6 +4828,9 @@ export class SubmissionService {
       if (error instanceof ForbiddenException) {
         throw error;
       }
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       const errorResponse = this.prismaErrorService.handleError(
         error,
         `deleting submission with ID: ${id}`,
@@ -4629,6 +4847,76 @@ export class SubmissionService {
         message: errorResponse.message,
         code: errorResponse.code,
         details: errorResponse.details,
+      });
+    }
+  }
+
+  /**
+   * Returns the submission phase names that must be open for a submission type to be managed
+   * by its submitter. Mirrors the phase precedence enforced when the submission is created.
+   *
+   * @param submissionType - Type of the submission being managed.
+   * @returns The challenge phase names that create submissions of that type.
+   */
+  private getSubmissionPhaseNamesForType(
+    submissionType: SubmissionType,
+  ): string[] {
+    if (submissionType === SubmissionType.CHECKPOINT_SUBMISSION) {
+      return ['Checkpoint Submission'];
+    }
+
+    if (submissionType === SubmissionType.STUDIO_FINAL_FIX_SUBMISSION) {
+      return ['Final Fix'];
+    }
+
+    return ['Submission', 'Topgear Submission'];
+  }
+
+  /**
+   * Validates that a submitter is still allowed to delete their own submission.
+   *
+   * Submitters may only delete a submission while the phase that created it is open, so a
+   * checkpoint submission stops being deletable once the Checkpoint Submission phase ends -
+   * even though the Submission phase opens right after it and the checkpoint submission is
+   * already being screened/reviewed. Admins and M2M callers bypass this check, and an
+   * unavailable Challenge API is logged and allowed through, matching submission creation.
+   *
+   * Used by deleteSubmission for non-admin, non-machine callers.
+   *
+   * @param challengeId - Challenge the submission belongs to.
+   * @param submissionType - Type of the submission being deleted.
+   * @throws BadRequestException when the matching submission phase is already closed.
+   */
+  private async validateSubmissionDeletionPhaseWindow(
+    challengeId: string,
+    submissionType: SubmissionType,
+  ): Promise<void> {
+    const requiredOpenPhases =
+      this.getSubmissionPhaseNamesForType(submissionType);
+
+    let submissionPhaseOpen: boolean;
+    try {
+      submissionPhaseOpen = await this.challengeApiService.isPhaseOpen(
+        challengeId,
+        requiredOpenPhases,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Could not validate submission deletion phase for challenge ${challengeId}: ${message}. Proceeding with submission deletion.`,
+      );
+      return;
+    }
+
+    if (!submissionPhaseOpen) {
+      throw new BadRequestException({
+        message: `Submissions cannot be deleted for challenge ${challengeId}. The ${requiredOpenPhases.join(' or ')} phase is not currently open.`,
+        code: 'SUBMISSION_PHASE_CLOSED',
+        details: {
+          challengeId,
+          submissionType,
+          requiredOpenPhases,
+        },
       });
     }
   }
