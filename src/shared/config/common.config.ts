@@ -58,6 +58,17 @@ export const CommonConfig = {
     submitterRoleId:
       process.env.SUBMITTER_ROLE_ID ?? '732339e7-8e30-49d7-9198-cccf9451e221',
   },
+  // Gitea configuration
+  gitea: {
+    // Identifier of the "Topcoder" authentication source configured in Gitea.
+    // New Gitea accounts are provisioned against this source so that members
+    // sign in with their existing Topcoder (auth0) credentials.
+    authSourceId: Number(process.env.GITEA_AUTH_SOURCE_ID ?? '1'),
+    // Visibility applied to Gitea accounts provisioned by this service.
+    userVisibility: process.env.GITEA_USER_VISIBILITY ?? 'public',
+    // Challenge metadata key holding the Gitea configuration for a challenge.
+    challengeMetadataKey: 'gitea',
+  },
   // configs of payment for each review type
   reviewPaymentConfig: paymentConfig,
   // sendgrid templates configs

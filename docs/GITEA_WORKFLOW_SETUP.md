@@ -4,6 +4,9 @@ New environment properties were added to support Gitea Workflows. These new prop
 
 - GITEA_TOKEN - the gitea token
 - GITEA_BASE_URL - gitea base URL which will be used by generated gitea client
+- GITEA_AUTH_SOURCE_ID - id of the "Topcoder" authentication source in Gitea, used when provisioning
+  accounts for challenge registrants (defaults to `1`)
+- GITEA_USER_VISIBILITY - visibility applied to provisioned Gitea accounts (defaults to `public`)
 
 These new properties are added in .env.sample.
 

@@ -6,8 +6,18 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { AxiosResponse } from 'axios';
-import { Api, Repository } from 'src/shared/clients/gitea/gitea.client';
+import { Api, Repository, User } from 'src/shared/clients/gitea/gitea.client';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
+import { CommonConfig } from 'src/shared/config/common.config';
+
+export interface GiteaUserProvisionInput {
+  /** Topcoder handle, used verbatim as the Gitea username. */
+  handle: string;
+  /** Topcoder user id, used to build the auth0 sign-in name. */
+  userId: string;
+  /** Member email address. Required by Gitea when creating an account. */
+  email: string;
+}
 
 export interface ActionDispatchWorkflowResponse {
   workflow_run_id: number;
@@ -229,6 +239,109 @@ export class GiteaService {
       );
       throw e;
     }
+  }
+
+  /**
+   * Resolves the HTTP status code carried by an Axios/Gitea client error.
+   *
+   * @param error Rejection raised by the generated Gitea client.
+   * @returns The HTTP status code, or undefined when the failure is not an HTTP response.
+   * @throws This function never throws.
+   */
+  private static resolveErrorStatus(error: unknown): number | undefined {
+    const candidate = error as
+      | { status?: number; response?: { status?: number } }
+      | undefined;
+    return candidate?.response?.status ?? candidate?.status;
+  }
+
+  /**
+   * Looks up a Gitea user by username.
+   *
+   * @param username Gitea username (the Topcoder handle).
+   * @returns The Gitea user, or null when no account exists.
+   * @throws Propagates non-404 failures raised by the Gitea API.
+   */
+  async getUser(username: string): Promise<User | null> {
+    try {
+      const response = await this.giteaClient.users.userGet(username);
+      return response.data;
+    } catch (error) {
+      if (GiteaService.resolveErrorStatus(error) === 404) {
+        return null;
+      }
+      this.logger.error(
+        `Error fetching Gitea user ${username}. status code: ${GiteaService.resolveErrorStatus(error)}, message: ${error?.message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Ensures a Gitea account exists for the given Topcoder member, creating one
+   * against the Topcoder authentication source when it is missing.
+   *
+   * @param member Handle, Topcoder user id and email of the member.
+   * @returns The existing or freshly created Gitea user.
+   * @throws Propagates Gitea API failures so the caller can decide how to react.
+   */
+  async ensureUser(member: GiteaUserProvisionInput): Promise<User> {
+    const existing = await this.getUser(member.handle);
+    if (existing) {
+      this.logger.log(
+        `Gitea user ${member.handle} already exists (id: ${existing.id}).`,
+      );
+      return existing;
+    }
+
+    this.logger.log(
+      `Gitea user ${member.handle} not found. Creating account for Topcoder user ${member.userId}.`,
+    );
+
+    try {
+      const response = await this.giteaClient.admin.adminCreateUser({
+        email: member.email,
+        full_name: member.email,
+        login_name: `auth0|${member.userId}`,
+        must_change_password: false,
+        source_id: CommonConfig.gitea.authSourceId,
+        username: member.handle,
+        visibility: CommonConfig.gitea.userVisibility,
+      });
+      this.logger.log(
+        `Created Gitea user ${member.handle} (id: ${response.data.id}).`,
+      );
+      return response.data;
+    } catch (error) {
+      this.logger.error(
+        `Error creating Gitea user ${member.handle}. status code: ${GiteaService.resolveErrorStatus(error)}, message: ${error?.message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Adds a Gitea user to a Gitea team.
+   *
+   * @param teamId Numeric Gitea team identifier.
+   * @param username Gitea username to add.
+   * @returns Nothing.
+   * @throws Propagates Gitea API failures.
+   */
+  async addTeamMember(teamId: number, username: string): Promise<void> {
+    await this.giteaClient.teams.orgAddTeamMember(teamId, username);
+  }
+
+  /**
+   * Removes a Gitea user from a Gitea team.
+   *
+   * @param teamId Numeric Gitea team identifier.
+   * @param username Gitea username to remove.
+   * @returns Nothing.
+   * @throws Propagates Gitea API failures.
+   */
+  async removeTeamMember(teamId: number, username: string): Promise<void> {
+    await this.giteaClient.teams.orgRemoveTeamMember(teamId, username);
   }
 
   async downloadWorkflowRunArtifact(
