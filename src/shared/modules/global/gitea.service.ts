@@ -473,7 +473,7 @@ export class GiteaService {
 
     const organizations: string[] = [];
     for (let page = 1; page <= ORGANIZATIONS_MAX_PAGES; page += 1) {
-      const response = await this.giteaClient.admin.adminGetAllOrgs({
+      const response = await this.giteaClient.orgs.orgGetAll({
         page,
         limit: ORGANIZATIONS_PAGE_SIZE,
       });
