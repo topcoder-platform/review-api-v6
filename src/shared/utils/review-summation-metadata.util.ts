@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 
 type MetadataRecord = Record<string, unknown>;
 type SafeTestProcess = 'example' | 'provisional' | 'system';
-type SafeTestStatus = 'FAILED' | 'IN PROGRESS' | 'SUCCESS';
+type SafeTestStatus = 'CANCELLED' | 'FAILED' | 'IN PROGRESS' | 'SUCCESS';
 const ISO_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 
@@ -39,13 +39,16 @@ function normalizeTestProcess(value: unknown): SafeTestProcess | undefined {
  * @param value Raw metadata value.
  * @returns Safe status value, or `undefined` when the value is unsupported.
  * Used by `buildSafeReviewSummationMetadata` to avoid leaking free-form text.
+ * `CANCELLED` is member-visible so superseded Marathon Match scoring runs are
+ * not shown as still preparing.
  */
 function normalizeTestStatus(value: unknown): SafeTestStatus | undefined {
   if (typeof value !== 'string') {
     return undefined;
   }
   const normalized = value.trim().toUpperCase();
-  return normalized === 'FAILED' ||
+  return normalized === 'CANCELLED' ||
+    normalized === 'FAILED' ||
     normalized === 'IN PROGRESS' ||
     normalized === 'SUCCESS'
     ? normalized
