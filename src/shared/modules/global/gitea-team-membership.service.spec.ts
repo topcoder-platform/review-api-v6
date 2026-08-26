@@ -42,7 +42,10 @@ describe('GiteaTeamMembershipService', () => {
   });
 
   it('adds the member to every configured team, deduplicating ids', async () => {
-    withMetadata({ gitea: '{"teams":["my-team","other.team_1","my-team"]}' });
+    withMetadata({
+      gitea:
+        '{"teams":[{"id":11,"name":"my-team"},{"id":22,"name":"other-team"},{"id":11,"name":"my-team"}]}',
+    });
 
     const results = await service.addMemberToChallengeTeams(
       'challenge-1',
@@ -50,31 +53,35 @@ describe('GiteaTeamMembershipService', () => {
     );
 
     expect(giteaService.addTeamMember.mock.calls).toEqual([
-      ['my-team', 'tc-handle'],
-      ['other.team_1', 'tc-handle'],
+      [11, 'tc-handle'],
+      [22, 'tc-handle'],
     ]);
     expect(results).toEqual([
-      { succeeded: true, teamId: 'my-team' },
-      { succeeded: true, teamId: 'other.team_1' },
+      { succeeded: true, teamId: 11, teamName: 'my-team' },
+      { succeeded: true, teamId: 22, teamName: 'other-team' },
     ]);
   });
 
   it('removes the member from every configured team', async () => {
-    withMetadata({ gitea: '{"teams":["my-team","other-team"]}' });
+    withMetadata({
+      gitea: '{"teams":[{"id":11,"name":"my-team"},{"id":22}]}',
+    });
 
     await service.removeMemberFromChallengeTeams('challenge-1', member);
 
     expect(giteaService.removeTeamMember.mock.calls).toEqual([
-      ['my-team', 'tc-handle'],
-      ['other-team', 'tc-handle'],
+      [11, 'tc-handle'],
+      [22, 'tc-handle'],
     ]);
     expect(giteaService.getUser).not.toHaveBeenCalled();
   });
 
   it('keeps going when a single team fails', async () => {
-    withMetadata({ gitea: '{"teams":["my-team","other-team"]}' });
-    giteaService.addTeamMember.mockImplementation((teamId: string) =>
-      teamId === 'my-team'
+    withMetadata({
+      gitea: '{"teams":[{"id":11,"name":"my-team"},{"id":22}]}',
+    });
+    giteaService.addTeamMember.mockImplementation((teamId: number) =>
+      teamId === 11
         ? Promise.reject(
             Object.assign(new Error('not found'), {
               response: { status: 404 },
@@ -89,23 +96,28 @@ describe('GiteaTeamMembershipService', () => {
     );
 
     expect(results).toEqual([
-      { error: 'status 404: not found', succeeded: false, teamId: 'my-team' },
-      { succeeded: true, teamId: 'other-team' },
+      {
+        error: 'status 404: not found',
+        succeeded: false,
+        teamId: 11,
+        teamName: 'my-team',
+      },
+      { succeeded: true, teamId: 22, teamName: undefined },
     ]);
   });
 
-  it('skips team ids with characters Gitea cannot address', async () => {
+  it('accepts bare ids and skips entries without a usable numeric id', async () => {
     withMetadata({
       gitea:
-        '{"teams":["my-team","has space","has/slash","",42," other.team_1 "]}',
+        '{"teams":[{"id":11,"name":"my-team"},{"name":"no-id"},"my-team","",0,-3,"7.5"," 42 ",13]}',
     });
 
     await service.addMemberToChallengeTeams('challenge-1', member);
 
     expect(giteaService.addTeamMember.mock.calls).toEqual([
-      ['my-team', 'tc-handle'],
-      ['42', 'tc-handle'],
-      ['other.team_1', 'tc-handle'],
+      [11, 'tc-handle'],
+      [42, 'tc-handle'],
+      [13, 'tc-handle'],
     ]);
   });
 
@@ -115,6 +127,10 @@ describe('GiteaTeamMembershipService', () => {
     ['empty gitea value', { gitea: '' }],
     ['unparseable gitea value', { gitea: 'not json' }],
     ['gitea value without teams array', { gitea: '{"teams":"my-team"}' }],
+    [
+      'gitea value with no addressable team',
+      { gitea: '{"teams":["my-team"]}' },
+    ],
   ])('performs no Gitea calls when there is %s', async (_label, metadata) => {
     withMetadata(metadata as Record<string, string | null> | undefined);
 
@@ -129,7 +145,7 @@ describe('GiteaTeamMembershipService', () => {
   });
 
   it('provisions a Gitea account when the handle is unknown', async () => {
-    withMetadata({ gitea: '{"teams":["my-team"]}' });
+    withMetadata({ gitea: '{"teams":[{"id":11,"name":"my-team"}]}' });
     giteaService.getUser.mockResolvedValue(null);
 
     await service.addMemberToChallengeTeams('challenge-1', member);
@@ -140,14 +156,11 @@ describe('GiteaTeamMembershipService', () => {
       handle: 'tc-handle',
       userId: '12345',
     });
-    expect(giteaService.addTeamMember).toHaveBeenCalledWith(
-      'my-team',
-      'tc-handle',
-    );
+    expect(giteaService.addTeamMember).toHaveBeenCalledWith(11, 'tc-handle');
   });
 
   it('does not attempt team membership when provisioning fails', async () => {
-    withMetadata({ gitea: '{"teams":["my-team"]}' });
+    withMetadata({ gitea: '{"teams":[{"id":11,"name":"my-team"}]}' });
     giteaService.getUser.mockResolvedValue(null);
     memberService.getUserEmails.mockResolvedValue([]);
 

@@ -5,11 +5,6 @@ import { GiteaService } from './gitea.service';
 import { MemberService } from './member.service';
 
 /**
- * Characters Gitea accepts in a team identifier.
- */
-const GITEA_TEAM_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
-
-/**
  * Shape of the `gitea` challenge metadata value maintained by Work Manager.
  */
 interface GiteaChallengeMetadata {
@@ -17,10 +12,21 @@ interface GiteaChallengeMetadata {
 }
 
 /**
+ * A Gitea team configured on a challenge.
+ */
+export interface GiteaTeamRef {
+  /** Numeric Gitea team id, the value Gitea team endpoints address teams by. */
+  id: number;
+  /** Team name, kept for logging only. */
+  name?: string;
+}
+
+/**
  * Outcome of a single team membership attempt, aggregated for logging.
  */
 export interface GiteaTeamSyncResult {
-  teamId: string;
+  teamId: number;
+  teamName?: string;
   succeeded: boolean;
   error?: string;
 }
@@ -36,11 +42,12 @@ export interface GiteaMembershipMember {
 /**
  * Keeps Gitea team membership in sync with challenge registrations.
  *
- * Work Manager stores a list of Gitea team ids under the challenge metadata
- * key `gitea` (`{"teams":["my-team","other.team"]}`). Registrations add the member to each
- * team and unregistrations remove them. Every Gitea call is isolated so a
- * misconfigured or stale team id never blocks the remaining teams, and each
- * attempt is logged with its result.
+ * Work Manager stores the Gitea teams picked in the challenge editor under the
+ * challenge metadata key `gitea`
+ * (`{"teams":[{"id":42,"name":"my-team","org":"topcoder"}]}`). Registrations add
+ * the member to each team and unregistrations remove them. Every Gitea call is
+ * isolated so a misconfigured or stale team never blocks the remaining teams,
+ * and each attempt is logged with its result.
  */
 @Injectable()
 export class GiteaTeamMembershipService {
@@ -68,8 +75,8 @@ export class GiteaTeamMembershipService {
     challengeId: string,
     member: GiteaMembershipMember,
   ): Promise<GiteaTeamSyncResult[]> {
-    const teamIds = await this.resolveTeamIds(challengeId);
-    if (teamIds.length === 0) {
+    const teams = await this.resolveTeams(challengeId);
+    if (teams.length === 0) {
       return [];
     }
 
@@ -78,8 +85,8 @@ export class GiteaTeamMembershipService {
       return [];
     }
 
-    const results = await this.runForEachTeam(teamIds, (teamId) =>
-      this.giteaService.addTeamMember(teamId, member.memberHandle),
+    const results = await this.runForEachTeam(teams, (team) =>
+      this.giteaService.addTeamMember(team.id, member.memberHandle),
     );
     this.logSummary('add', challengeId, member, results);
     return results;
@@ -98,26 +105,26 @@ export class GiteaTeamMembershipService {
     challengeId: string,
     member: GiteaMembershipMember,
   ): Promise<GiteaTeamSyncResult[]> {
-    const teamIds = await this.resolveTeamIds(challengeId);
-    if (teamIds.length === 0) {
+    const teams = await this.resolveTeams(challengeId);
+    if (teams.length === 0) {
       return [];
     }
 
-    const results = await this.runForEachTeam(teamIds, (teamId) =>
-      this.giteaService.removeTeamMember(teamId, member.memberHandle),
+    const results = await this.runForEachTeam(teams, (team) =>
+      this.giteaService.removeTeamMember(team.id, member.memberHandle),
     );
     this.logSummary('remove', challengeId, member, results);
     return results;
   }
 
   /**
-   * Reads the challenge metadata and extracts the configured Gitea team ids.
+   * Reads the challenge metadata and extracts the configured Gitea teams.
    *
    * @param challengeId Challenge whose metadata is inspected.
-   * @returns Unique, well-formed team ids. Empty when unset or unparseable.
+   * @returns Unique, well-formed teams. Empty when unset or unparseable.
    * @throws This method does not throw; lookup failures are logged.
    */
-  private async resolveTeamIds(challengeId: string): Promise<string[]> {
+  private async resolveTeams(challengeId: string): Promise<GiteaTeamRef[]> {
     let rawValue: string | null | undefined;
     try {
       const challenge =
@@ -149,24 +156,26 @@ export class GiteaTeamMembershipService {
       return [];
     }
 
-    const teamIds: string[] = [];
+    const teams: GiteaTeamRef[] = [];
     for (const entry of parsed.teams) {
-      const teamId = this.toTeamId(entry);
-      if (teamId === undefined) {
+      const team = this.toTeam(entry);
+      if (team === undefined) {
         this.logger.warn(
-          `Ignoring invalid Gitea team id ${JSON.stringify(entry)} configured on challenge ${challengeId}.`,
+          `Ignoring invalid Gitea team ${JSON.stringify(entry)} configured on challenge ${challengeId}.`,
         );
         continue;
       }
-      if (!teamIds.includes(teamId)) {
-        teamIds.push(teamId);
+      if (!teams.some((existing) => existing.id === team.id)) {
+        teams.push(team);
       }
     }
 
     this.logger.log(
-      `Challenge ${challengeId} is configured with Gitea teams: [${teamIds.join(', ')}].`,
+      `Challenge ${challengeId} is configured with Gitea teams: [${teams
+        .map((team) => this.describeTeam(team))
+        .join(', ')}].`,
     );
-    return teamIds;
+    return teams;
   }
 
   /**
@@ -207,26 +216,62 @@ export class GiteaTeamMembershipService {
   }
 
   /**
-   * Normalizes a configured team id.
+   * Normalizes a configured team entry.
    *
-   * A Gitea team id may only contain alphanumeric characters, dashes,
-   * underscores and dots; anything else cannot address a team and is rejected.
+   * The editor stores `{ id, name }` objects, but challenges configured before
+   * that change may hold a bare id, so both shapes are accepted. Gitea team
+   * endpoints address teams by numeric id, so entries without one are rejected.
    *
-   * @param value Raw team id from challenge metadata.
-   * @returns The trimmed team id, or undefined when the value is invalid.
+   * @param value Raw team entry from challenge metadata.
+   * @returns The team, or undefined when the entry carries no usable id.
    * @throws This method does not throw.
    */
-  private toTeamId(value: unknown): string | undefined {
-    const normalized =
-      typeof value === 'string'
-        ? value.trim()
-        : typeof value === 'number' && Number.isFinite(value)
-          ? String(value)
-          : undefined;
-    if (!normalized || !GITEA_TEAM_ID_PATTERN.test(normalized)) {
+  private toTeam(value: unknown): GiteaTeamRef | undefined {
+    const candidate =
+      typeof value === 'object' && value !== null
+        ? (value as { id?: unknown; name?: unknown })
+        : { id: value };
+
+    const id = this.toTeamId(candidate.id);
+    if (id === undefined) {
       return undefined;
     }
-    return normalized;
+
+    const name =
+      typeof candidate.name === 'string' && candidate.name.trim()
+        ? candidate.name.trim()
+        : undefined;
+
+    return name === undefined ? { id } : { id, name };
+  }
+
+  /**
+   * Coerces a raw metadata value into a numeric Gitea team id.
+   *
+   * @param value Raw id from challenge metadata, a number or a numeric string.
+   * @returns The positive integer id, or undefined when the value is invalid.
+   * @throws This method does not throw.
+   */
+  private toTeamId(value: unknown): number | undefined {
+    const id =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.trim()
+          ? Number(value.trim())
+          : NaN;
+
+    return Number.isInteger(id) && id > 0 ? id : undefined;
+  }
+
+  /**
+   * Renders a team for logs, including its name when one was configured.
+   *
+   * @param team Team to describe.
+   * @returns Either `id` or `id (name)`.
+   * @throws This method does not throw.
+   */
+  private describeTeam(team: GiteaTeamRef): string {
+    return team.name === undefined ? `${team.id}` : `${team.id} (${team.name})`;
   }
 
   /**
@@ -291,25 +336,26 @@ export class GiteaTeamMembershipService {
   /**
    * Applies an operation to each team, isolating and logging per-team failures.
    *
-   * @param teamIds Teams to operate on.
+   * @param teams Teams to operate on.
    * @param operation Gitea call to run for a single team.
    * @returns One result per team, in configuration order.
    * @throws This method does not throw.
    */
   private async runForEachTeam(
-    teamIds: string[],
-    operation: (teamId: string) => Promise<void>,
+    teams: GiteaTeamRef[],
+    operation: (team: GiteaTeamRef) => Promise<void>,
   ): Promise<GiteaTeamSyncResult[]> {
     const results: GiteaTeamSyncResult[] = [];
-    for (const teamId of teamIds) {
+    for (const team of teams) {
       try {
-        await operation(teamId);
-        results.push({ succeeded: true, teamId });
+        await operation(team);
+        results.push({ succeeded: true, teamId: team.id, teamName: team.name });
       } catch (error) {
         results.push({
           error: this.describe(error),
           succeeded: false,
-          teamId,
+          teamId: team.id,
+          teamName: team.name,
         });
       }
     }
@@ -333,13 +379,17 @@ export class GiteaTeamMembershipService {
     results: GiteaTeamSyncResult[],
   ): void {
     for (const result of results) {
+      const team = this.describeTeam({
+        id: result.teamId,
+        name: result.teamName,
+      });
       if (result.succeeded) {
         this.logger.log(
-          `Gitea team sync (${action}) succeeded: challenge ${challengeId}, team ${result.teamId}, handle ${member.memberHandle}.`,
+          `Gitea team sync (${action}) succeeded: challenge ${challengeId}, team ${team}, handle ${member.memberHandle}.`,
         );
       } else {
         this.logger.error(
-          `Gitea team sync (${action}) failed: challenge ${challengeId}, team ${result.teamId}, handle ${member.memberHandle}: ${result.error}`,
+          `Gitea team sync (${action}) failed: challenge ${challengeId}, team ${team}, handle ${member.memberHandle}: ${result.error}`,
         );
       }
     }
