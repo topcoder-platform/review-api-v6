@@ -16,8 +16,12 @@ import { PaginationDto } from 'src/dto/pagination.dto';
 import { ReviewResponseDto } from 'src/dto/review.dto';
 import { SortDto } from 'src/dto/sort.dto';
 import {
+  MAX_DUPLICATE_CHECK_SUBMISSION_IDS,
   SubmissionQueryDto,
   ManualSubmissionUploadRequestDto,
+  SubmissionDuplicateDto,
+  SubmissionDuplicatesQueryDto,
+  SubmissionDuplicatesResponse,
   SubmissionRequestDto,
   SubmissionResponseDto,
   SubmissionUpdateRequestDto,
@@ -101,6 +105,29 @@ const DESIGN_LIMITED_SUBMISSION_TYPES = new Set<SubmissionType>([
   SubmissionType.CONTEST_SUBMISSION,
   SubmissionType.CHECKPOINT_SUBMISSION,
 ]);
+/**
+ * Challenge resource role name fragments allowed to run duplicate detection.
+ * Matches challenge Reviewers/Screeners, Copilots, and Managers (PMs).
+ */
+const DUPLICATE_DETECTION_RESOURCE_ROLE_FRAGMENTS = [
+  'reviewer',
+  'screener',
+  'copilot',
+  'manager',
+];
+/** Statuses that never surface as duplicate matches. */
+const DUPLICATE_DETECTION_EXCLUDED_STATUSES: SubmissionStatus[] = [
+  SubmissionStatus.DELETED,
+];
+
+type DuplicateSubmissionCandidate = {
+  id: string;
+  challengeId: string | null;
+  memberId: string | null;
+  submittedDate: Date | null;
+  createdAt: Date;
+  sha256Hash: string | null;
+};
 
 /**
  * Parses optional boolean-like query parameters used by submission listing filters.
@@ -4524,6 +4551,301 @@ export class SubmissionService {
         details: errorResponse.details,
       });
     }
+  }
+
+  /**
+   * Finds submissions that share the exact SHA-256 digest of one or more
+   * submissions belonging to a challenge.
+   *
+   * @param authUser - The authenticated caller.
+   * @param challengeId - Challenge that owns every requested submission.
+   * @param query - Requested submission ids and the cross-challenge flag.
+   * @returns Duplicate matches keyed by the requested submission id.
+   * @throws BadRequestException when no ids are supplied, too many are supplied, or an id belongs to another challenge.
+   * @throws ForbiddenException when the caller is not a challenge reviewer, copilot, manager, PM, or admin.
+   * @throws NotFoundException when a requested submission does not exist.
+   */
+  async findDuplicateSubmissions(
+    authUser: JwtUser,
+    challengeId: string,
+    query: SubmissionDuplicatesQueryDto,
+  ): Promise<SubmissionDuplicatesResponse> {
+    const normalizedChallengeId = String(challengeId ?? '').trim();
+    if (!normalizedChallengeId) {
+      throw new BadRequestException({
+        message: 'Challenge ID is required',
+        code: 'CHALLENGE_ID_REQUIRED',
+      });
+    }
+
+    const requestedIds = Array.from(
+      new Set(
+        (Array.isArray(query?.submissionId)
+          ? query.submissionId
+          : query?.submissionId
+            ? [query.submissionId as unknown as string]
+            : []
+        )
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+
+    if (!requestedIds.length) {
+      throw new BadRequestException({
+        message: 'At least one submissionId query parameter is required',
+        code: 'SUBMISSION_IDS_REQUIRED',
+      });
+    }
+    if (requestedIds.length > MAX_DUPLICATE_CHECK_SUBMISSION_IDS) {
+      throw new BadRequestException({
+        message: `At most ${MAX_DUPLICATE_CHECK_SUBMISSION_IDS} submissionId values can be checked per request`,
+        code: 'TOO_MANY_SUBMISSION_IDS',
+        details: {
+          submitted: requestedIds.length,
+          maximum: MAX_DUPLICATE_CHECK_SUBMISSION_IDS,
+        },
+      });
+    }
+
+    await this.ensureChallengeWhitelistAccess(authUser, normalizedChallengeId);
+    await this.ensureDuplicateDetectionAccess(authUser, normalizedChallengeId);
+
+    const requestedSubmissions = await this.prisma.submission.findMany({
+      where: { id: { in: requestedIds } },
+      select: { id: true, challengeId: true, sha256Hash: true },
+    });
+
+    const byId = new Map(requestedSubmissions.map((row) => [row.id, row]));
+    const missingIds = requestedIds.filter((id) => !byId.has(id));
+    if (missingIds.length) {
+      throw new NotFoundException({
+        message: `Submission(s) not found: ${missingIds.join(', ')}`,
+        code: 'SUBMISSIONS_NOT_FOUND',
+        details: { submissionIds: missingIds },
+      });
+    }
+    const foreignIds = requestedIds.filter(
+      (id) => byId.get(id)?.challengeId !== normalizedChallengeId,
+    );
+    if (foreignIds.length) {
+      throw new BadRequestException({
+        message: `Submission(s) do not belong to challenge ${normalizedChallengeId}: ${foreignIds.join(', ')}`,
+        code: 'SUBMISSION_CHALLENGE_MISMATCH',
+        details: {
+          challengeId: normalizedChallengeId,
+          submissionIds: foreignIds,
+        },
+      });
+    }
+
+    const hashById = new Map<string, string>();
+    for (const id of requestedIds) {
+      const hash = String(byId.get(id)?.sha256Hash ?? '')
+        .trim()
+        .toLowerCase();
+      if (hash) {
+        hashById.set(id, hash);
+      }
+    }
+
+    const response: SubmissionDuplicatesResponse = {};
+    for (const id of requestedIds) {
+      response[id] = { duplicates: [] };
+    }
+
+    const hashes = Array.from(new Set(hashById.values()));
+    if (!hashes.length) {
+      this.logger.log(
+        `No SHA-256 digests available for duplicate detection on challenge ${normalizedChallengeId}`,
+      );
+      return response;
+    }
+
+    const crossChallenge = query?.crossChallenge === true;
+    const candidates: DuplicateSubmissionCandidate[] =
+      await this.prisma.submission.findMany({
+        where: {
+          sha256Hash: { in: hashes },
+          status: { notIn: DUPLICATE_DETECTION_EXCLUDED_STATUSES },
+          ...(crossChallenge ? {} : { challengeId: normalizedChallengeId }),
+        },
+        select: {
+          id: true,
+          challengeId: true,
+          memberId: true,
+          submittedDate: true,
+          createdAt: true,
+          sha256Hash: true,
+        },
+      });
+
+    const candidatesByHash = new Map<string, DuplicateSubmissionCandidate[]>();
+    for (const candidate of candidates) {
+      const hash = String(candidate.sha256Hash ?? '')
+        .trim()
+        .toLowerCase();
+      if (!hash) {
+        continue;
+      }
+      const bucket = candidatesByHash.get(hash);
+      if (bucket) {
+        bucket.push(candidate);
+      } else {
+        candidatesByHash.set(hash, [candidate]);
+      }
+    }
+
+    const challengeTitles = await this.resolveChallengeTitles(
+      candidates.map((candidate) => candidate.challengeId),
+    );
+
+    for (const [id, hash] of hashById.entries()) {
+      const duplicates = (candidatesByHash.get(hash) ?? [])
+        .filter((candidate) => candidate.id !== id)
+        .map(
+          (candidate): SubmissionDuplicateDto => ({
+            submissionId: candidate.id,
+            challenge: candidate.challengeId ?? null,
+            challengeTitle: candidate.challengeId
+              ? (challengeTitles.get(candidate.challengeId) ?? null)
+              : null,
+            user: candidate.memberId ?? null,
+            submittedAt: candidate.submittedDate ?? candidate.createdAt ?? null,
+          }),
+        )
+        .sort((a, b) => {
+          const left = a.submittedAt ? a.submittedAt.getTime() : 0;
+          const right = b.submittedAt ? b.submittedAt.getTime() : 0;
+          if (left !== right) {
+            return right - left;
+          }
+          return a.submissionId.localeCompare(b.submissionId);
+        });
+      response[id] = { duplicates };
+    }
+
+    return response;
+  }
+
+  /**
+   * Resolves challenge names for duplicate matches, tolerating lookup failures.
+   *
+   * @param challengeIds - Challenge ids referenced by duplicate matches.
+   * @returns Map of challenge id to challenge name for the ids that resolved.
+   */
+  private async resolveChallengeTitles(
+    challengeIds: (string | null | undefined)[],
+  ): Promise<Map<string, string>> {
+    const titles = new Map<string, string>();
+    const ids = Array.from(
+      new Set(
+        challengeIds
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+    if (!ids.length) {
+      return titles;
+    }
+
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      getChallengeSummaries?: (
+        challengeIds: string[],
+      ) => Promise<ChallengeData[]>;
+    };
+    if (typeof challengeService.getChallengeSummaries !== 'function') {
+      return titles;
+    }
+
+    try {
+      const summaries = await challengeService.getChallengeSummaries(ids);
+      for (const summary of summaries ?? []) {
+        if (summary?.id && summary?.name) {
+          titles.set(summary.id, summary.name);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve challenge names for duplicate submissions: ${(error as Error)?.message}`,
+      );
+    }
+
+    return titles;
+  }
+
+  /**
+   * Authorizes duplicate detection for admins, scoped machines, PMs, and
+   * challenge Reviewer/Screener/Copilot/Manager resources.
+   *
+   * @param authUser - The authenticated caller.
+   * @param challengeId - Challenge whose resources are evaluated.
+   * @throws ForbiddenException when the caller holds none of the allowed roles.
+   */
+  private async ensureDuplicateDetectionAccess(
+    authUser: JwtUser,
+    challengeId: string,
+  ): Promise<void> {
+    if (authUser?.isMachine) {
+      const scopes = authUser.scopes ?? [];
+      if (
+        !scopes.includes('read:submission') &&
+        !scopes.includes('all:submission')
+      ) {
+        throw new ForbiddenException({
+          message:
+            'M2M token missing required scope to check duplicate submissions',
+          code: 'FORBIDDEN_M2M_SCOPE',
+        });
+      }
+      return;
+    }
+
+    if (authUser && isAdmin(authUser)) {
+      return;
+    }
+
+    const tokenRoles = (authUser?.roles ?? []).map((role) =>
+      String(role ?? '')
+        .trim()
+        .toLowerCase(),
+    );
+    if (tokenRoles.includes(String(UserRole.ProjectManager).toLowerCase())) {
+      return;
+    }
+
+    const requester = String(authUser?.userId ?? '').trim();
+    if (requester) {
+      let resources: ResourceInfo[] = [];
+      try {
+        resources = await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          requester,
+        );
+      } catch (error) {
+        // If challenge roles cannot be confirmed, fall through and deny.
+        this.logger.warn(
+          `Could not load challenge ${challengeId} roles for member ${requester}: ${(error as Error)?.message}`,
+        );
+      }
+      for (const resource of resources ?? []) {
+        const roleName = (resource?.roleName ?? '').toLowerCase();
+        if (
+          DUPLICATE_DETECTION_RESOURCE_ROLE_FRAGMENTS.some((fragment) =>
+            roleName.includes(fragment),
+          )
+        ) {
+          return;
+        }
+      }
+    }
+
+    throw new ForbiddenException({
+      message:
+        'Only a challenge reviewer, copilot, manager/PM, or an admin can check for duplicate submissions',
+      code: 'FORBIDDEN_DUPLICATE_SUBMISSION_CHECK',
+      details: { challengeId, requester },
+    });
   }
 
   async getSubmission(
