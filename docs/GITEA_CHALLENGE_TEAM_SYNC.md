@@ -6,18 +6,11 @@ they register for and unregister from a challenge.
 ## Challenge configuration
 
 Work Manager writes the configuration into challenge metadata under the `gitea`
-key. The value is a JSON object holding a list of unique Gitea team ids:
+key. The value is a JSON object holding a list of Gitea team references:
 
 ```json
-{ "teams": ["my-team", "other.team_1"] }
+{ "teams": [{"id": "string", "name": "string", "organization": "string"}] }
 ```
-
-A Gitea team id may only contain alphanumeric characters, dashes (`-`),
-underscores (`_`) and dots (`.`).
-
-Team ids are not validated when the challenge is saved. Values that contain any
-other character, or that point at teams which do not exist, are logged and
-skipped here.
 
 ## Kafka topics
 

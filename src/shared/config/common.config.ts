@@ -81,7 +81,13 @@ export const CommonConfig = {
     // Identifier of the "Topcoder" authentication source configured in Gitea.
     // New Gitea accounts are provisioned against this source so that members
     // sign in with their existing Topcoder (auth0) credentials.
-    authSourceId: Number(process.env.GITEA_AUTH_SOURCE_ID ?? '1'),
+    authSourceId: (() => {
+      const parsed = Number.parseInt(
+        process.env.GITEA_AUTH_SOURCE_ID ?? '1',
+        10,
+      );
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+    })(),
     // Visibility applied to Gitea accounts provisioned by this service.
     userVisibility: process.env.GITEA_USER_VISIBILITY ?? 'public',
     // Challenge metadata key holding the Gitea configuration for a challenge.
