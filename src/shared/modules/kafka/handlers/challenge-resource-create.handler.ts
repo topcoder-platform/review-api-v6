@@ -5,6 +5,7 @@ import {
 } from '../../global/gitea-team-membership.service';
 import { ChallengeResourceMembershipHandler } from './challenge-resource-membership.base';
 import { KafkaHandlerRegistry } from '../kafka-handler.registry';
+import { ResourcePrismaService } from '../../global/resource-prisma.service';
 
 /**
  * Adds challenge registrants to the Gitea teams configured on the challenge.
@@ -22,13 +23,20 @@ export class ChallengeResourceCreateHandler extends ChallengeResourceMembershipH
    *
    * @param handlerRegistry Registry used to subscribe this handler's topic.
    * @param membershipService Gitea team reconciliation service.
+   * @param resourcePrisma Resource database used to resolve resource role names.
    * @throws This constructor does not intentionally throw.
    */
   constructor(
     handlerRegistry: KafkaHandlerRegistry,
     membershipService: GiteaTeamMembershipService,
+    resourcePrisma: ResourcePrismaService,
   ) {
-    super(handlerRegistry, membershipService, 'ChallengeResourceCreateHandler');
+    super(
+      handlerRegistry,
+      membershipService,
+      resourcePrisma,
+      'ChallengeResourceCreateHandler',
+    );
   }
 
   /**

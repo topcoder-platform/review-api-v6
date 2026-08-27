@@ -42,7 +42,9 @@ export class AiPhaseOpenedHandler
 
       const challengeId = String(message.payload?.challengeId ?? '').trim();
       if (!challengeId) {
-        this.logger.warn('AI phase opened event missing challengeId; skipping.');
+        this.logger.warn(
+          'AI phase opened event missing challengeId; skipping.',
+        );
         return;
       }
 

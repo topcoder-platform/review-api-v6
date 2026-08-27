@@ -5,6 +5,7 @@ import {
   GiteaTeamMembershipService,
 } from '../../global/gitea-team-membership.service';
 import { LoggerService } from '../../global/logger.service';
+import { ResourcePrismaService } from '../../global/resource-prisma.service';
 import { BaseEventHandler } from '../base-event.handler';
 import { KafkaHandlerRegistry } from '../kafka-handler.registry';
 
@@ -43,9 +44,10 @@ function toNonEmptyString(value: unknown): string | undefined {
 /**
  * Shared plumbing for the challenge registration and unregistration handlers.
  *
- * Both topics carry the same resource payload and both only care about
- * submitter resources, so validation and role filtering live here while the
- * subclass supplies the topic and the Gitea reconciliation direction.
+ * Both topics carry the same resource payload and both only care about the
+ * roles that take part in the challenge's Gitea repositories — submitters and
+ * reviewers — so validation and role filtering live here while the subclass
+ * supplies the topic and the Gitea reconciliation direction.
  */
 export abstract class ChallengeResourceMembershipHandler
   extends BaseEventHandler
@@ -59,9 +61,13 @@ export abstract class ChallengeResourceMembershipHandler
    * @param loggerName Logger context name for the concrete handler.
    * @throws This constructor does not intentionally throw.
    */
+  /** Memoized `roleId -> lowercase role name` lookups; resource roles are static. */
+  private readonly roleNameCache = new Map<string, string | undefined>();
+
   protected constructor(
     private readonly handlerRegistry: KafkaHandlerRegistry,
     protected readonly membershipService: GiteaTeamMembershipService,
+    private readonly resourcePrisma: ResourcePrismaService,
     loggerName: string,
   ) {
     super(LoggerService.forRoot(loggerName));
@@ -92,7 +98,7 @@ export abstract class ChallengeResourceMembershipHandler
   }
 
   /**
-   * Handles one resource event, filtering out non-submitter resources.
+   * Handles one resource event, filtering out roles that are not synced.
    *
    * Gitea configuration problems are logged rather than rethrown so a single
    * challenge cannot stall the consumer or exhaust its retry budget.
@@ -119,9 +125,9 @@ export abstract class ChallengeResourceMembershipHandler
       }
 
       const roleId = toNonEmptyString(payload.roleId);
-      if (roleId !== CommonConfig.roles.submitterRoleId) {
+      if (!roleId || !(await this.isSyncedRole(roleId))) {
         this.logger.log(
-          `Resource role ${roleId ?? 'unknown'} is not a submitter role. Skipping Gitea team sync.`,
+          `Resource role ${roleId ?? 'unknown'} is not synced with Gitea teams. Skipping Gitea team sync.`,
         );
         return;
       }
@@ -144,5 +150,68 @@ export abstract class ChallengeResourceMembershipHandler
         error,
       );
     }
+  }
+
+  /**
+   * Decides whether a resource role takes part in the Gitea team sync.
+   *
+   * Submitters are recognized by the configured role id so the common case
+   * needs no lookup. Every other role is matched by name, because reviewers are
+   * spread over several roles (reviewer, iterative reviewer, specification
+   * reviewer, ...) whose ids differ per environment.
+   *
+   * @param roleId Resource role id carried by the event.
+   * @returns True when members holding the role should be synced.
+   * @throws This method does not throw; lookup failures resolve to false.
+   */
+  private async isSyncedRole(roleId: string): Promise<boolean> {
+    if (roleId === CommonConfig.roles.submitterRoleId) {
+      return true;
+    }
+
+    const roleName = await this.resolveRoleName(roleId);
+    if (!roleName) {
+      return false;
+    }
+
+    return CommonConfig.gitea.syncedRoleNameFragments.some((fragment) =>
+      roleName.includes(fragment),
+    );
+  }
+
+  /**
+   * Resolves and memoizes the lowercase name of a resource role.
+   *
+   * @param roleId Resource role id carried by the event.
+   * @returns The lowercase role name, or undefined when it cannot be resolved.
+   * @throws This method does not throw; lookup failures are logged.
+   */
+  private async resolveRoleName(roleId: string): Promise<string | undefined> {
+    if (this.roleNameCache.has(roleId)) {
+      return this.roleNameCache.get(roleId);
+    }
+
+    let roleName: string | undefined;
+    try {
+      const role = await this.resourcePrisma.resourceRole.findUnique({
+        where: { id: roleId },
+        select: { nameLower: true, name: true },
+      });
+      roleName = (role?.nameLower ?? role?.name)?.toLowerCase();
+      if (!roleName) {
+        this.logger.warn(
+          `Resource role ${roleId} was not found in the resource database. Skipping Gitea team sync.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Unable to resolve resource role ${roleId} for Gitea team sync`,
+        error,
+      );
+      return undefined;
+    }
+
+    this.roleNameCache.set(roleId, roleName);
+    return roleName;
   }
 }

@@ -92,6 +92,15 @@ export const CommonConfig = {
     userVisibility: process.env.GITEA_USER_VISIBILITY ?? 'public',
     // Challenge metadata key holding the Gitea configuration for a challenge.
     challengeMetadataKey: 'gitea',
+    // Resource role names whose members are synced with the challenge's Gitea
+    // teams. Matched as lowercase substrings of the resource role name, so
+    // "reviewer" also covers iterative, specification and failure reviewers.
+    syncedRoleNameFragments: (
+      process.env.GITEA_TEAM_SYNC_ROLE_NAMES ?? 'submitter,reviewer'
+    )
+      .split(',')
+      .map((fragment) => fragment.trim().toLowerCase())
+      .filter((fragment) => fragment.length > 0),
     // Gitea organizations searched when the challenge editor looks up teams.
     // Team names are only unique within an organization, so every organization
     // teams may be picked from has to be listed here (comma separated).
