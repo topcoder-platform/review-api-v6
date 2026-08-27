@@ -1,24 +1,6 @@
 import { ReviewApplicationRole } from '@prisma/client';
 import { ReviewOpportunityType } from 'src/dto/reviewOpportunity.dto';
 
-/**
- * Parses a comma separated environment value into a unique, trimmed list.
- *
- * @param value Raw environment value.
- * @returns The entries, in configuration order, without blanks or duplicates.
- * @throws This function never throws.
- */
-function parseCsvEnv(value: string | undefined): string[] {
-  return Array.from(
-    new Set(
-      (value ?? '')
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter((entry) => !!entry),
-    ),
-  );
-}
-
 // Build payment config for each review opportunity config.
 const paymentConfig: Record<string, Record<string, number>> = {};
 
@@ -101,10 +83,16 @@ export const CommonConfig = {
       .split(',')
       .map((fragment) => fragment.trim().toLowerCase())
       .filter((fragment) => fragment.length > 0),
-    // Gitea organizations searched when the challenge editor looks up teams.
-    // Team names are only unique within an organization, so every organization
-    // teams may be picked from has to be listed here (comma separated).
-    organizations: parseCsvEnv(process.env.GITEA_ORGANIZATIONS ?? 'topcoder'),
+    // How long a caller's Gitea organizations are cached for. Org membership
+    // changes rarely, and the challenge editor searches teams on every
+    // keystroke, so this keeps the identity lookups off the hot path.
+    organizationsCacheTtlMs: (() => {
+      const parsed = Number.parseInt(
+        process.env.GITEA_ORGANIZATIONS_CACHE_TTL_MS ?? '300000',
+        10,
+      );
+      return Number.isInteger(parsed) && parsed >= 0 ? parsed : 300000;
+    })(),
   },
   // configs of payment for each review type
   reviewPaymentConfig: paymentConfig,

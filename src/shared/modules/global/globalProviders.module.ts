@@ -32,6 +32,7 @@ import { SubmissionConfirmationEmailService } from './submission-confirmation-em
 import { SubmissionConfirmationEmailRetryService } from './submission-confirmation-email-retry.service';
 import { SubmissionPreviewService } from './submission-preview.service';
 import { GiteaTeamMembershipService } from './gitea-team-membership.service';
+import { GiteaTeamSearchService } from './gitea-team-search.service';
 import { ChallengeResourceCreateHandler } from '../kafka/handlers/challenge-resource-create.handler';
 import { ChallengeResourceDeleteHandler } from '../kafka/handlers/challenge-resource-delete.handler';
 
@@ -66,6 +67,7 @@ import { ChallengeResourceDeleteHandler } from '../kafka/handlers/challenge-reso
     SubmissionBaseService,
     GiteaService,
     GiteaTeamMembershipService,
+    GiteaTeamSearchService,
     SubmissionScanCompleteOrchestrator,
     AiPhaseOpenedOrchestrator,
     AiWorkflowQueueService,
@@ -100,6 +102,7 @@ import { ChallengeResourceDeleteHandler } from '../kafka/handlers/challenge-reso
     SubmissionBaseService,
     GiteaService,
     GiteaTeamMembershipService,
+    GiteaTeamSearchService,
     SubmissionScanCompleteOrchestrator,
     AiPhaseOpenedOrchestrator,
     AiWorkflowQueueService,
