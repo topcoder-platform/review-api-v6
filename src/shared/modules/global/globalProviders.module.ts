@@ -31,6 +31,9 @@ import { SubmissionNotificationCreateHandler } from '../kafka/handlers/submissio
 import { SubmissionConfirmationEmailService } from './submission-confirmation-email.service';
 import { SubmissionConfirmationEmailRetryService } from './submission-confirmation-email-retry.service';
 import { SubmissionPreviewService } from './submission-preview.service';
+import { GiteaTeamMembershipService } from './gitea-team-membership.service';
+import { ChallengeResourceCreateHandler } from '../kafka/handlers/challenge-resource-create.handler';
+import { ChallengeResourceDeleteHandler } from '../kafka/handlers/challenge-resource-delete.handler';
 
 // Global module for providing global providers
 // Add any provider you want to be global here
@@ -62,6 +65,7 @@ import { SubmissionPreviewService } from './submission-preview.service';
     MemberService,
     SubmissionBaseService,
     GiteaService,
+    GiteaTeamMembershipService,
     SubmissionScanCompleteOrchestrator,
     AiPhaseOpenedOrchestrator,
     AiWorkflowQueueService,
@@ -70,6 +74,8 @@ import { SubmissionPreviewService } from './submission-preview.service';
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
     SubmissionNotificationCreateHandler,
+    ChallengeResourceCreateHandler,
+    ChallengeResourceDeleteHandler,
     SubmissionConfirmationEmailService,
     SubmissionConfirmationEmailRetryService,
     SubmissionPreviewService,
@@ -93,6 +99,7 @@ import { SubmissionPreviewService } from './submission-preview.service';
     MemberService,
     SubmissionBaseService,
     GiteaService,
+    GiteaTeamMembershipService,
     SubmissionScanCompleteOrchestrator,
     AiPhaseOpenedOrchestrator,
     AiWorkflowQueueService,
@@ -100,6 +107,8 @@ import { SubmissionPreviewService } from './submission-preview.service';
     AiReviewerDecisionMakerService,
     SubmissionScanCompleteHandler,
     SubmissionNotificationCreateHandler,
+    ChallengeResourceCreateHandler,
+    ChallengeResourceDeleteHandler,
     SubmissionConfirmationEmailService,
     SubmissionPreviewService,
     AiPhaseOpenedHandler,

@@ -1,6 +1,24 @@
 import { ReviewApplicationRole } from '@prisma/client';
 import { ReviewOpportunityType } from 'src/dto/reviewOpportunity.dto';
 
+/**
+ * Parses a comma separated environment value into a unique, trimmed list.
+ *
+ * @param value Raw environment value.
+ * @returns The entries, in configuration order, without blanks or duplicates.
+ * @throws This function never throws.
+ */
+function parseCsvEnv(value: string | undefined): string[] {
+  return Array.from(
+    new Set(
+      (value ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => !!entry),
+    ),
+  );
+}
+
 // Build payment config for each review opportunity config.
 const paymentConfig: Record<string, Record<string, number>> = {};
 
@@ -57,6 +75,36 @@ export const CommonConfig = {
   roles: {
     submitterRoleId:
       process.env.SUBMITTER_ROLE_ID ?? '732339e7-8e30-49d7-9198-cccf9451e221',
+  },
+  // Gitea configuration
+  gitea: {
+    // Identifier of the "Topcoder" authentication source configured in Gitea.
+    // New Gitea accounts are provisioned against this source so that members
+    // sign in with their existing Topcoder (auth0) credentials.
+    authSourceId: (() => {
+      const parsed = Number.parseInt(
+        process.env.GITEA_AUTH_SOURCE_ID ?? '1',
+        10,
+      );
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+    })(),
+    // Visibility applied to Gitea accounts provisioned by this service.
+    userVisibility: process.env.GITEA_USER_VISIBILITY ?? 'public',
+    // Challenge metadata key holding the Gitea configuration for a challenge.
+    challengeMetadataKey: 'gitea',
+    // Resource role names whose members are synced with the challenge's Gitea
+    // teams. Matched as lowercase substrings of the resource role name, so
+    // "reviewer" also covers iterative, specification and failure reviewers.
+    syncedRoleNameFragments: (
+      process.env.GITEA_TEAM_SYNC_ROLE_NAMES ?? 'submitter,reviewer'
+    )
+      .split(',')
+      .map((fragment) => fragment.trim().toLowerCase())
+      .filter((fragment) => fragment.length > 0),
+    // Gitea organizations searched when the challenge editor looks up teams.
+    // Team names are only unique within an organization, so every organization
+    // teams may be picked from has to be listed here (comma separated).
+    organizations: parseCsvEnv(process.env.GITEA_ORGANIZATIONS ?? 'topcoder'),
   },
   // configs of payment for each review type
   reviewPaymentConfig: paymentConfig,
