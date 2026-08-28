@@ -20,7 +20,7 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 
 @ApiTags('Gitea Teams')
 @ApiBearerAuth()
-@Controller('/gitea/teams')
+@Controller('/reviews/gitea/teams')
 export class GiteaTeamController {
   constructor(
     private readonly giteaTeamSearchService: GiteaTeamSearchService,
