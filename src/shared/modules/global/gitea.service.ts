@@ -10,6 +10,15 @@ import { Api, Repository, User } from 'src/shared/clients/gitea/gitea.client';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { CommonConfig } from 'src/shared/config/common.config';
 
+/** Page size used when reading the organizations a Gitea user belongs to. */
+const GITEA_ORGANIZATIONS_PAGE_SIZE = 50;
+
+/** Safety bound on the number of organization pages read for one user. */
+const GITEA_ORGANIZATIONS_MAX_PAGES = 20;
+
+/** Number of candidates requested when looking a Gitea user up by email. */
+const GITEA_USER_SEARCH_LIMIT = 10;
+
 export interface GiteaUserProvisionInput {
   /** Topcoder handle, used verbatim as the Gitea username. */
   handle: string;
@@ -290,6 +299,87 @@ export class GiteaService {
   }
 
   /**
+   * Looks a Gitea user up by email address.
+   *
+   * Gitea only matches emails for privileged tokens and `q` is a fuzzy search,
+   * so candidates are filtered down to an exact, case-insensitive email match.
+   *
+   * @param email Email address to look for.
+   * @returns The matching Gitea user, or null when there is none.
+   * @throws Propagates non-404 failures raised by the Gitea API.
+   */
+  async findUserByEmail(email: string): Promise<User | null> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      return null;
+    }
+
+    try {
+      const response = await this.giteaClient.users.userSearch({
+        q: normalizedEmail,
+        limit: GITEA_USER_SEARCH_LIMIT,
+      });
+
+      return (
+        (response.data?.data ?? []).find(
+          (candidate) =>
+            candidate.email?.trim().toLowerCase() === normalizedEmail,
+        ) ?? null
+      );
+    } catch (error) {
+      if (GiteaService.resolveErrorStatus(error) === 404) {
+        return null;
+      }
+      this.logger.error(
+        `Error searching Gitea users by email. status code: ${GiteaService.resolveErrorStatus(error)}, message: ${error?.message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Lists the organizations a Gitea user belongs to.
+   *
+   * `GET /users/{username}/orgs` only includes the user's private
+   * organizations when the request is made with an administrator token, which
+   * is what this service authenticates with.
+   *
+   * @param username Gitea username whose organizations are read.
+   * @returns The organization names, in the order Gitea returns them.
+   * @throws Propagates Gitea API failures.
+   */
+  async listUserOrganizations(username: string): Promise<string[]> {
+    const organizations: string[] = [];
+    const seen = new Set<string>();
+
+    for (let page = 1; page <= GITEA_ORGANIZATIONS_MAX_PAGES; page += 1) {
+      const response = await this.giteaClient.users.orgListUserOrgs(username, {
+        page,
+        limit: GITEA_ORGANIZATIONS_PAGE_SIZE,
+      });
+      const pageOrganizations = response.data ?? [];
+
+      for (const organization of pageOrganizations) {
+        // `username` is the deprecated alias Gitea still fills in on old versions.
+        const name = (organization.name ?? organization.username ?? '').trim();
+        if (name && !seen.has(name)) {
+          seen.add(name);
+          organizations.push(name);
+        }
+      }
+
+      if (pageOrganizations.length < GITEA_ORGANIZATIONS_PAGE_SIZE) {
+        return organizations;
+      }
+    }
+
+    this.logger.warn(
+      `Stopped listing organizations for Gitea user ${username} after ${GITEA_ORGANIZATIONS_MAX_PAGES} pages; teams in further organizations will not be searched.`,
+    );
+    return organizations;
+  }
+
+  /**
    * Ensures a Gitea account exists for the given Topcoder member, creating one
    * against the Topcoder authentication source when it is missing.
    *
@@ -357,30 +447,26 @@ export class GiteaService {
   }
 
   /**
-   * Searches the configured Gitea organizations for teams matching a keyword.
+   * Searches the given organizations for teams matching a keyword.
    *
    * Team names are only unique within an organization, so each match is
    * returned with the organization owning it and callers keep the numeric team
-   * id. The organizations searched come from configuration
-   * (`GITEA_ORGANIZATIONS`). A single organization failing its search never
-   * hides the matches found in the others.
+   * id. A single organization failing its search never hides the matches found
+   * in the others.
    *
    * @param keyword Free text matched against team names.
    * @param limit Maximum number of matches to return.
+   * @param organizations Organizations to search, usually the ones the caller belongs to.
    * @returns Matches ordered with exact name matches first, then by name.
    * @throws This method does not throw; per-organization failures are logged.
    */
-  async searchTeams(keyword: string, limit: number): Promise<GiteaTeamMatch[]> {
+  async searchTeams(
+    keyword: string,
+    limit: number,
+    organizations: string[],
+  ): Promise<GiteaTeamMatch[]> {
     const normalizedKeyword = keyword.trim();
-    if (!normalizedKeyword) {
-      return [];
-    }
-
-    const organizations = CommonConfig.gitea.organizations;
-    if (organizations.length === 0) {
-      this.logger.warn(
-        'No Gitea organizations are configured (GITEA_ORGANIZATIONS), so no team can be found.',
-      );
+    if (!normalizedKeyword || organizations.length === 0) {
       return [];
     }
 
