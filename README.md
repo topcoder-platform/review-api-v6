@@ -13,7 +13,7 @@
 
 Review API built on modern frameworks for managing all review-related Topcoder needs.
 
-Use Node.js 26.5.0 (see `.nvmrc`) and pnpm 11.15.1 for local development and builds.
+Use Node.js 26.5.1 (see `.nvmrc`) and pnpm 11.15.1 for local development and builds.
 
 ## Project setup
 
