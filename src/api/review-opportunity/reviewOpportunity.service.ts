@@ -88,8 +88,9 @@ export class ReviewOpportunityService {
    * filters. The review database returns only lightweight challenge IDs before
    * the challenge database applies track, type, submission-count, title, and
    * lifecycle rules, avoiding hydration of every opportunity. Open work still
-   * requires an ACTIVE challenge, while closed/cancelled history remains
-   * discoverable after the challenge completes.
+   * requires an ACTIVE challenge. A legacy OPEN row whose challenge is now
+   * COMPLETED is treated as CLOSED so historical work remains discoverable
+   * even when no writer synchronized the two databases.
    *
    * @param dto - Validated search, sort, and pagination filters.
    * @param authUser - Optional caller used for whitelist and application state.
@@ -108,6 +109,16 @@ export class ReviewOpportunityService {
       const trackFilterIds = await this.resolveTrackFilters(dto.tracks);
       const typeFilterIds = await this.resolveTypeFilters(dto.types);
       const userId = this.getUserId(authUser);
+      const requestedStatuses = dto.statuses?.length
+        ? dto.statuses
+        : [ReviewOpportunityStatus.OPEN];
+      const candidateStatuses = [...requestedStatuses];
+      if (
+        requestedStatuses.includes(ReviewOpportunityStatus.CLOSED) &&
+        !candidateStatuses.includes(ReviewOpportunityStatus.OPEN)
+      ) {
+        candidateStatuses.push(ReviewOpportunityStatus.OPEN);
+      }
       if (
         (dto.appliedByMe !== undefined || dto.applicationStatuses?.length) &&
         !userId
@@ -120,9 +131,7 @@ export class ReviewOpportunityService {
 
       const where: Prisma.reviewOpportunityWhereInput = {
         status: {
-          in: (dto.statuses?.length
-            ? dto.statuses
-            : [ReviewOpportunityStatus.OPEN]) as any,
+          in: candidateStatuses as any,
         },
       };
       if (dto.paymentFrom !== undefined || dto.paymentTo !== undefined) {
@@ -228,39 +237,55 @@ export class ReviewOpportunityService {
       if (!visibleChallengeIds.length) {
         return this.emptySearchResult(dto);
       }
-      const requestedStatuses = dto.statuses?.length
-        ? dto.statuses
-        : [ReviewOpportunityStatus.OPEN];
+      const visibleChallengeIdSet = new Set(visibleChallengeIds);
       const activeVisibleIds = challengeRows
         .filter(
           (row) =>
             row.status === ChallengeStatus.ACTIVE &&
-            visibleChallengeIds.includes(row.id),
+            visibleChallengeIdSet.has(row.id),
         )
         .map((row) => row.id);
-      const nonOpenStatuses = requestedStatuses.filter(
+      const completedVisibleIds = challengeRows
+        .filter(
+          (row) =>
+            row.status === ChallengeStatus.COMPLETED &&
+            visibleChallengeIdSet.has(row.id),
+        )
+        .map((row) => row.id);
+      const persistedNonOpenStatuses = requestedStatuses.filter(
         (status) => status !== ReviewOpportunityStatus.OPEN,
       );
-      if (requestedStatuses.includes(ReviewOpportunityStatus.OPEN)) {
-        where.AND = [
-          ...(Array.isArray(where.AND)
-            ? where.AND
-            : where.AND
-              ? [where.AND]
-              : []),
-          {
-            OR: [
-              ...(nonOpenStatuses.length
-                ? [{ status: { in: nonOpenStatuses as any } }]
-                : []),
+      const lifecycleStatusConditions: Prisma.reviewOpportunityWhereInput[] = [
+        ...(persistedNonOpenStatuses.length
+          ? [{ status: { in: persistedNonOpenStatuses as any } }]
+          : []),
+        ...(requestedStatuses.includes(ReviewOpportunityStatus.OPEN)
+          ? [
               {
                 status: ReviewOpportunityStatus.OPEN,
                 challengeId: { in: activeVisibleIds },
               },
-            ],
-          },
-        ];
-      }
+            ]
+          : []),
+        ...(requestedStatuses.includes(ReviewOpportunityStatus.CLOSED)
+          ? [
+              {
+                status: ReviewOpportunityStatus.OPEN,
+                challengeId: { in: completedVisibleIds },
+              },
+            ]
+          : []),
+      ];
+      where.AND = [
+        ...(Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : []),
+        {
+          OR: lifecycleStatusConditions,
+        },
+      ];
       where.challengeId = { in: visibleChallengeIds };
 
       const limit = Math.max(1, Number(dto.limit ?? 10));
@@ -304,9 +329,15 @@ export class ReviewOpportunityService {
       const approvedCountById = new Map(
         approvedCountRows.map((row) => [row.id, row._count.applications]),
       );
+      const completedVisibleIdSet = new Set(completedVisibleIds);
       const countedEntityList = entityList.map((entity) => ({
         ...entity,
         approvedApplicationCount: approvedCountById.get(entity.id) ?? 0,
+        status:
+          entity.status === ReviewOpportunityStatus.OPEN &&
+          completedVisibleIdSet.has(entity.challengeId)
+            ? ReviewOpportunityStatus.CLOSED
+            : entity.status,
       }));
       const challengeMap = await this.buildChallengeMap(countedEntityList);
       const items = this.buildResponseList(

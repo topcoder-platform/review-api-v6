@@ -548,4 +548,90 @@ describe('ReviewOpportunityService search', () => {
       }),
     );
   });
+
+  it('derives a closed opportunity from a completed challenge with a legacy open row', async () => {
+    const opportunity = {
+      id: 'opportunity-legacy-open',
+      challengeId: 'challenge-completed',
+      status: ReviewOpportunityStatus.OPEN,
+      type: ReviewOpportunityType.REGULAR_REVIEW,
+      openPositions: 1,
+      startDate: new Date('2026-07-20T00:00:00Z'),
+      duration: 86400,
+      basePayment: 100,
+      incrementalPayment: 0,
+      applications: [],
+      _count: { applications: 3 },
+    };
+    prismaMock.reviewOpportunity.findMany
+      .mockResolvedValueOnce([{ challengeId: 'challenge-completed' }])
+      .mockResolvedValueOnce([opportunity])
+      .mockResolvedValueOnce([
+        { id: 'opportunity-legacy-open', _count: { applications: 1 } },
+      ]);
+    prismaMock.reviewOpportunity.count.mockResolvedValue(1);
+    challengePrismaMock.$queryRaw.mockResolvedValue([
+      { id: 'challenge-completed', status: ChallengeStatus.COMPLETED },
+    ]);
+    challengeServiceMock.filterChallengeIdsByWhitelist.mockResolvedValue([
+      'challenge-completed',
+    ]);
+    challengeServiceMock.getChallengeSummaries.mockResolvedValue([
+      {
+        id: 'challenge-completed',
+        legacyId: 456,
+        name: 'Completed Design Challenge',
+        status: ChallengeStatus.COMPLETED,
+      },
+    ]);
+    const query = dto();
+    query.statuses = [ReviewOpportunityStatus.CLOSED];
+
+    const result = await service.search(query, {
+      userId: 'reviewer-1',
+      handle: 'reviewer-one',
+      roles: [UserRole.Reviewer],
+      isMachine: false,
+    });
+
+    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: {
+            in: expect.arrayContaining([
+              ReviewOpportunityStatus.CLOSED,
+              ReviewOpportunityStatus.OPEN,
+            ]),
+          },
+        }),
+      }),
+    );
+    expect(prismaMock.reviewOpportunity.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            {
+              OR: expect.arrayContaining([
+                {
+                  status: ReviewOpportunityStatus.OPEN,
+                  challengeId: { in: ['challenge-completed'] },
+                },
+              ]),
+            },
+          ]),
+        }),
+      }),
+    );
+    expect(result.metadata.total).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        id: 'opportunity-legacy-open',
+        status: ReviewOpportunityStatus.CLOSED,
+        canApplyReason: ReviewOpportunityCanApplyReason.OPPORTUNITY_CLOSED,
+      }),
+    );
+  });
 });
