@@ -49,8 +49,10 @@ operational access. A resource holder also retains access to an assigned
 group-restricted challenge, matching challenge-api-v6 self-resource searches.
 
 An `OPEN` review opportunity is returned only while its linked challenge is
-`ACTIVE`. `CLOSED` and `CANCELLED` filters preserve historical opportunities
-after the linked challenge completes.
+`ACTIVE`. A `CLOSED` search also includes legacy `OPEN` opportunity rows whose
+linked challenge is now `COMPLETED`; those rows are returned with the effective
+status `CLOSED` without mutating data during the read. Explicitly `CLOSED` and
+`CANCELLED` rows remain available as historical opportunities.
 
 `GET /review-opportunities` accepts the same query but preserves its historical
 bare-array response. Pagination is returned in CORS-exposed `X-Total-Count`,
