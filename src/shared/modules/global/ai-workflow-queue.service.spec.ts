@@ -161,6 +161,25 @@ describe('AiWorkflowQueueService', () => {
     expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
   });
 
+  it('does not look up phases when the AI review config has no enabled workflows', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-10',
+      challengeId: 'challenge-10',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: false,
+      template: { disabled: false },
+      workflows: [],
+    });
+
+    await service.queueWorkflowsForSubmission('submission-10', {
+      detectAiPhaseOpened: true,
+    });
+
+    expect(challengeApiServiceMock.isPhaseOpen).not.toHaveBeenCalled();
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
+  });
+
   it('does not queue workflows when instantReview is disabled on active AI review config', async () => {
     submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
       id: 'submission-2',

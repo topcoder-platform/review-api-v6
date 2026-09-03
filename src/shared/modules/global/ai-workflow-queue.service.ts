@@ -74,6 +74,10 @@ export class AiWorkflowQueueService {
         return [];
       }
 
+      if (!configured.workflowIds.length) {
+        return [];
+      }
+
       if (
         configured.instantReviewEnabled ||
         (await this.isAiPhaseOpened(challengeId, options))
