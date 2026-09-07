@@ -138,6 +138,25 @@ export class UpdateAiWorkflowRunDto extends OmitType(
   ['submissionId'],
 ) {}
 
+export class QueueAiWorkflowRunsDto {
+  @ApiProperty({
+    description: 'The submission to queue the configured AI workflows for',
+  })
+  @IsString()
+  @IsNotEmpty()
+  submissionId: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Queue the configured AI workflows even if no AI phase is currently open',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  ignoreAiPhaseState?: boolean;
+}
+
 export class RetriggerAiWorkflowRunDto {
   @ApiProperty()
   @IsString()
