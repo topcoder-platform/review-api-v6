@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SubmissionBaseService } from './submission-base.service';
 import { ChallengeApiService } from './challenge.service';
-import { WorkflowQueueHandler } from './workflow-queue.handler';
+import {
+  QueueWorkflowRunsResult,
+  WorkflowQueueHandler,
+} from './workflow-queue.handler';
 import { PrismaService } from './prisma.service';
 
 /** Phases whose opening allows AI workflows to be dispatched for a submission. */
@@ -16,6 +19,16 @@ export interface QueueWorkflowsOptions {
    * phase already opened, which would otherwise never get queued.
    */
   detectAiPhaseOpened?: boolean;
+  /**
+   * Queue the configured workflows regardless of whether an AI phase is
+   * currently open. Only used by the manual (admin triggered) queueing flow.
+   */
+  ignoreAiPhaseState?: boolean;
+  /**
+   * Queue only the workflows that don't have a run for the submission yet
+   * instead of skipping the submission entirely when some runs exist.
+   */
+  onlyMissing?: boolean;
 }
 
 @Injectable()
@@ -32,7 +45,7 @@ export class AiWorkflowQueueService {
   async queueWorkflowsForSubmission(
     submissionId: string,
     options?: QueueWorkflowsOptions,
-  ): Promise<void> {
+  ): Promise<QueueWorkflowRunsResult> {
     this.logger.log(`Queueing AI workflows for submission ${submissionId}`);
 
     const submission = await this.submissionBaseService.getSubmissionById(
@@ -40,10 +53,9 @@ export class AiWorkflowQueueService {
     );
     const challengeId = String(submission.challengeId ?? '').trim();
     if (!challengeId) {
-      this.logger.warn(
-        `Skipping AI workflow queueing because submission ${submissionId} is missing challengeId.`,
-      );
-      return;
+      const reason = `Skipping AI workflow queueing because submission ${submissionId} is missing challengeId.`;
+      this.logger.warn(reason);
+      return { queuedRuns: [], skipped: true, reason };
     }
 
     const workflowIds = await this.resolveWorkflowIdsForChallenge(
@@ -51,16 +63,16 @@ export class AiWorkflowQueueService {
       options,
     );
     if (!workflowIds.length) {
-      this.logger.log(
-        `No AI workflows configured for challenge ${challengeId}; skipping queueing for submission ${submissionId}.`,
-      );
-      return;
+      const reason = `No AI workflows configured (or eligible) for challenge ${challengeId}; skipping queueing for submission ${submissionId}.`;
+      this.logger.log(reason);
+      return { queuedRuns: [], skipped: true, reason };
     }
 
-    await this.workflowQueueHandler.queueWorkflowRuns(
+    return this.workflowQueueHandler.queueWorkflowRuns(
       workflowIds.map((id) => ({ id })),
       challengeId,
       submissionId,
+      { onlyMissing: options?.onlyMissing },
     );
   }
 
@@ -105,7 +117,7 @@ export class AiWorkflowQueueService {
     challengeId: string,
     options?: QueueWorkflowsOptions,
   ): Promise<boolean> {
-    if (options?.aiPhaseOpened) {
+    if (options?.aiPhaseOpened || options?.ignoreAiPhaseState) {
       return true;
     }
 
