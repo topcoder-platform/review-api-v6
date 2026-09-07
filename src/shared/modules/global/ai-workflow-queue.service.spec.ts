@@ -22,6 +22,7 @@ describe('AiWorkflowQueueService', () => {
   };
   const challengeApiServiceMock = {
     getChallengeDetail: jest.fn(),
+    isPhaseOpen: jest.fn(),
   };
   const workflowQueueHandlerMock = {
     queueWorkflowRuns: jest.fn(),
@@ -93,6 +94,92 @@ describe('AiWorkflowQueueService', () => {
     );
   });
 
+  it('queues workflows when detection finds an AI phase already open', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-7',
+      challengeId: 'challenge-7',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: false,
+      template: { disabled: false },
+      workflows: [{ workflowId: 'workflow-d' }],
+    });
+    challengeApiServiceMock.isPhaseOpen.mockResolvedValue(true);
+
+    await service.queueWorkflowsForSubmission('submission-7', {
+      detectAiPhaseOpened: true,
+    });
+
+    expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenCalledWith(
+      'challenge-7',
+      ['AI Screening', 'AI Review'],
+    );
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).toHaveBeenCalledWith(
+      [{ id: 'workflow-d' }],
+      'challenge-7',
+      'submission-7',
+    );
+  });
+
+  it('does not queue workflows when detection finds no AI phase open', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-8',
+      challengeId: 'challenge-8',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: false,
+      template: { disabled: false },
+      workflows: [{ workflowId: 'workflow-d' }],
+    });
+    challengeApiServiceMock.isPhaseOpen.mockResolvedValue(false);
+
+    await service.queueWorkflowsForSubmission('submission-8', {
+      detectAiPhaseOpened: true,
+    });
+
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
+  });
+
+  it('does not queue workflows when AI phase detection fails', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-9',
+      challengeId: 'challenge-9',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: false,
+      template: { disabled: false },
+      workflows: [{ workflowId: 'workflow-d' }],
+    });
+    challengeApiServiceMock.isPhaseOpen.mockRejectedValue(
+      new Error('challenge lookup failed'),
+    );
+
+    await service.queueWorkflowsForSubmission('submission-9', {
+      detectAiPhaseOpened: true,
+    });
+
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
+  });
+
+  it('does not look up phases when the AI review config has no enabled workflows', async () => {
+    submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
+      id: 'submission-10',
+      challengeId: 'challenge-10',
+    });
+    prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
+      instantReview: false,
+      template: { disabled: false },
+      workflows: [],
+    });
+
+    await service.queueWorkflowsForSubmission('submission-10', {
+      detectAiPhaseOpened: true,
+    });
+
+    expect(challengeApiServiceMock.isPhaseOpen).not.toHaveBeenCalled();
+    expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
+  });
+
   it('does not queue workflows when instantReview is disabled on active AI review config', async () => {
     submissionBaseServiceMock.getSubmissionById.mockResolvedValue({
       id: 'submission-2',
@@ -105,6 +192,7 @@ describe('AiWorkflowQueueService', () => {
 
     await service.queueWorkflowsForSubmission('submission-2');
 
+    expect(challengeApiServiceMock.isPhaseOpen).not.toHaveBeenCalled();
     expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
     expect(workflowQueueHandlerMock.queueWorkflowRuns).not.toHaveBeenCalled();
   });

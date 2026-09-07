@@ -24,6 +24,7 @@ export class SubmissionScanCompleteOrchestrator {
     try {
       await this.aiWorkflowQueueService.queueWorkflowsForSubmission(
         submissionId,
+        { detectAiPhaseOpened: true },
       );
     } catch (error) {
       this.logger.error(
