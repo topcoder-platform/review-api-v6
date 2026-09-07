@@ -34,8 +34,8 @@ Supported query parameters are:
 - repeated `opportunityTypes` values;
 - repeated `status`/`statuses`; omission keeps the legacy `OPEN` default;
 - `appliedByMe` and repeated `applicationStatuses`, which require a caller;
-- `sortBy=basePayment|duration|startDate|openPositions`, `sortOrder`, `limit`
-  (maximum 100), and zero-based `offset`.
+- `sortBy=basePayment|createdAt|duration|startDate|openPositions`, `sortOrder`,
+  `limit` (maximum 1000), and zero-based `offset`.
 
 Challenge-backed filters run in the challenge database; pagination and totals
 run in the review database after active-challenge visibility filtering. That
@@ -49,10 +49,13 @@ operational access. A resource holder also retains access to an assigned
 group-restricted challenge, matching challenge-api-v6 self-resource searches.
 
 An `OPEN` review opportunity is returned only while its linked challenge is
-`ACTIVE`. A `CLOSED` search also includes legacy `OPEN` opportunity rows whose
-linked challenge is now `COMPLETED`; those rows are returned with the effective
-status `CLOSED` without mutating data during the read. Explicitly `CLOSED` and
-`CANCELLED` rows remain available as historical opportunities.
+`ACTIVE` and its `startDate + duration` review window has not elapsed. A
+`CLOSED` search also includes legacy `OPEN` opportunity rows whose linked
+challenge is now `COMPLETED` or whose review window has ended; those rows are
+returned with the effective status `CLOSED` without mutating data during the
+read. Explicitly `CLOSED` and `CANCELLED` rows remain available as historical
+opportunities. Application creation enforces the same review-window cutoff, so
+an expired legacy `OPEN` row cannot accept a late application by ID.
 
 `GET /review-opportunities` accepts the same query but preserves its historical
 bare-array response. Pagination is returned in CORS-exposed `X-Total-Count`,
@@ -62,6 +65,7 @@ bare-array response. Pagination is returned in CORS-exposed `X-Total-Count`,
 
 Every opportunity item adds:
 
+- `createdAt`, the authoritative date when the review opportunity was posted;
 - `canApply`;
 - `canApplyReason`: `CAN_APPLY`, `NOT_AUTHENTICATED`, `NOT_REVIEWER`,
   `OPPORTUNITY_CLOSED`, `CHALLENGE_NOT_ACTIVE`, `ALREADY_APPLIED`, or
@@ -72,6 +76,11 @@ Every opportunity item adds:
 - `applicationRoles` and `defaultApplicationRole`, which let a one-click UI
   submit the correct specialized role for regular, scenarios, iterative,
   specification, or component-development review work.
+
+`basePayment` and each role-adjusted `payments[].payment` are the fixed payment
+component. `incrementalPayment` is paid for every reviewed submission, including
+the first, so a one-submission total is the applicable fixed component plus one
+incremental payment.
 
 Search/list responses include only the caller's application rows (or none for
 anonymous callers). `applicationCount` and `approvedApplicationCount` are

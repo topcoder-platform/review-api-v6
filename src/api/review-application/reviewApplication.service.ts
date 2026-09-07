@@ -37,6 +37,7 @@ import {
   RECENT_REVIEW_WINDOW_DAYS,
   resolveReviewerMetrics,
 } from 'src/shared/modules/global/reviewer-metrics.util';
+import { isReviewOpportunityWindowOpen } from 'src/shared/utils/review-opportunity-lifecycle.util';
 
 const RESOURCE_CREATED_TOPIC = 'challenge.action.resource.create';
 
@@ -84,7 +85,7 @@ export class ReviewApplicationService {
 
   /**
    * Creates a review application after enforcing challenge visibility,
-   * opportunity state, role compatibility, capacity, and uniqueness.
+   * opportunity state/window, role compatibility, capacity, and uniqueness.
    * The database uniqueness constraint remains authoritative when concurrent
    * requests both pass the optimistic duplicate pre-check.
    *
@@ -121,6 +122,12 @@ export class ReviewApplicationService {
         );
       }
       if (opportunity.status !== ReviewOpportunityStatus.OPEN) {
+        throw new ConflictException({
+          message: 'This review opportunity is no longer open.',
+          code: 'REVIEW_OPPORTUNITY_CLOSED',
+        });
+      }
+      if (!isReviewOpportunityWindowOpen(opportunity)) {
         throw new ConflictException({
           message: 'This review opportunity is no longer open.',
           code: 'REVIEW_OPPORTUNITY_CLOSED',
