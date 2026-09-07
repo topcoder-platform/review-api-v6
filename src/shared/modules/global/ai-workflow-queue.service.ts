@@ -4,6 +4,20 @@ import { ChallengeApiService } from './challenge.service';
 import { WorkflowQueueHandler } from './workflow-queue.handler';
 import { PrismaService } from './prisma.service';
 
+/** Phases whose opening allows AI workflows to be dispatched for a submission. */
+const AI_PHASE_NAMES = ['AI Screening', 'AI Review'];
+
+export interface QueueWorkflowsOptions {
+  /** The AI phase is known to have just opened (event-driven dispatch). */
+  aiPhaseOpened?: boolean;
+  /**
+   * Look up whether an AI phase is currently open before deciding to skip.
+   * Used by flows (e.g. virus scan completion) that can happen after the AI
+   * phase already opened, which would otherwise never get queued.
+   */
+  detectAiPhaseOpened?: boolean;
+}
+
 @Injectable()
 export class AiWorkflowQueueService {
   private readonly logger = new Logger(AiWorkflowQueueService.name);
@@ -17,7 +31,7 @@ export class AiWorkflowQueueService {
 
   async queueWorkflowsForSubmission(
     submissionId: string,
-    options?: { aiPhaseOpened?: boolean },
+    options?: QueueWorkflowsOptions,
   ): Promise<void> {
     this.logger.log(`Queueing AI workflows for submission ${submissionId}`);
 
@@ -52,7 +66,7 @@ export class AiWorkflowQueueService {
 
   private async resolveWorkflowIdsForChallenge(
     challengeId: string,
-    options?: { aiPhaseOpened?: boolean },
+    options?: QueueWorkflowsOptions,
   ): Promise<string[]> {
     const configured = await this.getConfiguredAiWorkflowIds(challengeId);
     if (configured) {
@@ -60,7 +74,14 @@ export class AiWorkflowQueueService {
         return [];
       }
 
-      if (configured.instantReviewEnabled || options?.aiPhaseOpened) {
+      if (!configured.workflowIds.length) {
+        return [];
+      }
+
+      if (
+        configured.instantReviewEnabled ||
+        (await this.isAiPhaseOpened(challengeId, options))
+      ) {
         return configured.workflowIds;
       }
 
@@ -78,6 +99,37 @@ export class AiWorkflowQueueService {
           .filter((workflowId): workflowId is string => Boolean(workflowId)),
       ),
     );
+  }
+
+  private async isAiPhaseOpened(
+    challengeId: string,
+    options?: QueueWorkflowsOptions,
+  ): Promise<boolean> {
+    if (options?.aiPhaseOpened) {
+      return true;
+    }
+
+    if (!options?.detectAiPhaseOpened) {
+      return false;
+    }
+
+    try {
+      const isOpen = await this.challengeApiService.isPhaseOpen(
+        challengeId,
+        AI_PHASE_NAMES,
+      );
+      this.logger.log(
+        `AI phase is ${isOpen ? 'open' : 'not open'} for challenge ${challengeId}.`,
+      );
+      return isOpen;
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error(
+        `Failed to determine AI phase open state for challenge ${challengeId}: ${err.message}`,
+        err.stack,
+      );
+      return false;
+    }
   }
 
   private async getConfiguredAiWorkflowIds(
