@@ -85,7 +85,9 @@ export class ReviewApplicationService {
 
   /**
    * Creates a review application after enforcing challenge visibility,
-   * opportunity state/window, role compatibility, capacity, and uniqueness.
+   * opportunity state/window, role compatibility, and uniqueness. Applications
+   * stay pending when approved reviewers already fill the advertised positions,
+   * so administrators can use them as the opportunity's waitlist.
    * The database uniqueness constraint remains authoritative when concurrent
    * requests both pass the optimistic duplicate pre-check.
    *
@@ -93,7 +95,7 @@ export class ReviewApplicationService {
    * @param dto - Opportunity and requested review role.
    * @returns Created pending review application.
    * @throws BadRequestException for an unknown opportunity or role mismatch.
-   * @throws ConflictException for closed/full/inactive/duplicate applications.
+   * @throws ConflictException for closed, inactive, or duplicate applications.
    * @throws ForbiddenException when the challenge whitelist denies the caller.
    * @throws NotFoundException when the linked challenge no longer exists.
    * @throws InternalServerErrorException when a dependency fails unexpectedly.
@@ -110,11 +112,6 @@ export class ReviewApplicationService {
       // make sure review opportunity exists
       const opportunity = await this.prisma.reviewOpportunity.findUnique({
         where: { id: dto.opportunityId },
-        include: {
-          applications: {
-            select: { status: true },
-          },
-        },
       });
       if (!opportunity || !opportunity.id) {
         throw new BadRequestException(
@@ -142,16 +139,6 @@ export class ReviewApplicationService {
           message:
             'Applications are closed because the challenge is not active.',
           code: 'REVIEW_OPPORTUNITY_CHALLENGE_NOT_ACTIVE',
-        });
-      }
-      const approvedCount = opportunity.applications.filter(
-        (application) =>
-          application.status === ReviewApplicationStatus.APPROVED,
-      ).length;
-      if (approvedCount >= opportunity.openPositions) {
-        throw new ConflictException({
-          message: 'All reviewer positions have been filled.',
-          code: 'REVIEW_OPPORTUNITY_FULL',
         });
       }
       // make sure application role matches

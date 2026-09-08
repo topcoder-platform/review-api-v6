@@ -1211,7 +1211,6 @@ export class ReviewOpportunityService {
       challengeData,
       authUser,
       ret.myApplications.length > 0,
-      ret.remainingPositions,
     );
     ret.canApply =
       ret.canApplyReason === ReviewOpportunityCanApplyReason.CAN_APPLY;
@@ -1254,15 +1253,14 @@ export class ReviewOpportunityService {
    * @param challenge - Associated challenge, when it could be loaded.
    * @param authUser - Optional JWT caller.
    * @param alreadyApplied - Whether this member has any application on the row.
-   * @param remainingPositions - Approved-capacity remainder.
    * @returns Stable can-apply reason code.
+   * @throws Does not throw.
    */
   private resolveCanApplyReason(
     entity: any,
     challenge: ChallengeData | undefined,
     authUser: JwtUser | undefined,
     alreadyApplied: boolean,
-    remainingPositions: number,
   ): ReviewOpportunityCanApplyReason {
     if (!this.getUserId(authUser)) {
       return ReviewOpportunityCanApplyReason.NOT_AUTHENTICATED;
@@ -1281,9 +1279,6 @@ export class ReviewOpportunityService {
     }
     if (alreadyApplied) {
       return ReviewOpportunityCanApplyReason.ALREADY_APPLIED;
-    }
-    if (remainingPositions <= 0) {
-      return ReviewOpportunityCanApplyReason.NO_OPEN_POSITIONS;
     }
     return ReviewOpportunityCanApplyReason.CAN_APPLY;
   }

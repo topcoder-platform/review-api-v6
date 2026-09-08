@@ -564,6 +564,21 @@ describe('ReviewOpportunityService search', () => {
     expect(reason).toBe(ReviewOpportunityCanApplyReason.NOT_REVIEWER);
   });
 
+  it('keeps a full active opportunity applyable for the reviewer waitlist', () => {
+    const reason = (service as any).resolveCanApplyReason(
+      { status: ReviewOpportunityStatus.OPEN },
+      { status: ChallengeStatus.ACTIVE },
+      {
+        userId: 'reviewer-1',
+        roles: [UserRole.Reviewer],
+        isMachine: false,
+      },
+      false,
+    );
+
+    expect(reason).toBe(ReviewOpportunityCanApplyReason.CAN_APPLY);
+  });
+
   it('excludes elapsed review windows from OPEN results before pagination', async () => {
     const currentOpportunity = {
       id: 'opportunity-current',

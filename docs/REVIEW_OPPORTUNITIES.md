@@ -73,8 +73,9 @@ Every opportunity item adds:
 - `createdAt`, the authoritative date when the review opportunity was posted;
 - `canApply`;
 - `canApplyReason`: `CAN_APPLY`, `NOT_AUTHENTICATED`, `NOT_REVIEWER`,
-  `OPPORTUNITY_CLOSED`, `CHALLENGE_NOT_ACTIVE`, `ALREADY_APPLIED`, or
-  `NO_OPEN_POSITIONS`;
+  `OPPORTUNITY_CLOSED`, `CHALLENGE_NOT_ACTIVE`, or `ALREADY_APPLIED`.
+  `NO_OPEN_POSITIONS` remains a deprecated compatibility enum value but is not
+  returned for an active opportunity because its pending waitlist stays open;
 - `myApplications`, containing only the caller's applications;
 - `applicationCount`, the public-safe total across all application statuses;
 - `approvedApplicationCount` and `remainingPositions`;
@@ -118,7 +119,9 @@ one review-api request.
 
 Only the exact `Reviewer` role produces `CAN_APPLY`. This supports the UI rule
 that non-reviewers receive a disabled action and the “How to become a reviewer”
-content.
+content. An otherwise eligible reviewer still receives `CAN_APPLY` when
+`remainingPositions` is zero: their new `PENDING` application joins the
+waitlist until an administrator approves or rejects it.
 
 `GET /review-opportunities/me` is authenticated, forces `appliedByMe=true`, and
 returns the metadata envelope. `GET /review-applications/me` supports repeated
@@ -126,10 +129,11 @@ returns the metadata envelope. `GET /review-applications/me` supports repeated
 and `sortOrder`; its metadata is `total`, `page`, `perPage`, and `totalPages`.
 
 `POST /review-applications` remains compatible with
-`{ "opportunityId": "...", "role": "REVIEWER" }`, while now failing closed
-for a closed opportunity, inactive or inaccessible challenge, duplicate
-application, or filled approved capacity. The database composite uniqueness
-constraint on opportunity, member, and role is authoritative for concurrent
-duplicate requests; the losing request receives the same HTTP 409 conflict as
-a duplicate found by the pre-check. Applications are created as `PENDING`, so
-they do not consume or overfill the approved-position capacity.
+`{ "opportunityId": "...", "role": "REVIEWER" }`, while failing closed for a
+closed opportunity, inactive or inaccessible challenge, or duplicate
+application. The database composite uniqueness constraint on opportunity,
+member, and role is authoritative for concurrent duplicate requests; the
+losing request receives the same HTTP 409 conflict as a duplicate found by the
+pre-check. Applications are always created as `PENDING`, including after
+approved reviewers fill the advertised capacity. Those additional applications
+form the waitlist and do not themselves consume or overfill approved capacity.

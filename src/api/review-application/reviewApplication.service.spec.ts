@@ -681,7 +681,7 @@ describe('ReviewApplicationService', () => {
     expect(prismaErrorServiceMock.handleError).not.toHaveBeenCalled();
   });
 
-  it('rejects member apply when approved applications fill capacity', async () => {
+  it('waitlists a pending application when approved reviewers fill capacity', async () => {
     prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
       id: 'opportunity-full',
       challengeId: 'challenge-full',
@@ -695,6 +695,16 @@ describe('ReviewApplicationService', () => {
     challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
       id: 'challenge-full',
       status: ChallengeStatus.ACTIVE,
+    });
+    prismaMock.reviewApplication.findMany.mockResolvedValue([]);
+    prismaMock.reviewApplication.create.mockResolvedValue({
+      id: 'application-waitlisted',
+      opportunityId: 'opportunity-full',
+      userId: '1002',
+      handle: 'reviewer-two',
+      role: ReviewApplicationRole.REVIEWER,
+      status: ReviewApplicationStatus.PENDING,
+      createdAt: new Date('2026-09-08T00:00:00Z'),
     });
 
     await expect(
@@ -710,14 +720,20 @@ describe('ReviewApplicationService', () => {
           role: ReviewApplicationRole.REVIEWER,
         },
       ),
-    ).rejects.toEqual(
+    ).resolves.toEqual(
       expect.objectContaining({
-        response: {
-          message: 'All reviewer positions have been filled.',
-          code: 'REVIEW_OPPORTUNITY_FULL',
-        },
+        id: 'application-waitlisted',
+        status: ReviewApplicationStatus.PENDING,
       }),
     );
-    expect(prismaMock.reviewApplication.create).not.toHaveBeenCalled();
+    expect(prismaMock.reviewApplication.create).toHaveBeenCalledWith({
+      data: {
+        handle: 'reviewer-two',
+        opportunityId: 'opportunity-full',
+        role: ReviewApplicationRole.REVIEWER,
+        status: ReviewApplicationStatus.PENDING,
+        userId: '1002',
+      },
+    });
   });
 });

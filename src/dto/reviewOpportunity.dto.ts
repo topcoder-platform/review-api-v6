@@ -107,6 +107,7 @@ export enum ReviewOpportunityCanApplyReason {
   OPPORTUNITY_CLOSED = 'OPPORTUNITY_CLOSED',
   CHALLENGE_NOT_ACTIVE = 'CHALLENGE_NOT_ACTIVE',
   ALREADY_APPLIED = 'ALREADY_APPLIED',
+  /** @deprecated Full active opportunities now accept pending waitlist applications. */
   NO_OPEN_POSITIONS = 'NO_OPEN_POSITIONS',
 }
 
@@ -323,7 +324,8 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   canApply: boolean;
 
   @ApiProperty({
-    description: 'Stable explanation for the canApply value',
+    description:
+      'Stable explanation for canApply; full active opportunities remain CAN_APPLY and create pending waitlist applications',
     enum: ReviewOpportunityCanApplyReason,
     example: ReviewOpportunityCanApplyReason.CAN_APPLY,
   })
