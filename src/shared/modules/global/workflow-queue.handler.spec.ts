@@ -34,14 +34,27 @@ jest.mock('src/api/submission/submission.service', () => ({
 import { WorkflowQueueHandler } from './workflow-queue.handler';
 
 describe('WorkflowQueueHandler', () => {
+  // The transaction callback gets its own client, distinct from `this.prisma`,
+  // so a read that escapes the locked transaction is detectable.
   const aiWorkflowRunMock = {
+    findFirst: jest.fn(),
     findUnique: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
     createManyAndReturn: jest.fn(),
   };
-  const prismaMock = {
+  const txMock = {
     aiWorkflowRun: aiWorkflowRunMock,
+    $executeRaw: jest.fn(),
+  };
+  const prismaMock = {
+    aiWorkflowRun: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+      createManyAndReturn: jest.fn(),
+    },
     aiWorkflow: { findMany: jest.fn() },
     submission: { findUnique: jest.fn() },
     $transaction: jest.fn(),
@@ -74,9 +87,9 @@ describe('WorkflowQueueHandler', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // Run the transaction callback against the mocked prisma client.
+    // Run the transaction callback against the transaction client.
     prismaMock.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
-      cb(prismaMock),
+      cb(txMock),
     );
     aiReviewerDecisionMakerMock.evaluateSubmission.mockResolvedValue({
       status: 'PENDING',
@@ -245,6 +258,43 @@ describe('WorkflowQueueHandler', () => {
         skipped: false,
         reason: expect.any(String),
       });
+    });
+
+    it('checks the already-queued guard through the transaction client', async () => {
+      prismaMock.aiWorkflow.findMany.mockResolvedValue([{ id: 'workflow-1' }]);
+      aiWorkflowRunMock.findFirst.mockResolvedValue(null);
+      aiWorkflowRunMock.createManyAndReturn.mockResolvedValue([
+        { id: 'run-1', workflowId: 'workflow-1', workflow: {} },
+      ]);
+
+      const result = await handler.queueWorkflowRuns(
+        [{ id: 'workflow-1' }],
+        'challenge-1',
+        'submission-1',
+      );
+
+      // The guard has to read on the connection holding the advisory lock.
+      expect(aiWorkflowRunMock.findFirst).toHaveBeenCalledWith({
+        where: { submissionId: 'submission-1' },
+      });
+      expect(prismaMock.aiWorkflowRun.findFirst).not.toHaveBeenCalled();
+      expect(result.queuedRuns).toEqual([
+        { id: 'run-1', workflowId: 'workflow-1' },
+      ]);
+    });
+
+    it('skips queueing when the submission already has runs', async () => {
+      prismaMock.aiWorkflow.findMany.mockResolvedValue([{ id: 'workflow-1' }]);
+      aiWorkflowRunMock.findFirst.mockResolvedValue({ id: 'run-1' });
+
+      const result = await handler.queueWorkflowRuns(
+        [{ id: 'workflow-1' }],
+        'challenge-1',
+        'submission-1',
+      );
+
+      expect(aiWorkflowRunMock.createManyAndReturn).not.toHaveBeenCalled();
+      expect(result.skipped).toBe(true);
     });
 
     it('skips queueing when every workflow already has a run', async () => {

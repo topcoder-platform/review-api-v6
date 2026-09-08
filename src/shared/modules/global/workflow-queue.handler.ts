@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { GiteaService, ActionDispatchWorkflowResponse } from './gitea.service';
 import { PrismaService } from './prisma.service';
-import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
+import { Prisma, aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengePrismaService } from './challenge-prisma.service';
@@ -425,7 +425,10 @@ export class WorkflowQueueHandler {
         }
       } else {
         // check if workflow runs have already been queued for this submission
-        const alreadyQueued = await this.hasQueuedWorkflowRuns(submissionId);
+        const alreadyQueued = await this.hasQueuedWorkflowRuns(
+          submissionId,
+          tx,
+        );
 
         if (alreadyQueued) {
           skipReason = `AI workflow runs already queued for submission ${submissionId}. Skipping queueing.`;
@@ -487,10 +490,19 @@ export class WorkflowQueueHandler {
     return { queuedRuns, skipped: false };
   }
 
-  async hasQueuedWorkflowRuns(submissionId: string): Promise<boolean> {
+  /**
+   * @param client the prisma client to read through. Callers running inside a
+   *   `$transaction` must pass their transaction client, so the read happens on
+   *   the connection holding the advisory lock instead of borrowing another
+   *   connection from the pool.
+   */
+  async hasQueuedWorkflowRuns(
+    submissionId: string,
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<boolean> {
     if (!submissionId) return false;
 
-    const existing = await this.prisma.aiWorkflowRun.findFirst({
+    const existing = await client.aiWorkflowRun.findFirst({
       where: {
         submissionId,
       },
@@ -895,7 +907,10 @@ export class WorkflowQueueHandler {
         where: { id: run.id },
         data: {
           status: 'SUCCESS',
-          completedAt: options?.completedAt ?? new Date(),
+          completedAt:
+            options?.completedAt ??
+            (run.status === 'SUCCESS' ? run.completedAt : null) ??
+            new Date(),
         },
         include: { workflow: true },
       });
