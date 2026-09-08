@@ -51,6 +51,9 @@ export const CommonConfig = {
     memberApiUrl: process.env.MEMBER_API_URL ?? 'http://localhost:4000/members',
     groupsApiUrl:
       process.env.GROUPS_API_URL ?? 'https://api.topcoder-dev.com/v6/groups',
+    standardizedSkillsApiUrl:
+      process.env.STANDARDIZED_SKILLS_API_URL ??
+      'https://api.topcoder-dev.com/v5/standardized-skills',
     onlineReviewUrlBase: 'https://review.topcoder.com/active-challenges/',
   },
   // Resource role configuration

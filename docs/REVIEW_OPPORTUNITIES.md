@@ -37,6 +37,11 @@ Supported query parameters are:
 - `sortBy=basePayment|createdAt|duration|startDate|openPositions`, `sortOrder`,
   `limit` (maximum 1000), and zero-based `offset`.
 
+The unified `search` value matches challenge names, authored technology tags,
+and standardized skill names. Skill names are translated to the IDs persisted
+by `ChallengeSkill`; if the optional standardized-skills lookup is unavailable,
+name and tag search remain available.
+
 Challenge-backed filters run in the challenge database; pagination and totals
 run in the review database after active-challenge visibility filtering. That
 visibility boundary enforces both `ChallengeUserWhitelist` and challenge group

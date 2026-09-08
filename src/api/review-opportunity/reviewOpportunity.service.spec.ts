@@ -28,6 +28,7 @@ describe('ReviewOpportunityService search', () => {
     filterChallengeIdsByWhitelist: jest.fn(),
     getChallengeSummaries: jest.fn(),
     getChallengeDetailForUser: jest.fn(),
+    findStandardizedSkillIds: jest.fn(),
   } as any;
   const challengeCatalogMock = {
     ensureTracksLoaded: jest.fn(),
@@ -77,6 +78,7 @@ describe('ReviewOpportunityService search', () => {
     challengeServiceMock.ensureChallengeWhitelistAccess.mockResolvedValue(
       undefined,
     );
+    challengeServiceMock.findStandardizedSkillIds.mockResolvedValue([]);
     prismaMock.$transaction.mockImplementation((operations) =>
       Promise.all(operations),
     );
@@ -205,6 +207,36 @@ describe('ReviewOpportunityService search', () => {
         },
       },
     });
+  });
+
+  it('matches review opportunity chips through challenge tags and standardized skills', async () => {
+    prismaMock.reviewOpportunity.findMany.mockResolvedValueOnce([
+      candidate(),
+    ]);
+    challengeServiceMock.findStandardizedSkillIds.mockResolvedValue([
+      'skill-uicollectionview',
+    ]);
+    challengeServiceMock.filterChallengeIdsByWhitelist.mockResolvedValue([]);
+    challengePrismaMock.$queryRaw.mockResolvedValue([]);
+    const query = dto();
+    query.search = 'UICollectionView';
+
+    await service.search(query);
+
+    expect(challengeServiceMock.findStandardizedSkillIds).toHaveBeenCalledWith(
+      'UICollectionView',
+    );
+    const challengeQuery = challengePrismaMock.$queryRaw.mock.calls[0][0];
+    const sqlText = challengeQuery.strings.join('?');
+    expect(sqlText).toContain('c.name ILIKE');
+    expect(sqlText).toContain('unnest(COALESCE(c.tags');
+    expect(sqlText).toContain('FROM "ChallengeSkill"');
+    expect(challengeQuery.values).toEqual(
+      expect.arrayContaining([
+        '%UICollectionView%',
+        'skill-uicollectionview',
+      ]),
+    );
   });
 
   it('sorts newest opportunities by creation date before database pagination', async () => {

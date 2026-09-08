@@ -99,8 +99,9 @@ export class ReviewOpportunityService {
   /**
    * Searches review opportunities with database pagination and challenge-side
    * filters. The review database returns only lightweight challenge IDs before
-   * the challenge database applies track, type, submission-count, title, and
-   * lifecycle rules, avoiding hydration of every opportunity. Open work still
+   * the challenge database applies track, type, submission-count, unified
+   * challenge-name/tag/skill search, and lifecycle rules, avoiding hydration
+   * of every opportunity. Open work still
    * requires an ACTIVE challenge and an unexpired review window. A legacy OPEN
    * row whose challenge is now COMPLETED, or whose review window has ended, is
    * treated as CLOSED so historical work remains discoverable even when no
@@ -206,6 +207,10 @@ export class ReviewOpportunityService {
         return this.emptySearchResult(dto);
       }
 
+      const normalizedSearch = dto.search?.trim();
+      const matchingSkillIds = normalizedSearch
+        ? await this.challengeService.findStandardizedSkillIds(normalizedSearch)
+        : [];
       const challengeConditions: Prisma.Sql[] = [
         Prisma.sql`c.id IN (${Prisma.join(
           opportunityChallengeIds.map((id) => Prisma.sql`${id}`),
@@ -235,9 +240,28 @@ export class ReviewOpportunityService {
           Prisma.sql`COALESCE(c."numOfSubmissions", 0) <= ${dto.numSubmissionsTo}`,
         );
       }
-      if (dto.search?.trim()) {
+      if (normalizedSearch) {
+        const searchPattern = `%${normalizedSearch}%`;
+        const searchConditions: Prisma.Sql[] = [
+          Prisma.sql`c.name ILIKE ${searchPattern}`,
+          Prisma.sql`EXISTS (
+            SELECT 1
+            FROM unnest(COALESCE(c.tags, ARRAY[]::text[])) AS challenge_tag(value)
+            WHERE challenge_tag.value ILIKE ${searchPattern}
+          )`,
+        ];
+        if (matchingSkillIds.length) {
+          searchConditions.push(Prisma.sql`EXISTS (
+            SELECT 1
+            FROM "ChallengeSkill" AS challenge_skill
+            WHERE challenge_skill."challengeId" = c.id
+              AND challenge_skill."skillId" IN (${Prisma.join(
+                matchingSkillIds.map((id) => Prisma.sql`${id}`),
+              )})
+          )`);
+        }
         challengeConditions.push(
-          Prisma.sql`c.name ILIKE ${`%${dto.search.trim()}%`}`,
+          Prisma.sql`(${Prisma.join(searchConditions, ' OR ')})`,
         );
       }
 
