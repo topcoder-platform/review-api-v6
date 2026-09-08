@@ -177,7 +177,8 @@ export class CreateReviewOpportunityDto {
   duration: number;
 
   @ApiProperty({
-    description: 'Payment for reviewer if there is 1 submission.',
+    description:
+      'Fixed reviewer payment component. The first-submission total is this value plus incrementalPayment.',
     example: '180.0',
   })
   @IsNumber()
@@ -185,7 +186,8 @@ export class CreateReviewOpportunityDto {
   basePayment: number;
 
   @ApiProperty({
-    description: 'Review payment for each extra submission.',
+    description:
+      'Variable payment for each reviewed submission, including the first.',
     example: '50.0',
   })
   @IsNumber()
@@ -212,7 +214,7 @@ export class ReviewPaymentDto {
 
   @ApiProperty({
     description:
-      'Review payment. Should be base payment if there is 1 submission.',
+      'Role-adjusted fixed payment component. Add incrementalPayment for the first reviewed submission.',
     example: 180.0,
   })
   @IsNumber()
@@ -276,6 +278,13 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   @IsNotEmpty()
   @IsUUID()
   id: string;
+
+  @ApiProperty({
+    description: 'Timestamp when the review opportunity was posted',
+    type: String,
+    format: 'date-time',
+  })
+  createdAt: Date;
 
   @ApiProperty({
     description: 'Current submission count of this challenge',
