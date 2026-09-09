@@ -4163,6 +4163,33 @@ export class SubmissionService {
       let canViewFullHistory =
         isRequestingMember || this.hasGlobalSubmissionHistoryAccess(authUser);
 
+      // A challenge-less list cannot establish access to anybody else's
+      // submissions. Keep the legacy unfiltered endpoint useful for members by
+      // treating it as an own-history request, while privileged callers retain
+      // the existing global view.
+      const effectiveMemberId =
+        !queryDto.challengeId &&
+        !requestedMemberId &&
+        !canViewFullHistory &&
+        requesterUserId
+          ? requesterUserId
+          : requestedMemberId;
+      if (
+        !queryDto.challengeId &&
+        !requestedMemberId &&
+        !canViewFullHistory &&
+        !requesterUserId
+      ) {
+        throw new ForbiddenException({
+          message:
+            'Authentication is required to list submissions without a challenge id',
+          code: 'FORBIDDEN_SUBMISSION_ACCESS',
+        });
+      }
+      if (effectiveMemberId === requesterUserId && requesterUserId) {
+        canViewFullHistory = true;
+      }
+
       if (requestedMemberId && !queryDto.challengeId && !canViewFullHistory) {
         throw new ForbiddenException({
           message:
@@ -4195,8 +4222,8 @@ export class SubmissionService {
           );
         }
       }
-      if (requestedMemberId) {
-        submissionWhereClause.memberId = requestedMemberId;
+      if (effectiveMemberId) {
+        submissionWhereClause.memberId = effectiveMemberId;
       }
       if (queryDto.legacySubmissionId) {
         submissionWhereClause.legacySubmissionId = queryDto.legacySubmissionId;
@@ -4307,8 +4334,12 @@ export class SubmissionService {
       }
 
       if (isLatestFilter !== null) {
+        const latestQueryDto =
+          effectiveMemberId && !requestedMemberId
+            ? { ...queryDto, memberId: effectiveMemberId }
+            : queryDto;
         const latestSubmissionIds =
-          await this.findLatestSubmissionIdsForQuery(queryDto);
+          await this.findLatestSubmissionIdsForQuery(latestQueryDto);
         whereClause.id = isLatestFilter
           ? { in: latestSubmissionIds }
           : { notIn: latestSubmissionIds };
@@ -4423,6 +4454,11 @@ export class SubmissionService {
       await this.populateReviewTypeNames(submissions);
       await this.enrichReviewerMetadata(submissions);
       await this.enrichAiDecisionScores(submissions);
+      this.stripUnauthorizedAiDecisionDetails(
+        authUser,
+        submissions,
+        reviewVisibilityContext,
+      );
 
       // Count total entities matching the filter for pagination metadata
       let totalCount = await this.prisma.submission.count({
@@ -4521,7 +4557,7 @@ export class SubmissionService {
    * challenge resource lookup.
    *
    * @param authUser - Authenticated requester.
-   * @returns True for internal machines, admins, global copilots, and project managers.
+   * @returns True for internal machines, admins, and global project managers.
    */
   private hasGlobalSubmissionHistoryAccess(authUser: JwtUser): boolean {
     if (authUser?.isMachine || (authUser && isAdmin(authUser))) {
@@ -4533,9 +4569,7 @@ export class SubmissionService {
         .trim()
         .toLowerCase(),
     );
-    return [UserRole.Copilot, UserRole.ProjectManager].some((role) =>
-      tokenRoles.includes(String(role).toLowerCase()),
-    );
+    return tokenRoles.includes(String(UserRole.ProjectManager).toLowerCase());
   }
 
   /**
@@ -4931,6 +4965,11 @@ export class SubmissionService {
     const reviewVisibilityContext = await this.applyReviewVisibilityFilters(
       authUser,
       [data],
+    );
+    this.stripUnauthorizedAiDecisionDetails(
+      authUser,
+      [data],
+      reviewVisibilityContext,
     );
     this.stripSubmitterMemberIds(authUser, [data], reviewVisibilityContext);
     this.stripSubmitterSubmissionDetails(
@@ -6260,52 +6299,37 @@ export class SubmissionService {
   }
 
   /**
-   * Finds submission ids that are latest within each challenge/member pair for
-   * the supplied submission-list filters. The result is used to constrain the
-   * main list and count queries before pagination, so callers can request a
-   * compact member-level view without fetching historical attempts first.
+   * Finds submission ids that are latest within each challenge/member/type
+   * stream. Row-specific filters are intentionally excluded from the ranking
+   * input: the main query intersects them after canonical latest ids have been
+   * selected, so targeting an older row cannot make it appear latest.
    *
    * @param queryDto - Submission list filters from the request query string.
    * @returns Submission ids that represent the latest attempt per member.
-   * @throws BadRequestException when isLatest is requested without challengeId.
+   * @throws BadRequestException when neither challengeId nor memberId scopes the query.
    */
   private async findLatestSubmissionIdsForQuery(
     queryDto: SubmissionQueryDto,
   ): Promise<string[]> {
-    if (!queryDto.challengeId) {
+    if (!queryDto.challengeId && !queryDto.memberId) {
       throw new BadRequestException({
-        message: 'isLatest filtering requires challengeId',
+        message: 'isLatest filtering requires challengeId or memberId',
         code: 'LATEST_SUBMISSION_FILTER_REQUIRES_CHALLENGE',
-        details: { fieldName: 'challengeId' },
+        details: { fieldNames: ['challengeId', 'memberId'] },
       });
     }
 
-    const filters: Prisma.Sql[] = [
-      Prisma.sql`"challengeId" = ${queryDto.challengeId}`,
-      Prisma.sql`"memberId" IS NOT NULL`,
-    ];
+    const filters: Prisma.Sql[] = [Prisma.sql`"memberId" IS NOT NULL`];
+
+    if (queryDto.challengeId) {
+      filters.push(Prisma.sql`"challengeId" = ${queryDto.challengeId}`);
+    }
 
     if (queryDto.type) {
       filters.push(Prisma.sql`"type" = ${queryDto.type}::"SubmissionType"`);
     }
-    if (queryDto.url) {
-      filters.push(Prisma.sql`"url" = ${queryDto.url}`);
-    }
     if (queryDto.memberId) {
       filters.push(Prisma.sql`"memberId" = ${String(queryDto.memberId)}`);
-    }
-    if (queryDto.legacySubmissionId) {
-      filters.push(
-        Prisma.sql`"legacySubmissionId" = ${queryDto.legacySubmissionId}`,
-      );
-    }
-    if (queryDto.legacyUploadId) {
-      filters.push(Prisma.sql`"legacyUploadId" = ${queryDto.legacyUploadId}`);
-    }
-    if (queryDto.submissionPhaseId) {
-      filters.push(
-        Prisma.sql`"submissionPhaseId" = ${queryDto.submissionPhaseId}`,
-      );
     }
 
     const whereSql = filters.reduce(
@@ -6872,9 +6896,6 @@ export class SubmissionService {
 
       delete (submission as any).initialScore;
       delete (submission as any).finalScore;
-      delete (submission as any).aiDecisionScore;
-      delete (submission as any).aiDecisionStatus;
-
       if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
         delete (submission as any).reviewSummation;
       }
@@ -6882,6 +6903,57 @@ export class SubmissionService {
       if (Object.prototype.hasOwnProperty.call(submission, 'url')) {
         (submission as any).url = null;
       }
+    }
+  }
+
+  /**
+   * Removes AI decision details unless the caller owns the submission or holds
+   * an authorized global/challenge role. This runs before submitter identity
+   * redaction so ownership can still be evaluated for single-submission reads.
+   * AI-only's legacy finalScore projection is deliberately left unchanged.
+   *
+   * @param authUser - Authenticated requester, when present.
+   * @param submissions - Submission rows enriched with AI decision data.
+   * @param visibilityContext - Resolved requester and challenge resource roles.
+   */
+  private stripUnauthorizedAiDecisionDetails(
+    authUser: JwtUser | undefined,
+    submissions: Array<
+      {
+        challengeId?: string | null;
+        memberId?: string | null;
+      } & Record<string, unknown>
+    >,
+    visibilityContext: ReviewVisibilityContext,
+  ): void {
+    if (!submissions.length) {
+      return;
+    }
+    if (authUser && this.hasGlobalSubmissionHistoryAccess(authUser)) {
+      return;
+    }
+
+    const requesterUserId = visibilityContext.requesterUserId;
+    for (const submission of submissions) {
+      const memberId = String(submission.memberId ?? '').trim();
+      if (requesterUserId && memberId === requesterUserId) {
+        continue;
+      }
+
+      const challengeId = String(submission.challengeId ?? '').trim();
+      const roleSummary = challengeId
+        ? visibilityContext.roleSummaryByChallenge.get(challengeId)
+        : undefined;
+      if (
+        roleSummary?.hasCopilot ||
+        roleSummary?.hasManager ||
+        roleSummary?.hasReviewer
+      ) {
+        continue;
+      }
+
+      delete submission.aiDecisionScore;
+      delete submission.aiDecisionStatus;
     }
   }
 
@@ -7300,7 +7372,7 @@ export class SubmissionService {
         mode: string;
         status: string;
         submissionId: string;
-        totalScore: number | null;
+        totalScore: Prisma.Decimal | number | string | null;
       }>
     >(Prisma.sql`
       SELECT DISTINCT ON (decision."submissionId")
@@ -7328,16 +7400,18 @@ export class SubmissionService {
       }
 
       const submissionRecord = submission as Record<string, unknown>;
-      // AI gating is a preliminary score. Preserve a later human final score,
-      // while keeping the legacy finalScore convenience fallback before one exists.
-      if (
-        decision.mode === 'AI_ONLY' ||
-        submissionRecord.finalScore === null ||
-        submissionRecord.finalScore === undefined
-      ) {
-        submissionRecord.finalScore = decision.totalScore;
+      const aiDecisionScore = Number(decision.totalScore);
+      if (!Number.isFinite(aiDecisionScore)) {
+        continue;
       }
-      submissionRecord.aiDecisionScore = decision.totalScore;
+
+      // Keep the established AI-only finalScore projection. AI gating is a
+      // preliminary result and is exposed through its dedicated field without
+      // replacing (or masquerading as) a human final score.
+      if (decision.mode === 'AI_ONLY') {
+        submissionRecord.finalScore = aiDecisionScore;
+      }
+      submissionRecord.aiDecisionScore = aiDecisionScore;
       submissionRecord.aiDecisionStatus = decision.status;
     }
   }
@@ -7383,6 +7457,18 @@ export class SubmissionService {
       dto.reviewSummation = this.sanitizeReviewSummationMetadata(
         data.reviewSummation,
       ) as any[];
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'finalScore')) {
+      dto.finalScore =
+        data.finalScore === null || data.finalScore === undefined
+          ? null
+          : Number(data.finalScore);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'aiDecisionScore')) {
+      dto.aiDecisionScore =
+        data.aiDecisionScore === null || data.aiDecisionScore === undefined
+          ? null
+          : Number(data.aiDecisionScore);
     }
     if (Object.prototype.hasOwnProperty.call(data, 'isLatest')) {
       dto.isLatest = Boolean(data.isLatest);

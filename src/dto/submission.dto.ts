@@ -18,6 +18,7 @@ import {
 import { Transform, Type } from 'class-transformer';
 
 import { ReviewResponseDto } from './review.dto';
+import { AiReviewDecisionStatus } from './aiReviewDecision.dto';
 
 export enum SubmissionType {
   CONTEST_SUBMISSION = 'CONTEST_SUBMISSION',
@@ -142,7 +143,7 @@ export class SubmissionQueryDto {
   @ApiProperty({
     name: 'memberId',
     description:
-      'The member id to filter by. Owners, admins, copilots, and challenge managers can receive full history; other challenge participants receive only the latest submission.',
+      'The member id to filter by. Owners, admins, global project managers, assigned challenge copilots, and assigned challenge managers can receive full history; other challenge participants receive only the latest submission.',
     required: false,
   })
   @IsOptional()
@@ -183,7 +184,7 @@ export class SubmissionQueryDto {
   @ApiProperty({
     name: 'isLatest',
     description:
-      'When true, only the latest submission per challenge/member pair is returned. When false, latest submissions are excluded only for callers allowed to view full history. Other challenge participants are always limited to latest submissions.',
+      'When true, only the latest submission per challenge/member/type stream is returned. When false, latest submissions are excluded only for callers allowed to view full history. Other challenge participants are always limited to latest submissions.',
     required: false,
   })
   @IsOptional()
@@ -480,6 +481,32 @@ export class SubmissionResponseDto {
     description: 'prize id',
   })
   prizeId?: number | null;
+
+  @ApiProperty({
+    description:
+      'Final submission score. AI-only decisions are projected here for backward compatibility.',
+    required: false,
+    nullable: true,
+    type: Number,
+  })
+  finalScore?: number | null;
+
+  @ApiProperty({
+    description:
+      'AI review decision score, visible to the submitter and authorized challenge staff.',
+    required: false,
+    nullable: true,
+    type: Number,
+  })
+  aiDecisionScore?: number | null;
+
+  @ApiProperty({
+    description:
+      'AI review decision status, visible to the submitter and authorized challenge staff.',
+    required: false,
+    enum: AiReviewDecisionStatus,
+  })
+  aiDecisionStatus?: AiReviewDecisionStatus;
 
   @ApiProperty({
     description: 'Virus scan status (true when scan passed)',
