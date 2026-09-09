@@ -141,7 +141,8 @@ export class SubmissionQueryDto {
 
   @ApiProperty({
     name: 'memberId',
-    description: 'The member id to filter by',
+    description:
+      'The member id to filter by. Owners, admins, copilots, and challenge managers can receive full history; other challenge participants receive only the latest submission.',
     required: false,
   })
   @IsOptional()
@@ -182,7 +183,7 @@ export class SubmissionQueryDto {
   @ApiProperty({
     name: 'isLatest',
     description:
-      'When true, only the latest submission per challenge/member pair is returned. When false, latest submissions are excluded.',
+      'When true, only the latest submission per challenge/member pair is returned. When false, latest submissions are excluded only for callers allowed to view full history. Other challenge participants are always limited to latest submissions.',
     required: false,
   })
   @IsOptional()

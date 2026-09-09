@@ -220,6 +220,75 @@ describe('SubmissionService', () => {
     });
   });
 
+  describe('enrichAiDecisionScores', () => {
+    it('includes AI-gating scores without replacing a later human final score', async () => {
+      const queryRaw = jest.fn().mockResolvedValueOnce([
+        {
+          mode: 'AI_GATING',
+          submissionId: 'submission-ai-gating',
+          totalScore: 87.25,
+          status: 'PASSED',
+        },
+        {
+          mode: 'AI_GATING',
+          submissionId: 'submission-human-reviewed',
+          totalScore: 78,
+          status: 'PASSED',
+        },
+        {
+          mode: 'AI_ONLY',
+          submissionId: 'submission-ai-only',
+          totalScore: 91,
+          status: 'PASSED',
+        },
+      ]);
+      (service as any).prisma = { $queryRaw: queryRaw };
+      const submissions = [
+        {
+          id: 'submission-ai-gating',
+          challengeId: 'ai-gating-challenge',
+          finalScore: null,
+        },
+        {
+          id: 'submission-human-reviewed',
+          challengeId: 'ai-gating-challenge',
+          finalScore: 93,
+        },
+        {
+          id: 'submission-ai-only',
+          challengeId: 'ai-only-challenge',
+          finalScore: 50,
+        },
+      ];
+
+      await (service as any).enrichAiDecisionScores(submissions);
+
+      const configQuery = queryRaw.mock.calls[0][0];
+      expect(configQuery.strings.join('')).not.toContain('AI_ONLY');
+      expect(submissions[0]).toEqual(
+        expect.objectContaining({
+          finalScore: 87.25,
+          aiDecisionScore: 87.25,
+          aiDecisionStatus: 'PASSED',
+        }),
+      );
+      expect(submissions[1]).toEqual(
+        expect.objectContaining({
+          finalScore: 93,
+          aiDecisionScore: 78,
+          aiDecisionStatus: 'PASSED',
+        }),
+      );
+      expect(submissions[2]).toEqual(
+        expect.objectContaining({
+          finalScore: 91,
+          aiDecisionScore: 91,
+          aiDecisionStatus: 'PASSED',
+        }),
+      );
+    });
+  });
+
   describe('retryStaleSubmissionScanRequests', () => {
     const createRetryService = (
       submissions: Array<{
@@ -2500,13 +2569,15 @@ describe('SubmissionService', () => {
         id: 'submission-new',
       });
       prismaMock.$queryRaw
-        .mockResolvedValueOnce([{ id: 'submission-new' }])
-        .mockResolvedValueOnce([
-          { memberId: 'member-1', submissionCount: BigInt(2) },
-        ]);
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'submission-new' }]);
 
       const result = await listService.listSubmission(
-        { isMachine: false } as any,
+        {
+          isMachine: false,
+          roles: [UserRole.Admin],
+          userId: 'admin-1',
+        } as any,
         { challengeId: 'challenge-1' } as any,
         { page: 1, perPage: 50 } as any,
       );
@@ -2617,6 +2688,189 @@ describe('SubmissionService', () => {
           { page: 1, perPage: 50 } as any,
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+    });
+
+    it('forces latest-only results when a participant requests another member history', async () => {
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['submission-new']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        {
+          challengeId: 'challenge-1',
+          memberId: 'member-2',
+          isLatest: 'false',
+        } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          challengeId: 'challenge-1',
+          memberId: 'member-2',
+          isLatest: 'false',
+        }),
+      );
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: 'challenge-1',
+            memberId: 'member-2',
+            id: { in: ['submission-new'] },
+          }),
+        }),
+      );
+    });
+
+    it('forces latest-only results for ordinary challenge-wide listings', async () => {
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['member-1-latest', 'member-2-latest']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { in: ['member-1-latest', 'member-2-latest'] },
+          }),
+        }),
+      );
+    });
+
+    it('returns full history when a member requests their own submissions', async () => {
+      const latestSpy = jest.spyOn(
+        listService as any,
+        'findLatestSubmissionIdsForQuery',
+      );
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1', memberId: 'member-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: 'challenge-1',
+            memberId: 'member-1',
+          }),
+        }),
+      );
+    });
+
+    it.each(['Copilot', 'Challenge Manager'])(
+      'returns full history to a challenge %s resource',
+      async (roleName) => {
+        const latestSpy = jest.spyOn(
+          listService as any,
+          'findLatestSubmissionIdsForQuery',
+        );
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+          { roleName, roleId: `${roleName}-role` },
+        ]);
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+
+        await listService.listSubmission(
+          {
+            userId: 'challenge-staff',
+            isMachine: false,
+            roles: [UserRole.User],
+          } as any,
+          { challengeId: 'challenge-1', memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        expect(latestSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([UserRole.Admin, UserRole.Copilot, UserRole.ProjectManager])(
+      'returns full history to a %s token',
+      async (role) => {
+        const latestSpy = jest.spyOn(
+          listService as any,
+          'findLatestSubmissionIdsForQuery',
+        );
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+
+        await listService.listSubmission(
+          {
+            userId: 'global-staff',
+            isMachine: false,
+            roles: [role],
+          } as any,
+          { challengeId: 'challenge-1', memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        expect(latestSpy).not.toHaveBeenCalled();
+        expect(
+          resourceApiServiceListMock.getMemberResourcesRoles,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects cross-member history requests that omit challengeId', async () => {
+      await expect(
+        listService.listSubmission(
+          {
+            userId: 'member-1',
+            isMachine: false,
+            roles: [UserRole.User],
+          } as any,
+          { memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
 
       expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
     });
@@ -4359,7 +4613,10 @@ describe('SubmissionService', () => {
         },
       };
       prismaMock = {
-        $transaction: jest.fn((callback) => callback(transactionClient)),
+        $transaction: jest.fn(
+          (callback: (client: typeof transactionClient) => unknown) =>
+            callback(transactionClient),
+        ),
         submission: {
           create: jest.fn().mockResolvedValue({ id: 'uncapped-submission' }),
         },
@@ -4552,31 +4809,35 @@ describe('SubmissionService', () => {
     it('serializes competing requests for the final available slot', async () => {
       let storedSubmissionCount = 1;
       let lockTail = Promise.resolve();
-      prismaMock.$transaction.mockImplementation(async (callback) => {
-        const previousLock = lockTail;
-        let releaseLock: () => void = () => undefined;
-        lockTail = new Promise<void>((resolve) => {
-          releaseLock = resolve;
-        });
-        await previousLock;
+      prismaMock.$transaction.mockImplementation(
+        async (
+          callback: (client: typeof transactionClient) => Promise<unknown>,
+        ) => {
+          const previousLock = lockTail;
+          let releaseLock: () => void = () => undefined;
+          lockTail = new Promise<void>((resolve) => {
+            releaseLock = resolve;
+          });
+          await previousLock;
 
-        const serializedClient = {
-          $executeRaw: jest.fn().mockResolvedValue(0),
-          submission: {
-            count: jest.fn().mockImplementation(() => storedSubmissionCount),
-            create: jest.fn().mockImplementation(() => {
-              storedSubmissionCount += 1;
-              return { id: `submission-${storedSubmissionCount}` };
-            }),
-          },
-        };
+          const serializedClient = {
+            $executeRaw: jest.fn().mockResolvedValue(0),
+            submission: {
+              count: jest.fn().mockImplementation(() => storedSubmissionCount),
+              create: jest.fn().mockImplementation(() => {
+                storedSubmissionCount += 1;
+                return { id: `submission-${storedSubmissionCount}` };
+              }),
+            },
+          };
 
-        try {
-          return await callback(serializedClient);
-        } finally {
-          releaseLock();
-        }
-      });
+          try {
+            return await callback(serializedClient);
+          } finally {
+            releaseLock();
+          }
+        },
+      );
 
       const results = await Promise.allSettled([
         (createService as any).createSubmissionWithLimit(
@@ -5657,7 +5918,9 @@ describe('SubmissionService', () => {
     ) => {
       const prismaMock = {
         submission: {
-          findUnique: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue(buildExistingSubmission(type)),
           delete: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
         },
         aiWorkflowRun: {

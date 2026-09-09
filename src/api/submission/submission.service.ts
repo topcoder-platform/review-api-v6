@@ -1653,10 +1653,7 @@ export class SubmissionService {
     }
 
     try {
-      const safeSubmissionId = submission.id.replace(
-        /[^A-Za-z0-9_-]/g,
-        '_',
-      );
+      const safeSubmissionId = submission.id.replace(/[^A-Za-z0-9_-]/g, '_');
       const fileName = `submission-${safeSubmissionId}.zip`;
       const downloadUrl = await getSignedUrl(
         s3,
@@ -1721,9 +1718,7 @@ export class SubmissionService {
       return false;
     }
 
-    if (
-      this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge)
-    ) {
+    if (this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge)) {
       return this.isWinningSubmission(challengeId, challenge, submission);
     }
 
@@ -1757,10 +1752,7 @@ export class SubmissionService {
       return true;
     }
 
-    return this.hasPassingStaleReviewSummation(
-      challengeId,
-      requesterMemberId,
-    );
+    return this.hasPassingStaleReviewSummation(challengeId, requesterMemberId);
   }
 
   /**
@@ -1857,9 +1849,7 @@ export class SubmissionService {
       }
 
       const scorecard = matchingReviews[0].scorecard;
-      const minimumPassingScore = Number.isFinite(
-        scorecard.minimumPassingScore,
-      )
+      const minimumPassingScore = Number.isFinite(scorecard.minimumPassingScore)
         ? scorecard.minimumPassingScore
         : Number.isFinite(scorecard.minScore)
           ? scorecard.minScore
@@ -2411,12 +2401,12 @@ export class SubmissionService {
           : Buffer.from(chunk as string | Uint8Array);
         hashedBytes += buffer.length;
         if (hashedBytes > maxBytes) {
-           stream.destroy();
-           this.logger.warn(
-             `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: streamed ${hashedBytes} bytes, above the ${maxBytes} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
-           );
-           return null;
-         }
+          stream.destroy();
+          this.logger.warn(
+            `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: streamed ${hashedBytes} bytes, above the ${maxBytes} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
+          );
+          return null;
+        }
         hash.update(buffer);
       }
 
@@ -4164,25 +4154,24 @@ export class SubmissionService {
       const requestedMemberId = queryDto.memberId
         ? String(queryDto.memberId)
         : undefined;
+      const requesterUserId =
+        authUser?.userId !== undefined && authUser?.userId !== null
+          ? String(authUser.userId)
+          : '';
+      const isRequestingMember =
+        !!requestedMemberId && requesterUserId === requestedMemberId;
+      let canViewFullHistory =
+        isRequestingMember || this.hasGlobalSubmissionHistoryAccess(authUser);
 
-      if (requestedMemberId) {
-        const userId = authUser?.userId ? String(authUser.userId) : undefined;
-        const isRequestingMember = userId === requestedMemberId;
-        const hasCopilotRole = (authUser?.roles ?? []).includes(
-          UserRole.Copilot,
-        );
-        const hasElevatedAccess = isAdmin(authUser) || hasCopilotRole;
-
-        if (!hasElevatedAccess && !isRequestingMember) {
-          throw new ForbiddenException({
-            message:
-              'You are not allowed to view submissions for the requested member',
-            code: 'FORBIDDEN_SUBMISSION_ACCESS',
-            details: {
-              requestedMemberId,
-            },
-          });
-        }
+      if (requestedMemberId && !queryDto.challengeId && !canViewFullHistory) {
+        throw new ForbiddenException({
+          message:
+            "A challenge id is required to verify access to another member's submissions",
+          code: 'FORBIDDEN_SUBMISSION_ACCESS',
+          details: {
+            requestedMemberId,
+          },
+        });
       }
 
       // Build the where clause for submissions based on available filter parameters
@@ -4199,6 +4188,12 @@ export class SubmissionService {
           queryDto.challengeId,
         );
         submissionWhereClause.challengeId = queryDto.challengeId;
+        if (!canViewFullHistory) {
+          canViewFullHistory = await this.hasChallengeSubmissionHistoryAccess(
+            authUser,
+            queryDto.challengeId,
+          );
+        }
       }
       if (requestedMemberId) {
         submissionWhereClause.memberId = requestedMemberId;
@@ -4212,16 +4207,19 @@ export class SubmissionService {
       if (queryDto.submissionPhaseId) {
         submissionWhereClause.submissionPhaseId = queryDto.submissionPhaseId;
       }
-      const isLatestFilter = parseOptionalBooleanQuery(
+      let isLatestFilter = parseOptionalBooleanQuery(
         queryDto.isLatest,
         'isLatest',
       );
 
+      // Challenge submission history is private. A submitter can inspect all of
+      // their own attempts, while other ordinary participants only receive the
+      // latest attempt even when they omit isLatest or explicitly request false.
+      if (queryDto.challengeId && !canViewFullHistory) {
+        isLatestFilter = true;
+      }
+
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
-      const requesterUserId =
-        authUser?.userId !== undefined && authUser?.userId !== null
-          ? String(authUser.userId)
-          : '';
 
       let restrictedChallengeIds = new Set<string>();
       if (!isPrivilegedRequester && requesterUserId && !queryDto.challengeId) {
@@ -4516,6 +4514,64 @@ export class SubmissionService {
       }
     }
     return false;
+  }
+
+  /**
+   * Reports whether a token grants full submission-history access without a
+   * challenge resource lookup.
+   *
+   * @param authUser - Authenticated requester.
+   * @returns True for internal machines, admins, global copilots, and project managers.
+   */
+  private hasGlobalSubmissionHistoryAccess(authUser: JwtUser): boolean {
+    if (authUser?.isMachine || (authUser && isAdmin(authUser))) {
+      return true;
+    }
+
+    const tokenRoles = (authUser?.roles ?? []).map((role) =>
+      String(role ?? '')
+        .trim()
+        .toLowerCase(),
+    );
+    return [UserRole.Copilot, UserRole.ProjectManager].some((role) =>
+      tokenRoles.includes(String(role).toLowerCase()),
+    );
+  }
+
+  /**
+   * Checks whether the requester is a copilot or manager for one challenge.
+   * Resource lookup failures fail closed so an unverified participant cannot
+   * receive historical submissions.
+   *
+   * @param authUser - Authenticated requester.
+   * @param challengeId - Challenge whose resource roles should be checked.
+   * @returns True when a challenge copilot or manager resource is confirmed.
+   */
+  private async hasChallengeSubmissionHistoryAccess(
+    authUser: JwtUser,
+    challengeId: string,
+  ): Promise<boolean> {
+    const requester = String(authUser?.userId ?? '').trim();
+    if (!requester) {
+      return false;
+    }
+
+    try {
+      const resources = await this.resourceApiService.getMemberResourcesRoles(
+        challengeId,
+        requester,
+      );
+      return (resources ?? []).some((resource) => {
+        const roleName = String(resource?.roleName ?? '').toLowerCase();
+        return roleName.includes('copilot') || roleName.includes('manager');
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[listSubmission] Could not verify challenge ${challengeId} history access for member ${requester}: ${message}`,
+      );
+      return false;
+    }
   }
 
   async countSubmissionsForChallenge(
@@ -7205,10 +7261,12 @@ export class SubmissionService {
   }
 
   /**
-   * Enriches submissions with the latest (non-PENDING) AI decision totalScore for AI-only challenges.
-   * For each submission, if an AI review config exists for its challenge and there's
-   * a non-PENDING AI decision, sets `finalScore`, `aiDecisionScore`, and `aiDecisionStatus`
-   * on the submission object.
+   * Enriches submissions with the latest non-pending AI decision score.
+   * Both AI-only and AI-gating configurations produce member-visible workflow
+   * scores, so every configured challenge is eligible for enrichment.
+   *
+   * @param submissions - Submission rows that will be returned to the client.
+   * @returns Nothing; eligible rows are enriched in place.
    */
   private async enrichAiDecisionScores(
     submissions: Array<{
@@ -7233,44 +7291,29 @@ export class SubmissionService {
       return;
     }
 
-    // Find which challenges have AI review configs (AI-only challenges)
-    const aiConfigRows = await this.prisma.$queryRaw<
-      Array<{ challengeId: string }>
-    >(Prisma.sql`
-      SELECT DISTINCT "challengeId"
-      FROM "aiReviewConfig"
-      WHERE "challengeId" IN (${Prisma.join(challengeIds)})
-        AND "mode" = 'AI_ONLY'
-    `);
+    const submissionIds = submissions.map((submission) => submission.id);
 
-    const aiOnlyChallengeIds = new Set(aiConfigRows.map((r) => r.challengeId));
-    if (!aiOnlyChallengeIds.size) {
-      return;
-    }
-
-    // Get submissions that belong to AI-only challenges
-    const aiSubmissions = submissions.filter(
-      (s) => s.challengeId && aiOnlyChallengeIds.has(s.challengeId),
-    );
-
-    if (!aiSubmissions.length) {
-      return;
-    }
-
-    const submissionIds = aiSubmissions.map((s) => s.id);
-
-    // Fetch the latest AI decision for each submission
+    // Fetch the latest configured AI decision for each submission. Joining the
+    // config supplies the exact mode used by that decision, including gating.
     const decisionRows = await this.prisma.$queryRaw<
-      Array<{ submissionId: string; totalScore: number | null; status: string }>
+      Array<{
+        mode: string;
+        status: string;
+        submissionId: string;
+        totalScore: number | null;
+      }>
     >(Prisma.sql`
-      SELECT DISTINCT ON ("submissionId")
-        "submissionId",
-        "totalScore",
-        status::text AS "status"
-      FROM "aiReviewDecision"
-      WHERE "submissionId" IN (${Prisma.join(submissionIds)})
-        AND UPPER(status::text) != 'PENDING'
-      ORDER BY "submissionId", "updatedAt" DESC
+      SELECT DISTINCT ON (decision."submissionId")
+        decision."submissionId",
+        decision."totalScore",
+        decision.status::text AS "status",
+        config.mode::text AS "mode"
+      FROM "aiReviewDecision" decision
+      INNER JOIN "aiReviewConfig" config ON config.id = decision."configId"
+      WHERE decision."submissionId" IN (${Prisma.join(submissionIds)})
+        AND config."challengeId" IN (${Prisma.join(challengeIds)})
+        AND UPPER(decision.status::text) != 'PENDING'
+      ORDER BY decision."submissionId", decision."updatedAt" DESC
     `);
 
     const decisionBySubmissionId = new Map(
@@ -7278,18 +7321,24 @@ export class SubmissionService {
     );
 
     // Enrich submissions with AI decision scores
-    for (const submission of aiSubmissions) {
+    for (const submission of submissions) {
       const decision = decisionBySubmissionId.get(submission.id);
       if (!decision || decision.totalScore === null) {
         continue;
       }
 
-      // Also set on the submission itself for convenience
-      (submission as Record<string, unknown>).finalScore = decision.totalScore;
-      (submission as Record<string, unknown>).aiDecisionScore =
-        decision.totalScore;
-      (submission as Record<string, unknown>).aiDecisionStatus =
-        decision.status;
+      const submissionRecord = submission as Record<string, unknown>;
+      // AI gating is a preliminary score. Preserve a later human final score,
+      // while keeping the legacy finalScore convenience fallback before one exists.
+      if (
+        decision.mode === 'AI_ONLY' ||
+        submissionRecord.finalScore === null ||
+        submissionRecord.finalScore === undefined
+      ) {
+        submissionRecord.finalScore = decision.totalScore;
+      }
+      submissionRecord.aiDecisionScore = decision.totalScore;
+      submissionRecord.aiDecisionStatus = decision.status;
     }
   }
 
