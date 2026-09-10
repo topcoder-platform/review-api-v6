@@ -15,6 +15,7 @@ import {
   UpdateAiWorkflowRunDto,
   UpdateAiWorkflowRunItemDto,
   UpdateRunItemCommentDto,
+  QueueAiWorkflowRunsDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
@@ -33,6 +34,7 @@ import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.ser
 import { Prisma, ReviewMethod, VoteType } from '@prisma/client';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
 import { WorkflowQueueHandler } from 'src/shared/modules/global/workflow-queue.handler';
+import { AiWorkflowQueueService } from 'src/shared/modules/global/ai-workflow-queue.service';
 
 @Injectable()
 export class AiWorkflowService {
@@ -46,6 +48,7 @@ export class AiWorkflowService {
     private readonly aiReviewerDecisionMaker: AiReviewerDecisionMakerService,
     private readonly giteaService: GiteaService,
     private readonly workflowQueueHandler: WorkflowQueueHandler,
+    private readonly aiWorkflowQueueService: AiWorkflowQueueService,
     private readonly challengePrisma: ChallengePrismaService,
   ) {
     this.logger = LoggerService.forRoot('AiWorkflowService');
@@ -63,6 +66,77 @@ export class AiWorkflowService {
       WHERE "isMemberReview" = false
         AND "aiConfigTemplateId" IN (${Prisma.join(templateIds)})
     `;
+  }
+
+  /**
+   * Manually queue the AI workflow runs configured for a submission.
+   *
+   * AI workflows are normally queued when the virus scan completes or when the
+   * AI phase opens. When one of those events is missed (or arrives before the
+   * challenge is configured), the submission ends up without any run. This
+   * gives admins a way to queue the missing runs after the fact.
+   */
+  async queueWorkflowRunsForSubmission(body: QueueAiWorkflowRunsDto) {
+    const { submissionId } = body;
+
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: submissionId },
+      select: { id: true, challengeId: true, virusScan: true },
+    });
+
+    if (!submission) {
+      throw new NotFoundException(
+        `Submission with id ${submissionId} not found.`,
+      );
+    }
+
+    if (submission.virusScan !== true) {
+      throw new BadRequestException(
+        `Submission ${submissionId} has not passed the virus scan yet; AI workflows cannot be queued.`,
+      );
+    }
+
+    const result =
+      await this.aiWorkflowQueueService.queueWorkflowsForSubmission(
+        submissionId,
+        {
+          onlyMissing: true,
+          detectAiPhaseOpened: !body.ignoreAiPhaseState,
+          ignoreAiPhaseState: body.ignoreAiPhaseState === true,
+        },
+      );
+
+    this.logger.log(
+      `Manual AI workflow queueing for submission ${submissionId} queued ${result.queuedRuns.length} run(s).${
+        result.reason ? ` ${result.reason}` : ''
+      }`,
+    );
+
+    if (!result.queuedRuns.length) {
+      return {
+        queued: false,
+        runs: [],
+        message:
+          result.reason ??
+          `No AI workflow runs were queued for submission ${submissionId}.`,
+      };
+    }
+
+    const runs = await this.prisma.aiWorkflowRun.findMany({
+      where: { id: { in: result.queuedRuns.map((run) => run.id) } },
+      include: { workflow: true },
+    });
+
+    return {
+      queued: true,
+      runs,
+      message: [
+        `Queued ${runs.length} AI workflow run(s) for submission ${submissionId}.`,
+        result.reason,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    };
   }
 
   async retriggerWorkflowRun(workflowRunId: string) {
@@ -599,6 +673,14 @@ export class AiWorkflowService {
       })),
     });
 
+    // Receiving run items proves the workflow finished, even if the timeout
+    // guard already marked the run as timed out.
+    if (run.status === 'TIMEOUT' && createdItems.count > 0) {
+      await this.workflowQueueHandler.reconcileTimedOutWorkflowRun(runId, {
+        previousStatus: run.status,
+      });
+    }
+
     return { createdCount: createdItems.count };
   }
 
@@ -880,6 +962,11 @@ export class AiWorkflowService {
       }
     }
 
+    const existingRun = await this.prisma.aiWorkflowRun.findUnique({
+      where: { id: runId },
+      select: { status: true },
+    });
+
     try {
       await this.prisma.aiWorkflowRun.update({
         where: {
@@ -899,6 +986,16 @@ export class AiWorkflowService {
       }
 
       throw error;
+    }
+
+    // The workflow reported its results after the timeout guard already gave
+    // up on the run - promote it back to SUCCESS and run the completion side
+    // effects that were skipped.
+    if (existingRun?.status === 'TIMEOUT') {
+      await this.workflowQueueHandler.reconcileTimedOutWorkflowRun(runId, {
+        previousStatus: existingRun.status,
+        completedAt: patchData.completedAt,
+      });
     }
   }
 

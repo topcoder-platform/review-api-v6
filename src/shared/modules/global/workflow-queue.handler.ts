@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { GiteaService, ActionDispatchWorkflowResponse } from './gitea.service';
 import { PrismaService } from './prisma.service';
-import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
+import { Prisma, aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengePrismaService } from './challenge-prisma.service';
@@ -40,6 +40,21 @@ const AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = (() => {
   }
   return normalized;
 })();
+
+export interface QueueWorkflowRunsOptions {
+  /**
+   * Queue only the workflows that don't have a run for the submission yet,
+   * instead of skipping the whole submission when any run already exists.
+   * Used by the manual queueing flow to recover jobs that were missed.
+   */
+  onlyMissing?: boolean;
+}
+
+export interface QueueWorkflowRunsResult {
+  queuedRuns: { id: string; workflowId: string }[];
+  skipped: boolean;
+  reason?: string;
+}
 
 @Injectable()
 export class WorkflowQueueHandler {
@@ -355,7 +370,8 @@ export class WorkflowQueueHandler {
     aiWorkflows: { id: string }[],
     challengeId: string,
     submissionId: string,
-  ) {
+    options?: QueueWorkflowRunsOptions,
+  ): Promise<QueueWorkflowRunsResult> {
     const requestedWorkflowIds = aiWorkflows
       .map((workflow) => workflow.id)
       .filter((id): id is string => Boolean(id));
@@ -371,30 +387,58 @@ export class WorkflowQueueHandler {
     });
 
     if (!activeWorkflows.length) {
-      this.logWithContext(
-        `No active AI workflows to queue for challenge ${challengeId}, submission ${submissionId}.`,
-        { submissionId },
-      );
-      return;
+      const reason = `No active AI workflows to queue for challenge ${challengeId}, submission ${submissionId}.`;
+      this.logWithContext(reason, { submissionId });
+      return { queuedRuns: [], skipped: true, reason };
     }
+
+    let skipReason: string | undefined;
 
     const workflowRuns = await this.prisma.$transaction(async (tx) => {
       // get a lock for the challengeId, submissionId pair
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${stringToHash(`queueWorkflowRuns, ${challengeId}:${submissionId}`)})`;
 
-      // check if workflow runs have already been queued for this submission
-      const alreadyQueued = await this.hasQueuedWorkflowRuns(submissionId);
+      let workflowsToQueue = activeWorkflows;
 
-      if (alreadyQueued) {
-        this.logWithContext(
-          `AI workflow runs already queued for submission ${submissionId}. Skipping queueing.`,
-          { submissionId },
+      if (options?.onlyMissing) {
+        // Only queue the workflows that are missing a run for this submission,
+        // so a partially queued submission can still be completed manually.
+        const existingRuns = await tx.aiWorkflowRun.findMany({
+          where: {
+            submissionId,
+            workflowId: { in: activeWorkflows.map((workflow) => workflow.id) },
+          },
+          select: { workflowId: true },
+        });
+        const queuedWorkflowIds = new Set(
+          existingRuns.map((run) => run.workflowId),
         );
-        return [];
+
+        workflowsToQueue = activeWorkflows.filter(
+          (workflow) => !queuedWorkflowIds.has(workflow.id),
+        );
+
+        if (!workflowsToQueue.length) {
+          skipReason = `All active AI workflows already have runs for submission ${submissionId}. Skipping queueing.`;
+          this.logWithContext(skipReason, { submissionId });
+          return [];
+        }
+      } else {
+        // check if workflow runs have already been queued for this submission
+        const alreadyQueued = await this.hasQueuedWorkflowRuns(
+          submissionId,
+          tx,
+        );
+
+        if (alreadyQueued) {
+          skipReason = `AI workflow runs already queued for submission ${submissionId}. Skipping queueing.`;
+          this.logWithContext(skipReason, { submissionId });
+          return [];
+        }
       }
 
       return tx.aiWorkflowRun.createManyAndReturn({
-        data: activeWorkflows.map((workflow) => ({
+        data: workflowsToQueue.map((workflow) => ({
           workflowId: workflow.id,
           submissionId,
           status: 'INIT',
@@ -407,15 +451,19 @@ export class WorkflowQueueHandler {
     });
 
     if (!workflowRuns.length) {
-      return;
+      return { queuedRuns: [], skipped: true, reason: skipReason };
     }
 
+    const queuedRuns = workflowRuns.map((run) => ({
+      id: run.id,
+      workflowId: run.workflowId,
+    }));
+
     if (!this.isDispatchEnabled) {
-      this.logWithContext(
-        'AI workflow dispatch is disabled, leaving workflow runs in INIT status.',
-        { submissionId },
-      );
-      return;
+      const reason =
+        'AI workflow dispatch is disabled, leaving workflow runs in INIT status.';
+      this.logWithContext(reason, { submissionId });
+      return { queuedRuns, skipped: false, reason };
     }
 
     const submission = await this.prisma.submission.findUnique({
@@ -438,12 +486,23 @@ export class WorkflowQueueHandler {
         },
       });
     }
+
+    return { queuedRuns, skipped: false };
   }
 
-  async hasQueuedWorkflowRuns(submissionId: string): Promise<boolean> {
+  /**
+   * @param client the prisma client to read through. Callers running inside a
+   *   `$transaction` must pass their transaction client, so the read happens on
+   *   the connection holding the advisory lock instead of borrowing another
+   *   connection from the pool.
+   */
+  async hasQueuedWorkflowRuns(
+    submissionId: string,
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<boolean> {
     if (!submissionId) return false;
 
-    const existing = await this.prisma.aiWorkflowRun.findFirst({
+    const existing = await client.aiWorkflowRun.findFirst({
       where: {
         submissionId,
       },
@@ -591,23 +650,6 @@ export class WorkflowQueueHandler {
     const [aiWorkflowRun]: ((typeof aiWorkflowRuns)[0] | null)[] =
       aiWorkflowRuns;
 
-    if (
-      aiWorkflowRun &&
-      !['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)
-    ) {
-      const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
-      this.logWithContext(
-        errorMessage,
-        {
-          aiWorkflowRunId: aiWorkflowRun.id,
-          submissionId: aiWorkflowRun.submissionId ?? null,
-          gitRunId: event.workflow_job.run_id,
-        },
-        'error',
-      );
-      return;
-    }
-
     const conclusion = event.workflow_job.conclusion?.toUpperCase();
     const terminalStatus = conclusion
       ? this.normalizeWorkflowConclusion(conclusion, {
@@ -637,6 +679,33 @@ export class WorkflowQueueHandler {
         'error',
       );
 
+      return;
+    }
+
+    if (!['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)) {
+      // The timeout guard may have given up on a run that was in fact still
+      // running on the gitea side. Recover it instead of dropping the event.
+      if (aiWorkflowRun.status === 'TIMEOUT' && event.action === 'completed') {
+        const recovered = await this.reconcileTimedOutWorkflowRun(
+          aiWorkflowRun.id,
+          { conclusion: terminalStatus },
+        );
+
+        if (recovered) {
+          return;
+        }
+      }
+
+      const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
+      this.logWithContext(
+        errorMessage,
+        {
+          aiWorkflowRunId: aiWorkflowRun.id,
+          submissionId: aiWorkflowRun.submissionId ?? null,
+          gitRunId: event.workflow_job.run_id,
+        },
+        'error',
+      );
       return;
     }
 
@@ -693,8 +762,6 @@ export class WorkflowQueueHandler {
           },
         });
 
-        await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
-
         this.logWithContext(
           {
             message: `Workflow job ${aiWorkflowRun.id} completed with conclusion: ${conclusion}`,
@@ -710,54 +777,167 @@ export class WorkflowQueueHandler {
           },
         );
 
-        if (terminalStatus !== 'CANCELLED') {
-          try {
-            await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
-          } catch (e) {
-            const errorMessage = e instanceof Error ? e.message : String(e);
-            this.logWithContext(
-              `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
-              {
-                aiWorkflowRunId: aiWorkflowRun.id,
-                submissionId: aiWorkflowRun.submissionId ?? null,
-                gitRunId: event.workflow_job.run_id,
-              },
-            );
-          }
-        }
-
-        // Check if all AI workflows for the challenge are complete and publish phase completion event
-        try {
-          if (aiWorkflowRun.submissionId) {
-            const submission = await this.prisma.submission.findUnique({
-              where: { id: aiWorkflowRun.submissionId },
-              select: { challengeId: true },
-            });
-
-            if (submission?.challengeId) {
-              await this.publishAiWorkflowPhaseCompletedEvent(
-                submission.challengeId,
-                aiWorkflowRun.submissionId,
-              );
-            }
-          }
-        } catch (e) {
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          this.logWithContext(
-            `Failed to publish AI workflow phase completion event for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
-            {
-              aiWorkflowRunId: aiWorkflowRun.id,
-              submissionId: aiWorkflowRun.submissionId ?? null,
-              gitRunId: event.workflow_job.run_id,
-            },
-            'error',
-          );
-        }
+        await this.runWorkflowRunCompletionSideEffects(aiWorkflowRun, {
+          notify: terminalStatus !== 'CANCELLED',
+          gitRunId: event.workflow_job.run_id,
+        });
         break;
       }
       default:
         break;
     }
+  }
+
+  /**
+   * Post-completion side effects shared by the gitea `completed` webhook and
+   * the timed-out run reconciliation: re-evaluate the AI decision, notify the
+   * submitter and publish the AI workflow phase completion event.
+   */
+  private async runWorkflowRunCompletionSideEffects(
+    aiWorkflowRun: aiWorkflowRun & { workflow: aiWorkflow },
+    options: { notify: boolean; gitRunId?: string | null },
+  ): Promise<void> {
+    const logContext = {
+      aiWorkflowRunId: aiWorkflowRun.id,
+      submissionId: aiWorkflowRun.submissionId ?? null,
+      gitRunId: options.gitRunId ?? aiWorkflowRun.gitRunId ?? null,
+    };
+
+    await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
+
+    if (options.notify) {
+      try {
+        await this.sendWorkflowRunCompletedNotification(aiWorkflowRun);
+      } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        this.logWithContext(
+          `Failed to send workflowRun completed notification for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
+          logContext,
+        );
+      }
+    }
+
+    // Check if all AI workflows for the challenge are complete and publish phase completion event
+    try {
+      if (aiWorkflowRun.submissionId) {
+        const submission = await this.prisma.submission.findUnique({
+          where: { id: aiWorkflowRun.submissionId },
+          select: { challengeId: true },
+        });
+
+        if (submission?.challengeId) {
+          await this.publishAiWorkflowPhaseCompletedEvent(
+            submission.challengeId,
+            aiWorkflowRun.submissionId,
+          );
+        }
+      }
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      this.logWithContext(
+        `Failed to publish AI workflow phase completion event for aiWorkflowRun ${aiWorkflowRun.id}. Got error ${errorMessage}!`,
+        logContext,
+        'error',
+      );
+    }
+  }
+
+  /**
+   * A workflow run marked as TIMEOUT may still have finished on the gitea side:
+   * the results (score / run items) or a late `completed` webhook can arrive
+   * after the timeout guard already gave up on the run.
+   *
+   * When that happens, promote the run from TIMEOUT to SUCCESS and run the
+   * regular post-completion side effects that the timeout path skipped.
+   *
+   * @param workflowRunId the run to reconcile
+   * @param options.previousStatus the run status observed before the caller
+   *   applied its own update, so a run patched straight from TIMEOUT to SUCCESS
+   *   is reconciled as well
+   * @param options.conclusion a gitea workflow conclusion, when reconciling
+   *   from a late webhook event
+   * @param options.completedAt the real completion time reported by the
+   *   workflow, when known. Defaults to now, since the `completedAt` stored by
+   *   the timeout guard is the moment we gave up on the run, not the moment
+   *   the run actually finished.
+   * @returns true when the run was reconciled
+   */
+  async reconcileTimedOutWorkflowRun(
+    workflowRunId: string,
+    options?: {
+      previousStatus?: string | null;
+      conclusion?: string | null;
+      completedAt?: Date | null;
+    },
+  ): Promise<boolean> {
+    const reconciled = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${stringToHash(`reconcileTimedOutWorkflowRun, ${workflowRunId}`)})`;
+
+      const run = await tx.aiWorkflowRun.findUnique({
+        where: { id: workflowRunId },
+        include: {
+          workflow: true,
+          _count: { select: { items: true } },
+        },
+      });
+
+      if (!run) {
+        return null;
+      }
+
+      const wasTimedOut =
+        run.status === 'TIMEOUT' || options?.previousStatus === 'TIMEOUT';
+      if (!wasTimedOut) {
+        return null;
+      }
+
+      // Only promote the run when we have proof the workflow actually finished.
+      const hasResults =
+        run.score !== null ||
+        run._count.items > 0 ||
+        (options?.conclusion ?? '').trim().toUpperCase() === 'SUCCESS' ||
+        run.status === 'SUCCESS';
+
+      if (!hasResults) {
+        return null;
+      }
+
+      const previousStatus = run.status;
+      const updated = await tx.aiWorkflowRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'SUCCESS',
+          completedAt:
+            options?.completedAt ??
+            (run.status === 'SUCCESS' ? run.completedAt : null) ??
+            new Date(),
+        },
+        include: { workflow: true },
+      });
+
+      return { previousStatus, updated };
+    });
+
+    if (!reconciled) {
+      return false;
+    }
+
+    this.logWithContext(
+      `Workflow run ${workflowRunId} reported results after timing out. Status updated from ${reconciled.previousStatus} to SUCCESS.`,
+      {
+        aiWorkflowRunId: workflowRunId,
+        submissionId: reconciled.updated.submissionId ?? null,
+        gitRunId: reconciled.updated.gitRunId ?? null,
+        score: reconciled.updated.score,
+      },
+      'warn',
+    );
+
+    await this.runWorkflowRunCompletionSideEffects(reconciled.updated, {
+      notify: true,
+    });
+
+    return true;
   }
 
   async sendWorkflowRunCompletedNotification(

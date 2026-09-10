@@ -67,6 +67,7 @@ describe('AiWorkflowQueueService', () => {
       [{ id: 'workflow-a' }, { id: 'workflow-b' }],
       'challenge-1',
       'submission-1',
+      { onlyMissing: undefined },
     );
   });
 
@@ -78,9 +79,7 @@ describe('AiWorkflowQueueService', () => {
     prismaMock.aiReviewConfig.findFirst.mockResolvedValue({
       instantReview: false,
       template: { disabled: false },
-      workflows: [
-        { workflowId: 'workflow-c' },
-      ],
+      workflows: [{ workflowId: 'workflow-c' }],
     });
 
     await service.queueWorkflowsForSubmission('submission-5', {
@@ -91,6 +90,7 @@ describe('AiWorkflowQueueService', () => {
       [{ id: 'workflow-c' }],
       'challenge-5',
       'submission-5',
+      { onlyMissing: undefined },
     );
   });
 
@@ -118,6 +118,7 @@ describe('AiWorkflowQueueService', () => {
       [{ id: 'workflow-d' }],
       'challenge-7',
       'submission-7',
+      { onlyMissing: undefined },
     );
   });
 
@@ -217,6 +218,7 @@ describe('AiWorkflowQueueService', () => {
       [{ id: 'legacy-workflow-1' }, { id: 'legacy-workflow-2' }],
       'challenge-3',
       'submission-3',
+      { onlyMissing: undefined },
     );
   });
   it('skips queueing when active AI review config template is disabled', async () => {

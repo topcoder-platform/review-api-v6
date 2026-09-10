@@ -26,6 +26,7 @@ import {
   CreateAiWorkflowRunItemsDto,
   UpdateAiWorkflowRunDto,
   RetriggerAiWorkflowRunDto,
+  QueueAiWorkflowRunsDto,
   CreateRunItemCommentDto,
   UpdateAiWorkflowRunItemDto,
   UpdateRunItemCommentDto,
@@ -238,6 +239,34 @@ export class AiWorkflowController {
     body: UpdateAiWorkflowRunDto,
   ) {
     return this.aiWorkflowService.updateWorkflowRun(workflowId, runId, body);
+  }
+
+  @Post('/runs/queue')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.CreateWorkflowRun)
+  @ApiOperation({
+    summary:
+      'Manually queue the AI workflow runs configured for a submission. Used to recover submissions whose runs were never queued because the virus scan / AI phase opened event was missed.',
+  })
+  @ApiBody({
+    description: 'The submission to queue the configured AI workflows for',
+    type: QueueAiWorkflowRunsDto,
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'The missing AI workflow runs have been queued.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'The submission has not passed the virus scan.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Submission not found.' })
+  queueRuns(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: QueueAiWorkflowRunsDto,
+  ) {
+    return this.aiWorkflowService.queueWorkflowRunsForSubmission(body);
   }
 
   @Post('/runs/retrigger')
