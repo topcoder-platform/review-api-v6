@@ -179,7 +179,33 @@ describe('SubmissionService', () => {
         hasSubmitter: false,
         reviewerResourceIds: [],
       };
+      const visibilityContext = {
+        requesterUserId: 'requester',
+        roleSummaryByChallenge: new Map([
+          ['reviewer-challenge', reviewerSummary],
+          ['unprivileged-challenge', noAccessSummary],
+        ]),
+        challengeDetailsById: new Map([
+          [
+            'reviewer-challenge',
+            { status: ChallengeStatus.ACTIVE, type: 'Challenge' },
+          ],
+          [
+            'unprivileged-challenge',
+            { status: ChallengeStatus.ACTIVE, type: 'Challenge' },
+          ],
+        ]),
+      };
 
+      (service as any).stripUnauthorizedAiDecisionDetails(
+        {
+          userId: 'requester',
+          roles: [UserRole.User],
+          isMachine: false,
+        },
+        submissions,
+        visibilityContext,
+      );
       (service as any).stripSubmitterSubmissionDetails(
         {
           userId: 'requester',
@@ -187,23 +213,7 @@ describe('SubmissionService', () => {
           isMachine: false,
         },
         submissions,
-        {
-          requesterUserId: 'requester',
-          roleSummaryByChallenge: new Map([
-            ['reviewer-challenge', reviewerSummary],
-            ['unprivileged-challenge', noAccessSummary],
-          ]),
-          challengeDetailsById: new Map([
-            [
-              'reviewer-challenge',
-              { status: ChallengeStatus.ACTIVE, type: 'Challenge' },
-            ],
-            [
-              'unprivileged-challenge',
-              { status: ChallengeStatus.ACTIVE, type: 'Challenge' },
-            ],
-          ]),
-        },
+        visibilityContext,
       );
 
       expect(submissions[0].url).toBe('https://example.com/reviewer.zip');
@@ -217,6 +227,202 @@ describe('SubmissionService', () => {
       expect(submissions[1]).not.toHaveProperty('finalScore');
       expect(submissions[1]).not.toHaveProperty('aiDecisionScore');
       expect(submissions[1]).not.toHaveProperty('aiDecisionStatus');
+    });
+  });
+
+  describe('stripUnauthorizedAiDecisionDetails', () => {
+    const noAccessSummary = {
+      hasCopilot: false,
+      hasManager: false,
+      hasReviewer: false,
+      hasSubmitter: true,
+      reviewerResourceIds: [],
+    };
+
+    it.each([
+      ['anonymous', undefined, ''],
+      [
+        'another member',
+        { userId: 'requester', roles: [UserRole.User], isMachine: false },
+        'requester',
+      ],
+      [
+        'an unassigned Copilot',
+        { userId: 'requester', roles: [UserRole.Copilot], isMachine: false },
+        'requester',
+      ],
+    ])(
+      'redacts AI decision fields for %s',
+      (_label, authUser, requesterUserId) => {
+        const submissions = [
+          {
+            id: 'submission-other',
+            challengeId: 'challenge-1',
+            memberId: 'owner',
+            finalScore: 95,
+            aiDecisionScore: 87.25,
+            aiDecisionStatus: 'PASSED',
+          },
+        ];
+
+        (service as any).stripUnauthorizedAiDecisionDetails(
+          authUser,
+          submissions,
+          {
+            requesterUserId,
+            roleSummaryByChallenge: new Map([['challenge-1', noAccessSummary]]),
+            challengeDetailsById: new Map(),
+          },
+        );
+
+        expect(submissions[0]).not.toHaveProperty('aiDecisionScore');
+        expect(submissions[0]).not.toHaveProperty('aiDecisionStatus');
+        expect(submissions[0].finalScore).toBe(95);
+      },
+    );
+
+    it.each(['owner', 'Copilot', 'Challenge Manager', 'Reviewer'])(
+      'retains AI decision fields for an authorized %s',
+      (authorizedAs) => {
+        const isOwner = authorizedAs === 'owner';
+        const submissions = [
+          {
+            id: 'submission-1',
+            challengeId: 'challenge-1',
+            memberId: isOwner ? 'requester' : 'owner',
+            aiDecisionScore: 87.25,
+            aiDecisionStatus: 'PASSED',
+          },
+        ];
+        const roleSummary = {
+          ...noAccessSummary,
+          hasCopilot: authorizedAs === 'Copilot',
+          hasManager: authorizedAs === 'Challenge Manager',
+          hasReviewer: authorizedAs === 'Reviewer',
+        };
+
+        (service as any).stripUnauthorizedAiDecisionDetails(
+          {
+            userId: 'requester',
+            roles: [UserRole.User],
+            isMachine: false,
+          },
+          submissions,
+          {
+            requesterUserId: 'requester',
+            roleSummaryByChallenge: new Map([['challenge-1', roleSummary]]),
+            challengeDetailsById: new Map(),
+          },
+        );
+
+        expect(submissions[0]).toEqual(
+          expect.objectContaining({
+            aiDecisionScore: 87.25,
+            aiDecisionStatus: 'PASSED',
+          }),
+        );
+      },
+    );
+
+    it.each([
+      { roles: [UserRole.ProjectManager], isMachine: false },
+      { roles: [UserRole.Admin], isMachine: false },
+      { roles: [], isMachine: true },
+    ])(
+      'retains AI decision fields for a global privileged caller',
+      (authUser) => {
+        const submissions = [
+          {
+            id: 'submission-1',
+            challengeId: 'challenge-1',
+            memberId: 'owner',
+            aiDecisionScore: 87.25,
+            aiDecisionStatus: 'PASSED',
+          },
+        ];
+
+        (service as any).stripUnauthorizedAiDecisionDetails(
+          authUser,
+          submissions,
+          {
+            requesterUserId: '',
+            roleSummaryByChallenge: new Map(),
+            challengeDetailsById: new Map(),
+          },
+        );
+
+        expect(submissions[0]).toHaveProperty('aiDecisionScore', 87.25);
+        expect(submissions[0]).toHaveProperty('aiDecisionStatus', 'PASSED');
+      },
+    );
+  });
+
+  describe('enrichAiDecisionScores', () => {
+    it('includes AI-gating scores without replacing a later human final score', async () => {
+      const queryRaw = jest.fn().mockResolvedValueOnce([
+        {
+          mode: 'AI_GATING',
+          submissionId: 'submission-ai-gating',
+          totalScore: '87.25',
+          status: 'PASSED',
+        },
+        {
+          mode: 'AI_GATING',
+          submissionId: 'submission-human-reviewed',
+          totalScore: 78,
+          status: 'PASSED',
+        },
+        {
+          mode: 'AI_ONLY',
+          submissionId: 'submission-ai-only',
+          totalScore: 91,
+          status: 'PASSED',
+        },
+      ]);
+      (service as any).prisma = { $queryRaw: queryRaw };
+      const submissions = [
+        {
+          id: 'submission-ai-gating',
+          challengeId: 'ai-gating-challenge',
+          finalScore: null,
+        },
+        {
+          id: 'submission-human-reviewed',
+          challengeId: 'ai-gating-challenge',
+          finalScore: 93,
+        },
+        {
+          id: 'submission-ai-only',
+          challengeId: 'ai-only-challenge',
+          finalScore: 50,
+        },
+      ];
+
+      await (service as any).enrichAiDecisionScores(submissions);
+
+      const configQuery = queryRaw.mock.calls[0][0];
+      expect(configQuery.strings.join('')).not.toContain('AI_ONLY');
+      expect(submissions[0]).toEqual({
+        id: 'submission-ai-gating',
+        challengeId: 'ai-gating-challenge',
+        finalScore: null,
+        aiDecisionScore: 87.25,
+        aiDecisionStatus: 'PASSED',
+      });
+      expect(submissions[1]).toEqual(
+        expect.objectContaining({
+          finalScore: 93,
+          aiDecisionScore: 78,
+          aiDecisionStatus: 'PASSED',
+        }),
+      );
+      expect(submissions[2]).toEqual(
+        expect.objectContaining({
+          finalScore: 91,
+          aiDecisionScore: 91,
+          aiDecisionStatus: 'PASSED',
+        }),
+      );
     });
   });
 
@@ -2500,13 +2706,15 @@ describe('SubmissionService', () => {
         id: 'submission-new',
       });
       prismaMock.$queryRaw
-        .mockResolvedValueOnce([{ id: 'submission-new' }])
-        .mockResolvedValueOnce([
-          { memberId: 'member-1', submissionCount: BigInt(2) },
-        ]);
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'submission-new' }]);
 
       const result = await listService.listSubmission(
-        { isMachine: false } as any,
+        {
+          isMachine: false,
+          roles: [UserRole.Admin],
+          userId: 'admin-1',
+        } as any,
         { challengeId: 'challenge-1' } as any,
         { page: 1, perPage: 50 } as any,
       );
@@ -2609,14 +2817,518 @@ describe('SubmissionService', () => {
       ]);
     });
 
-    it('requires challengeId when filtering by isLatest', async () => {
+    it('rejects an unauthenticated challenge-less listing before querying', async () => {
       await expect(
         listService.listSubmission(
           { isMachine: false } as any,
           { isLatest: 'true' } as any,
           { page: 1, perPage: 50 } as any,
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+    });
+
+    it('scopes an unfiltered challenge-less ordinary listing to the requester own history', async () => {
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        {} as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            memberId: 'member-1',
+          }),
+        }),
+      );
+      expect(prismaMock.submission.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          memberId: 'member-1',
+        }),
+      });
+    });
+
+    it('injects the requester member scope before challenge-less latest filtering', async () => {
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['submission-new']);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { isLatest: 'true' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).toHaveBeenCalledWith({
+        isLatest: 'true',
+        memberId: 'member-1',
+      });
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            memberId: 'member-1',
+            id: { in: ['submission-new'] },
+          }),
+        }),
+      );
+    });
+
+    it('forces latest-only results when a participant requests another member history', async () => {
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['submission-new']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        {
+          challengeId: 'challenge-1',
+          memberId: 'member-2',
+          isLatest: 'false',
+        } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          challengeId: 'challenge-1',
+          memberId: 'member-2',
+          isLatest: 'false',
+        }),
+      );
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: 'challenge-1',
+            memberId: 'member-2',
+            id: { in: ['submission-new'] },
+          }),
+        }),
+      );
+    });
+
+    it('ranks canonical latest submissions before intersecting row-specific filters', async () => {
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      prismaMock.$queryRaw.mockResolvedValue([{ id: 'submission-new' }]);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        {
+          challengeId: 'challenge-1',
+          memberId: 'member-2',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          url: 'https://example.com/old.zip',
+          legacySubmissionId: 'legacy-old',
+          legacyUploadId: 'upload-old',
+          submissionPhaseId: 'phase-old',
+        } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const latestQuery = prismaMock.$queryRaw.mock.calls[0][0];
+      const latestSql = latestQuery.strings.join('');
+      expect(latestSql).toContain('"challengeId"');
+      expect(latestSql).toContain('"memberId"');
+      expect(latestSql).toContain('"type"');
+      expect(latestSql).not.toContain('"url"');
+      expect(latestSql).not.toContain('"legacySubmissionId"');
+      expect(latestSql).not.toContain('"legacyUploadId"');
+      expect(latestSql).not.toContain('"submissionPhaseId"');
+
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: 'challenge-1',
+            memberId: 'member-2',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            url: 'https://example.com/old.zip',
+            legacySubmissionId: 'legacy-old',
+            legacyUploadId: 'upload-old',
+            submissionPhaseId: 'phase-old',
+            id: { in: ['submission-new'] },
+          }),
+        }),
+      );
+    });
+
+    it('excludes row-specific fields from the canonical latest SQL', async () => {
+      prismaMock.$queryRaw.mockResolvedValue([{ id: 'submission-new' }]);
+
+      await (listService as any).findLatestSubmissionIdsForQuery({
+        challengeId: 'challenge-1',
+        memberId: 'member-2',
+        type: SubmissionType.CONTEST_SUBMISSION,
+        url: 'https://example.com/old.zip',
+        legacySubmissionId: 'legacy-old',
+        legacyUploadId: 'upload-old',
+        submissionPhaseId: 'phase-old',
+      });
+
+      const latestQuery = prismaMock.$queryRaw.mock.calls[0][0];
+      const latestSql = latestQuery.strings.join('');
+      expect(latestSql).toContain('"challengeId"');
+      expect(latestSql).toContain('"memberId"');
+      expect(latestSql).toContain('"type"');
+      expect(latestSql).not.toContain('"url"');
+      expect(latestSql).not.toContain('"legacySubmissionId"');
+      expect(latestSql).not.toContain('"legacyUploadId"');
+      expect(latestSql).not.toContain('"submissionPhaseId"');
+    });
+
+    it('forces latest-only results for ordinary challenge-wide listings', async () => {
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['member-1-latest', 'member-2-latest']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { in: ['member-1-latest', 'member-2-latest'] },
+          }),
+        }),
+      );
+    });
+
+    it('returns full history when a member requests their own submissions', async () => {
+      const latestSpy = jest.spyOn(
+        listService as any,
+        'findLatestSubmissionIdsForQuery',
+      );
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1', memberId: 'member-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).not.toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: 'challenge-1',
+            memberId: 'member-1',
+          }),
+        }),
+      );
+    });
+
+    it.each(['Copilot', 'Challenge Manager'])(
+      'returns full history to a challenge %s resource',
+      async (roleName) => {
+        const latestSpy = jest.spyOn(
+          listService as any,
+          'findLatestSubmissionIdsForQuery',
+        );
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+          { roleName, roleId: `${roleName}-role` },
+        ]);
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+
+        await listService.listSubmission(
+          {
+            userId: 'challenge-staff',
+            isMachine: false,
+            roles: [UserRole.User],
+          } as any,
+          { challengeId: 'challenge-1', memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        expect(latestSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([UserRole.Admin, UserRole.ProjectManager])(
+      'returns full history to a %s token',
+      async (role) => {
+        const latestSpy = jest.spyOn(
+          listService as any,
+          'findLatestSubmissionIdsForQuery',
+        );
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+
+        await listService.listSubmission(
+          {
+            userId: 'global-staff',
+            isMachine: false,
+            roles: [role],
+          } as any,
+          { challengeId: 'challenge-1', memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        expect(latestSpy).not.toHaveBeenCalled();
+        expect(
+          resourceApiServiceListMock.getMemberResourcesRoles,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it('requires a generic Copilot token to be assigned to the target challenge', async () => {
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['submission-new']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([]);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'unassigned-copilot',
+          isMachine: false,
+          roles: [UserRole.Copilot],
+        } as any,
+        {
+          challengeId: 'challenge-1',
+          memberId: 'member-2',
+          isLatest: 'false',
+        } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(
+        resourceApiServiceListMock.getMemberResourcesRoles,
+      ).toHaveBeenCalledWith('challenge-1', 'unassigned-copilot');
+      expect(latestSpy).toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { in: ['submission-new'] },
+          }),
+        }),
+      );
+    });
+
+    it('fails Copilot challenge assignment lookup closed to latest-only', async () => {
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['submission-new']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockRejectedValue(
+        new Error('resource api unavailable'),
+      );
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'unassigned-copilot',
+          isMachine: false,
+          roles: [UserRole.Copilot],
+        } as any,
+        { challengeId: 'challenge-1', memberId: 'member-2' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).toHaveBeenCalled();
+    });
+
+    it('redacts an enriched AI-gating decision from an anonymous challenge listing', async () => {
+      jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['submission-1']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      prismaMock.submission.findMany.mockResolvedValue([
+        {
+          id: 'submission-1',
+          challengeId: 'challenge-1',
+          memberId: '1001',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          finalScore: null,
+          review: [],
+          reviewSummation: [],
+          legacyChallengeId: null,
+          prizeId: null,
+        },
+      ]);
+      prismaMock.submission.count.mockResolvedValue(1);
+      prismaMock.$queryRaw.mockResolvedValue([
+        {
+          mode: 'AI_GATING',
+          submissionId: 'submission-1',
+          totalScore: '87.25',
+          status: 'PASSED',
+        },
+      ]);
+
+      const result = await listService.listSubmission(
+        { isMachine: false, roles: [] } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(result.data[0].finalScore).toBeNull();
+      expect(result.data[0]).not.toHaveProperty('aiDecisionScore');
+      expect(result.data[0]).not.toHaveProperty('aiDecisionStatus');
+    });
+
+    it.each([
+      {
+        label: 'submission owner',
+        authUser: {
+          userId: '1001',
+          isMachine: false,
+          roles: [UserRole.User],
+        },
+        resources: [
+          {
+            roleName: 'Submitter',
+            roleId: CommonConfig.roles.submitterRoleId,
+          },
+        ],
+      },
+      {
+        label: 'assigned challenge Copilot',
+        authUser: {
+          userId: '2001',
+          isMachine: false,
+          roles: [UserRole.Copilot],
+        },
+        resources: [{ roleName: 'Copilot', roleId: 'copilot-role' }],
+      },
+    ])(
+      'retains an enriched AI-gating decision for the $label',
+      async (testCase) => {
+        jest
+          .spyOn(listService as any, 'populateLatestSubmissionFlags')
+          .mockImplementation(async (submissions: any[]) => {
+            submissions.forEach((entry) => {
+              entry.isLatest = true;
+            });
+          });
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue(
+          testCase.resources,
+        );
+        prismaMock.submission.findMany.mockResolvedValue([
+          {
+            id: 'submission-1',
+            challengeId: 'challenge-1',
+            memberId: '1001',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            status: SubmissionStatus.ACTIVE,
+            finalScore: null,
+            review: [],
+            reviewSummation: [],
+            legacyChallengeId: null,
+            prizeId: null,
+          },
+        ]);
+        prismaMock.submission.count.mockResolvedValue(1);
+        prismaMock.$queryRaw.mockResolvedValue([
+          {
+            mode: 'AI_GATING',
+            submissionId: 'submission-1',
+            totalScore: '87.25',
+            status: 'PASSED',
+          },
+        ]);
+
+        const result = await listService.listSubmission(
+          testCase.authUser as any,
+          { challengeId: 'challenge-1', memberId: '1001' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        expect(result.data[0]).toEqual(
+          expect.objectContaining({
+            finalScore: null,
+            aiDecisionScore: 87.25,
+            aiDecisionStatus: 'PASSED',
+          }),
+        );
+      },
+    );
+
+    it('rejects cross-member history requests that omit challengeId', async () => {
+      await expect(
+        listService.listSubmission(
+          {
+            userId: 'member-1',
+            isMachine: false,
+            roles: [UserRole.User],
+          } as any,
+          { memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
 
       expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
     });
@@ -4359,7 +5071,10 @@ describe('SubmissionService', () => {
         },
       };
       prismaMock = {
-        $transaction: jest.fn((callback) => callback(transactionClient)),
+        $transaction: jest.fn(
+          (callback: (client: typeof transactionClient) => unknown) =>
+            callback(transactionClient),
+        ),
         submission: {
           create: jest.fn().mockResolvedValue({ id: 'uncapped-submission' }),
         },
@@ -4552,31 +5267,35 @@ describe('SubmissionService', () => {
     it('serializes competing requests for the final available slot', async () => {
       let storedSubmissionCount = 1;
       let lockTail = Promise.resolve();
-      prismaMock.$transaction.mockImplementation(async (callback) => {
-        const previousLock = lockTail;
-        let releaseLock: () => void = () => undefined;
-        lockTail = new Promise<void>((resolve) => {
-          releaseLock = resolve;
-        });
-        await previousLock;
+      prismaMock.$transaction.mockImplementation(
+        async (
+          callback: (client: typeof transactionClient) => Promise<unknown>,
+        ) => {
+          const previousLock = lockTail;
+          let releaseLock: () => void = () => undefined;
+          lockTail = new Promise<void>((resolve) => {
+            releaseLock = resolve;
+          });
+          await previousLock;
 
-        const serializedClient = {
-          $executeRaw: jest.fn().mockResolvedValue(0),
-          submission: {
-            count: jest.fn().mockImplementation(() => storedSubmissionCount),
-            create: jest.fn().mockImplementation(() => {
-              storedSubmissionCount += 1;
-              return { id: `submission-${storedSubmissionCount}` };
-            }),
-          },
-        };
+          const serializedClient = {
+            $executeRaw: jest.fn().mockResolvedValue(0),
+            submission: {
+              count: jest.fn().mockImplementation(() => storedSubmissionCount),
+              create: jest.fn().mockImplementation(() => {
+                storedSubmissionCount += 1;
+                return { id: `submission-${storedSubmissionCount}` };
+              }),
+            },
+          };
 
-        try {
-          return await callback(serializedClient);
-        } finally {
-          releaseLock();
-        }
-      });
+          try {
+            return await callback(serializedClient);
+          } finally {
+            releaseLock();
+          }
+        },
+      );
 
       const results = await Promise.allSettled([
         (createService as any).createSubmissionWithLimit(
@@ -5657,7 +6376,9 @@ describe('SubmissionService', () => {
     ) => {
       const prismaMock = {
         submission: {
-          findUnique: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue(buildExistingSubmission(type)),
           delete: jest.fn().mockResolvedValue(buildExistingSubmission(type)),
         },
         aiWorkflowRun: {
