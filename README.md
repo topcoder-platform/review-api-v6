@@ -98,6 +98,24 @@ This allows you to:
 - run the prisma seed `npx prisma db seed`
 - run the project `pnpm run start`
 
+## Design submission visibility
+
+`GET /v6/submissions?challengeId=...` returns the configured review window to
+assigned Design screeners, checkpoint screeners, reviewers, and other review
+resources. A finite `submissionLimit.count` retains that many non-deleted
+submissions per member and exact submission type; checkpoint and final submissions
+are ranked independently. Missing or explicitly unlimited Design metadata keeps
+all non-deleted contest and checkpoint submissions visible. Malformed limits fall
+back to one per type. Selection happens before pagination and row-specific filters,
+and `isLatest` query flags cannot expand access beyond this window. Other types,
+including Final Fix, retain only the latest non-deleted row per member/type.
+
+Ordinary viewers retain latest-only access, and Development review resources keep
+the existing latest-only behavior. Owners requesting their own submissions,
+challenge copilots/managers, admins, project managers, and authorized machine
+clients retain their existing history access. Unavailable challenge or resource
+metadata does not grant broader access.
+
 ## Run tests
 
 ```bash
