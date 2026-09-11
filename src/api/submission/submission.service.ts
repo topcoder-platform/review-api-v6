@@ -82,6 +82,13 @@ type ActiveChallengeRow = {
   id: string | null;
 };
 
+/** Submission-list access confirmed from the requester's challenge resources. */
+type ChallengeSubmissionListAccess = {
+  canViewFullHistory: boolean;
+  /** Design review window; null is unlimited, undefined retains latest-only privacy. */
+  reviewSubmissionLimit?: number | null;
+};
+
 type SubmissionDownloadCandidate = {
   id: string;
   memberId: string | null;
@@ -4162,6 +4169,7 @@ export class SubmissionService {
         !!requestedMemberId && requesterUserId === requestedMemberId;
       let canViewFullHistory =
         isRequestingMember || this.hasGlobalSubmissionHistoryAccess(authUser);
+      let reviewSubmissionLimit: number | null | undefined;
 
       // A challenge-less list cannot establish access to anybody else's
       // submissions. Keep the legacy unfiltered endpoint useful for members by
@@ -4216,10 +4224,12 @@ export class SubmissionService {
         );
         submissionWhereClause.challengeId = queryDto.challengeId;
         if (!canViewFullHistory) {
-          canViewFullHistory = await this.hasChallengeSubmissionHistoryAccess(
+          const access = await this.resolveChallengeSubmissionListAccess(
             authUser,
             queryDto.challengeId,
           );
+          canViewFullHistory = access.canViewFullHistory;
+          reviewSubmissionLimit = access.reviewSubmissionLimit;
         }
       }
       if (effectiveMemberId) {
@@ -4242,7 +4252,13 @@ export class SubmissionService {
       // Challenge submission history is private. A submitter can inspect all of
       // their own attempts, while other ordinary participants only receive the
       // latest attempt even when they omit isLatest or explicitly request false.
-      if (queryDto.challengeId && !canViewFullHistory) {
+      // Assigned Design reviewers instead receive the configured review window;
+      // multiple eligible submissions are current work, not private history.
+      if (
+        queryDto.challengeId &&
+        !canViewFullHistory &&
+        reviewSubmissionLimit === undefined
+      ) {
         isLatestFilter = true;
       }
 
@@ -4333,6 +4349,14 @@ export class SubmissionService {
         }
       }
 
+      if (queryDto.challengeId && reviewSubmissionLimit !== undefined) {
+        whereClause.id = {
+          in: await this.findReviewableDesignSubmissionIds(
+            queryDto.challengeId,
+            reviewSubmissionLimit,
+          ),
+        };
+      }
       if (isLatestFilter !== null) {
         const latestQueryDto =
           effectiveMemberId && !requestedMemberId
@@ -4340,9 +4364,19 @@ export class SubmissionService {
             : queryDto;
         const latestSubmissionIds =
           await this.findLatestSubmissionIdsForQuery(latestQueryDto);
-        whereClause.id = isLatestFilter
+        const latestIdFilter = isLatestFilter
           ? { in: latestSubmissionIds }
           : { notIn: latestSubmissionIds };
+        if (whereClause.id) {
+          const existingAnd = Array.isArray(whereClause.AND)
+            ? whereClause.AND
+            : whereClause.AND
+              ? [whereClause.AND]
+              : [];
+          whereClause.AND = [...existingAnd, { id: latestIdFilter }];
+        } else {
+          whereClause.id = latestIdFilter;
+        }
       }
 
       // find entities by filters
@@ -4573,21 +4607,24 @@ export class SubmissionService {
   }
 
   /**
-   * Checks whether the requester is a copilot or manager for one challenge.
-   * Resource lookup failures fail closed so an unverified participant cannot
-   * receive historical submissions.
+   * Resolves challenge-specific submission visibility for listSubmission.
+   * Copilots and managers can see history. Assigned Design review resources can
+   * see the configured review window, with separate contest/checkpoint limits.
+   * Other callers and failed lookups retain latest-only visibility.
    *
    * @param authUser - Authenticated requester.
    * @param challengeId - Challenge whose resource roles should be checked.
-   * @returns True when a challenge copilot or manager resource is confirmed.
+   * @returns Full-history access or the eligible Design submission rank limit.
+   * @throws Never; unavailable role or challenge metadata fails closed.
    */
-  private async hasChallengeSubmissionHistoryAccess(
+  private async resolveChallengeSubmissionListAccess(
     authUser: JwtUser,
     challengeId: string,
-  ): Promise<boolean> {
+  ): Promise<ChallengeSubmissionListAccess> {
+    const restrictedAccess = { canViewFullHistory: false };
     const requester = String(authUser?.userId ?? '').trim();
     if (!requester) {
-      return false;
+      return restrictedAccess;
     }
 
     try {
@@ -4595,17 +4632,90 @@ export class SubmissionService {
         challengeId,
         requester,
       );
-      return (resources ?? []).some((resource) => {
-        const roleName = String(resource?.roleName ?? '').toLowerCase();
-        return roleName.includes('copilot') || roleName.includes('manager');
-      });
+      const roleNames = (resources ?? []).map((resource) =>
+        String(resource?.roleName ?? '').toLowerCase(),
+      );
+      if (
+        roleNames.some(
+          (role) => role.includes('copilot') || role.includes('manager'),
+        )
+      ) {
+        return { canViewFullHistory: true };
+      }
+      if (
+        !roleNames.some((role) =>
+          REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) => role.includes(keyword)),
+        )
+      ) {
+        return restrictedAccess;
+      }
+
+      const challenge =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+      return isDesignTrackChallenge(challenge)
+        ? {
+            canViewFullHistory: false,
+            reviewSubmissionLimit: resolveReviewSubmissionRankLimit(challenge),
+          }
+        : restrictedAccess;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
         `[listSubmission] Could not verify challenge ${challengeId} history access for member ${requester}: ${message}`,
       );
-      return false;
+      return restrictedAccess;
     }
+  }
+
+  /**
+   * Selects the Design submissions an assigned review resource needs to see.
+   * Uses the same non-deleted, per-member/type ranking as review creation.
+   * Other types, including Final Fix, retain one visible row per member/type.
+   * listSubmission intersects these IDs with request filters before counting or
+   * paginating, so a row-specific filter cannot promote an older submission.
+   *
+   * @param challengeId - Challenge whose review-eligible submissions are selected.
+   * @param maximumRank - Positive configured count, or null for unlimited Design.
+   * @returns Eligible contest/checkpoint IDs and the latest IDs for other types.
+   * @throws Error when the database query fails; no unfiltered fallback is used.
+   */
+  private async findReviewableDesignSubmissionIds(
+    challengeId: string,
+    maximumRank: number | null,
+  ): Promise<string[]> {
+    const rankFilter =
+      maximumRank === null
+        ? Prisma.empty
+        : Prisma.sql`AND "submissionRank" <= ${maximumRank}`;
+    const entries = await this.prisma.$queryRaw<
+      Array<{ id: string }>
+    >(Prisma.sql`
+      SELECT "id"
+      FROM (
+        SELECT
+          "id",
+          "type",
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE("memberId", "id"), "type"
+            ORDER BY "submittedDate" DESC NULLS LAST,
+                     "createdAt" DESC NULLS LAST,
+                     "updatedAt" DESC NULLS LAST,
+                     "id" DESC
+          ) AS "submissionRank"
+        FROM "submission"
+        WHERE "challengeId" = ${challengeId}
+          AND ("status" IS NULL OR "status" <> 'DELETED')
+      ) ranked
+      WHERE (
+        "type" IN ('CONTEST_SUBMISSION', 'CHECKPOINT_SUBMISSION')
+        ${rankFilter}
+      ) OR (
+        "type" NOT IN ('CONTEST_SUBMISSION', 'CHECKPOINT_SUBMISSION')
+        AND "submissionRank" = 1
+      )
+    `);
+
+    return entries.map((entry) => entry.id);
   }
 
   async countSubmissionsForChallenge(

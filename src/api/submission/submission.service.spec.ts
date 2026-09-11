@@ -3198,6 +3198,261 @@ describe('SubmissionService', () => {
       expect(latestSpy).toHaveBeenCalled();
     });
 
+    describe('Design review submission visibility (PM-6307)', () => {
+      const reviewer = {
+        userId: 'design-screener',
+        isMachine: false,
+        roles: [UserRole.User],
+      };
+      const designChallenge = {
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        track: 'Design',
+        type: 'Challenge',
+        metadata: {
+          submissionLimit: '{"count":"2","limit":"true","unlimited":"false"}',
+        },
+        phases: [],
+      };
+
+      beforeEach(() => {
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue(
+          designChallenge,
+        );
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+          { id: 'screener-resource', roleName: 'Checkpoint Screener' },
+        ]);
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+      });
+
+      it.each([
+        'Screener',
+        'Checkpoint Screener',
+        'Reviewer',
+        'Checkpoint Reviewer',
+      ])(
+        'returns both eligible submissions to the assigned %s before pagination',
+        async (roleName) => {
+          resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+            { id: 'review-resource', roleName },
+          ]);
+          const submissions = [
+            { id: 'checkpoint-new', isLatest: true },
+            { id: 'checkpoint-older', isLatest: false },
+          ].map((submission) => ({
+            ...submission,
+            challengeId: 'challenge-1',
+            memberId: '123',
+            type: SubmissionType.CHECKPOINT_SUBMISSION,
+            status: SubmissionStatus.ACTIVE,
+            createdAt: new Date('2026-09-11T05:00:00Z'),
+            review: [],
+            reviewSummation: [],
+          }));
+          prismaMock.$queryRaw.mockResolvedValue(
+            submissions.map(({ id }) => ({ id })),
+          );
+          prismaMock.submission.findMany.mockResolvedValue(submissions);
+          prismaMock.submission.count.mockResolvedValue(2);
+          jest
+            .spyOn(listService as any, 'populateLatestSubmissionFlags')
+            .mockResolvedValue(undefined);
+
+          const response = await listService.listSubmission(
+            reviewer as any,
+            { challengeId: 'challenge-1' } as any,
+            { page: 1, perPage: 2 } as any,
+          );
+
+          expect(
+            response.data.map(({ id, isLatest }) => ({ id, isLatest })),
+          ).toEqual([
+            { id: 'checkpoint-new', isLatest: true },
+            { id: 'checkpoint-older', isLatest: false },
+          ]);
+          expect(response.meta.totalCount).toBe(2);
+          const where = {
+            challengeId: 'challenge-1',
+            id: { in: ['checkpoint-new', 'checkpoint-older'] },
+          };
+          expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where, skip: 0, take: 2 }),
+          );
+          expect(prismaMock.submission.count).toHaveBeenCalledWith({ where });
+          const selectionQuery = prismaMock.$queryRaw.mock.calls[0][0];
+          expect(selectionQuery.values).toContain(2);
+        },
+      );
+
+      it('ranks checkpoint and final submissions independently before applying row filters', async () => {
+        await listService.listSubmission(
+          reviewer as any,
+          {
+            challengeId: 'challenge-1',
+            url: 'https://example.com/old.zip',
+            legacySubmissionId: 'old-submission',
+            submissionPhaseId: 'old-phase',
+          } as any,
+        );
+
+        const selectionQuery = prismaMock.$queryRaw.mock.calls[0][0];
+        const sql = selectionQuery.strings.join('');
+        expect(sql).toContain(
+          'PARTITION BY COALESCE("memberId", "id"), "type"',
+        );
+        expect(sql).toContain('"status" <> \'DELETED\'');
+        expect(sql).toContain('CONTEST_SUBMISSION');
+        expect(sql).toContain('CHECKPOINT_SUBMISSION');
+        expect(sql).not.toContain('"url"');
+        expect(sql).not.toContain('"legacySubmissionId"');
+        expect(sql).not.toContain('"submissionPhaseId"');
+        expect(selectionQuery.values).toContain(2);
+        expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              url: 'https://example.com/old.zip',
+              legacySubmissionId: 'old-submission',
+              submissionPhaseId: 'old-phase',
+            }),
+          }),
+        );
+      });
+
+      it.each(['true', 'false', undefined])(
+        'keeps the configured review window when isLatest=%s is requested',
+        async (isLatest) => {
+          const latestSpy = jest
+            .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+            .mockResolvedValue(['checkpoint-new']);
+          await listService.listSubmission(
+            reviewer as any,
+            { challengeId: 'challenge-1', isLatest } as any,
+          );
+
+          expect(prismaMock.$queryRaw.mock.calls[0][0].values).toContain(2);
+          if (isLatest === undefined) {
+            expect(latestSpy).not.toHaveBeenCalled();
+          } else {
+            expect(latestSpy).toHaveBeenCalled();
+            expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+              expect.objectContaining({
+                where: {
+                  challengeId: 'challenge-1',
+                  id: { in: [] },
+                  AND: [
+                    {
+                      id:
+                        isLatest === 'true'
+                          ? { in: ['checkpoint-new'] }
+                          : { notIn: ['checkpoint-new'] },
+                    },
+                  ],
+                },
+              }),
+            );
+          }
+        },
+      );
+
+      it.each([undefined, '{"unlimited":true}'])(
+        'keeps all non-deleted Design submissions when the limit is %s',
+        async (submissionLimit) => {
+          challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+            ...designChallenge,
+            metadata: { submissionLimit },
+          });
+
+          await listService.listSubmission(
+            reviewer as any,
+            { challengeId: 'challenge-1' } as any,
+          );
+
+          const sql = prismaMock.$queryRaw.mock.calls[0][0].strings.join('');
+          expect(sql).toContain('"status" <> \'DELETED\'');
+          expect(sql).not.toContain('"submissionRank" <=');
+        },
+      );
+
+      it.each([
+        '{invalid',
+        '{"count":2,"limit":true,"unlimited":true}',
+        '{"count":1}',
+      ])(
+        'limits review selection to one per type for metadata %s',
+        async (submissionLimit) => {
+          challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+            ...designChallenge,
+            metadata: { submissionLimit },
+          });
+
+          await listService.listSubmission(
+            reviewer as any,
+            { challengeId: 'challenge-1' } as any,
+          );
+
+          const query = prismaMock.$queryRaw.mock.calls[0][0];
+          expect(query.values).toContain(1);
+          expect(query.strings.join('')).toContain('"submissionRank"');
+        },
+      );
+
+      it.each(['Submitter', 'Observer', undefined])(
+        'retains latest-only privacy for an ordinary %s',
+        async (roleName) => {
+          resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue(
+            roleName ? [{ roleName }] : [],
+          );
+          const latestSpy = jest
+            .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+            .mockResolvedValue([]);
+
+          await listService.listSubmission(
+            reviewer as any,
+            { challengeId: 'challenge-1', isLatest: 'false' } as any,
+          );
+
+          expect(latestSpy).toHaveBeenCalled();
+          expect(
+            challengeApiServiceMock.getChallengeDetail,
+          ).not.toHaveBeenCalled();
+        },
+      );
+
+      it('retains latest-only privacy for a Development screener', async () => {
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          ...designChallenge,
+          track: 'Development',
+        });
+        const latestSpy = jest
+          .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+          .mockResolvedValue([]);
+
+        await listService.listSubmission(
+          reviewer as any,
+          { challengeId: 'challenge-1' } as any,
+        );
+
+        expect(latestSpy).toHaveBeenCalled();
+      });
+
+      it('fails closed when the assigned screener challenge metadata cannot be loaded', async () => {
+        challengeApiServiceMock.getChallengeDetail.mockRejectedValue(
+          new Error('challenge API unavailable'),
+        );
+        const latestSpy = jest
+          .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+          .mockResolvedValue([]);
+
+        await listService.listSubmission(
+          reviewer as any,
+          { challengeId: 'challenge-1' } as any,
+        );
+
+        expect(latestSpy).toHaveBeenCalled();
+      });
+    });
+
     it('redacts an enriched AI-gating decision from an anonymous challenge listing', async () => {
       jest
         .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
