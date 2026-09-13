@@ -681,7 +681,7 @@ export class SubmissionController {
   @ApiOperation({
     summary: 'List artifacts for the given Submission ID',
     description:
-      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission',
+      'Owners may list regular artifacts. Registered Submitters of a COMPLETED Marathon Match may list all regular and internal artifacts for every submission. Admin, M2M, and challenge Copilot access is unchanged. Cancelled or active challenges do not unlock contestant access. | Scopes: read:submission',
   })
   @ApiParam({
     name: 'submissionId',
@@ -706,7 +706,7 @@ export class SubmissionController {
   @ApiOperation({
     summary: 'Download artifact using Submission ID and Artifact ID',
     description:
-      'Roles: Copilot, Admin, User, Reviewer. | Scopes: read:submission-artifacts',
+      'Owners may download regular artifacts. Registered Submitters of a COMPLETED Marathon Match may download all regular and internal artifacts for every submission. Admin, M2M, and challenge Copilot access is unchanged. Cancelled or active challenges do not unlock contestant access. | Scopes: read:submission-artifacts',
   })
   @ApiParam({
     name: 'submissionId',
