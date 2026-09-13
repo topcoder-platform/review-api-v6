@@ -1218,50 +1218,103 @@ export class SubmissionService {
     return { artifacts: artifactId };
   }
 
+  /**
+   * Resolves the shared policy for artifact listing and streaming after challenge
+   * whitelist access has been checked. Ordinary members can read their own
+   * regular artifacts. A completed Marathon Match also releases every regular
+   * and internal artifact to its submission owners and registered Submitters.
+   * No phase dates, scores, or cancelled statuses imply completion.
+   * @param authUser Authenticated requester.
+   * @param submission Stored submission whose artifacts are requested.
+   * @returns Whether any artifacts and internal artifacts may be read.
+   * @throws Does not throw; failed role/status lookups preserve owner-only access.
+   */
+  private async resolveArtifactAccess(
+    authUser: JwtUser,
+    submission: {
+      memberId: string | null;
+      challengeId: string | null;
+    },
+  ): Promise<{ canAccess: boolean; allowInternalArtifacts: boolean }> {
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return { canAccess: true, allowInternalArtifacts: true };
+    }
+
+    const uid = String(authUser.userId ?? '');
+    const isOwner = !!uid && submission.memberId === uid;
+    let isSubmitter = false;
+
+    if (!isOwner && submission.challengeId && uid) {
+      try {
+        const resources = await this.resourceApiService.getMemberResourcesRoles(
+          submission.challengeId,
+          uid,
+        );
+        if (
+          resources.some((resource) =>
+            (resource.roleName || '').toLowerCase().includes('copilot'),
+          )
+        ) {
+          return { canAccess: true, allowInternalArtifacts: true };
+        }
+        isSubmitter = resources.some(
+          (resource) =>
+            resource.roleId === CommonConfig.roles.submitterRoleId ||
+            (resource.roleName || '').trim().toLowerCase() === 'submitter',
+        );
+      } catch {
+        // An unverified resource cannot grant access to another member's files.
+      }
+    }
+
+    if ((isOwner || isSubmitter) && submission.challengeId) {
+      try {
+        const challenge = await this.challengeApiService.getChallengeDetail(
+          submission.challengeId,
+        );
+        if (
+          challenge.status === ChallengeStatus.COMPLETED &&
+          this.isMarathonMatchChallenge(challenge)
+        ) {
+          return { canAccess: true, allowInternalArtifacts: true };
+        }
+      } catch {
+        // A failed challenge lookup must never release internal artifacts.
+      }
+    }
+
+    return { canAccess: isOwner, allowInternalArtifacts: false };
+  }
+
+  /**
+   * Lists authorized regular and scorer-internal artifacts for a submission.
+   * Completed Marathon Match contestants may also list other submissions' files.
+   * @param authUser Authenticated requester.
+   * @param submissionId Submission to inspect.
+   * @returns Distinct artifact IDs allowed by the shared artifact access policy.
+   * @throws NotFoundException for a missing submission, ForbiddenException for
+   * unauthorized access, or InternalServerErrorException on storage failures.
+   */
   async listArtifacts(
     authUser: JwtUser,
     submissionId: string,
   ): Promise<{ artifacts: string[] }> {
     const submission = await this.checkSubmission(submissionId, authUser);
 
-    const isMachineToken = !!authUser.isMachine;
-    const isAdminUser = isAdmin(authUser);
-    const uid = authUser.userId ? String(authUser.userId) : '';
-    let isOwner = false;
-    let isCopilot = false;
-
-    if (!isMachineToken && !isAdminUser) {
-      isOwner = !!uid && submission.memberId === uid;
-
-      if (!isOwner && submission.challengeId && uid) {
-        try {
-          const resources =
-            await this.resourceApiService.getMemberResourcesRoles(
-              submission.challengeId,
-              uid,
-            );
-          isCopilot = resources.some((resource) =>
-            (resource.roleName || '').toLowerCase().includes('copilot'),
-          );
-        } catch {
-          isCopilot = false;
-        }
-      }
-
-      if (!isOwner && !isCopilot) {
-        throw new ForbiddenException({
-          message:
-            'Only the submission owner, a challenge copilot, or an admin can list submission artifacts',
-          code: 'FORBIDDEN_ARTIFACT_LIST',
-          details: {
-            submissionId,
-            requester: uid,
-            challengeId: submission.challengeId,
-          },
-        });
-      }
+    const { canAccess, allowInternalArtifacts } =
+      await this.resolveArtifactAccess(authUser, submission);
+    if (!canAccess) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner, a challenge copilot, an admin, or a contestant after Marathon Match completion can list submission artifacts',
+        code: 'FORBIDDEN_ARTIFACT_LIST',
+        details: {
+          submissionId,
+          requester: String(authUser.userId ?? ''),
+          challengeId: submission.challengeId,
+        },
+      });
     }
-    const allowInternalArtifacts = isMachineToken || isAdminUser || isCopilot;
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
@@ -1321,6 +1374,16 @@ export class SubmissionService {
     return { artifacts };
   }
 
+  /**
+   * Streams an artifact using the same authorization policy as artifact listing.
+   * @param authUser Authenticated requester.
+   * @param submissionId Submission containing the requested artifact.
+   * @param artifactId Artifact ID returned by listArtifacts.
+   * @returns Readable storage stream, content type, and download filename.
+   * @throws NotFoundException for missing data, ForbiddenException for unauthorized
+   * access (including internal files before completion), or InternalServerErrorException
+   * when storage is unavailable.
+   */
   async getArtifactStream(
     authUser: JwtUser,
     submissionId: string,
@@ -1328,56 +1391,32 @@ export class SubmissionService {
   ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
     const submission = await this.checkSubmission(submissionId, authUser);
 
-    const isMachineToken = !!authUser.isMachine;
-    const isAdminUser = isAdmin(authUser);
-    const uid = authUser.userId ? String(authUser.userId) : '';
-    let isOwner = false;
-    let isCopilot = false;
-
-    if (!isMachineToken && !isAdminUser) {
-      isOwner = !!uid && submission.memberId === uid;
-
-      if (!isOwner && submission.challengeId && uid) {
-        try {
-          const resources =
-            await this.resourceApiService.getMemberResourcesRoles(
-              submission.challengeId,
-              uid,
-            );
-          isCopilot = resources.some((resource) =>
-            (resource.roleName || '').toLowerCase().includes('copilot'),
-          );
-        } catch {
-          isCopilot = false;
-        }
-      }
-
-      if (!isOwner && !isCopilot) {
-        throw new ForbiddenException({
-          message:
-            'Only the submission owner, a challenge copilot, or an admin can download artifacts',
-          code: 'FORBIDDEN_ARTIFACT_DOWNLOAD',
-          details: {
-            submissionId,
-            requester: uid,
-            challengeId: submission.challengeId,
-          },
-        });
-      }
+    const { canAccess, allowInternalArtifacts } =
+      await this.resolveArtifactAccess(authUser, submission);
+    if (!canAccess) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner, a challenge copilot, an admin, or a contestant after Marathon Match completion can download artifacts',
+        code: 'FORBIDDEN_ARTIFACT_DOWNLOAD',
+        details: {
+          submissionId,
+          requester: String(authUser.userId ?? ''),
+          challengeId: submission.challengeId,
+        },
+      });
     }
-
-    const allowInternalArtifacts = isMachineToken || isAdminUser || isCopilot;
     if (
       !allowInternalArtifacts &&
       artifactId.toLowerCase().includes('internal')
     ) {
       throw new ForbiddenException({
-        message: 'Submission owners cannot download internal artifacts',
+        message:
+          'Internal artifacts are available to contestants only after Marathon Match completion',
         code: 'FORBIDDEN_INTERNAL_ARTIFACT_DOWNLOAD',
         details: {
           submissionId,
           artifactId,
-          requester: uid,
+          requester: String(authUser.userId ?? ''),
         },
       });
     }
@@ -4252,6 +4291,7 @@ export class SubmissionService {
       // Challenge submission history is private. A submitter can inspect all of
       // their own attempts, while other ordinary participants only receive the
       // latest attempt even when they omit isLatest or explicitly request false.
+      // Completed Marathon Match contestants may inspect every attempt's artifacts.
       // Assigned Design reviewers instead receive the configured review window;
       // multiple eligible submissions are current work, not private history.
       if (
@@ -4610,6 +4650,8 @@ export class SubmissionService {
    * Resolves challenge-specific submission visibility for listSubmission.
    * Copilots and managers can see history. Assigned Design review resources can
    * see the configured review window, with separate contest/checkpoint limits.
+   * Registered contestants can inspect all attempts of a COMPLETED Marathon Match
+   * to download the artifacts associated with those historical submission IDs.
    * Other callers and failed lookups retain latest-only visibility.
    *
    * @param authUser - Authenticated requester.
@@ -4642,17 +4684,28 @@ export class SubmissionService {
       ) {
         return { canViewFullHistory: true };
       }
-      if (
-        !roleNames.some((role) =>
-          REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) => role.includes(keyword)),
-        )
-      ) {
+      const isSubmitter = resources.some(
+        (resource) =>
+          resource.roleId === CommonConfig.roles.submitterRoleId ||
+          (resource.roleName || '').trim().toLowerCase() === 'submitter',
+      );
+      const hasReviewRole = roleNames.some((role) =>
+        REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) => role.includes(keyword)),
+      );
+      if (!isSubmitter && !hasReviewRole) {
         return restrictedAccess;
       }
 
       const challenge =
         await this.challengeApiService.getChallengeDetail(challengeId);
-      return isDesignTrackChallenge(challenge)
+      if (
+        isSubmitter &&
+        challenge.status === ChallengeStatus.COMPLETED &&
+        this.isMarathonMatchChallenge(challenge)
+      ) {
+        return { canViewFullHistory: true };
+      }
+      return hasReviewRole && isDesignTrackChallenge(challenge)
         ? {
             canViewFullHistory: false,
             reviewSubmissionLimit: resolveReviewSubmissionRankLimit(challenge),

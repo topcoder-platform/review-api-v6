@@ -728,6 +728,104 @@ describe('SubmissionService', () => {
   });
 
   describe('listArtifacts', () => {
+    it.each(['owner-user', 'other-contestant'])(
+      'releases every artifact to %s only after Marathon Match completion',
+      async (userId) => {
+        (service as any).challengeApiService = {
+          getChallengeDetail: jest.fn().mockResolvedValue({
+            status: ChallengeStatus.COMPLETED,
+            type: 'Marathon Match',
+          }),
+        };
+        resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+          { roleName: 'Submitter' },
+        ]);
+
+        const result = await service.listArtifacts(
+          { userId, isMachine: false, roles: [] } as any,
+          submission.id,
+        );
+
+        expect(result.artifacts).toEqual([
+          'regular-artifact',
+          'internal-notes',
+        ]);
+      },
+    );
+
+    it.each([
+      ChallengeStatus.ACTIVE,
+      ChallengeStatus.CANCELLED,
+      ChallengeStatus.CANCELLED_FAILED_REVIEW,
+      undefined,
+    ])('does not release artifacts for challenge status %s', async (status) => {
+      (service as any).challengeApiService = {
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          status,
+          type: 'Marathon Match',
+          phases: [
+            {
+              name: 'Review',
+              isOpen: false,
+              actualEndTime: '2026-09-01T00:00:00Z',
+            },
+          ],
+        }),
+      };
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+
+      const owned = await service.listArtifacts(
+        { userId: submission.memberId, roles: [] } as any,
+        submission.id,
+      );
+      expect(owned.artifacts).toEqual(['regular-artifact']);
+      s3Send.mockClear();
+      await expect(
+        service.listArtifacts(
+          { userId: 'other-contestant', roles: [] } as any,
+          submission.id,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('does not extend post-completion artifact access to other challenge types', async () => {
+      (service as any).challengeApiService = {
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          status: ChallengeStatus.COMPLETED,
+          type: 'Challenge',
+        }),
+      };
+      resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Submitter' },
+      ]);
+
+      await expect(
+        service.listArtifacts(
+          { userId: 'other-contestant', roles: [] } as any,
+          submission.id,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('keeps unregistered members out of completed Marathon Match artifacts', async () => {
+      (service as any).challengeApiService = {
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          status: ChallengeStatus.COMPLETED,
+          type: 'Marathon Match',
+        }),
+      };
+      await expect(
+        service.listArtifacts(
+          { userId: 'observer', roles: [] } as any,
+          submission.id,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(s3Send).not.toHaveBeenCalled();
+    });
     it('filters internal artifacts for submission owners', async () => {
       const result = await service.listArtifacts(
         {
@@ -808,6 +906,109 @@ describe('SubmissionService', () => {
 
     beforeEach(() => {
       s3Send.mockReset();
+    });
+
+    it.each([
+      ['owner-user', 'internal-notes'],
+      ['other-contestant', 'internal-notes'],
+      ['other-contestant', 'regular-artifact'],
+    ])(
+      'allows completed MM contestant %s to download %s',
+      async (userId, artifactId) => {
+        (service as any).challengeApiService = {
+          getChallengeDetail: jest.fn().mockResolvedValue({
+            status: ChallengeStatus.COMPLETED,
+            type: 'Marathon Match',
+          }),
+        };
+        resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+          { roleName: 'Submitter' },
+        ]);
+        s3Send
+          .mockResolvedValueOnce({
+            Contents: [{ Key: `${submission.id}/${artifactId}.zip` }],
+          })
+          .mockResolvedValueOnce({ ContentType: 'application/zip' })
+          .mockResolvedValueOnce({ Body: Readable.from(['results']) });
+
+        const result = await service.getArtifactStream(
+          { userId, roles: [] } as any,
+          submission.id,
+          artifactId,
+        );
+        expect(result.stream).toBeInstanceOf(Readable);
+        expect(s3Send).toHaveBeenCalledTimes(3);
+      },
+    );
+
+    it.each([
+      ['owner-user', 'Internal-provisional'],
+      ['other-contestant', 'regular-artifact'],
+      ['other-contestant', 'internal-system'],
+    ])(
+      'rejects direct active-MM downloads for %s of %s',
+      async (userId, artifactId) => {
+        (service as any).challengeApiService = {
+          getChallengeDetail: jest.fn().mockResolvedValue({
+            status: ChallengeStatus.ACTIVE,
+            type: 'Marathon Match',
+          }),
+        };
+        resourceApiService.getMemberResourcesRoles.mockResolvedValue([
+          { roleName: 'Submitter' },
+        ]);
+
+        await expect(
+          service.getArtifactStream(
+            { userId, roles: [] } as any,
+            submission.id,
+            artifactId,
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(s3Send).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rechecks completion at download time after listing artifacts', async () => {
+      const getChallengeDetail = jest
+        .fn()
+        .mockResolvedValueOnce({
+          status: ChallengeStatus.COMPLETED,
+          type: 'Marathon Match',
+        })
+        .mockResolvedValueOnce({
+          status: ChallengeStatus.ACTIVE,
+          type: 'Marathon Match',
+        });
+      (service as any).challengeApiService = { getChallengeDetail };
+      s3Send.mockResolvedValueOnce({ Contents: s3Contents });
+      const authUser = { userId: submission.memberId, roles: [] } as any;
+      expect(
+        (await service.listArtifacts(authUser, submission.id)).artifacts,
+      ).toContain('internal-notes');
+      s3Send.mockClear();
+
+      await expect(
+        service.getArtifactStream(authUser, submission.id, 'internal-notes'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(getChallengeDetail).toHaveBeenCalledTimes(2);
+      expect(s3Send).not.toHaveBeenCalled();
+    });
+
+    it('fails closed for internal files when challenge lookup fails', async () => {
+      (service as any).challengeApiService = {
+        getChallengeDetail: jest
+          .fn()
+          .mockRejectedValue(new Error('Challenge unavailable')),
+      };
+      await expect(
+        service.getArtifactStream(
+          { userId: submission.memberId, roles: [] } as any,
+          submission.id,
+          'internal-notes',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(s3Send).not.toHaveBeenCalled();
     });
 
     it('allows submission owners to download non-internal artifacts', async () => {
@@ -2936,6 +3137,61 @@ describe('SubmissionService', () => {
       );
     });
 
+    it.each([
+      ['COMPLETED', 'Marathon Match', true, true],
+      ['ACTIVE', 'Marathon Match', true, false],
+      ['CANCELLED', 'Marathon Match', true, false],
+      ['CANCELLED_FAILED_REVIEW', 'Marathon Match', true, false],
+      ['COMPLETED', 'Challenge', true, false],
+      ['COMPLETED', 'Marathon Match', false, false],
+    ])(
+      'gates artifact history for %s %s with contestant=%s',
+      async (status, type, registered, fullHistory) => {
+        const latestSpy = jest
+          .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+          .mockResolvedValue(['submission-new']);
+        jest
+          .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+          .mockResolvedValue(undefined);
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue(
+          registered
+            ? [
+                {
+                  roleName: 'Submitter',
+                  roleId: CommonConfig.roles.submitterRoleId,
+                },
+              ]
+            : [],
+        );
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          id: 'challenge-1',
+          status,
+          type,
+          phases: [
+            { name: 'Review', isOpen: false, actualEndDate: new Date() },
+          ],
+        });
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+
+        await listService.listSubmission(
+          {
+            userId: 'member-1',
+            isMachine: false,
+            roles: [UserRole.User],
+          } as any,
+          { challengeId: 'challenge-1', memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        if (fullHistory) {
+          expect(latestSpy).not.toHaveBeenCalled();
+        } else {
+          expect(latestSpy).toHaveBeenCalled();
+        }
+      },
+    );
+
     it('ranks canonical latest submissions before intersecting row-specific filters', async () => {
       resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
         {
@@ -3413,9 +3669,15 @@ describe('SubmissionService', () => {
           );
 
           expect(latestSpy).toHaveBeenCalled();
-          expect(
-            challengeApiServiceMock.getChallengeDetail,
-          ).not.toHaveBeenCalled();
+          if (roleName === 'Submitter') {
+            expect(
+              challengeApiServiceMock.getChallengeDetail,
+            ).toHaveBeenCalledWith('challenge-1');
+          } else {
+            expect(
+              challengeApiServiceMock.getChallengeDetail,
+            ).not.toHaveBeenCalled();
+          }
         },
       );
 
@@ -3906,7 +4168,7 @@ describe('SubmissionService', () => {
           roleId: CommonConfig.roles.submitterRoleId,
         },
       ]);
-      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
         id: 'challenge-1',
         status: ChallengeStatus.ACTIVE,
         type: 'Challenge',
@@ -3948,7 +4210,7 @@ describe('SubmissionService', () => {
     });
 
     it('retains review data for other submissions once the challenge completes', async () => {
-      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
         id: 'challenge-1',
         status: ChallengeStatus.COMPLETED,
         type: 'Challenge',
@@ -4020,7 +4282,7 @@ describe('SubmissionService', () => {
     });
 
     it('retains review data for marathon match submissions', async () => {
-      challengeApiServiceMock.getChallengeDetail.mockResolvedValueOnce({
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
         id: 'challenge-1',
         status: ChallengeStatus.ACTIVE,
         type: 'Marathon Match',
