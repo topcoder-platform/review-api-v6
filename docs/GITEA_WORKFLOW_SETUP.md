@@ -4,6 +4,16 @@ New environment properties were added to support Gitea Workflows. These new prop
 
 - GITEA_TOKEN - the gitea token
 - GITEA_BASE_URL - gitea base URL which will be used by generated gitea client
+- GITEA_AUTH_SOURCE_ID - id of the "Topcoder" authentication source in Gitea, used when provisioning
+  accounts for challenge registrants (defaults to `1`)
+- GITEA_USER_VISIBILITY - visibility applied to provisioned Gitea accounts (defaults to `public`)
+- GITEA_TEAM_SYNC_ROLE_NAMES - comma separated resource role name fragments whose members are synced
+  with the challenge Gitea teams (defaults to `submitter,reviewer`)
+- GITEA_ORGANIZATIONS_CACHE_TTL_MS - how long a caller's Gitea organizations are cached for, in
+  milliseconds (defaults to `300000`). `GET /reviews/gitea/teams`, the team lookup backing the challenge
+  editor's Gitea Teams field, maps the signed-in user onto their Gitea account and searches only the
+  organizations that account belongs to — private ones included — so there is no organization list
+  to configure.
 
 These new properties are added in .env.sample.
 

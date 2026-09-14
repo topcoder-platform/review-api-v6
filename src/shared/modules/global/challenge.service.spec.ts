@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { ChallengeApiService } from './challenge.service';
 
 describe('ChallengeApiService whitelist access', () => {
@@ -19,6 +19,37 @@ describe('ChallengeApiService whitelist access', () => {
       httpServiceMock,
       m2mServiceMock,
     );
+  });
+
+  it('resolves standardized skill names to stable challenge skill IDs', async () => {
+    httpServiceMock.get.mockReturnValue(
+      of({
+        data: [
+          { id: 'skill-1', name: 'UICollectionView' },
+          { id: 'skill-1', name: 'UICollectionView' },
+          { id: 'skill-2', name: 'Collection Views' },
+        ],
+      }),
+    );
+
+    await expect(
+      service.findStandardizedSkillIds(' UICollectionView '),
+    ).resolves.toEqual(['skill-1', 'skill-2']);
+    expect(httpServiceMock.get).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '/skills/fuzzymatch?term=UICollectionView&size=100',
+      ),
+    );
+  });
+
+  it('keeps review search usable when standardized skills are unavailable', async () => {
+    httpServiceMock.get.mockReturnValue(
+      throwError(() => new Error('skills unavailable')),
+    );
+
+    await expect(
+      service.findStandardizedSkillIds('React'),
+    ).resolves.toEqual([]);
   });
 
   it('keeps challenges visible when there are no whitelist rows', async () => {

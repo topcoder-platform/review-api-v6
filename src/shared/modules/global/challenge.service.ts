@@ -139,6 +139,17 @@ interface ChallengeUserWhitelistRow {
   userId: string;
 }
 
+interface StandardizedSkillSummary {
+  id?: string;
+}
+
+interface StandardizedSkillSearchEnvelope {
+  content?: StandardizedSkillSummary[];
+  result?: {
+    content?: StandardizedSkillSummary[];
+  };
+}
+
 interface ChallengeGroupRow {
   id: string;
   groups: string[] | null;
@@ -182,6 +193,52 @@ export class ChallengeApiService {
     private readonly httpService?: HttpService,
     private readonly m2mService?: M2MService,
   ) {}
+
+  /**
+   * Resolves a member-entered skill label to the standardized skill IDs stored
+   * in ChallengeSkill. The public review-opportunity search still matches
+   * challenge names and authored tags when this optional dependency is down.
+   *
+   * @param searchTerm skill-name fragment entered or selected by the member
+   * @returns unique standardized skill IDs, or an empty list on lookup failure
+   * @throws Does not throw; dependency failures degrade to an empty list.
+   */
+  async findStandardizedSkillIds(searchTerm: string): Promise<string[]> {
+    const term = String(searchTerm ?? '').trim();
+    if (!term || !this.httpService) {
+      return [];
+    }
+
+    const baseUrl = CommonConfig.apis.standardizedSkillsApiUrl.replace(
+      /\/$/,
+      '',
+    );
+    const url = `${baseUrl}/skills/fuzzymatch?term=${encodeURIComponent(term)}&size=100`;
+
+    try {
+      const response = await firstValueFrom(this.httpService.get(url));
+      const payload = response.data as
+        | StandardizedSkillSummary[]
+        | StandardizedSkillSearchEnvelope;
+      const skills = Array.isArray(payload)
+        ? payload
+        : (payload.result?.content ?? payload.content ?? []);
+      return Array.from(
+        new Set(
+          skills
+            .map((skill) => String(skill?.id ?? '').trim())
+            .filter(Boolean),
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to resolve standardized skills for review opportunity search: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  }
 
   /**
    * Determine whether challenge whitelist checks apply for a request.

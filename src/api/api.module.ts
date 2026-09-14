@@ -49,6 +49,7 @@ import { AiReviewDecisionService } from './ai-review-decision/ai-review-decision
 import { AiReviewEscalationController } from './ai-review-escalation/ai-review-escalation.controller';
 import { AiReviewEscalationService } from './ai-review-escalation/ai-review-escalation.service';
 import { ChallengeReviewContextController } from './challenge-review-context/challenge-review-context.controller';
+import { GiteaTeamController } from './gitea-team/gitea-team.controller';
 import { ChallengeReviewContextService } from './challenge-review-context/challenge-review-context.service';
 
 @Module({
@@ -84,6 +85,7 @@ import { ChallengeReviewContextService } from './challenge-review-context/challe
     AiReviewDecisionController,
     AiReviewEscalationController,
     ChallengeReviewContextController,
+    GiteaTeamController,
   ],
   providers: [
     ReviewService,

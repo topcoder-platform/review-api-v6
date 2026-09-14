@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'async_hooks';
+import { randomBytes } from 'node:crypto';
 import { NextFunction } from 'express';
-import { nanoid } from 'nanoid';
 
 // Class for storing request specific metadata
 export class RequestMetadata {
@@ -8,7 +8,8 @@ export class RequestMetadata {
   userId?: string;
 
   constructor(params: { requestId?: string; userId?: string }) {
-    this.requestId = params.requestId ?? nanoid(11);
+    this.requestId =
+      params.requestId ?? randomBytes(9).toString('base64url').slice(0, 11);
     this.userId = params.userId;
   }
 }

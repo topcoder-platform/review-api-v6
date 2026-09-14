@@ -34,13 +34,18 @@ import { JwtUser } from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { Prisma, ReviewApplicationStatus } from '@prisma/client';
+import {
+  Prisma,
+  ReviewApplicationStatus,
+  ReviewOpportunityStatus as PrismaReviewOpportunityStatus,
+} from '@prisma/client';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import {
   resolveReviewerMetrics,
   ReviewerMetrics,
 } from 'src/shared/modules/global/reviewer-metrics.util';
+import { hasReviewOpportunityWindowEnded } from 'src/shared/utils/review-opportunity-lifecycle.util';
 
 type SubmissionPhaseSummary = {
   scheduledEndDate: Date | null;
@@ -68,7 +73,15 @@ type ReviewerTotalRow = {
 
 type ChallengeCandidateRow = {
   id: string;
-  status: string;
+  status: ChallengeStatus;
+};
+
+type ReviewOpportunityCandidateRow = {
+  id: string;
+  challengeId: string;
+  status: PrismaReviewOpportunityStatus;
+  startDate: Date;
+  duration: number;
 };
 
 @Injectable()
@@ -86,10 +99,13 @@ export class ReviewOpportunityService {
   /**
    * Searches review opportunities with database pagination and challenge-side
    * filters. The review database returns only lightweight challenge IDs before
-   * the challenge database applies track, type, submission-count, title, and
-   * lifecycle rules, avoiding hydration of every opportunity. Open work still
-   * requires an ACTIVE challenge, while closed/cancelled history remains
-   * discoverable after the challenge completes.
+   * the challenge database applies track, type, submission-count, unified
+   * challenge-name/tag/skill search, and lifecycle rules, avoiding hydration
+   * of every opportunity. Open work still
+   * requires an ACTIVE challenge and an unexpired review window. A legacy OPEN
+   * row whose challenge is now COMPLETED, or whose review window has ended, is
+   * treated as CLOSED so historical work remains discoverable even when no
+   * writer synchronized the two databases.
    *
    * @param dto - Validated search, sort, and pagination filters.
    * @param authUser - Optional caller used for whitelist and application state.
@@ -108,6 +124,16 @@ export class ReviewOpportunityService {
       const trackFilterIds = await this.resolveTrackFilters(dto.tracks);
       const typeFilterIds = await this.resolveTypeFilters(dto.types);
       const userId = this.getUserId(authUser);
+      const requestedStatuses = dto.statuses?.length
+        ? dto.statuses
+        : [ReviewOpportunityStatus.OPEN];
+      const candidateStatuses = [...requestedStatuses];
+      if (
+        requestedStatuses.includes(ReviewOpportunityStatus.CLOSED) &&
+        !candidateStatuses.includes(ReviewOpportunityStatus.OPEN)
+      ) {
+        candidateStatuses.push(ReviewOpportunityStatus.OPEN);
+      }
       if (
         (dto.appliedByMe !== undefined || dto.applicationStatuses?.length) &&
         !userId
@@ -120,9 +146,7 @@ export class ReviewOpportunityService {
 
       const where: Prisma.reviewOpportunityWhereInput = {
         status: {
-          in: (dto.statuses?.length
-            ? dto.statuses
-            : [ReviewOpportunityStatus.OPEN]) as any,
+          in: candidateStatuses as any,
         },
       };
       if (dto.paymentFrom !== undefined || dto.paymentTo !== undefined) {
@@ -165,19 +189,28 @@ export class ReviewOpportunityService {
         where.applications = { none: { userId } };
       }
 
-      const opportunityChallengeRows =
-        await this.prisma.reviewOpportunity.findMany({
+      const opportunityCandidates =
+        (await this.prisma.reviewOpportunity.findMany({
           where,
-          select: { challengeId: true },
-          distinct: ['challengeId'],
-        });
-      const opportunityChallengeIds = opportunityChallengeRows.map(
-        (row) => row.challengeId,
-      );
+          select: {
+            id: true,
+            challengeId: true,
+            status: true,
+            startDate: true,
+            duration: true,
+          },
+        })) as ReviewOpportunityCandidateRow[];
+      const opportunityChallengeIds = [
+        ...new Set(opportunityCandidates.map((row) => row.challengeId)),
+      ];
       if (!opportunityChallengeIds.length) {
         return this.emptySearchResult(dto);
       }
 
+      const normalizedSearch = dto.search?.trim();
+      const matchingSkillIds = normalizedSearch
+        ? await this.challengeService.findStandardizedSkillIds(normalizedSearch)
+        : [];
       const challengeConditions: Prisma.Sql[] = [
         Prisma.sql`c.id IN (${Prisma.join(
           opportunityChallengeIds.map((id) => Prisma.sql`${id}`),
@@ -207,9 +240,28 @@ export class ReviewOpportunityService {
           Prisma.sql`COALESCE(c."numOfSubmissions", 0) <= ${dto.numSubmissionsTo}`,
         );
       }
-      if (dto.search?.trim()) {
+      if (normalizedSearch) {
+        const searchPattern = `%${normalizedSearch}%`;
+        const searchConditions: Prisma.Sql[] = [
+          Prisma.sql`c.name ILIKE ${searchPattern}`,
+          Prisma.sql`EXISTS (
+            SELECT 1
+            FROM unnest(COALESCE(c.tags, ARRAY[]::text[])) AS challenge_tag(value)
+            WHERE challenge_tag.value ILIKE ${searchPattern}
+          )`,
+        ];
+        if (matchingSkillIds.length) {
+          searchConditions.push(Prisma.sql`EXISTS (
+            SELECT 1
+            FROM "ChallengeSkill" AS challenge_skill
+            WHERE challenge_skill."challengeId" = c.id
+              AND challenge_skill."skillId" IN (${Prisma.join(
+                matchingSkillIds.map((id) => Prisma.sql`${id}`),
+              )})
+          )`);
+        }
         challengeConditions.push(
-          Prisma.sql`c.name ILIKE ${`%${dto.search.trim()}%`}`,
+          Prisma.sql`(${Prisma.join(searchConditions, ' OR ')})`,
         );
       }
 
@@ -228,39 +280,79 @@ export class ReviewOpportunityService {
       if (!visibleChallengeIds.length) {
         return this.emptySearchResult(dto);
       }
-      const requestedStatuses = dto.statuses?.length
-        ? dto.statuses
-        : [ReviewOpportunityStatus.OPEN];
+      const visibleChallengeIdSet = new Set(visibleChallengeIds);
       const activeVisibleIds = challengeRows
         .filter(
           (row) =>
             row.status === ChallengeStatus.ACTIVE &&
-            visibleChallengeIds.includes(row.id),
+            visibleChallengeIdSet.has(row.id),
         )
         .map((row) => row.id);
-      const nonOpenStatuses = requestedStatuses.filter(
+      const activeVisibleIdSet = new Set(activeVisibleIds);
+      const completedVisibleIds = challengeRows
+        .filter(
+          (row) =>
+            row.status === ChallengeStatus.COMPLETED &&
+            visibleChallengeIdSet.has(row.id),
+        )
+        .map((row) => row.id);
+      const completedVisibleIdSet = new Set(completedVisibleIds);
+      const currentTimestamp = Date.now();
+      const openVisibleOpportunityIds = opportunityCandidates
+        .filter(
+          (row) =>
+            row.status === PrismaReviewOpportunityStatus.OPEN &&
+            activeVisibleIdSet.has(row.challengeId) &&
+            !hasReviewOpportunityWindowEnded(row, currentTimestamp),
+        )
+        .map((row) => row.id);
+      const derivedClosedOpportunityIds = opportunityCandidates
+        .filter(
+          (row) =>
+            row.status === PrismaReviewOpportunityStatus.OPEN &&
+            visibleChallengeIdSet.has(row.challengeId) &&
+            (completedVisibleIdSet.has(row.challengeId) ||
+              (activeVisibleIdSet.has(row.challengeId) &&
+                hasReviewOpportunityWindowEnded(row, currentTimestamp))),
+        )
+        .map((row) => row.id);
+      const derivedClosedOpportunityIdSet = new Set(
+        derivedClosedOpportunityIds,
+      );
+      const persistedNonOpenStatuses = requestedStatuses.filter(
         (status) => status !== ReviewOpportunityStatus.OPEN,
       );
-      if (requestedStatuses.includes(ReviewOpportunityStatus.OPEN)) {
-        where.AND = [
-          ...(Array.isArray(where.AND)
-            ? where.AND
-            : where.AND
-              ? [where.AND]
-              : []),
-          {
-            OR: [
-              ...(nonOpenStatuses.length
-                ? [{ status: { in: nonOpenStatuses as any } }]
-                : []),
+      const lifecycleStatusConditions: Prisma.reviewOpportunityWhereInput[] = [
+        ...(persistedNonOpenStatuses.length
+          ? [{ status: { in: persistedNonOpenStatuses as any } }]
+          : []),
+        ...(requestedStatuses.includes(ReviewOpportunityStatus.OPEN)
+          ? [
               {
-                status: ReviewOpportunityStatus.OPEN,
-                challengeId: { in: activeVisibleIds },
+                status: PrismaReviewOpportunityStatus.OPEN,
+                id: { in: openVisibleOpportunityIds },
               },
-            ],
-          },
-        ];
-      }
+            ]
+          : []),
+        ...(requestedStatuses.includes(ReviewOpportunityStatus.CLOSED)
+          ? [
+              {
+                status: PrismaReviewOpportunityStatus.OPEN,
+                id: { in: derivedClosedOpportunityIds },
+              },
+            ]
+          : []),
+      ];
+      where.AND = [
+        ...(Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : []),
+        {
+          OR: lifecycleStatusConditions,
+        },
+      ];
       where.challengeId = { in: visibleChallengeIds };
 
       const limit = Math.max(1, Number(dto.limit ?? 10));
@@ -307,12 +399,19 @@ export class ReviewOpportunityService {
       const countedEntityList = entityList.map((entity) => ({
         ...entity,
         approvedApplicationCount: approvedCountById.get(entity.id) ?? 0,
+        status:
+          entity.status === PrismaReviewOpportunityStatus.OPEN &&
+          derivedClosedOpportunityIdSet.has(entity.id)
+            ? ReviewOpportunityStatus.CLOSED
+            : entity.status,
       }));
       const challengeMap = await this.buildChallengeMap(countedEntityList);
       const items = this.buildResponseList(
         countedEntityList,
         challengeMap,
         authUser,
+        undefined,
+        currentTimestamp,
       );
       return {
         items,
@@ -975,6 +1074,7 @@ export class ReviewOpportunityService {
    * @param challengeMap - Hydrated challenges keyed by ID.
    * @param authUser - Optional caller used for eligibility.
    * @param reviewerMetrics - Optional public-safe assignment totals by member.
+   * @param lifecycleTimestamp - Optional read-consistent lifecycle snapshot.
    * @returns Enriched response items.
    */
   private buildResponseList(
@@ -982,6 +1082,7 @@ export class ReviewOpportunityService {
     challengeMap: Map<string, ChallengeData>,
     authUser?: JwtUser,
     reviewerMetrics?: Map<string, ReviewerMetrics>,
+    lifecycleTimestamp?: number,
   ): ReviewOpportunityResponseDto[] {
     return (entityList || []).map((e) =>
       this.buildResponse(
@@ -989,6 +1090,7 @@ export class ReviewOpportunityService {
         challengeMap.get(e.challengeId),
         authUser,
         reviewerMetrics,
+        lifecycleTimestamp,
       ),
     );
   }
@@ -1011,12 +1113,7 @@ export class ReviewOpportunityService {
       this.challengePrisma,
       (entity.applications ?? []).map((application) => application.userId),
     );
-    return this.buildResponse(
-      entity,
-      challengeData,
-      authUser,
-      reviewerMetrics,
-    );
+    return this.buildResponse(entity, challengeData, authUser, reviewerMetrics);
   }
 
   /**
@@ -1025,6 +1122,7 @@ export class ReviewOpportunityService {
    * @param challengeData challenge data from api
    * @param authUser optional caller used for application eligibility
    * @param reviewerMetrics public-safe assignment totals keyed by applicant ID
+   * @param lifecycleTimestamp optional read-consistent lifecycle snapshot
    * @returns response dto
    */
   private buildResponse(
@@ -1032,12 +1130,18 @@ export class ReviewOpportunityService {
     challengeData?: ChallengeData,
     authUser?: JwtUser,
     reviewerMetrics?: Map<string, ReviewerMetrics>,
+    lifecycleTimestamp?: number,
   ): ReviewOpportunityResponseDto {
     const ret = new ReviewOpportunityResponseDto();
     ret.id = entity.id;
     ret.challengeId = entity.challengeId;
     ret.type = entity.type;
-    ret.status = entity.status;
+    ret.status = this.resolveEffectiveOpportunityStatus(
+      entity,
+      challengeData,
+      lifecycleTimestamp,
+    );
+    ret.createdAt = entity.createdAt;
     ret.openPositions = entity.openPositions;
     ret.startDate = entity.startDate;
     ret.duration = entity.duration;
@@ -1103,11 +1207,10 @@ export class ReviewOpportunityService {
       Number(entity.openPositions ?? 0) - ret.approvedApplicationCount,
     );
     ret.canApplyReason = this.resolveCanApplyReason(
-      entity,
+      { ...entity, status: ret.status },
       challengeData,
       authUser,
       ret.myApplications.length > 0,
-      ret.remainingPositions,
     );
     ret.canApply =
       ret.canApplyReason === ReviewOpportunityCanApplyReason.CAN_APPLY;
@@ -1150,15 +1253,14 @@ export class ReviewOpportunityService {
    * @param challenge - Associated challenge, when it could be loaded.
    * @param authUser - Optional JWT caller.
    * @param alreadyApplied - Whether this member has any application on the row.
-   * @param remainingPositions - Approved-capacity remainder.
    * @returns Stable can-apply reason code.
+   * @throws Does not throw.
    */
   private resolveCanApplyReason(
     entity: any,
     challenge: ChallengeData | undefined,
     authUser: JwtUser | undefined,
     alreadyApplied: boolean,
-    remainingPositions: number,
   ): ReviewOpportunityCanApplyReason {
     if (!this.getUserId(authUser)) {
       return ReviewOpportunityCanApplyReason.NOT_AUTHENTICATED;
@@ -1178,10 +1280,47 @@ export class ReviewOpportunityService {
     if (alreadyApplied) {
       return ReviewOpportunityCanApplyReason.ALREADY_APPLIED;
     }
-    if (remainingPositions <= 0) {
-      return ReviewOpportunityCanApplyReason.NO_OPEN_POSITIONS;
-    }
     return ReviewOpportunityCanApplyReason.CAN_APPLY;
+  }
+
+  /**
+   * Derives the member-facing lifecycle for stale legacy opportunity rows.
+   *
+   * Review opportunities are occasionally left OPEN after either the linked
+   * challenge completes or the configured review window elapses. Read paths
+   * treat those rows as CLOSED without mutating historical source data.
+   *
+   * @param entity - Review opportunity persistence row.
+   * @param challenge - Associated challenge, when it could be loaded.
+   * @param now - Optional lifecycle snapshot shared with the search filter.
+   * @returns persisted status, or CLOSED for an expired legacy OPEN row.
+   */
+  private resolveEffectiveOpportunityStatus(
+    entity: {
+      status: unknown;
+      startDate: Date | string;
+      duration: number;
+    },
+    challenge?: ChallengeData,
+    now: number = Date.now(),
+  ): ReviewOpportunityStatus {
+    const persistedStatus = String(entity.status);
+    if (persistedStatus === 'CLOSED') {
+      return ReviewOpportunityStatus.CLOSED;
+    }
+    if (persistedStatus === 'CANCELLED') {
+      return ReviewOpportunityStatus.CANCELLED;
+    }
+    if (persistedStatus !== 'OPEN') {
+      return ReviewOpportunityStatus.CLOSED;
+    }
+    if (
+      challenge?.status === ChallengeStatus.COMPLETED ||
+      hasReviewOpportunityWindowEnded(entity, now)
+    ) {
+      return ReviewOpportunityStatus.CLOSED;
+    }
+    return ReviewOpportunityStatus.OPEN;
   }
 
   private findLatestSubmissionPhase(

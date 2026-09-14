@@ -107,6 +107,7 @@ export enum ReviewOpportunityCanApplyReason {
   OPPORTUNITY_CLOSED = 'OPPORTUNITY_CLOSED',
   CHALLENGE_NOT_ACTIVE = 'CHALLENGE_NOT_ACTIVE',
   ALREADY_APPLIED = 'ALREADY_APPLIED',
+  /** @deprecated Full active opportunities now accept pending waitlist applications. */
   NO_OPEN_POSITIONS = 'NO_OPEN_POSITIONS',
 }
 
@@ -177,7 +178,8 @@ export class CreateReviewOpportunityDto {
   duration: number;
 
   @ApiProperty({
-    description: 'Payment for reviewer if there is 1 submission.',
+    description:
+      'Fixed reviewer payment component. The first-submission total is this value plus incrementalPayment.',
     example: '180.0',
   })
   @IsNumber()
@@ -185,7 +187,8 @@ export class CreateReviewOpportunityDto {
   basePayment: number;
 
   @ApiProperty({
-    description: 'Review payment for each extra submission.',
+    description:
+      'Variable payment for each reviewed submission, including the first.',
     example: '50.0',
   })
   @IsNumber()
@@ -212,7 +215,7 @@ export class ReviewPaymentDto {
 
   @ApiProperty({
     description:
-      'Review payment. Should be base payment if there is 1 submission.',
+      'Role-adjusted fixed payment component. Add incrementalPayment for the first reviewed submission.',
     example: 180.0,
   })
   @IsNumber()
@@ -278,6 +281,13 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   id: string;
 
   @ApiProperty({
+    description: 'Timestamp when the review opportunity was posted',
+    type: String,
+    format: 'date-time',
+  })
+  createdAt: Date;
+
+  @ApiProperty({
     description: 'Current submission count of this challenge',
   })
   submissions: number | null;
@@ -314,7 +324,8 @@ export class ReviewOpportunityResponseDto extends CreateReviewOpportunityDto {
   canApply: boolean;
 
   @ApiProperty({
-    description: 'Stable explanation for the canApply value',
+    description:
+      'Stable explanation for canApply; full active opportunities remain CAN_APPLY and create pending waitlist applications',
     enum: ReviewOpportunityCanApplyReason,
     example: ReviewOpportunityCanApplyReason.CAN_APPLY,
   })

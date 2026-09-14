@@ -3,10 +3,7 @@ jest.mock('nanoid', () => ({
   nanoid: () => 'mock-nanoid',
 }));
 
-import {
-  ConflictException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { Prisma, ReviewOpportunityType } from '@prisma/client';
 import {
   ReviewApplicationRole,
@@ -527,6 +524,8 @@ describe('ReviewApplicationService', () => {
       type: ReviewOpportunityType.SCENARIOS_REVIEW,
       status: 'OPEN',
       openPositions: 1,
+      startDate: new Date('2099-01-01T00:00:00Z'),
+      duration: 86400,
       applications: [],
     });
     challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
@@ -565,6 +564,45 @@ describe('ReviewApplicationService', () => {
     );
   });
 
+  it('rejects applications after an OPEN opportunity review window ends', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      id: 'opportunity-expired',
+      challengeId: 'challenge-active',
+      type: ReviewOpportunityType.REGULAR_REVIEW,
+      status: 'OPEN',
+      openPositions: 1,
+      startDate: new Date('2020-01-01T00:00:00Z'),
+      duration: 86400,
+      applications: [],
+    });
+
+    await expect(
+      service.create(
+        {
+          userId: '1001',
+          handle: 'reviewer-one',
+          roles: [] as any,
+          isMachine: false,
+        },
+        {
+          opportunityId: 'opportunity-expired',
+          role: ReviewApplicationRole.REVIEWER,
+        },
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        response: {
+          message: 'This review opportunity is no longer open.',
+          code: 'REVIEW_OPPORTUNITY_CLOSED',
+        },
+      }),
+    );
+    expect(
+      challengeServiceMock.getChallengeDetailForUser,
+    ).not.toHaveBeenCalled();
+    expect(prismaMock.reviewApplication.create).not.toHaveBeenCalled();
+  });
+
   it('returns conflict for one of two concurrent duplicate applications', async () => {
     prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
       id: 'opportunity-concurrent',
@@ -572,6 +610,8 @@ describe('ReviewApplicationService', () => {
       type: ReviewOpportunityType.REGULAR_REVIEW,
       status: 'OPEN',
       openPositions: 2,
+      startDate: new Date('2099-01-01T00:00:00Z'),
+      duration: 86400,
       applications: [],
     });
     challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
@@ -641,18 +681,30 @@ describe('ReviewApplicationService', () => {
     expect(prismaErrorServiceMock.handleError).not.toHaveBeenCalled();
   });
 
-  it('rejects member apply when approved applications fill capacity', async () => {
+  it('waitlists a pending application when approved reviewers fill capacity', async () => {
     prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
       id: 'opportunity-full',
       challengeId: 'challenge-full',
       type: ReviewOpportunityType.REGULAR_REVIEW,
       status: 'OPEN',
       openPositions: 1,
+      startDate: new Date('2099-01-01T00:00:00Z'),
+      duration: 86400,
       applications: [{ status: ReviewApplicationStatus.APPROVED }],
     });
     challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
       id: 'challenge-full',
       status: ChallengeStatus.ACTIVE,
+    });
+    prismaMock.reviewApplication.findMany.mockResolvedValue([]);
+    prismaMock.reviewApplication.create.mockResolvedValue({
+      id: 'application-waitlisted',
+      opportunityId: 'opportunity-full',
+      userId: '1002',
+      handle: 'reviewer-two',
+      role: ReviewApplicationRole.REVIEWER,
+      status: ReviewApplicationStatus.PENDING,
+      createdAt: new Date('2026-09-08T00:00:00Z'),
     });
 
     await expect(
@@ -668,14 +720,20 @@ describe('ReviewApplicationService', () => {
           role: ReviewApplicationRole.REVIEWER,
         },
       ),
-    ).rejects.toEqual(
+    ).resolves.toEqual(
       expect.objectContaining({
-        response: {
-          message: 'All reviewer positions have been filled.',
-          code: 'REVIEW_OPPORTUNITY_FULL',
-        },
+        id: 'application-waitlisted',
+        status: ReviewApplicationStatus.PENDING,
       }),
     );
-    expect(prismaMock.reviewApplication.create).not.toHaveBeenCalled();
+    expect(prismaMock.reviewApplication.create).toHaveBeenCalledWith({
+      data: {
+        handle: 'reviewer-two',
+        opportunityId: 'opportunity-full',
+        role: ReviewApplicationRole.REVIEWER,
+        status: ReviewApplicationStatus.PENDING,
+        userId: '1002',
+      },
+    });
   });
 });

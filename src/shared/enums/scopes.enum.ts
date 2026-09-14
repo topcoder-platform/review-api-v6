@@ -97,6 +97,9 @@ export enum Scope {
   // AI review decision scopes
   ReadAiReviewDecision = 'read:ai-review-decision',
 
+  // Gitea scopes
+  ReadGiteaTeam = 'read:gitea-team',
+
   // Challenge review context scopes
   CreateChallengeReviewContext = 'create:challenge-review-context',
   ReadChallengeReviewContext = 'read:challenge-review-context',

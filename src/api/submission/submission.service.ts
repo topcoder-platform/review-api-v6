@@ -16,8 +16,12 @@ import { PaginationDto } from 'src/dto/pagination.dto';
 import { ReviewResponseDto } from 'src/dto/review.dto';
 import { SortDto } from 'src/dto/sort.dto';
 import {
+  MAX_DUPLICATE_CHECK_SUBMISSION_IDS,
   SubmissionQueryDto,
   ManualSubmissionUploadRequestDto,
+  SubmissionDuplicateDto,
+  SubmissionDuplicatesQueryDto,
+  SubmissionDuplicatesResponse,
   SubmissionRequestDto,
   SubmissionResponseDto,
   SubmissionUpdateRequestDto,
@@ -78,6 +82,13 @@ type ActiveChallengeRow = {
   id: string | null;
 };
 
+/** Submission-list access confirmed from the requester's challenge resources. */
+type ChallengeSubmissionListAccess = {
+  canViewFullHistory: boolean;
+  /** Design review window; null is unlimited, undefined retains latest-only privacy. */
+  reviewSubmissionLimit?: number | null;
+};
+
 type SubmissionDownloadCandidate = {
   id: string;
   memberId: string | null;
@@ -101,6 +112,29 @@ const DESIGN_LIMITED_SUBMISSION_TYPES = new Set<SubmissionType>([
   SubmissionType.CONTEST_SUBMISSION,
   SubmissionType.CHECKPOINT_SUBMISSION,
 ]);
+/**
+ * Challenge resource role name fragments allowed to run duplicate detection.
+ * Matches challenge Reviewers/Screeners, Copilots, and Managers (PMs).
+ */
+const DUPLICATE_DETECTION_RESOURCE_ROLE_FRAGMENTS = [
+  'reviewer',
+  'screener',
+  'copilot',
+  'manager',
+];
+/** Statuses that never surface as duplicate matches. */
+const DUPLICATE_DETECTION_EXCLUDED_STATUSES: SubmissionStatus[] = [
+  SubmissionStatus.DELETED,
+];
+
+type DuplicateSubmissionCandidate = {
+  id: string;
+  challengeId: string | null;
+  memberId: string | null;
+  submittedDate: Date | null;
+  createdAt: Date;
+  sha256Hash: string | null;
+};
 
 /**
  * Parses optional boolean-like query parameters used by submission listing filters.
@@ -1184,50 +1218,103 @@ export class SubmissionService {
     return { artifacts: artifactId };
   }
 
+  /**
+   * Resolves the shared policy for artifact listing and streaming after challenge
+   * whitelist access has been checked. Ordinary members can read their own
+   * regular artifacts. A completed Marathon Match also releases every regular
+   * and internal artifact to its submission owners and registered Submitters.
+   * No phase dates, scores, or cancelled statuses imply completion.
+   * @param authUser Authenticated requester.
+   * @param submission Stored submission whose artifacts are requested.
+   * @returns Whether any artifacts and internal artifacts may be read.
+   * @throws Does not throw; failed role/status lookups preserve owner-only access.
+   */
+  private async resolveArtifactAccess(
+    authUser: JwtUser,
+    submission: {
+      memberId: string | null;
+      challengeId: string | null;
+    },
+  ): Promise<{ canAccess: boolean; allowInternalArtifacts: boolean }> {
+    if (authUser.isMachine || isAdmin(authUser)) {
+      return { canAccess: true, allowInternalArtifacts: true };
+    }
+
+    const uid = String(authUser.userId ?? '');
+    const isOwner = !!uid && submission.memberId === uid;
+    let isSubmitter = false;
+
+    if (!isOwner && submission.challengeId && uid) {
+      try {
+        const resources = await this.resourceApiService.getMemberResourcesRoles(
+          submission.challengeId,
+          uid,
+        );
+        if (
+          resources.some((resource) =>
+            (resource.roleName || '').toLowerCase().includes('copilot'),
+          )
+        ) {
+          return { canAccess: true, allowInternalArtifacts: true };
+        }
+        isSubmitter = resources.some(
+          (resource) =>
+            resource.roleId === CommonConfig.roles.submitterRoleId ||
+            (resource.roleName || '').trim().toLowerCase() === 'submitter',
+        );
+      } catch {
+        // An unverified resource cannot grant access to another member's files.
+      }
+    }
+
+    if ((isOwner || isSubmitter) && submission.challengeId) {
+      try {
+        const challenge = await this.challengeApiService.getChallengeDetail(
+          submission.challengeId,
+        );
+        if (
+          challenge.status === ChallengeStatus.COMPLETED &&
+          this.isMarathonMatchChallenge(challenge)
+        ) {
+          return { canAccess: true, allowInternalArtifacts: true };
+        }
+      } catch {
+        // A failed challenge lookup must never release internal artifacts.
+      }
+    }
+
+    return { canAccess: isOwner, allowInternalArtifacts: false };
+  }
+
+  /**
+   * Lists authorized regular and scorer-internal artifacts for a submission.
+   * Completed Marathon Match contestants may also list other submissions' files.
+   * @param authUser Authenticated requester.
+   * @param submissionId Submission to inspect.
+   * @returns Distinct artifact IDs allowed by the shared artifact access policy.
+   * @throws NotFoundException for a missing submission, ForbiddenException for
+   * unauthorized access, or InternalServerErrorException on storage failures.
+   */
   async listArtifacts(
     authUser: JwtUser,
     submissionId: string,
   ): Promise<{ artifacts: string[] }> {
     const submission = await this.checkSubmission(submissionId, authUser);
 
-    const isMachineToken = !!authUser.isMachine;
-    const isAdminUser = isAdmin(authUser);
-    const uid = authUser.userId ? String(authUser.userId) : '';
-    let isOwner = false;
-    let isCopilot = false;
-
-    if (!isMachineToken && !isAdminUser) {
-      isOwner = !!uid && submission.memberId === uid;
-
-      if (!isOwner && submission.challengeId && uid) {
-        try {
-          const resources =
-            await this.resourceApiService.getMemberResourcesRoles(
-              submission.challengeId,
-              uid,
-            );
-          isCopilot = resources.some((resource) =>
-            (resource.roleName || '').toLowerCase().includes('copilot'),
-          );
-        } catch {
-          isCopilot = false;
-        }
-      }
-
-      if (!isOwner && !isCopilot) {
-        throw new ForbiddenException({
-          message:
-            'Only the submission owner, a challenge copilot, or an admin can list submission artifacts',
-          code: 'FORBIDDEN_ARTIFACT_LIST',
-          details: {
-            submissionId,
-            requester: uid,
-            challengeId: submission.challengeId,
-          },
-        });
-      }
+    const { canAccess, allowInternalArtifacts } =
+      await this.resolveArtifactAccess(authUser, submission);
+    if (!canAccess) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner, a challenge copilot, an admin, or a contestant after Marathon Match completion can list submission artifacts',
+        code: 'FORBIDDEN_ARTIFACT_LIST',
+        details: {
+          submissionId,
+          requester: String(authUser.userId ?? ''),
+          challengeId: submission.challengeId,
+        },
+      });
     }
-    const allowInternalArtifacts = isMachineToken || isAdminUser || isCopilot;
 
     const bucket = process.env.ARTIFACTS_S3_BUCKET;
     if (!bucket) {
@@ -1287,6 +1374,16 @@ export class SubmissionService {
     return { artifacts };
   }
 
+  /**
+   * Streams an artifact using the same authorization policy as artifact listing.
+   * @param authUser Authenticated requester.
+   * @param submissionId Submission containing the requested artifact.
+   * @param artifactId Artifact ID returned by listArtifacts.
+   * @returns Readable storage stream, content type, and download filename.
+   * @throws NotFoundException for missing data, ForbiddenException for unauthorized
+   * access (including internal files before completion), or InternalServerErrorException
+   * when storage is unavailable.
+   */
   async getArtifactStream(
     authUser: JwtUser,
     submissionId: string,
@@ -1294,56 +1391,32 @@ export class SubmissionService {
   ): Promise<{ stream: Readable; contentType?: string; fileName: string }> {
     const submission = await this.checkSubmission(submissionId, authUser);
 
-    const isMachineToken = !!authUser.isMachine;
-    const isAdminUser = isAdmin(authUser);
-    const uid = authUser.userId ? String(authUser.userId) : '';
-    let isOwner = false;
-    let isCopilot = false;
-
-    if (!isMachineToken && !isAdminUser) {
-      isOwner = !!uid && submission.memberId === uid;
-
-      if (!isOwner && submission.challengeId && uid) {
-        try {
-          const resources =
-            await this.resourceApiService.getMemberResourcesRoles(
-              submission.challengeId,
-              uid,
-            );
-          isCopilot = resources.some((resource) =>
-            (resource.roleName || '').toLowerCase().includes('copilot'),
-          );
-        } catch {
-          isCopilot = false;
-        }
-      }
-
-      if (!isOwner && !isCopilot) {
-        throw new ForbiddenException({
-          message:
-            'Only the submission owner, a challenge copilot, or an admin can download artifacts',
-          code: 'FORBIDDEN_ARTIFACT_DOWNLOAD',
-          details: {
-            submissionId,
-            requester: uid,
-            challengeId: submission.challengeId,
-          },
-        });
-      }
+    const { canAccess, allowInternalArtifacts } =
+      await this.resolveArtifactAccess(authUser, submission);
+    if (!canAccess) {
+      throw new ForbiddenException({
+        message:
+          'Only the owner, a challenge copilot, an admin, or a contestant after Marathon Match completion can download artifacts',
+        code: 'FORBIDDEN_ARTIFACT_DOWNLOAD',
+        details: {
+          submissionId,
+          requester: String(authUser.userId ?? ''),
+          challengeId: submission.challengeId,
+        },
+      });
     }
-
-    const allowInternalArtifacts = isMachineToken || isAdminUser || isCopilot;
     if (
       !allowInternalArtifacts &&
       artifactId.toLowerCase().includes('internal')
     ) {
       throw new ForbiddenException({
-        message: 'Submission owners cannot download internal artifacts',
+        message:
+          'Internal artifacts are available to contestants only after Marathon Match completion',
         code: 'FORBIDDEN_INTERNAL_ARTIFACT_DOWNLOAD',
         details: {
           submissionId,
           artifactId,
-          requester: uid,
+          requester: String(authUser.userId ?? ''),
         },
       });
     }
@@ -1626,10 +1699,7 @@ export class SubmissionService {
     }
 
     try {
-      const safeSubmissionId = submission.id.replace(
-        /[^A-Za-z0-9_-]/g,
-        '_',
-      );
+      const safeSubmissionId = submission.id.replace(/[^A-Za-z0-9_-]/g, '_');
       const fileName = `submission-${safeSubmissionId}.zip`;
       const downloadUrl = await getSignedUrl(
         s3,
@@ -1694,9 +1764,7 @@ export class SubmissionService {
       return false;
     }
 
-    if (
-      this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge)
-    ) {
+    if (this.areAllRegistrantsAllowedToDownloadWinningSubmissions(challenge)) {
       return this.isWinningSubmission(challengeId, challenge, submission);
     }
 
@@ -1730,10 +1798,7 @@ export class SubmissionService {
       return true;
     }
 
-    return this.hasPassingStaleReviewSummation(
-      challengeId,
-      requesterMemberId,
-    );
+    return this.hasPassingStaleReviewSummation(challengeId, requesterMemberId);
   }
 
   /**
@@ -1830,9 +1895,7 @@ export class SubmissionService {
       }
 
       const scorecard = matchingReviews[0].scorecard;
-      const minimumPassingScore = Number.isFinite(
-        scorecard.minimumPassingScore,
-      )
+      const minimumPassingScore = Number.isFinite(scorecard.minimumPassingScore)
         ? scorecard.minimumPassingScore
         : Number.isFinite(scorecard.minScore)
           ? scorecard.minScore
@@ -2384,12 +2447,12 @@ export class SubmissionService {
           : Buffer.from(chunk as string | Uint8Array);
         hashedBytes += buffer.length;
         if (hashedBytes > maxBytes) {
-           stream.destroy();
-           this.logger.warn(
-             `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: streamed ${hashedBytes} bytes, above the ${maxBytes} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
-           );
-           return null;
-         }
+          stream.destroy();
+          this.logger.warn(
+            `[${context}] Skipping sha256Hash for bucket=${bucket} key=${key}: streamed ${hashedBytes} bytes, above the ${maxBytes} byte limit (SUBMISSION_SHA256_MAX_BYTES).`,
+          );
+          return null;
+        }
         hash.update(buffer);
       }
 
@@ -4137,25 +4200,52 @@ export class SubmissionService {
       const requestedMemberId = queryDto.memberId
         ? String(queryDto.memberId)
         : undefined;
+      const requesterUserId =
+        authUser?.userId !== undefined && authUser?.userId !== null
+          ? String(authUser.userId)
+          : '';
+      const isRequestingMember =
+        !!requestedMemberId && requesterUserId === requestedMemberId;
+      let canViewFullHistory =
+        isRequestingMember || this.hasGlobalSubmissionHistoryAccess(authUser);
+      let reviewSubmissionLimit: number | null | undefined;
 
-      if (requestedMemberId) {
-        const userId = authUser?.userId ? String(authUser.userId) : undefined;
-        const isRequestingMember = userId === requestedMemberId;
-        const hasCopilotRole = (authUser?.roles ?? []).includes(
-          UserRole.Copilot,
-        );
-        const hasElevatedAccess = isAdmin(authUser) || hasCopilotRole;
+      // A challenge-less list cannot establish access to anybody else's
+      // submissions. Keep the legacy unfiltered endpoint useful for members by
+      // treating it as an own-history request, while privileged callers retain
+      // the existing global view.
+      const effectiveMemberId =
+        !queryDto.challengeId &&
+        !requestedMemberId &&
+        !canViewFullHistory &&
+        requesterUserId
+          ? requesterUserId
+          : requestedMemberId;
+      if (
+        !queryDto.challengeId &&
+        !requestedMemberId &&
+        !canViewFullHistory &&
+        !requesterUserId
+      ) {
+        throw new ForbiddenException({
+          message:
+            'Authentication is required to list submissions without a challenge id',
+          code: 'FORBIDDEN_SUBMISSION_ACCESS',
+        });
+      }
+      if (effectiveMemberId === requesterUserId && requesterUserId) {
+        canViewFullHistory = true;
+      }
 
-        if (!hasElevatedAccess && !isRequestingMember) {
-          throw new ForbiddenException({
-            message:
-              'You are not allowed to view submissions for the requested member',
-            code: 'FORBIDDEN_SUBMISSION_ACCESS',
-            details: {
-              requestedMemberId,
-            },
-          });
-        }
+      if (requestedMemberId && !queryDto.challengeId && !canViewFullHistory) {
+        throw new ForbiddenException({
+          message:
+            "A challenge id is required to verify access to another member's submissions",
+          code: 'FORBIDDEN_SUBMISSION_ACCESS',
+          details: {
+            requestedMemberId,
+          },
+        });
       }
 
       // Build the where clause for submissions based on available filter parameters
@@ -4172,9 +4262,17 @@ export class SubmissionService {
           queryDto.challengeId,
         );
         submissionWhereClause.challengeId = queryDto.challengeId;
+        if (!canViewFullHistory) {
+          const access = await this.resolveChallengeSubmissionListAccess(
+            authUser,
+            queryDto.challengeId,
+          );
+          canViewFullHistory = access.canViewFullHistory;
+          reviewSubmissionLimit = access.reviewSubmissionLimit;
+        }
       }
-      if (requestedMemberId) {
-        submissionWhereClause.memberId = requestedMemberId;
+      if (effectiveMemberId) {
+        submissionWhereClause.memberId = effectiveMemberId;
       }
       if (queryDto.legacySubmissionId) {
         submissionWhereClause.legacySubmissionId = queryDto.legacySubmissionId;
@@ -4185,16 +4283,26 @@ export class SubmissionService {
       if (queryDto.submissionPhaseId) {
         submissionWhereClause.submissionPhaseId = queryDto.submissionPhaseId;
       }
-      const isLatestFilter = parseOptionalBooleanQuery(
+      let isLatestFilter = parseOptionalBooleanQuery(
         queryDto.isLatest,
         'isLatest',
       );
 
+      // Challenge submission history is private. A submitter can inspect all of
+      // their own attempts, while other ordinary participants only receive the
+      // latest attempt even when they omit isLatest or explicitly request false.
+      // Completed Marathon Match contestants may inspect every attempt's artifacts.
+      // Assigned Design reviewers instead receive the configured review window;
+      // multiple eligible submissions are current work, not private history.
+      if (
+        queryDto.challengeId &&
+        !canViewFullHistory &&
+        reviewSubmissionLimit === undefined
+      ) {
+        isLatestFilter = true;
+      }
+
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
-      const requesterUserId =
-        authUser?.userId !== undefined && authUser?.userId !== null
-          ? String(authUser.userId)
-          : '';
 
       let restrictedChallengeIds = new Set<string>();
       if (!isPrivilegedRequester && requesterUserId && !queryDto.challengeId) {
@@ -4281,12 +4389,34 @@ export class SubmissionService {
         }
       }
 
+      if (queryDto.challengeId && reviewSubmissionLimit !== undefined) {
+        whereClause.id = {
+          in: await this.findReviewableDesignSubmissionIds(
+            queryDto.challengeId,
+            reviewSubmissionLimit,
+          ),
+        };
+      }
       if (isLatestFilter !== null) {
+        const latestQueryDto =
+          effectiveMemberId && !requestedMemberId
+            ? { ...queryDto, memberId: effectiveMemberId }
+            : queryDto;
         const latestSubmissionIds =
-          await this.findLatestSubmissionIdsForQuery(queryDto);
-        whereClause.id = isLatestFilter
+          await this.findLatestSubmissionIdsForQuery(latestQueryDto);
+        const latestIdFilter = isLatestFilter
           ? { in: latestSubmissionIds }
           : { notIn: latestSubmissionIds };
+        if (whereClause.id) {
+          const existingAnd = Array.isArray(whereClause.AND)
+            ? whereClause.AND
+            : whereClause.AND
+              ? [whereClause.AND]
+              : [];
+          whereClause.AND = [...existingAnd, { id: latestIdFilter }];
+        } else {
+          whereClause.id = latestIdFilter;
+        }
       }
 
       // find entities by filters
@@ -4398,6 +4528,11 @@ export class SubmissionService {
       await this.populateReviewTypeNames(submissions);
       await this.enrichReviewerMetadata(submissions);
       await this.enrichAiDecisionScores(submissions);
+      this.stripUnauthorizedAiDecisionDetails(
+        authUser,
+        submissions,
+        reviewVisibilityContext,
+      );
 
       // Count total entities matching the filter for pagination metadata
       let totalCount = await this.prisma.submission.count({
@@ -4491,6 +4626,151 @@ export class SubmissionService {
     return false;
   }
 
+  /**
+   * Reports whether a token grants full submission-history access without a
+   * challenge resource lookup.
+   *
+   * @param authUser - Authenticated requester.
+   * @returns True for internal machines, admins, and global project managers.
+   */
+  private hasGlobalSubmissionHistoryAccess(authUser: JwtUser): boolean {
+    if (authUser?.isMachine || (authUser && isAdmin(authUser))) {
+      return true;
+    }
+
+    const tokenRoles = (authUser?.roles ?? []).map((role) =>
+      String(role ?? '')
+        .trim()
+        .toLowerCase(),
+    );
+    return tokenRoles.includes(String(UserRole.ProjectManager).toLowerCase());
+  }
+
+  /**
+   * Resolves challenge-specific submission visibility for listSubmission.
+   * Copilots and managers can see history. Assigned Design review resources can
+   * see the configured review window, with separate contest/checkpoint limits.
+   * Registered contestants can inspect all attempts of a COMPLETED Marathon Match
+   * to download the artifacts associated with those historical submission IDs.
+   * Other callers and failed lookups retain latest-only visibility.
+   *
+   * @param authUser - Authenticated requester.
+   * @param challengeId - Challenge whose resource roles should be checked.
+   * @returns Full-history access or the eligible Design submission rank limit.
+   * @throws Never; unavailable role or challenge metadata fails closed.
+   */
+  private async resolveChallengeSubmissionListAccess(
+    authUser: JwtUser,
+    challengeId: string,
+  ): Promise<ChallengeSubmissionListAccess> {
+    const restrictedAccess = { canViewFullHistory: false };
+    const requester = String(authUser?.userId ?? '').trim();
+    if (!requester) {
+      return restrictedAccess;
+    }
+
+    try {
+      const resources = await this.resourceApiService.getMemberResourcesRoles(
+        challengeId,
+        requester,
+      );
+      const roleNames = (resources ?? []).map((resource) =>
+        String(resource?.roleName ?? '').toLowerCase(),
+      );
+      if (
+        roleNames.some(
+          (role) => role.includes('copilot') || role.includes('manager'),
+        )
+      ) {
+        return { canViewFullHistory: true };
+      }
+      const isSubmitter = resources.some(
+        (resource) =>
+          resource.roleId === CommonConfig.roles.submitterRoleId ||
+          (resource.roleName || '').trim().toLowerCase() === 'submitter',
+      );
+      const hasReviewRole = roleNames.some((role) =>
+        REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) => role.includes(keyword)),
+      );
+      if (!isSubmitter && !hasReviewRole) {
+        return restrictedAccess;
+      }
+
+      const challenge =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+      if (
+        isSubmitter &&
+        challenge.status === ChallengeStatus.COMPLETED &&
+        this.isMarathonMatchChallenge(challenge)
+      ) {
+        return { canViewFullHistory: true };
+      }
+      return hasReviewRole && isDesignTrackChallenge(challenge)
+        ? {
+            canViewFullHistory: false,
+            reviewSubmissionLimit: resolveReviewSubmissionRankLimit(challenge),
+          }
+        : restrictedAccess;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[listSubmission] Could not verify challenge ${challengeId} history access for member ${requester}: ${message}`,
+      );
+      return restrictedAccess;
+    }
+  }
+
+  /**
+   * Selects the Design submissions an assigned review resource needs to see.
+   * Uses the same non-deleted, per-member/type ranking as review creation.
+   * Other types, including Final Fix, retain one visible row per member/type.
+   * listSubmission intersects these IDs with request filters before counting or
+   * paginating, so a row-specific filter cannot promote an older submission.
+   *
+   * @param challengeId - Challenge whose review-eligible submissions are selected.
+   * @param maximumRank - Positive configured count, or null for unlimited Design.
+   * @returns Eligible contest/checkpoint IDs and the latest IDs for other types.
+   * @throws Error when the database query fails; no unfiltered fallback is used.
+   */
+  private async findReviewableDesignSubmissionIds(
+    challengeId: string,
+    maximumRank: number | null,
+  ): Promise<string[]> {
+    const rankFilter =
+      maximumRank === null
+        ? Prisma.empty
+        : Prisma.sql`AND "submissionRank" <= ${maximumRank}`;
+    const entries = await this.prisma.$queryRaw<
+      Array<{ id: string }>
+    >(Prisma.sql`
+      SELECT "id"
+      FROM (
+        SELECT
+          "id",
+          "type",
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE("memberId", "id"), "type"
+            ORDER BY "submittedDate" DESC NULLS LAST,
+                     "createdAt" DESC NULLS LAST,
+                     "updatedAt" DESC NULLS LAST,
+                     "id" DESC
+          ) AS "submissionRank"
+        FROM "submission"
+        WHERE "challengeId" = ${challengeId}
+          AND ("status" IS NULL OR "status" <> 'DELETED')
+      ) ranked
+      WHERE (
+        "type" IN ('CONTEST_SUBMISSION', 'CHECKPOINT_SUBMISSION')
+        ${rankFilter}
+      ) OR (
+        "type" NOT IN ('CONTEST_SUBMISSION', 'CHECKPOINT_SUBMISSION')
+        AND "submissionRank" = 1
+      )
+    `);
+
+    return entries.map((entry) => entry.id);
+  }
+
   async countSubmissionsForChallenge(
     authUser: JwtUser,
     challengeId: string,
@@ -4526,6 +4806,301 @@ export class SubmissionService {
     }
   }
 
+  /**
+   * Finds submissions that share the exact SHA-256 digest of one or more
+   * submissions belonging to a challenge.
+   *
+   * @param authUser - The authenticated caller.
+   * @param challengeId - Challenge that owns every requested submission.
+   * @param query - Requested submission ids and the cross-challenge flag.
+   * @returns Duplicate matches keyed by the requested submission id.
+   * @throws BadRequestException when no ids are supplied, too many are supplied, or an id belongs to another challenge.
+   * @throws ForbiddenException when the caller is not a challenge reviewer, copilot, manager, PM, or admin.
+   * @throws NotFoundException when a requested submission does not exist.
+   */
+  async findDuplicateSubmissions(
+    authUser: JwtUser,
+    challengeId: string,
+    query: SubmissionDuplicatesQueryDto,
+  ): Promise<SubmissionDuplicatesResponse> {
+    const normalizedChallengeId = String(challengeId ?? '').trim();
+    if (!normalizedChallengeId) {
+      throw new BadRequestException({
+        message: 'Challenge ID is required',
+        code: 'CHALLENGE_ID_REQUIRED',
+      });
+    }
+
+    const requestedIds = Array.from(
+      new Set(
+        (Array.isArray(query?.submissionId)
+          ? query.submissionId
+          : query?.submissionId
+            ? [query.submissionId as unknown as string]
+            : []
+        )
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+
+    if (!requestedIds.length) {
+      throw new BadRequestException({
+        message: 'At least one submissionId query parameter is required',
+        code: 'SUBMISSION_IDS_REQUIRED',
+      });
+    }
+    if (requestedIds.length > MAX_DUPLICATE_CHECK_SUBMISSION_IDS) {
+      throw new BadRequestException({
+        message: `At most ${MAX_DUPLICATE_CHECK_SUBMISSION_IDS} submissionId values can be checked per request`,
+        code: 'TOO_MANY_SUBMISSION_IDS',
+        details: {
+          submitted: requestedIds.length,
+          maximum: MAX_DUPLICATE_CHECK_SUBMISSION_IDS,
+        },
+      });
+    }
+
+    await this.ensureChallengeWhitelistAccess(authUser, normalizedChallengeId);
+    await this.ensureDuplicateDetectionAccess(authUser, normalizedChallengeId);
+
+    const requestedSubmissions = await this.prisma.submission.findMany({
+      where: { id: { in: requestedIds } },
+      select: { id: true, challengeId: true, sha256Hash: true },
+    });
+
+    const byId = new Map(requestedSubmissions.map((row) => [row.id, row]));
+    const missingIds = requestedIds.filter((id) => !byId.has(id));
+    if (missingIds.length) {
+      throw new NotFoundException({
+        message: `Submission(s) not found: ${missingIds.join(', ')}`,
+        code: 'SUBMISSIONS_NOT_FOUND',
+        details: { submissionIds: missingIds },
+      });
+    }
+    const foreignIds = requestedIds.filter(
+      (id) => byId.get(id)?.challengeId !== normalizedChallengeId,
+    );
+    if (foreignIds.length) {
+      throw new BadRequestException({
+        message: `Submission(s) do not belong to challenge ${normalizedChallengeId}: ${foreignIds.join(', ')}`,
+        code: 'SUBMISSION_CHALLENGE_MISMATCH',
+        details: {
+          challengeId: normalizedChallengeId,
+          submissionIds: foreignIds,
+        },
+      });
+    }
+
+    const hashById = new Map<string, string>();
+    for (const id of requestedIds) {
+      const hash = String(byId.get(id)?.sha256Hash ?? '')
+        .trim()
+        .toLowerCase();
+      if (hash) {
+        hashById.set(id, hash);
+      }
+    }
+
+    const response: SubmissionDuplicatesResponse = {};
+    for (const id of requestedIds) {
+      response[id] = { duplicates: [] };
+    }
+
+    const hashes = Array.from(new Set(hashById.values()));
+    if (!hashes.length) {
+      this.logger.log(
+        `No SHA-256 digests available for duplicate detection on challenge ${normalizedChallengeId}`,
+      );
+      return response;
+    }
+
+    const crossChallenge = query?.crossChallenge === true;
+    const candidates: DuplicateSubmissionCandidate[] =
+      await this.prisma.submission.findMany({
+        where: {
+          sha256Hash: { in: hashes },
+          status: { notIn: DUPLICATE_DETECTION_EXCLUDED_STATUSES },
+          ...(crossChallenge ? {} : { challengeId: normalizedChallengeId }),
+        },
+        select: {
+          id: true,
+          challengeId: true,
+          memberId: true,
+          submittedDate: true,
+          createdAt: true,
+          sha256Hash: true,
+        },
+      });
+
+    const candidatesByHash = new Map<string, DuplicateSubmissionCandidate[]>();
+    for (const candidate of candidates) {
+      const hash = String(candidate.sha256Hash ?? '')
+        .trim()
+        .toLowerCase();
+      if (!hash) {
+        continue;
+      }
+      const bucket = candidatesByHash.get(hash);
+      if (bucket) {
+        bucket.push(candidate);
+      } else {
+        candidatesByHash.set(hash, [candidate]);
+      }
+    }
+
+    const challengeTitles = await this.resolveChallengeTitles(
+      candidates.map((candidate) => candidate.challengeId),
+    );
+
+    for (const [id, hash] of hashById.entries()) {
+      const duplicates = (candidatesByHash.get(hash) ?? [])
+        .filter((candidate) => candidate.id !== id)
+        .map(
+          (candidate): SubmissionDuplicateDto => ({
+            submissionId: candidate.id,
+            challenge: candidate.challengeId ?? null,
+            challengeTitle: candidate.challengeId
+              ? (challengeTitles.get(candidate.challengeId) ?? null)
+              : null,
+            user: candidate.memberId ?? null,
+            submittedAt: candidate.submittedDate ?? candidate.createdAt ?? null,
+          }),
+        )
+        .sort((a, b) => {
+          const left = a.submittedAt ? a.submittedAt.getTime() : 0;
+          const right = b.submittedAt ? b.submittedAt.getTime() : 0;
+          if (left !== right) {
+            return right - left;
+          }
+          return a.submissionId.localeCompare(b.submissionId);
+        });
+      response[id] = { duplicates };
+    }
+
+    return response;
+  }
+
+  /**
+   * Resolves challenge names for duplicate matches, tolerating lookup failures.
+   *
+   * @param challengeIds - Challenge ids referenced by duplicate matches.
+   * @returns Map of challenge id to challenge name for the ids that resolved.
+   */
+  private async resolveChallengeTitles(
+    challengeIds: (string | null | undefined)[],
+  ): Promise<Map<string, string>> {
+    const titles = new Map<string, string>();
+    const ids = Array.from(
+      new Set(
+        challengeIds
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+    if (!ids.length) {
+      return titles;
+    }
+
+    const challengeService = this.challengeApiService as ChallengeApiService & {
+      getChallengeSummaries?: (
+        challengeIds: string[],
+      ) => Promise<ChallengeData[]>;
+    };
+    if (typeof challengeService.getChallengeSummaries !== 'function') {
+      return titles;
+    }
+
+    try {
+      const summaries = await challengeService.getChallengeSummaries(ids);
+      for (const summary of summaries ?? []) {
+        if (summary?.id && summary?.name) {
+          titles.set(summary.id, summary.name);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve challenge names for duplicate submissions: ${(error as Error)?.message}`,
+      );
+    }
+
+    return titles;
+  }
+
+  /**
+   * Authorizes duplicate detection for admins, scoped machines, PMs, and
+   * challenge Reviewer/Screener/Copilot/Manager resources.
+   *
+   * @param authUser - The authenticated caller.
+   * @param challengeId - Challenge whose resources are evaluated.
+   * @throws ForbiddenException when the caller holds none of the allowed roles.
+   */
+  private async ensureDuplicateDetectionAccess(
+    authUser: JwtUser,
+    challengeId: string,
+  ): Promise<void> {
+    if (authUser?.isMachine) {
+      const scopes = authUser.scopes ?? [];
+      if (
+        !scopes.includes('read:submission') &&
+        !scopes.includes('all:submission')
+      ) {
+        throw new ForbiddenException({
+          message:
+            'M2M token missing required scope to check duplicate submissions',
+          code: 'FORBIDDEN_M2M_SCOPE',
+        });
+      }
+      return;
+    }
+
+    if (authUser && isAdmin(authUser)) {
+      return;
+    }
+
+    const tokenRoles = (authUser?.roles ?? []).map((role) =>
+      String(role ?? '')
+        .trim()
+        .toLowerCase(),
+    );
+    if (tokenRoles.includes(String(UserRole.ProjectManager).toLowerCase())) {
+      return;
+    }
+
+    const requester = String(authUser?.userId ?? '').trim();
+    if (requester) {
+      let resources: ResourceInfo[] = [];
+      try {
+        resources = await this.resourceApiService.getMemberResourcesRoles(
+          challengeId,
+          requester,
+        );
+      } catch (error) {
+        // If challenge roles cannot be confirmed, fall through and deny.
+        this.logger.warn(
+          `Could not load challenge ${challengeId} roles for member ${requester}: ${(error as Error)?.message}`,
+        );
+      }
+      for (const resource of resources ?? []) {
+        const roleName = (resource?.roleName ?? '').toLowerCase();
+        if (
+          DUPLICATE_DETECTION_RESOURCE_ROLE_FRAGMENTS.some((fragment) =>
+            roleName.includes(fragment),
+          )
+        ) {
+          return;
+        }
+      }
+    }
+
+    throw new ForbiddenException({
+      message:
+        'Only a challenge reviewer, copilot, manager/PM, or an admin can check for duplicate submissions',
+      code: 'FORBIDDEN_DUPLICATE_SUBMISSION_CHECK',
+      details: { challengeId, requester },
+    });
+  }
+
   async getSubmission(
     authUserOrSubmissionId: JwtUser | string,
     submissionId?: string,
@@ -4553,6 +5128,11 @@ export class SubmissionService {
     const reviewVisibilityContext = await this.applyReviewVisibilityFilters(
       authUser,
       [data],
+    );
+    this.stripUnauthorizedAiDecisionDetails(
+      authUser,
+      [data],
+      reviewVisibilityContext,
     );
     this.stripSubmitterMemberIds(authUser, [data], reviewVisibilityContext);
     this.stripSubmitterSubmissionDetails(
@@ -5882,52 +6462,37 @@ export class SubmissionService {
   }
 
   /**
-   * Finds submission ids that are latest within each challenge/member pair for
-   * the supplied submission-list filters. The result is used to constrain the
-   * main list and count queries before pagination, so callers can request a
-   * compact member-level view without fetching historical attempts first.
+   * Finds submission ids that are latest within each challenge/member/type
+   * stream. Row-specific filters are intentionally excluded from the ranking
+   * input: the main query intersects them after canonical latest ids have been
+   * selected, so targeting an older row cannot make it appear latest.
    *
    * @param queryDto - Submission list filters from the request query string.
    * @returns Submission ids that represent the latest attempt per member.
-   * @throws BadRequestException when isLatest is requested without challengeId.
+   * @throws BadRequestException when neither challengeId nor memberId scopes the query.
    */
   private async findLatestSubmissionIdsForQuery(
     queryDto: SubmissionQueryDto,
   ): Promise<string[]> {
-    if (!queryDto.challengeId) {
+    if (!queryDto.challengeId && !queryDto.memberId) {
       throw new BadRequestException({
-        message: 'isLatest filtering requires challengeId',
+        message: 'isLatest filtering requires challengeId or memberId',
         code: 'LATEST_SUBMISSION_FILTER_REQUIRES_CHALLENGE',
-        details: { fieldName: 'challengeId' },
+        details: { fieldNames: ['challengeId', 'memberId'] },
       });
     }
 
-    const filters: Prisma.Sql[] = [
-      Prisma.sql`"challengeId" = ${queryDto.challengeId}`,
-      Prisma.sql`"memberId" IS NOT NULL`,
-    ];
+    const filters: Prisma.Sql[] = [Prisma.sql`"memberId" IS NOT NULL`];
+
+    if (queryDto.challengeId) {
+      filters.push(Prisma.sql`"challengeId" = ${queryDto.challengeId}`);
+    }
 
     if (queryDto.type) {
       filters.push(Prisma.sql`"type" = ${queryDto.type}::"SubmissionType"`);
     }
-    if (queryDto.url) {
-      filters.push(Prisma.sql`"url" = ${queryDto.url}`);
-    }
     if (queryDto.memberId) {
       filters.push(Prisma.sql`"memberId" = ${String(queryDto.memberId)}`);
-    }
-    if (queryDto.legacySubmissionId) {
-      filters.push(
-        Prisma.sql`"legacySubmissionId" = ${queryDto.legacySubmissionId}`,
-      );
-    }
-    if (queryDto.legacyUploadId) {
-      filters.push(Prisma.sql`"legacyUploadId" = ${queryDto.legacyUploadId}`);
-    }
-    if (queryDto.submissionPhaseId) {
-      filters.push(
-        Prisma.sql`"submissionPhaseId" = ${queryDto.submissionPhaseId}`,
-      );
     }
 
     const whereSql = filters.reduce(
@@ -6494,9 +7059,6 @@ export class SubmissionService {
 
       delete (submission as any).initialScore;
       delete (submission as any).finalScore;
-      delete (submission as any).aiDecisionScore;
-      delete (submission as any).aiDecisionStatus;
-
       if (Object.prototype.hasOwnProperty.call(submission, 'reviewSummation')) {
         delete (submission as any).reviewSummation;
       }
@@ -6504,6 +7066,57 @@ export class SubmissionService {
       if (Object.prototype.hasOwnProperty.call(submission, 'url')) {
         (submission as any).url = null;
       }
+    }
+  }
+
+  /**
+   * Removes AI decision details unless the caller owns the submission or holds
+   * an authorized global/challenge role. This runs before submitter identity
+   * redaction so ownership can still be evaluated for single-submission reads.
+   * AI-only's legacy finalScore projection is deliberately left unchanged.
+   *
+   * @param authUser - Authenticated requester, when present.
+   * @param submissions - Submission rows enriched with AI decision data.
+   * @param visibilityContext - Resolved requester and challenge resource roles.
+   */
+  private stripUnauthorizedAiDecisionDetails(
+    authUser: JwtUser | undefined,
+    submissions: Array<
+      {
+        challengeId?: string | null;
+        memberId?: string | null;
+      } & Record<string, unknown>
+    >,
+    visibilityContext: ReviewVisibilityContext,
+  ): void {
+    if (!submissions.length) {
+      return;
+    }
+    if (authUser && this.hasGlobalSubmissionHistoryAccess(authUser)) {
+      return;
+    }
+
+    const requesterUserId = visibilityContext.requesterUserId;
+    for (const submission of submissions) {
+      const memberId = String(submission.memberId ?? '').trim();
+      if (requesterUserId && memberId === requesterUserId) {
+        continue;
+      }
+
+      const challengeId = String(submission.challengeId ?? '').trim();
+      const roleSummary = challengeId
+        ? visibilityContext.roleSummaryByChallenge.get(challengeId)
+        : undefined;
+      if (
+        roleSummary?.hasCopilot ||
+        roleSummary?.hasManager ||
+        roleSummary?.hasReviewer
+      ) {
+        continue;
+      }
+
+      delete submission.aiDecisionScore;
+      delete submission.aiDecisionStatus;
     }
   }
 
@@ -6883,10 +7496,12 @@ export class SubmissionService {
   }
 
   /**
-   * Enriches submissions with the latest (non-PENDING) AI decision totalScore for AI-only challenges.
-   * For each submission, if an AI review config exists for its challenge and there's
-   * a non-PENDING AI decision, sets `finalScore`, `aiDecisionScore`, and `aiDecisionStatus`
-   * on the submission object.
+   * Enriches submissions with the latest non-pending AI decision score.
+   * Both AI-only and AI-gating configurations produce member-visible workflow
+   * scores, so every configured challenge is eligible for enrichment.
+   *
+   * @param submissions - Submission rows that will be returned to the client.
+   * @returns Nothing; eligible rows are enriched in place.
    */
   private async enrichAiDecisionScores(
     submissions: Array<{
@@ -6911,44 +7526,29 @@ export class SubmissionService {
       return;
     }
 
-    // Find which challenges have AI review configs (AI-only challenges)
-    const aiConfigRows = await this.prisma.$queryRaw<
-      Array<{ challengeId: string }>
-    >(Prisma.sql`
-      SELECT DISTINCT "challengeId"
-      FROM "aiReviewConfig"
-      WHERE "challengeId" IN (${Prisma.join(challengeIds)})
-        AND "mode" = 'AI_ONLY'
-    `);
+    const submissionIds = submissions.map((submission) => submission.id);
 
-    const aiOnlyChallengeIds = new Set(aiConfigRows.map((r) => r.challengeId));
-    if (!aiOnlyChallengeIds.size) {
-      return;
-    }
-
-    // Get submissions that belong to AI-only challenges
-    const aiSubmissions = submissions.filter(
-      (s) => s.challengeId && aiOnlyChallengeIds.has(s.challengeId),
-    );
-
-    if (!aiSubmissions.length) {
-      return;
-    }
-
-    const submissionIds = aiSubmissions.map((s) => s.id);
-
-    // Fetch the latest AI decision for each submission
+    // Fetch the latest configured AI decision for each submission. Joining the
+    // config supplies the exact mode used by that decision, including gating.
     const decisionRows = await this.prisma.$queryRaw<
-      Array<{ submissionId: string; totalScore: number | null; status: string }>
+      Array<{
+        mode: string;
+        status: string;
+        submissionId: string;
+        totalScore: Prisma.Decimal | number | string | null;
+      }>
     >(Prisma.sql`
-      SELECT DISTINCT ON ("submissionId")
-        "submissionId",
-        "totalScore",
-        status::text AS "status"
-      FROM "aiReviewDecision"
-      WHERE "submissionId" IN (${Prisma.join(submissionIds)})
-        AND UPPER(status::text) != 'PENDING'
-      ORDER BY "submissionId", "updatedAt" DESC
+      SELECT DISTINCT ON (decision."submissionId")
+        decision."submissionId",
+        decision."totalScore",
+        decision.status::text AS "status",
+        config.mode::text AS "mode"
+      FROM "aiReviewDecision" decision
+      INNER JOIN "aiReviewConfig" config ON config.id = decision."configId"
+      WHERE decision."submissionId" IN (${Prisma.join(submissionIds)})
+        AND config."challengeId" IN (${Prisma.join(challengeIds)})
+        AND UPPER(decision.status::text) != 'PENDING'
+      ORDER BY decision."submissionId", decision."updatedAt" DESC
     `);
 
     const decisionBySubmissionId = new Map(
@@ -6956,18 +7556,26 @@ export class SubmissionService {
     );
 
     // Enrich submissions with AI decision scores
-    for (const submission of aiSubmissions) {
+    for (const submission of submissions) {
       const decision = decisionBySubmissionId.get(submission.id);
       if (!decision || decision.totalScore === null) {
         continue;
       }
 
-      // Also set on the submission itself for convenience
-      (submission as Record<string, unknown>).finalScore = decision.totalScore;
-      (submission as Record<string, unknown>).aiDecisionScore =
-        decision.totalScore;
-      (submission as Record<string, unknown>).aiDecisionStatus =
-        decision.status;
+      const submissionRecord = submission as Record<string, unknown>;
+      const aiDecisionScore = Number(decision.totalScore);
+      if (!Number.isFinite(aiDecisionScore)) {
+        continue;
+      }
+
+      // Keep the established AI-only finalScore projection. AI gating is a
+      // preliminary result and is exposed through its dedicated field without
+      // replacing (or masquerading as) a human final score.
+      if (decision.mode === 'AI_ONLY') {
+        submissionRecord.finalScore = aiDecisionScore;
+      }
+      submissionRecord.aiDecisionScore = aiDecisionScore;
+      submissionRecord.aiDecisionStatus = decision.status;
     }
   }
 
@@ -7012,6 +7620,18 @@ export class SubmissionService {
       dto.reviewSummation = this.sanitizeReviewSummationMetadata(
         data.reviewSummation,
       ) as any[];
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'finalScore')) {
+      dto.finalScore =
+        data.finalScore === null || data.finalScore === undefined
+          ? null
+          : Number(data.finalScore);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'aiDecisionScore')) {
+      dto.aiDecisionScore =
+        data.aiDecisionScore === null || data.aiDecisionScore === undefined
+          ? null
+          : Number(data.aiDecisionScore);
     }
     if (Object.prototype.hasOwnProperty.call(data, 'isLatest')) {
       dto.isLatest = Boolean(data.isLatest);

@@ -13,7 +13,7 @@
 
 Review API built on modern frameworks for managing all review-related Topcoder needs.
 
-Use Node.js 26.5.0 (see `.nvmrc`) and pnpm 11.15.1 for local development and builds.
+Use Node.js 26.5.1 (see `.nvmrc`) and pnpm 11.15.1 for local development and builds.
 
 ## Project setup
 
@@ -98,6 +98,24 @@ This allows you to:
 - run the prisma seed `npx prisma db seed`
 - run the project `pnpm run start`
 
+## Design submission visibility
+
+`GET /v6/submissions?challengeId=...` returns the configured review window to
+assigned Design screeners, checkpoint screeners, reviewers, and other review
+resources. A finite `submissionLimit.count` retains that many non-deleted
+submissions per member and exact submission type; checkpoint and final submissions
+are ranked independently. Missing or explicitly unlimited Design metadata keeps
+all non-deleted contest and checkpoint submissions visible. Malformed limits fall
+back to one per type. Selection happens before pagination and row-specific filters,
+and `isLatest` query flags cannot expand access beyond this window. Other types,
+including Final Fix, retain only the latest non-deleted row per member/type.
+
+Ordinary viewers retain latest-only access, and Development review resources keep
+the existing latest-only behavior. Owners requesting their own submissions,
+challenge copilots/managers, admins, project managers, and authorized machine
+clients retain their existing history access. Unavailable challenge or resource
+metadata does not grant broader access.
+
 ## Run tests
 
 ```bash
@@ -116,3 +134,12 @@ $ pnpm run test:cov
 `GET /v6/reviewSummations?metadata=true` returns full metadata for admins, copilots, and machine clients. Member/submitter requests are limited to their own Marathon Match submissions and receive only progress metadata: `testProcess`, `testProgress`, `testStatus`, and safe count/timestamp fields in `testProgressDetails`. Per-seed scores and runner messages are not returned to competitors.
 
 Submission responses include that same safe progress subset in nested review summations. The allowlisted process values are `example`, `provisional`, and `system`; raw test scores, seeds, and runner messages remain excluded.
+
+## Duplicate submission detection
+
+`GET /v6/submissions/{challengeId}/duplicates?submissionId=s1&submissionId=s2&crossChallenge=false` returns submissions that share the exact `sha256Hash` of each requested submission.
+
+- `submissionId` is required and repeatable (a comma-separated list also works). Up to 100 ids per request, and every id must belong to `{challengeId}`.
+- `crossChallenge` defaults to `false`, which limits matches to `{challengeId}`. Set it to `true` to match across every challenge.
+- Access is limited to admins, machine clients with `read:submission`/`all:submission`, users holding the `Project Manager` role, and challenge Reviewer/Screener/Copilot/Manager resources.
+- The response is keyed by the requested submission id: `{ "s1": { "duplicates": [{ "submissionId", "challenge", "challengeTitle", "user", "submittedAt" }] } }`, newest first. Submissions without a stored digest and `DELETED` submissions never match, so their lists come back empty.

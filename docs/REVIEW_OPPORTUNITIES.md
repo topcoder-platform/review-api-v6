@@ -34,8 +34,13 @@ Supported query parameters are:
 - repeated `opportunityTypes` values;
 - repeated `status`/`statuses`; omission keeps the legacy `OPEN` default;
 - `appliedByMe` and repeated `applicationStatuses`, which require a caller;
-- `sortBy=basePayment|duration|startDate|openPositions`, `sortOrder`, `limit`
-  (maximum 100), and zero-based `offset`.
+- `sortBy=basePayment|createdAt|duration|startDate|openPositions`, `sortOrder`,
+  `limit` (maximum 1000), and zero-based `offset`.
+
+The unified `search` value matches challenge names, authored technology tags,
+and standardized skill names. Skill names are translated to the IDs persisted
+by `ChallengeSkill`; if the optional standardized-skills lookup is unavailable,
+name and tag search remain available.
 
 Challenge-backed filters run in the challenge database; pagination and totals
 run in the review database after active-challenge visibility filtering. That
@@ -49,8 +54,13 @@ operational access. A resource holder also retains access to an assigned
 group-restricted challenge, matching challenge-api-v6 self-resource searches.
 
 An `OPEN` review opportunity is returned only while its linked challenge is
-`ACTIVE`. `CLOSED` and `CANCELLED` filters preserve historical opportunities
-after the linked challenge completes.
+`ACTIVE` and its `startDate + duration` review window has not elapsed. A
+`CLOSED` search also includes legacy `OPEN` opportunity rows whose linked
+challenge is now `COMPLETED` or whose review window has ended; those rows are
+returned with the effective status `CLOSED` without mutating data during the
+read. Explicitly `CLOSED` and `CANCELLED` rows remain available as historical
+opportunities. Application creation enforces the same review-window cutoff, so
+an expired legacy `OPEN` row cannot accept a late application by ID.
 
 `GET /review-opportunities` accepts the same query but preserves its historical
 bare-array response. Pagination is returned in CORS-exposed `X-Total-Count`,
@@ -60,16 +70,23 @@ bare-array response. Pagination is returned in CORS-exposed `X-Total-Count`,
 
 Every opportunity item adds:
 
+- `createdAt`, the authoritative date when the review opportunity was posted;
 - `canApply`;
 - `canApplyReason`: `CAN_APPLY`, `NOT_AUTHENTICATED`, `NOT_REVIEWER`,
-  `OPPORTUNITY_CLOSED`, `CHALLENGE_NOT_ACTIVE`, `ALREADY_APPLIED`, or
-  `NO_OPEN_POSITIONS`;
+  `OPPORTUNITY_CLOSED`, `CHALLENGE_NOT_ACTIVE`, or `ALREADY_APPLIED`.
+  `NO_OPEN_POSITIONS` remains a deprecated compatibility enum value but is not
+  returned for an active opportunity because its pending waitlist stays open;
 - `myApplications`, containing only the caller's applications;
 - `applicationCount`, the public-safe total across all application statuses;
 - `approvedApplicationCount` and `remainingPositions`;
 - `applicationRoles` and `defaultApplicationRole`, which let a one-click UI
   submit the correct specialized role for regular, scenarios, iterative,
   specification, or component-development review work.
+
+`basePayment` and each role-adjusted `payments[].payment` are the fixed payment
+component. `incrementalPayment` is paid for every reviewed submission, including
+the first, so a one-submission total is the applicable fixed component plus one
+incremental payment.
 
 Search/list responses include only the caller's application rows (or none for
 anonymous callers). `applicationCount` and `approvedApplicationCount` are
@@ -102,7 +119,9 @@ one review-api request.
 
 Only the exact `Reviewer` role produces `CAN_APPLY`. This supports the UI rule
 that non-reviewers receive a disabled action and the “How to become a reviewer”
-content.
+content. An otherwise eligible reviewer still receives `CAN_APPLY` when
+`remainingPositions` is zero: their new `PENDING` application joins the
+waitlist until an administrator approves or rejects it.
 
 `GET /review-opportunities/me` is authenticated, forces `appliedByMe=true`, and
 returns the metadata envelope. `GET /review-applications/me` supports repeated
@@ -110,10 +129,11 @@ returns the metadata envelope. `GET /review-applications/me` supports repeated
 and `sortOrder`; its metadata is `total`, `page`, `perPage`, and `totalPages`.
 
 `POST /review-applications` remains compatible with
-`{ "opportunityId": "...", "role": "REVIEWER" }`, while now failing closed
-for a closed opportunity, inactive or inaccessible challenge, duplicate
-application, or filled approved capacity. The database composite uniqueness
-constraint on opportunity, member, and role is authoritative for concurrent
-duplicate requests; the losing request receives the same HTTP 409 conflict as
-a duplicate found by the pre-check. Applications are created as `PENDING`, so
-they do not consume or overfill the approved-position capacity.
+`{ "opportunityId": "...", "role": "REVIEWER" }`, while failing closed for a
+closed opportunity, inactive or inaccessible challenge, or duplicate
+application. The database composite uniqueness constraint on opportunity,
+member, and role is authoritative for concurrent duplicate requests; the
+losing request receives the same HTTP 409 conflict as a duplicate found by the
+pre-check. Applications are always created as `PENDING`, including after
+approved reviewers fill the advertised capacity. Those additional applications
+form the waitlist and do not themselves consume or overfill approved capacity.
