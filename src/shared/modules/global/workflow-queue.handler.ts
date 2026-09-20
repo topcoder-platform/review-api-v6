@@ -895,10 +895,7 @@ export class WorkflowQueueHandler {
       // reconcile a timed-out run based on a bare success conclusion alone, since
       // the score must be persisted on the aiWorkflowRun row for downstream
       // decision making.
-      const hasResults =
-        run.score !== null &&
-        ((options?.conclusion ?? '').trim().toUpperCase() === 'SUCCESS' ||
-          run.status === 'SUCCESS');
+      const hasResults = run.score !== null;
 
       if (!hasResults) {
         return null;
