@@ -3131,7 +3131,16 @@ describe('SubmissionService', () => {
           where: expect.objectContaining({
             challengeId: 'challenge-1',
             memberId: 'member-2',
-            id: { in: ['submission-new'] },
+            // The own-history escape can never widen a list already scoped to
+            // another member, so member-2 still yields only their latest row.
+            AND: [
+              {
+                OR: [
+                  { id: { in: ['submission-new'] } },
+                  { memberId: 'member-1' },
+                ],
+              },
+            ],
           }),
         }),
       );
@@ -3241,7 +3250,14 @@ describe('SubmissionService', () => {
             legacySubmissionId: 'legacy-old',
             legacyUploadId: 'upload-old',
             submissionPhaseId: 'phase-old',
-            id: { in: ['submission-new'] },
+            AND: [
+              {
+                OR: [
+                  { id: { in: ['submission-new'] } },
+                  { memberId: 'member-1' },
+                ],
+              },
+            ],
           }),
         }),
       );
@@ -3301,9 +3317,149 @@ describe('SubmissionService', () => {
       expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            id: { in: ['member-1-latest', 'member-2-latest'] },
+            // Everybody else's latest attempt, plus every attempt the requester
+            // made themselves (PM-6340).
+            AND: [
+              {
+                OR: [
+                  { id: { in: ['member-1-latest', 'member-2-latest'] } },
+                  { memberId: 'member-1' },
+                ],
+              },
+            ],
           }),
         }),
+      );
+    });
+
+    it('keeps a submitter own checkpoint round alongside everybody latest', async () => {
+      const own = (
+        id: string,
+        type: SubmissionType,
+        submittedDate: string,
+      ) => ({
+        id,
+        challengeId: 'challenge-1',
+        memberId: 'member-1',
+        submittedDate: new Date(submittedDate),
+        createdAt: new Date(submittedDate),
+        updatedAt: new Date(submittedDate),
+        type,
+        status: SubmissionStatus.ACTIVE,
+        review: [],
+        reviewSummation: [],
+        legacyChallengeId: null,
+        prizeId: null,
+      });
+      const rows = [
+        own(
+          'own-contest-latest',
+          SubmissionType.CONTEST_SUBMISSION,
+          '2026-09-15T14:01:00Z',
+        ),
+        own(
+          'own-contest-older',
+          SubmissionType.CONTEST_SUBMISSION,
+          '2026-09-15T13:58:00Z',
+        ),
+        own(
+          'own-checkpoint',
+          SubmissionType.CHECKPOINT_SUBMISSION,
+          '2026-09-15T13:53:00Z',
+        ),
+      ];
+
+      const latestSpy = jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['own-contest-latest', 'other-contest-latest']);
+      jest
+        .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+        .mockResolvedValue(undefined);
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        id: 'challenge-1',
+        status: 'ACTIVE',
+        type: 'Challenge',
+        track: { name: 'Design' },
+        phases: [],
+      });
+      prismaMock.submission.findMany.mockResolvedValue(
+        rows.map((entry) => ({ ...entry })),
+      );
+      prismaMock.submission.count.mockResolvedValue(rows.length);
+      prismaMock.$queryRaw.mockResolvedValue([
+        { id: 'own-contest-latest' },
+        { id: 'own-checkpoint' },
+      ]);
+
+      const result = await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      expect(latestSpy).toHaveBeenCalled();
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            challengeId: 'challenge-1',
+            AND: [
+              {
+                OR: [
+                  {
+                    id: {
+                      in: ['own-contest-latest', 'other-contest-latest'],
+                    },
+                  },
+                  { memberId: 'member-1' },
+                ],
+              },
+            ],
+          }),
+        }),
+      );
+      // The checkpoint round is a different submission type, so it is not
+      // history of the contest submission and keeps its own isLatest flag.
+      expect(result.data.map((entry) => [entry.id, entry.isLatest])).toEqual([
+        ['own-contest-latest', true],
+        ['own-contest-older', false],
+        ['own-checkpoint', true],
+      ]);
+    });
+
+    it('ranks the canonical latest submission per member and type', async () => {
+      resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+        {
+          roleName: 'Submitter',
+          roleId: CommonConfig.roles.submitterRoleId,
+        },
+      ]);
+      prismaMock.$queryRaw.mockResolvedValue([{ id: 'submission-new' }]);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(0);
+
+      await listService.listSubmission(
+        {
+          userId: 'member-1',
+          isMachine: false,
+          roles: [UserRole.User],
+        } as any,
+        { challengeId: 'challenge-1' } as any,
+        { page: 1, perPage: 50 } as any,
+      );
+
+      const latestSql = prismaMock.$queryRaw.mock.calls[0][0].strings.join('');
+      expect(latestSql).toContain(
+        'PARTITION BY "challengeId", "memberId", "type"',
       );
     });
 
@@ -3422,7 +3578,14 @@ describe('SubmissionService', () => {
       expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            id: { in: ['submission-new'] },
+            AND: [
+              {
+                OR: [
+                  { id: { in: ['submission-new'] } },
+                  { memberId: 'unassigned-copilot' },
+                ],
+              },
+            ],
           }),
         }),
       );

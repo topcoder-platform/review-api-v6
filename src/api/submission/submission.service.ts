@@ -4294,12 +4294,17 @@ export class SubmissionService {
       // Completed Marathon Match contestants may inspect every attempt's artifacts.
       // Assigned Design reviewers instead receive the configured review window;
       // multiple eligible submissions are current work, not private history.
+      let latestOnlyIsImplied = false;
+      // True once the page is allowed to carry the requester's own history
+      // alongside everybody else's latest attempt.
+      let keepsOwnSubmissions = false;
       if (
         queryDto.challengeId &&
         !canViewFullHistory &&
         reviewSubmissionLimit === undefined
       ) {
         isLatestFilter = true;
+        latestOnlyIsImplied = true;
       }
 
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
@@ -4407,13 +4412,21 @@ export class SubmissionService {
         const latestIdFilter = isLatestFilter
           ? { in: latestSubmissionIds }
           : { notIn: latestSubmissionIds };
-        if (whereClause.id) {
+        // Privacy hides other people's history, never the requester's own. When
+        // latest-only was imposed rather than asked for, the caller keeps every
+        // submission they made themselves, which is what the rule above states
+        // and what a submitter needs to see their own checkpoint round (PM-6340).
+        keepsOwnSubmissions = latestOnlyIsImplied && !!requesterUserId;
+        const latestCriteria: Prisma.submissionWhereInput = keepsOwnSubmissions
+          ? { OR: [{ id: latestIdFilter }, { memberId: requesterUserId }] }
+          : { id: latestIdFilter };
+        if (whereClause.id || keepsOwnSubmissions) {
           const existingAnd = Array.isArray(whereClause.AND)
             ? whereClause.AND
             : whereClause.AND
               ? [whereClause.AND]
               : [];
-          whereClause.AND = [...existingAnd, { id: latestIdFilter }];
+          whereClause.AND = [...existingAnd, latestCriteria];
         } else {
           whereClause.id = latestIdFilter;
         }
@@ -4546,11 +4559,13 @@ export class SubmissionService {
         await this.populateSubmissionCountsForQuery(submissions, queryDto);
       }
 
-      if (isLatestFilter !== null) {
+      if (isLatestFilter !== null && !keepsOwnSubmissions) {
         for (const submission of submissions) {
           (submission as any).isLatest = isLatestFilter;
         }
       } else {
+        // The page carries the requester's own older attempts as well as
+        // everybody else's latest, so the flag is resolved per row.
         await this.populateLatestSubmissionFlags(submissions);
       }
       this.stripSubmitterSubmissionDetails(
@@ -6421,6 +6436,8 @@ export class SubmissionService {
 
     try {
       // Use a single windowed query to locate the latest submission per (challengeId, memberId)
+      // Ranked per submission type: a Checkpoint Submission is a separate round,
+      // not an older attempt at the Contest Submission (PM-6340).
       const latestEntries = await this.prisma.$queryRaw<
         Array<{ id: string }>
       >(Prisma.sql`
@@ -6429,7 +6446,7 @@ export class SubmissionService {
           SELECT
             "id",
             ROW_NUMBER() OVER (
-              PARTITION BY "challengeId", "memberId"
+              PARTITION BY "challengeId", "memberId", "type"
               ORDER BY "submittedDate" DESC NULLS LAST,
                        "createdAt" DESC,
                        "updatedAt" DESC NULLS LAST
@@ -6506,7 +6523,7 @@ export class SubmissionService {
           SELECT
             "id",
             ROW_NUMBER() OVER (
-              PARTITION BY "challengeId", "memberId"
+              PARTITION BY "challengeId", "memberId", "type"
               ORDER BY "submittedDate" DESC NULLS LAST,
                        "createdAt" DESC,
                        "updatedAt" DESC NULLS LAST,
