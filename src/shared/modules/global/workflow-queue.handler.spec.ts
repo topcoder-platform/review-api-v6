@@ -98,6 +98,16 @@ describe('WorkflowQueueHandler', () => {
     handler = buildHandler();
   });
 
+  describe('rebuildSubmissionDecision', () => {
+    it('re-evaluates the provided submission id', async () => {
+      await handler.rebuildSubmissionDecision('submission-1');
+
+      expect(
+        aiReviewerDecisionMakerMock.evaluateSubmission,
+      ).toHaveBeenCalledWith('submission-1');
+    });
+  });
+
   describe('reconcileTimedOutWorkflowRun', () => {
     const timedOutRun = (overrides: Record<string, unknown> = {}) => ({
       id: 'run-1',

@@ -26,6 +26,7 @@ import {
   CreateAiWorkflowRunItemsDto,
   UpdateAiWorkflowRunDto,
   RetriggerAiWorkflowRunDto,
+  RebuildAiWorkflowDecisionDto,
   QueueAiWorkflowRunsDto,
   CreateRunItemCommentDto,
   UpdateAiWorkflowRunItemDto,
@@ -287,6 +288,29 @@ export class AiWorkflowController {
     body: RetriggerAiWorkflowRunDto,
   ) {
     return this.aiWorkflowService.retriggerWorkflowRun(body.workflowRunId);
+  }
+
+  @Post('/runs/rebuild-decision')
+  @Roles(UserRole.Admin)
+  @Scopes(Scope.UpdateWorkflowRun)
+  @ApiOperation({
+    summary: 'Rebuild the AI decision for a submission by submission ID',
+  })
+  @ApiBody({
+    description: 'Submission ID to rebuild the AI decision for',
+    type: RebuildAiWorkflowDecisionDto,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The AI decision rebuild has been triggered.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Submission not found.' })
+  rebuildDecision(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: RebuildAiWorkflowDecisionDto,
+  ) {
+    return this.aiWorkflowService.rebuildSubmissionDecision(body.submissionId);
   }
 
   @Get('/:workflowId/runs/:runId/attachments')
