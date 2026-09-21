@@ -320,7 +320,7 @@ export class WorkflowQueueHandler {
     return true;
   }
 
-  private async triggerEvaluateSubmission(submissionId: string): Promise<void> {
+  async rebuildSubmissionDecision(submissionId: string): Promise<void> {
     try {
       const decision =
         await this.aiReviewerDecisionMaker.evaluateSubmission(submissionId);
@@ -803,7 +803,7 @@ export class WorkflowQueueHandler {
       gitRunId: options.gitRunId ?? aiWorkflowRun.gitRunId ?? null,
     };
 
-    await this.triggerEvaluateSubmission(aiWorkflowRun.submissionId);
+    await this.rebuildSubmissionDecision(aiWorkflowRun.submissionId);
 
     if (options.notify) {
       try {
