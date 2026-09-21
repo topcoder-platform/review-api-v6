@@ -139,6 +139,27 @@ export class AiWorkflowService {
     };
   }
 
+  async rebuildSubmissionDecision(submissionId: string) {
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: submissionId },
+      select: { id: true },
+    });
+
+    if (!submission) {
+      throw new NotFoundException(
+        `Submission with id ${submissionId} not found.`,
+      );
+    }
+
+    await this.workflowQueueHandler.rebuildSubmissionDecision(submissionId);
+
+    return {
+      submissionId,
+      rebuilt: true,
+      message: `AI decision rebuild triggered for submission ${submissionId}.`,
+    };
+  }
+
   async retriggerWorkflowRun(workflowRunId: string) {
     const existingRun = await this.prisma.aiWorkflowRun.findUnique({
       where: { id: workflowRunId },

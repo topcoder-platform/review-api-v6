@@ -164,6 +164,15 @@ export class RetriggerAiWorkflowRunDto {
   workflowRunId: string;
 }
 
+export class RebuildAiWorkflowDecisionDto {
+  @ApiProperty({
+    description: 'The submission ID whose AI decision should be rebuilt',
+  })
+  @IsString()
+  @IsNotEmpty()
+  submissionId: string;
+}
+
 export class CreateAiWorkflowRunItemDto {
   @ApiProperty()
   @IsString()

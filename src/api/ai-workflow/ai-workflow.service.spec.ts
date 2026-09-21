@@ -74,7 +74,9 @@ describe('AiWorkflowService.updateRunItem', () => {
     evaluateSubmission: jest.fn(),
   } as any;
   const giteaServiceMock = {} as any;
-  const workflowQueueHandlerMock = {} as any;
+  const workflowQueueHandlerMock = {
+    rebuildSubmissionDecision: jest.fn(),
+  } as any;
   const challengePrismaMock = {} as any;
 
   beforeAll(async () => {
@@ -86,9 +88,9 @@ describe('AiWorkflowService.updateRunItem', () => {
       {} as any,
       resourceApiServiceMock,
       aiReviewerDecisionMakerMock,
-      {} as any,
       giteaServiceMock,
       workflowQueueHandlerMock,
+      {} as any,
       challengePrismaMock,
     );
   });
@@ -121,6 +123,22 @@ describe('AiWorkflowService.updateRunItem', () => {
       questionScore: 1,
       originalQuestionScore: null,
     });
+    prismaMock.submission.findUnique.mockResolvedValue({
+      id: 'submission-1',
+      challengeId: 'challenge-1',
+    });
+  });
+
+  it('rebuilds the AI decision for a submission', async () => {
+    await service.rebuildSubmissionDecision('submission-1');
+
+    expect(prismaMock.submission.findUnique).toHaveBeenCalledWith({
+      where: { id: 'submission-1' },
+      select: { id: true },
+    });
+    expect(workflowQueueHandlerMock.rebuildSubmissionDecision).toHaveBeenCalledWith(
+      'submission-1',
+    );
   });
 
   it('throws ForbiddenException when adding a comment to a deterministic workflow via updateRunItem', async () => {
