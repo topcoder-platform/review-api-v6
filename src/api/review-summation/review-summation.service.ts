@@ -23,7 +23,6 @@ import {
   ChallengeData,
 } from 'src/shared/modules/global/challenge.service';
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { Prisma } from '@prisma/client';
 
@@ -77,7 +76,6 @@ export class ReviewSummationService {
     private readonly prismaErrorService: PrismaErrorService,
     private readonly challengeApiService: ChallengeApiService,
     private readonly memberPrisma: MemberPrismaService,
-    private readonly resourceApiService: ResourceApiService,
   ) {}
 
   private readonly systemActor = 'ReviewSummationService';
@@ -659,8 +657,91 @@ export class ReviewSummationService {
     }
   }
 
+  /**
+   * Enforces the public Marathon Match leaderboard contract for callers that
+   * are neither administrators, copilots, nor machine tokens.
+   *
+   * Topcoder publishes Marathon Match leaderboards and dashboards while the
+   * challenge runs (PM-6293), so registration is not required. Access is still
+   * limited to one challenge at a time, that challenge must be a Marathon
+   * Match, and challenge whitelist plus group visibility are enforced so a
+   * private challenge never leaks its scores.
+   *
+   * @param authUser authenticated caller, or undefined/null for an anonymous request.
+   * @param challengeIdFilter trimmed challengeId supplied by the caller, when present.
+   * @param roles normalized caller roles, echoed back in the error details.
+   * @returns nothing when the caller may read the challenge's summations.
+   * @throws ForbiddenException when challengeId is missing, the challenge is not
+   * visible to the caller, or the challenge is not a Marathon Match.
+   */
+  private async assertMarathonLeaderboardAccess(
+    authUser: JwtUser | null | undefined,
+    challengeIdFilter: string | undefined,
+    roles: string[],
+  ): Promise<void> {
+    if (!challengeIdFilter) {
+      throw new ForbiddenException({
+        message:
+          'A challengeId is required when listing review summations.',
+        code: 'SUBMITTER_CHALLENGE_ID_REQUIRED',
+        details: {
+          reason: 'CHALLENGE_ID_REQUIRED',
+          guidance:
+            'Pass a challengeId query parameter when requesting review summations.',
+          submitterUserId: authUser?.userId ?? null,
+          submitterHandle: authUser?.handle ?? null,
+          roles,
+        },
+      });
+    }
+
+    await this.challengeApiService.ensureChallengeWhitelistAccess(
+      authUser,
+      challengeIdFilter,
+    );
+
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeIdFilter);
+
+    if (!this.isMarathonMatchChallenge(challenge)) {
+      throw new ForbiddenException({
+        message:
+          'Review summations for this challenge are only available to its reviewers and copilots.',
+        code: 'SUBMITTER_NON_MARATHON_FORBIDDEN',
+        details: {
+          challengeId: challengeIdFilter,
+          challengeType: challenge.type ?? null,
+          legacyTrack: challenge.track ?? null,
+          legacySubTrack: challenge.legacy?.subTrack ?? null,
+          allowedChallengeTypes: ['Marathon Match'],
+          submitterUserId: authUser?.userId ?? null,
+          submitterHandle: authUser?.handle ?? null,
+          roles,
+        },
+      });
+    }
+  }
+
+  /**
+   * Searches review summations for the calling audience.
+   *
+   * Admin, Copilot, and machine callers search without restriction. Everyone
+   * else - including anonymous visitors, who reach this route because
+   * Marathon Match leaderboards and dashboards are public (PM-6293) - must
+   * scope the search to one Marathon Match challenge they are allowed to see.
+   *
+   * @param authUser authenticated caller, or undefined for an anonymous request.
+   * @param queryDto review summation filters, including the required challengeId
+   * for unprivileged callers.
+   * @param paginationDto optional one-based page and page size.
+   * @param sortDto optional sort field and direction.
+   * @returns the matching review summations and pagination metadata.
+   * @throws ForbiddenException when an unprivileged caller omits challengeId,
+   * cannot see the challenge, or scopes the search to a non-Marathon Match challenge.
+   * @throws InternalServerErrorException when the database query fails.
+   */
   async searchSummation(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     queryDto: ReviewSummationQueryDto,
     paginationDto?: PaginationDto,
     sortDto?: SortDto,
@@ -713,116 +794,32 @@ export class ReviewSummationService {
       const challengeIdFilter =
         rawChallengeId && rawChallengeId.length ? rawChallengeId : undefined;
 
-      if (isSubmitterOnly) {
-        const userId =
-          authUser?.userId !== undefined && authUser?.userId !== null
-            ? String(authUser.userId)
-            : '';
-        if (!userId) {
-          throw new ForbiddenException({
-            message:
-              'Authenticated user information is required to view review summations.',
-            code: 'SUBMITTER_USER_MISSING',
-            details: {
-              reason: 'USER_ID_MISSING',
-              roles: Array.from(normalizedRoles),
-            },
-          });
-        }
+      const requesterUserId =
+        authUser?.userId !== undefined && authUser?.userId !== null
+          ? String(authUser.userId)
+          : '';
+      // Anonymous visitors reach this route through the guard's public
+      // challenge-scoped allowance; they carry no roles and no user id.
+      const isAnonymous = !isPrivileged && !isSubmitterOnly && !requesterUserId;
 
-        if (!challengeIdFilter) {
-          throw new ForbiddenException({
-            message:
-              'Submitters must specify a challengeId when listing review summations.',
-            code: 'SUBMITTER_CHALLENGE_ID_REQUIRED',
-            details: {
-              reason: 'CHALLENGE_ID_REQUIRED',
-              guidance:
-                'Pass a challengeId query parameter when requesting review summations as a submitter.',
-              submitterUserId: authUser?.userId ?? null,
-              submitterHandle: authUser?.handle ?? null,
-              roles: Array.from(normalizedRoles),
-            },
-          });
-        }
+      if (isSubmitterOnly && !requesterUserId) {
+        throw new ForbiddenException({
+          message:
+            'Authenticated user information is required to view review summations.',
+          code: 'SUBMITTER_USER_MISSING',
+          details: {
+            reason: 'USER_ID_MISSING',
+            roles: Array.from(normalizedRoles),
+          },
+        });
+      }
 
-        const challenge =
-          await this.challengeApiService.getChallengeDetail(challengeIdFilter);
-
-        if (!this.isMarathonMatchChallenge(challenge)) {
-          throw new ForbiddenException({
-            message:
-              'Submitters can only view review summations for Marathon Match challenges.',
-            code: 'SUBMITTER_NON_MARATHON_FORBIDDEN',
-            details: {
-              challengeId: challengeIdFilter,
-              challengeType: challenge.type ?? null,
-              legacyTrack: challenge.track ?? null,
-              legacySubTrack: challenge.legacy?.subTrack ?? null,
-              allowedChallengeTypes: ['Marathon Match'],
-              submitterUserId: authUser?.userId ?? null,
-              submitterHandle: authUser?.handle ?? null,
-              roles: Array.from(normalizedRoles),
-            },
-          });
-        }
-
-        let memberResources: unknown[] = [];
-        let resourceLookupFailed = false;
-        try {
-          memberResources = await this.resourceApiService.getResources({
-            challengeId: challengeIdFilter,
-            memberId: userId,
-          });
-        } catch (resourceLookupError) {
-          resourceLookupFailed = true;
-          const message =
-            resourceLookupError instanceof Error
-              ? resourceLookupError.message
-              : String(resourceLookupError);
-          this.logger.warn(
-            `[searchSummation] Unable to load member resources for challenge ${challengeIdFilter} and member ${userId}: ${message}`,
-          );
-        }
-
-        if (!resourceLookupFailed) {
-          const hasAnyResource =
-            Array.isArray(memberResources) && memberResources.length > 0;
-          if (!hasAnyResource) {
-            throw new ForbiddenException({
-              message:
-                'Submitter access requires active registration for this challenge.',
-              code: 'SUBMITTER_NOT_REGISTERED',
-              details: {
-                challengeId: challengeIdFilter,
-                memberId: userId,
-                info: 'Member does not have any resources on this challenge.',
-              },
-            });
-          }
-        } else {
-          try {
-            await this.resourceApiService.validateSubmitterRegistration(
-              challengeIdFilter,
-              userId,
-            );
-          } catch (validationError) {
-            const details =
-              validationError instanceof Error
-                ? validationError.message
-                : String(validationError);
-            throw new ForbiddenException({
-              message:
-                'Submitter access requires active registration for this challenge.',
-              code: 'SUBMITTER_NOT_REGISTERED',
-              details: {
-                challengeId: challengeIdFilter,
-                memberId: userId,
-                info: details,
-              },
-            });
-          }
-        }
+      if (isAnonymous || isSubmitterOnly) {
+        await this.assertMarathonLeaderboardAccess(
+          authUser,
+          challengeIdFilter,
+          Array.from(normalizedRoles),
+        );
       }
 
       // Build the where clause for review summations based on available filter parameters
@@ -878,9 +875,15 @@ export class ReviewSummationService {
       };
 
       const shouldEnrichSubmitterMetadata = Boolean(challengeIdFilter);
+      // Scorer metadata carries per-seed test cases and per-test scores. It is
+      // never member-facing: a contestant who could read it would be able to
+      // reverse engineer the test set. Only machine tokens may request it, so
+      // the public Marathon Match leaderboard audience opened up by PM-6293 -
+      // anonymous visitors and unregistered members alike - can never obtain it,
+      // whatever `metadata=true` they pass.
+      const canReadScorerMetadata = authUser?.isMachine === true;
       const includeMetadata =
-        (authUser?.isMachine ?? false) &&
-        parseBooleanString(queryDto.metadata) === true;
+        canReadScorerMetadata && parseBooleanString(queryDto.metadata) === true;
       const summationSelect = shouldEnrichSubmitterMetadata
         ? includeMetadata
           ? REVIEW_SUMMATION_WITH_SUBMITTER_AND_METADATA_SELECT

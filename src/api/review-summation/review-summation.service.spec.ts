@@ -3,12 +3,14 @@ jest.mock('nanoid', () => ({
   nanoid: () => 'mock-nanoid',
 }));
 
+import { ForbiddenException } from '@nestjs/common';
+
 import { ReviewSummationService } from './review-summation.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 
 describe('ReviewSummationService', () => {
   describe('searchSummation', () => {
-    it('allows registered marathon submitters to view challenge summations without metadata', async () => {
+    it('allows signed-in members to view marathon challenge summations without metadata', async () => {
       const prismaMock = {
         reviewSummation: {
           findMany: jest.fn().mockResolvedValue([
@@ -81,6 +83,7 @@ describe('ReviewSummationService', () => {
         },
       };
       const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest.fn().mockResolvedValue(undefined),
         getChallengeDetail: jest.fn().mockResolvedValue({
           id: 'challenge-1',
           type: 'Marathon Match',
@@ -88,16 +91,11 @@ describe('ReviewSummationService', () => {
           phases: [],
         }),
       };
-      const resourceApiServiceMock = {
-        getResources: jest.fn().mockResolvedValue([{ id: 'resource-1' }]),
-        validateSubmitterRegistration: jest.fn(),
-      };
       const service = new ReviewSummationService(
         prismaMock as any,
         {} as any,
         challengeApiServiceMock as any,
         { member: { findMany: jest.fn().mockResolvedValue([]) } } as any,
-        resourceApiServiceMock as any,
       );
 
       const result = await service.searchSummation(
@@ -177,7 +175,6 @@ describe('ReviewSummationService', () => {
         {} as any,
         {} as any,
         { member: { findMany: jest.fn().mockResolvedValue([]) } } as any,
-        {} as any,
       );
 
       const result = await service.searchSummation(
@@ -202,6 +199,302 @@ describe('ReviewSummationService', () => {
       expect(result.data).toHaveLength(1);
       expect(result.data[0].metadata).toEqual(metadata);
       expect(result.data[0]).not.toHaveProperty('submission');
+    });
+
+    it('allows anonymous visitors to read a public marathon leaderboard', async () => {
+      const prismaMock = {
+        reviewSummation: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'summation-1',
+              submissionId: 'submission-1',
+              aggregateScore: 88.5,
+              scorecardId: null,
+              isPassing: true,
+              isFinal: false,
+              isProvisional: true,
+              isExample: false,
+              reviewedDate: null,
+              createdAt: new Date('2026-05-01T00:00:00.000Z'),
+              createdBy: null,
+              updatedAt: null,
+              updatedBy: null,
+              submission: { memberId: '222' },
+            },
+          ]),
+          count: jest.fn().mockResolvedValue(1),
+        },
+      };
+      const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest.fn().mockResolvedValue(undefined),
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-1',
+          type: 'Marathon Match',
+          legacy: {},
+          phases: [],
+        }),
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        {
+          member: {
+            findMany: jest.fn().mockResolvedValue([
+              { userId: 222n, handle: 'coder', maxRating: { rating: 1500 } },
+            ]),
+          },
+        } as any,
+      );
+
+      const result = await service.searchSummation(
+        undefined,
+        { challengeId: 'challenge-1' },
+        { page: 1, perPage: 10 },
+      );
+
+      expect(
+        challengeApiServiceMock.ensureChallengeWhitelistAccess,
+      ).toHaveBeenCalledWith(undefined, 'challenge-1');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].submitterHandle).toBe('coder');
+      expect(result.data[0]).not.toHaveProperty('metadata');
+    });
+
+    it('rejects anonymous visitors that omit a challengeId', async () => {
+      const prismaMock = {
+        reviewSummation: { findMany: jest.fn(), count: jest.fn() },
+      };
+      const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest.fn(),
+        getChallengeDetail: jest.fn(),
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        { member: { findMany: jest.fn() } } as any,
+      );
+
+      await expect(
+        service.searchSummation(undefined, {}, { page: 1, perPage: 10 }),
+      ).rejects.toMatchObject({
+        response: { code: 'SUBMITTER_CHALLENGE_ID_REQUIRED' },
+      });
+      expect(prismaMock.reviewSummation.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects anonymous visitors on non-marathon challenges', async () => {
+      const prismaMock = {
+        reviewSummation: { findMany: jest.fn(), count: jest.fn() },
+      };
+      const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest.fn().mockResolvedValue(undefined),
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-1',
+          type: 'Code',
+          legacy: {},
+          phases: [],
+        }),
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        { member: { findMany: jest.fn() } } as any,
+      );
+
+      await expect(
+        service.searchSummation(
+          undefined,
+          { challengeId: 'challenge-1' },
+          { page: 1, perPage: 10 },
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'SUBMITTER_NON_MARATHON_FORBIDDEN' },
+      });
+      expect(prismaMock.reviewSummation.findMany).not.toHaveBeenCalled();
+    });
+
+    it('hides summations for challenges the anonymous visitor cannot see', async () => {
+      const prismaMock = {
+        reviewSummation: { findMany: jest.fn(), count: jest.fn() },
+      };
+      const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest
+          .fn()
+          .mockRejectedValue(
+            new ForbiddenException({
+              message: "You don't have access to view this challenge",
+              code: 'FORBIDDEN_CHALLENGE_WHITELIST',
+            }),
+          ),
+        getChallengeDetail: jest.fn(),
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        { member: { findMany: jest.fn() } } as any,
+      );
+
+      await expect(
+        service.searchSummation(
+          undefined,
+          { challengeId: 'private-challenge' },
+          { page: 1, perPage: 10 },
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'FORBIDDEN_CHALLENGE_WHITELIST' },
+      });
+      expect(challengeApiServiceMock.getChallengeDetail).not.toHaveBeenCalled();
+      expect(prismaMock.reviewSummation.findMany).not.toHaveBeenCalled();
+    });
+
+    it('no longer requires registration for signed-in marathon viewers', async () => {
+      const prismaMock = {
+        reviewSummation: {
+          findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
+        },
+      };
+      const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest.fn().mockResolvedValue(undefined),
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-1',
+          type: 'Marathon Match',
+          legacy: {},
+          phases: [],
+        }),
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        { member: { findMany: jest.fn().mockResolvedValue([]) } } as any,
+      );
+
+      const result = await service.searchSummation(
+        { userId: '999', isMachine: false, roles: [UserRole.User] },
+        { challengeId: 'challenge-1' },
+        { page: 1, perPage: 10 },
+      );
+
+      expect(result.data).toEqual([]);
+      expect(prismaMock.reviewSummation.findMany).toHaveBeenCalled();
+    });
+    it('withholds scorer metadata from anonymous visitors that ask for it', async () => {
+      const findMany = jest.fn().mockResolvedValue([
+        {
+          id: 'summation-1',
+          submissionId: 'submission-1',
+          aggregateScore: 88.5,
+          scorecardId: null,
+          isPassing: true,
+          isFinal: false,
+          isProvisional: true,
+          isExample: false,
+          reviewedDate: null,
+          createdAt: new Date('2026-05-01T00:00:00.000Z'),
+          createdBy: null,
+          updatedAt: null,
+          updatedBy: null,
+          submission: { memberId: '222' },
+          metadata: {
+            testProcess: 'provisional',
+            testScores: [{ score: 100, seed: 987654321 }],
+          },
+        },
+      ]);
+      const prismaMock = {
+        reviewSummation: {
+          findMany,
+          count: jest.fn().mockResolvedValue(1),
+        },
+      };
+      const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest.fn().mockResolvedValue(undefined),
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-1',
+          type: 'Marathon Match',
+          legacy: {},
+          phases: [],
+        }),
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        { member: { findMany: jest.fn().mockResolvedValue([]) } } as any,
+      );
+
+      const result = await service.searchSummation(
+        undefined,
+        { challengeId: 'challenge-1', metadata: 'true' },
+        { page: 1, perPage: 10 },
+      );
+
+      // The seed never leaves the database: it is not selected, and it is
+      // stripped again on the way out.
+      expect(findMany.mock.calls[0][0].select).not.toHaveProperty('metadata');
+      expect(result.data[0]).not.toHaveProperty('metadata');
+      expect(JSON.stringify(result)).not.toContain('987654321');
+    });
+
+    it('withholds scorer metadata from signed-in members that ask for it', async () => {
+      const findMany = jest.fn().mockResolvedValue([
+        {
+          id: 'summation-1',
+          submissionId: 'submission-1',
+          aggregateScore: 88.5,
+          scorecardId: null,
+          isPassing: true,
+          isFinal: false,
+          isProvisional: true,
+          isExample: false,
+          reviewedDate: null,
+          createdAt: new Date('2026-05-01T00:00:00.000Z'),
+          createdBy: null,
+          updatedAt: null,
+          updatedBy: null,
+          submission: { memberId: '222' },
+          metadata: {
+            testProcess: 'provisional',
+            testScores: [{ score: 100, seed: 987654321 }],
+          },
+        },
+      ]);
+      const prismaMock = {
+        reviewSummation: {
+          findMany,
+          count: jest.fn().mockResolvedValue(1),
+        },
+      };
+      const challengeApiServiceMock = {
+        ensureChallengeWhitelistAccess: jest.fn().mockResolvedValue(undefined),
+        getChallengeDetail: jest.fn().mockResolvedValue({
+          id: 'challenge-1',
+          type: 'Marathon Match',
+          legacy: {},
+          phases: [],
+        }),
+      };
+      const service = new ReviewSummationService(
+        prismaMock as any,
+        {} as any,
+        challengeApiServiceMock as any,
+        { member: { findMany: jest.fn().mockResolvedValue([]) } } as any,
+      );
+
+      const result = await service.searchSummation(
+        { userId: '999', isMachine: false, roles: [UserRole.User] },
+        { challengeId: 'challenge-1', metadata: 'true' },
+        { page: 1, perPage: 10 },
+      );
+
+      expect(findMany.mock.calls[0][0].select).not.toHaveProperty('metadata');
+      expect(result.data[0]).not.toHaveProperty('metadata');
+      expect(JSON.stringify(result)).not.toContain('987654321');
     });
   });
 });
