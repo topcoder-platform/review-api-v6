@@ -123,6 +123,27 @@ export class AiReviewerDecisionMakerService {
       return pendingDecision;
     }
 
+    const hasTimedOutRun = context.workflows.some(
+      (workflow) => workflow.runStatus === 'TIMEOUT',
+    );
+
+    if (hasTimedOutRun) {
+      const pendingDecision = (await this.prisma.aiReviewDecision.update({
+        where: {
+          submissionId_configId: {
+            submissionId: context.submissionId,
+            configId: context.configId,
+          },
+        },
+        data: {
+          status: AiReviewDecisionStatus.PENDING,
+          reason:
+            'Awaiting successful completion of all configured AI workflow runs. One or more runs timed out and must be retriggered.',
+        },
+      })) as AiReviewDecisionRecord;
+      return pendingDecision;
+    }
+
     const hasCancelledRun = context.workflows.some(
       (workflow) => workflow.runStatus === 'CANCELLED',
     );
