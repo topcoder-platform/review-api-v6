@@ -137,12 +137,12 @@ describe('WorkflowQueueHandler', () => {
       ).toHaveBeenCalledWith('submission-1');
     });
 
-    it('promotes a timed out run to SUCCESS when run items were reported', async () => {
+    it('promotes a timed out run to SUCCESS when a persisted score exists, even if items were reported', async () => {
       aiWorkflowRunMock.findUnique.mockResolvedValue(
-        timedOutRun({ _count: { items: 3 } }),
+        timedOutRun({ _count: { items: 3 }, score: 84 }),
       );
       aiWorkflowRunMock.update.mockResolvedValue({
-        ...timedOutRun({ _count: { items: 3 } }),
+        ...timedOutRun({ _count: { items: 3 }, score: 84 }),
         status: 'SUCCESS',
       });
 
@@ -152,7 +152,7 @@ describe('WorkflowQueueHandler', () => {
       expect(aiWorkflowRunMock.update).toHaveBeenCalled();
     });
 
-    it('promotes a timed out run to SUCCESS on a late successful webhook', async () => {
+    it('does not reconcile a timed out run on a bare successful conclusion without score or items', async () => {
       aiWorkflowRunMock.findUnique.mockResolvedValue(timedOutRun());
       aiWorkflowRunMock.update.mockResolvedValue({
         ...timedOutRun(),
@@ -163,7 +163,8 @@ describe('WorkflowQueueHandler', () => {
         handler.reconcileTimedOutWorkflowRun('run-1', {
           conclusion: 'SUCCESS',
         }),
-      ).resolves.toBe(true);
+      ).resolves.toBe(false);
+      expect(aiWorkflowRunMock.update).not.toHaveBeenCalled();
     });
 
     it('reconciles a run patched straight from TIMEOUT to SUCCESS', async () => {

@@ -891,12 +891,11 @@ export class WorkflowQueueHandler {
         return null;
       }
 
-      // Only promote the run when we have proof the workflow actually finished.
-      const hasResults =
-        run.score !== null ||
-        run._count.items > 0 ||
-        (options?.conclusion ?? '').trim().toUpperCase() === 'SUCCESS' ||
-        run.status === 'SUCCESS';
+      // Only promote the run when the run score is actually present. We do not
+      // reconcile a timed-out run based on a bare success conclusion alone, since
+      // the score must be persisted on the aiWorkflowRun row for downstream
+      // decision making.
+      const hasResults = run.score !== null;
 
       if (!hasResults) {
         return null;
