@@ -67,7 +67,7 @@ export class TokenRolesGuard implements CanActivate {
 
       if (!user && (requiredRoles.length || requiredScopes.length)) {
         if (
-          this.allowAnonymousSubmissionListByChallenge(
+          this.allowAnonymousChallengeScopedRead(
             context,
             request,
             requiredRoles,
@@ -75,7 +75,7 @@ export class TokenRolesGuard implements CanActivate {
         ) {
           this.logger.log({
             message:
-              'Allowing anonymous request for submission list with challengeId',
+              'Allowing anonymous request for a public challenge-scoped list with challengeId',
             ...requestMeta,
             hasUser: false,
             requiredRoles,
@@ -255,7 +255,24 @@ export class TokenRolesGuard implements CanActivate {
     return true;
   }
 
-  private allowAnonymousSubmissionListByChallenge(
+  /**
+   * Decides whether an unauthenticated caller may reach a challenge-scoped
+   * list route.
+   *
+   * Topcoder publishes challenge details, and therefore the Marathon Match
+   * leaderboard and dashboard built from them, to anonymous visitors
+   * (PM-6293). The routes named in ANONYMOUS_CHALLENGE_SCOPED_HANDLERS each
+   * re-check challenge visibility and strip member-private fields for
+   * anonymous callers in their own service layer, so the guard only has to
+   * confirm that the request is a challenge-scoped GET.
+   *
+   * @param context Nest execution context identifying the target handler.
+   * @param request Express request carrying the query string and method.
+   * @param requiredRoles roles declared by the handler's `@Roles` decorator.
+   * @returns true when the anonymous request should be allowed through.
+   * @throws Does not throw.
+   */
+  private allowAnonymousChallengeScopedRead(
     context: ExecutionContext,
     request: any,
     requiredRoles: UserRole[],
@@ -274,11 +291,12 @@ export class TokenRolesGuard implements CanActivate {
     const handler = context.getHandler?.();
     const controllerClass = context.getClass?.();
 
-    const isSubmissionListHandler =
-      controllerClass?.name === 'SubmissionController' &&
-      handler?.name === 'listSubmissions';
+    const isPublicChallengeScopedHandler =
+      TokenRolesGuard.ANONYMOUS_CHALLENGE_SCOPED_HANDLERS.has(
+        `${controllerClass?.name}.${handler?.name}`,
+      );
 
-    if (!isSubmissionListHandler) {
+    if (!isPublicChallengeScopedHandler) {
       return false;
     }
 
@@ -304,6 +322,16 @@ export class TokenRolesGuard implements CanActivate {
     }
     return false;
   }
+
+  /**
+   * `Controller.handler` names whose challenge-scoped GET routes are safe for
+   * anonymous callers. Each listed service re-validates challenge visibility
+   * and removes member-private data before responding.
+   */
+  private static readonly ANONYMOUS_CHALLENGE_SCOPED_HANDLERS = new Set([
+    'SubmissionController.listSubmissions',
+    'ReviewSummationController.listReviewSummations',
+  ]);
 
   private static readonly GENERAL_USER_ROLE_ALIASES = new Set(
     [

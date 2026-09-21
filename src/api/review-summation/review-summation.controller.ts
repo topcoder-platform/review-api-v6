@@ -147,7 +147,10 @@ export class ReviewSummationController {
   @ApiOperation({
     summary: 'Search for review summations',
     description:
-      'Roles: Copilot, Admin, Submitter. | Scopes: read:review_summation',
+      'Roles: Copilot, Admin, Submitter, User, or anonymous. | Scopes: read:review_summation. ' +
+      'Marathon Match leaderboards and dashboards are public, so anonymous and unregistered ' +
+      'callers may read summations by passing a challengeId for a Marathon Match challenge they ' +
+      'are allowed to see. Every other caller must be an Admin, Copilot, or machine token.',
   })
   @ApiResponse({
     status: 200,
@@ -168,6 +171,19 @@ export class ReviewSummationController {
       },
     },
   })
+  /**
+   * Searches review summations for the caller, optionally as a TSV export.
+   *
+   * @param req request carrying the authenticated caller, if any; anonymous
+   * visitors are supported for public Marathon Match leaderboards.
+   * @param res response used to set TSV download headers.
+   * @param queryDto review summation filters, including challengeId.
+   * @param paginationDto optional one-based page and page size.
+   * @param sortDto optional sort field and direction.
+   * @returns paginated summations, or the TSV payload when the caller asks for it.
+   * @throws BadRequestException when a TSV export omits challengeId.
+   * @throws ForbiddenException when the caller may not read the challenge's summations.
+   */
   async listReviewSummations(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -178,7 +194,7 @@ export class ReviewSummationController {
     this.logger.log(
       `Getting review summations with filters - ${JSON.stringify(queryDto)}`,
     );
-    const authUser: JwtUser = req['user'] as JwtUser;
+    const authUser: JwtUser | undefined = req['user'] as JwtUser | undefined;
     const wantsTabSeparated = this.requestWantsTabSeparated(req);
     const results = await this.service.searchSummation(
       authUser,
@@ -329,7 +345,7 @@ export class ReviewSummationController {
   }
 
   private async loadAllReviewSummationsForExport(
-    authUser: JwtUser,
+    authUser: JwtUser | undefined,
     queryDto: ReviewSummationQueryDto,
     sortDto: SortDto | undefined,
     initialResults: PaginatedResponse<ReviewSummationResponseDto>,
