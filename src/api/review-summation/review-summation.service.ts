@@ -875,9 +875,15 @@ export class ReviewSummationService {
       };
 
       const shouldEnrichSubmitterMetadata = Boolean(challengeIdFilter);
+      // Scorer metadata carries per-seed test cases and per-test scores. It is
+      // never member-facing: a contestant who could read it would be able to
+      // reverse engineer the test set. Only machine tokens may request it, so
+      // the public Marathon Match leaderboard audience opened up by PM-6293 -
+      // anonymous visitors and unregistered members alike - can never obtain it,
+      // whatever `metadata=true` they pass.
+      const canReadScorerMetadata = authUser?.isMachine === true;
       const includeMetadata =
-        (authUser?.isMachine ?? false) &&
-        parseBooleanString(queryDto.metadata) === true;
+        canReadScorerMetadata && parseBooleanString(queryDto.metadata) === true;
       const summationSelect = shouldEnrichSubmitterMetadata
         ? includeMetadata
           ? REVIEW_SUMMATION_WITH_SUBMITTER_AND_METADATA_SELECT

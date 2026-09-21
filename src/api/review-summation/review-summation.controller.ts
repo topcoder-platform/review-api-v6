@@ -13,6 +13,7 @@ import {
   Req,
   Res,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -150,7 +151,9 @@ export class ReviewSummationController {
       'Roles: Copilot, Admin, Submitter, User, or anonymous. | Scopes: read:review_summation. ' +
       'Marathon Match leaderboards and dashboards are public, so anonymous and unregistered ' +
       'callers may read summations by passing a challengeId for a Marathon Match challenge they ' +
-      'are allowed to see. Every other caller must be an Admin, Copilot, or machine token.',
+      'are allowed to see. Every other caller must be an Admin, Copilot, or machine token. ' +
+      'Per-seed scorer metadata is returned only to machine tokens that pass metadata=true, and ' +
+      'the tab-delimited export requires an authenticated caller.',
   })
   @ApiResponse({
     status: 200,
@@ -182,7 +185,8 @@ export class ReviewSummationController {
    * @param sortDto optional sort field and direction.
    * @returns paginated summations, or the TSV payload when the caller asks for it.
    * @throws BadRequestException when a TSV export omits challengeId.
-   * @throws ForbiddenException when the caller may not read the challenge's summations.
+   * @throws ForbiddenException when an anonymous caller requests the TSV export,
+   * or when the caller may not read the challenge's summations.
    */
   async listReviewSummations(
     @Req() req: Request,
@@ -196,6 +200,18 @@ export class ReviewSummationController {
     );
     const authUser: JwtUser | undefined = req['user'] as JwtUser | undefined;
     const wantsTabSeparated = this.requestWantsTabSeparated(req);
+    // The public Marathon Match leaderboard (PM-6293) is a paginated read. The
+    // TSV export walks every page of a challenge in one request, so it stays
+    // limited to the authenticated audience it had before that change, and no
+    // unauthenticated caller can trigger that unbounded work.
+    if (wantsTabSeparated && !authUser) {
+      throw new ForbiddenException({
+        message:
+          'Sign in to download tab-delimited review summations.',
+        code: 'TSV_AUTHENTICATION_REQUIRED',
+      });
+    }
+
     const results = await this.service.searchSummation(
       authUser,
       queryDto,
