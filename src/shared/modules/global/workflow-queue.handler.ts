@@ -682,24 +682,6 @@ export class WorkflowQueueHandler {
       return;
     }
 
-    if (
-      !['INIT', 'DISPATCHED', 'IN_PROGRESS', 'TIMEOUT'].includes(
-        aiWorkflowRun.status,
-      )
-    ) {
-      const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
-      this.logWithContext(
-        errorMessage,
-        {
-          aiWorkflowRunId: aiWorkflowRun.id,
-          submissionId: aiWorkflowRun.submissionId ?? null,
-          gitRunId: event.workflow_job.run_id,
-        },
-        'error',
-      );
-      return;
-    }
-
     // The timeout guard may have given up on a run that was in fact still
     // running on the gitea side. Recover it instead of dropping the event.
     if (
@@ -715,6 +697,20 @@ export class WorkflowQueueHandler {
       if (recovered) {
         return;
       }
+    }
+
+    if (!['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)) {
+      const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
+      this.logWithContext(
+        errorMessage,
+        {
+          aiWorkflowRunId: aiWorkflowRun.id,
+          submissionId: aiWorkflowRun.submissionId ?? null,
+          gitRunId: event.workflow_job.run_id,
+        },
+        'error',
+      );
+      return;
     }
 
     switch (event.action) {
