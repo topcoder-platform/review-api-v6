@@ -700,8 +700,10 @@ export class WorkflowQueueHandler {
     }
 
     if (
-      !['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status) ||
-      // let timed-out runs go through normal flow if terminal status if not success
+      !['INIT', 'DISPATCHED', 'IN_PROGRESS', 'TIMEOUT'].includes(
+        aiWorkflowRun.status,
+      ) ||
+      // a timed-out run reporting SUCCESS that could not be reconciled is unexpected
       (aiWorkflowRun.status === 'TIMEOUT' && terminalStatus === 'SUCCESS')
     ) {
       const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
