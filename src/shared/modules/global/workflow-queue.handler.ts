@@ -683,22 +683,10 @@ export class WorkflowQueueHandler {
     }
 
     if (
-      !['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status) &&
-      terminalStatus === 'SUCCESS'
+      !['INIT', 'DISPATCHED', 'IN_PROGRESS', 'TIMEOUT'].includes(
+        aiWorkflowRun.status,
+      )
     ) {
-      // The timeout guard may have given up on a run that was in fact still
-      // running on the gitea side. Recover it instead of dropping the event.
-      if (aiWorkflowRun.status === 'TIMEOUT' && event.action === 'completed') {
-        const recovered = await this.reconcileTimedOutWorkflowRun(
-          aiWorkflowRun.id,
-          { conclusion: terminalStatus },
-        );
-
-        if (recovered) {
-          return;
-        }
-      }
-
       const errorMessage = `Unexpected aiWorkflowRun status '${aiWorkflowRun.status}' for gitRunId=${event.workflow_job.run_id} and workflowJobName=${event.workflow_job.name}`;
       this.logWithContext(
         errorMessage,
@@ -710,6 +698,23 @@ export class WorkflowQueueHandler {
         'error',
       );
       return;
+    }
+
+    // The timeout guard may have given up on a run that was in fact still
+    // running on the gitea side. Recover it instead of dropping the event.
+    if (
+      aiWorkflowRun.status === 'TIMEOUT' &&
+      event.action === 'completed' &&
+      terminalStatus === 'SUCCESS'
+    ) {
+      const recovered = await this.reconcileTimedOutWorkflowRun(
+        aiWorkflowRun.id,
+        { conclusion: terminalStatus },
+      );
+
+      if (recovered) {
+        return;
+      }
     }
 
     switch (event.action) {
