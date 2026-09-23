@@ -682,7 +682,10 @@ export class WorkflowQueueHandler {
       return;
     }
 
-    if (!['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status)) {
+    if (
+      !['INIT', 'DISPATCHED', 'IN_PROGRESS'].includes(aiWorkflowRun.status) &&
+      terminalStatus === 'SUCCESS'
+    ) {
       // The timeout guard may have given up on a run that was in fact still
       // running on the gitea side. Recover it instead of dropping the event.
       if (aiWorkflowRun.status === 'TIMEOUT' && event.action === 'completed') {
