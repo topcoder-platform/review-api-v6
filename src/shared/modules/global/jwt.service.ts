@@ -22,7 +22,19 @@ export interface JwtUser {
   isMachine: boolean;
 }
 
-export const isAdmin = (user: JwtUser): boolean => {
+/**
+ * Reports whether a caller has administrator authority.
+ *
+ * Machine tokens are treated as administrators. The parameter accepts
+ * null/undefined so anonymous callers - which public routes such as the
+ * Marathon Match leaderboard now allow - can be tested without a guard at
+ * every call site.
+ *
+ * @param user authenticated caller, or null/undefined for an anonymous request.
+ * @returns true for machine tokens and users holding an administrator role.
+ * @throws Does not throw.
+ */
+export const isAdmin = (user: JwtUser | null | undefined): boolean => {
   if (!user) {
     return false;
   }

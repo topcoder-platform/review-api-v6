@@ -1,6 +1,10 @@
 import 'reflect-metadata';
 
-import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
+import {
+  ForbiddenException,
+  UnauthorizedException,
+  type ExecutionContext,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
 import { TokenRolesGuard, ROLES_KEY } from './tokenRoles.guard';
@@ -142,6 +146,84 @@ describe('TokenRolesGuard', () => {
       const context = createExecutionContext(request as TestRequest);
 
       expect(guard.canActivate(context)).toBe(true);
+    });
+  });
+
+  describe('public marathon leaderboard summations', () => {
+    function listReviewSummations() {
+      return undefined;
+    }
+
+    const summationHandler = listReviewSummations;
+
+    const createSummationContext = (
+      request: TestRequest,
+      controllerName = 'ReviewSummationController',
+    ): ExecutionContext => {
+      const controllerClass = { name: controllerName };
+
+      return {
+        switchToHttp: () => ({
+          getRequest: () => request,
+        }),
+        getHandler: () => summationHandler,
+        getClass: () => controllerClass,
+        getType: () => 'http',
+        getArgs: () => [],
+        getArgByIndex: () => undefined,
+        switchToRpc: () => ({
+          getData: () => undefined,
+          getContext: () => undefined,
+        }),
+        switchToWs: () => ({
+          getClient: () => undefined,
+          getData: () => undefined,
+          getPattern: () => undefined,
+        }),
+      } as unknown as ExecutionContext;
+    };
+
+    beforeEach(() => {
+      Reflect.defineMetadata(
+        ROLES_KEY,
+        [UserRole.Copilot, UserRole.Admin, UserRole.Submitter, UserRole.User],
+        summationHandler,
+      );
+      Reflect.defineMetadata(
+        SCOPES_KEY,
+        ['read:review_summation'],
+        summationHandler,
+      );
+    });
+
+    it('allows anonymous review summation reads scoped to a challenge', () => {
+      const context = createSummationContext({
+        method: 'GET',
+        query: { challengeId: '12345' },
+      } as TestRequest);
+
+      expect(guard.canActivate(context)).toBe(true);
+    });
+
+    it('denies anonymous review summation reads without a challengeId', () => {
+      const context = createSummationContext({
+        method: 'GET',
+        query: {},
+      } as TestRequest);
+
+      expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
+    });
+
+    it('denies anonymous reads on controllers outside the public allowance', () => {
+      const context = createSummationContext(
+        {
+          method: 'GET',
+          query: { challengeId: '12345' },
+        } as TestRequest,
+        'ReviewController',
+      );
+
+      expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
     });
   });
 });

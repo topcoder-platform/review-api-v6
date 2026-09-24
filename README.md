@@ -116,6 +116,20 @@ challenge copilots/managers, admins, project managers, and authorized machine
 clients retain their existing history access. Unavailable challenge or resource
 metadata does not grant broader access.
 
+Two rules keep "latest-only" from hiding a member's own work:
+
+- **Latest is per submission type.** The canonical ranking partitions by
+  `challengeId`, `memberId`, and `type`, so a Checkpoint Submission is never
+  treated as an older attempt at a Contest Submission. Without this, a member who
+  submitted in the final round of a two-round Design challenge lost their entire
+  checkpoint round from every listing.
+- **Privacy hides other people's history, never the caller's own.** When
+  latest-only is *imposed* on a challenge-scoped list rather than requested with
+  `isLatest`, the caller still receives every submission they made themselves
+  alongside everybody else's latest attempt. `isLatest` is then resolved per row
+  instead of being assumed for the whole page. An explicit `isLatest` query is
+  unaffected, and a list already scoped to another `memberId` cannot be widened.
+
 ## Run tests
 
 ```bash
