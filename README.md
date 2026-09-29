@@ -127,8 +127,13 @@ Two rules keep "latest-only" from hiding a member's own work:
   latest-only is *imposed* on a challenge-scoped list rather than requested with
   `isLatest`, the caller still receives every submission they made themselves
   alongside everybody else's latest attempt. `isLatest` is then resolved per row
-  instead of being assumed for the whole page. An explicit `isLatest` query is
-  unaffected, and a list already scoped to another `memberId` cannot be widened.
+  instead of being assumed for the whole page. An explicit `isLatest=true`
+  request (including the accepted `TRUE` and `1` aliases) returns only the latest
+  attempt per member and type, including the caller's own submissions. This
+  filter applies before pagination and counting, keeping Marathon Match
+  Submissions rows and totals consistent before and after system testing.
+  My Submissions and history requests without the flag retain the owner's full
+  history, and a list already scoped to another `memberId` cannot be widened.
 
 ## Run tests
 
