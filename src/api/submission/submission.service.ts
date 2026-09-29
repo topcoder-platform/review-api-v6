@@ -4303,8 +4303,9 @@ export class SubmissionService {
         !canViewFullHistory &&
         reviewSubmissionLimit === undefined
       ) {
+        // Explicit latest-only lists must exclude the caller's older attempts too.
+        latestOnlyIsImplied = isLatestFilter !== true;
         isLatestFilter = true;
-        latestOnlyIsImplied = true;
       }
 
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
