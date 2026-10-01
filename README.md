@@ -110,7 +110,14 @@ back to one per type. Selection happens before pagination and row-specific filte
 and `isLatest` query flags cannot expand access beyond this window. Other types,
 including Final Fix, retain only the latest non-deleted row per member/type.
 
-Ordinary viewers retain latest-only access, and Development review resources keep
+For visible Marathon Matches, all viewers, including anonymous and unregistered
+visitors, can request complete submission history by omitting `isLatest`. Challenge
+whitelist and group checks still run first, and private submission fields and
+artifact downloads retain their existing authorization. Explicit `isLatest=true`
+requests still return only the newest attempt per member/type, with full submission
+counts for the Opportunities History action.
+
+Ordinary viewers of other challenge types retain latest-only access, and Development review resources keep
 the existing latest-only behavior. Owners requesting their own submissions,
 challenge copilots/managers, admins, project managers, and authorized machine
 clients retain their existing history access. Unavailable challenge or resource
