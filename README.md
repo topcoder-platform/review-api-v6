@@ -110,7 +110,14 @@ back to one per type. Selection happens before pagination and row-specific filte
 and `isLatest` query flags cannot expand access beyond this window. Other types,
 including Final Fix, retain only the latest non-deleted row per member/type.
 
-Ordinary viewers retain latest-only access, and Development review resources keep
+For visible Marathon Matches, all viewers, including anonymous and unregistered
+visitors, can request complete submission history by omitting `isLatest`. Challenge
+whitelist and group checks still run first, and private submission fields and
+artifact downloads retain their existing authorization. Explicit `isLatest=true`
+requests still return only the newest attempt per member/type, with full submission
+counts for the Opportunities History action.
+
+Ordinary viewers of other challenge types retain latest-only access, and Development review resources keep
 the existing latest-only behavior. Owners requesting their own submissions,
 challenge copilots/managers, admins, project managers, and authorized machine
 clients retain their existing history access. Unavailable challenge or resource
@@ -127,8 +134,13 @@ Two rules keep "latest-only" from hiding a member's own work:
   latest-only is *imposed* on a challenge-scoped list rather than requested with
   `isLatest`, the caller still receives every submission they made themselves
   alongside everybody else's latest attempt. `isLatest` is then resolved per row
-  instead of being assumed for the whole page. An explicit `isLatest` query is
-  unaffected, and a list already scoped to another `memberId` cannot be widened.
+  instead of being assumed for the whole page. An explicit `isLatest=true`
+  request (including the accepted `TRUE` and `1` aliases) returns only the latest
+  attempt per member and type, including the caller's own submissions. This
+  filter applies before pagination and counting, keeping Marathon Match
+  Submissions rows and totals consistent before and after system testing.
+  My Submissions and history requests without the flag retain the owner's full
+  history, and a list already scoped to another `memberId` cannot be widened.
 
 ## Run tests
 

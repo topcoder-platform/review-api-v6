@@ -4288,10 +4288,9 @@ export class SubmissionService {
         'isLatest',
       );
 
-      // Challenge submission history is private. A submitter can inspect all of
-      // their own attempts, while other ordinary participants only receive the
-      // latest attempt even when they omit isLatest or explicitly request false.
-      // Completed Marathon Match contestants may inspect every attempt's artifacts.
+      // Visible Marathon Matches expose history to every viewer. Other challenge
+      // history remains private: ordinary participants see only the latest attempt
+      // from other members even when they omit isLatest or explicitly request false.
       // Assigned Design reviewers instead receive the configured review window;
       // multiple eligible submissions are current work, not private history.
       let latestOnlyIsImplied = false;
@@ -4303,8 +4302,9 @@ export class SubmissionService {
         !canViewFullHistory &&
         reviewSubmissionLimit === undefined
       ) {
+        // Explicit latest-only lists must exclude the caller's older attempts too.
+        latestOnlyIsImplied = isLatestFilter !== true;
         isLatestFilter = true;
-        latestOnlyIsImplied = true;
       }
 
       const isPrivilegedRequester = authUser?.isMachine || isAdmin(authUser);
@@ -4665,8 +4665,9 @@ export class SubmissionService {
    * Resolves challenge-specific submission visibility for listSubmission.
    * Copilots and managers can see history. Assigned Design review resources can
    * see the configured review window, with separate contest/checkpoint limits.
-   * Registered contestants can inspect all attempts of a COMPLETED Marathon Match
-   * to download the artifacts associated with those historical submission IDs.
+   * Every viewer, including anonymous callers, can inspect all attempts of a
+   * visible Marathon Match; listSubmission checks whitelist/group access first.
+   * This controls history rows only, not artifact downloads or private fields.
    * Other callers and failed lookups retain latest-only visibility.
    *
    * @param authUser - Authenticated requester.
@@ -4680,11 +4681,17 @@ export class SubmissionService {
   ): Promise<ChallengeSubmissionListAccess> {
     const restrictedAccess = { canViewFullHistory: false };
     const requester = String(authUser?.userId ?? '').trim();
-    if (!requester) {
-      return restrictedAccess;
-    }
 
     try {
+      const challenge =
+        await this.challengeApiService.getChallengeDetail(challengeId);
+      if (this.isMarathonMatchChallenge(challenge)) {
+        return { canViewFullHistory: true };
+      }
+      if (!requester) {
+        return restrictedAccess;
+      }
+
       const resources = await this.resourceApiService.getMemberResourcesRoles(
         challengeId,
         requester,
@@ -4699,27 +4706,9 @@ export class SubmissionService {
       ) {
         return { canViewFullHistory: true };
       }
-      const isSubmitter = resources.some(
-        (resource) =>
-          resource.roleId === CommonConfig.roles.submitterRoleId ||
-          (resource.roleName || '').trim().toLowerCase() === 'submitter',
-      );
       const hasReviewRole = roleNames.some((role) =>
         REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) => role.includes(keyword)),
       );
-      if (!isSubmitter && !hasReviewRole) {
-        return restrictedAccess;
-      }
-
-      const challenge =
-        await this.challengeApiService.getChallengeDetail(challengeId);
-      if (
-        isSubmitter &&
-        challenge.status === ChallengeStatus.COMPLETED &&
-        this.isMarathonMatchChallenge(challenge)
-      ) {
-        return { canViewFullHistory: true };
-      }
       return hasReviewRole && isDesignTrackChallenge(challenge)
         ? {
             canViewFullHistory: false,

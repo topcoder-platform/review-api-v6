@@ -3018,6 +3018,79 @@ describe('SubmissionService', () => {
       ]);
     });
 
+    it.each([
+      ['true', ChallengeStatus.ACTIVE, 'Submission'],
+      ['TRUE', ChallengeStatus.ACTIVE, 'Review'],
+      ['1', ChallengeStatus.COMPLETED, undefined],
+    ])(
+      'honors explicit isLatest=%s for a Marathon Match contestant during %s / %s',
+      async (isLatest, status, phaseName) => {
+        const latestIds = ['own-latest', 'other-latest'];
+        jest
+          .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+          .mockResolvedValue(latestIds);
+        jest
+          .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+          .mockResolvedValue(undefined);
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          id: 'challenge-1',
+          status,
+          type: 'Marathon Match',
+          track: 'Development',
+          phases: phaseName ? [{ name: phaseName, isOpen: true }] : [],
+        });
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+          {
+            roleName: 'Submitter',
+            roleId: CommonConfig.roles.submitterRoleId,
+          },
+        ]);
+        prismaMock.submission.findMany.mockResolvedValue([
+          {
+            id: 'other-latest',
+            challengeId: 'challenge-1',
+            memberId: 'member-2',
+            type: SubmissionType.CONTEST_SUBMISSION,
+            status: SubmissionStatus.ACTIVE,
+            review: [],
+            reviewSummation: [],
+          },
+        ]);
+        prismaMock.submission.count.mockResolvedValue(2);
+
+        const result = await listService.listSubmission(
+          {
+            userId: 'member-1',
+            isMachine: false,
+            roles: [UserRole.User],
+          } as any,
+          { challengeId: 'challenge-1', isLatest } as any,
+          { page: 2, perPage: 1 } as any,
+        );
+
+        // Both the page and its total must exclude the caller's older attempts.
+        const expectedWhere = {
+          challengeId: 'challenge-1',
+          id: { in: latestIds },
+        };
+        expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: expectedWhere, skip: 1, take: 1 }),
+        );
+        expect(prismaMock.submission.count).toHaveBeenCalledWith({
+          where: expectedWhere,
+        });
+        expect(result.meta).toMatchObject({
+          page: 2,
+          perPage: 1,
+          totalCount: 2,
+          totalPages: 2,
+        });
+        expect(result.data).toEqual([
+          expect.objectContaining({ id: 'other-latest', isLatest: true }),
+        ]);
+      },
+    );
+
     it('rejects an unauthenticated challenge-less listing before querying', async () => {
       await expect(
         listService.listSubmission(
@@ -3148,13 +3221,13 @@ describe('SubmissionService', () => {
 
     it.each([
       ['COMPLETED', 'Marathon Match', true, true],
-      ['ACTIVE', 'Marathon Match', true, false],
-      ['CANCELLED', 'Marathon Match', true, false],
-      ['CANCELLED_FAILED_REVIEW', 'Marathon Match', true, false],
+      ['ACTIVE', 'Marathon Match', true, true],
+      ['CANCELLED', 'Marathon Match', true, true],
+      ['CANCELLED_FAILED_REVIEW', 'Marathon Match', true, true],
       ['COMPLETED', 'Challenge', true, false],
-      ['COMPLETED', 'Marathon Match', false, false],
+      ['COMPLETED', 'Marathon Match', false, true],
     ])(
-      'gates artifact history for %s %s with contestant=%s',
+      'resolves submission history for %s %s with contestant=%s',
       async (status, type, registered, fullHistory) => {
         const latestSpy = jest
           .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
@@ -3200,6 +3273,107 @@ describe('SubmissionService', () => {
         }
       },
     );
+
+    it.each([undefined, 'unregistered-viewer'])(
+      'returns full public Marathon history for viewer %s with anonymous field redaction',
+      async (userId) => {
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          id: 'challenge-1',
+          status: ChallengeStatus.ACTIVE,
+          type: 'Marathon Match',
+          phases: [],
+        });
+        const latestSpy = jest.spyOn(
+          listService as any,
+          'findLatestSubmissionIdsForQuery',
+        );
+        const submissions = ['newer', 'older'].map((id, index) => ({
+          id,
+          challengeId: 'challenge-1',
+          memberId: 'member-2',
+          type: SubmissionType.CONTEST_SUBMISSION,
+          status: SubmissionStatus.ACTIVE,
+          submittedDate: new Date(`2026-09-0${2 - index}T00:00:00Z`),
+          url: 'https://private.example/submission.zip',
+          review: [],
+          reviewSummation: [],
+        }));
+        prismaMock.submission.findMany.mockResolvedValue(submissions);
+        prismaMock.submission.count.mockResolvedValue(2);
+
+        const result = await listService.listSubmission(
+          { userId, isMachine: false, roles: [] } as any,
+          {
+            challengeId: 'challenge-1',
+            memberId: 'member-2',
+            type: SubmissionType.CONTEST_SUBMISSION,
+          } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        expect(latestSpy).not.toHaveBeenCalled();
+        expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              challengeId: 'challenge-1',
+              memberId: 'member-2',
+              type: SubmissionType.CONTEST_SUBMISSION,
+            },
+          }),
+        );
+        expect(result.data.map((row) => row.id)).toEqual(['newer', 'older']);
+        expect(result.meta.totalCount).toBe(2);
+        if (!userId) {
+          for (const row of result.data) {
+            expect(row.url).toBeNull();
+            expect(row.review).toBeUndefined();
+            expect(row.reviewSummation).toBeUndefined();
+          }
+        }
+      },
+    );
+
+    it('keeps anonymous Marathon leaderboard requests latest-only before pagination', async () => {
+      challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+        id: 'challenge-1',
+        status: ChallengeStatus.ACTIVE,
+        type: 'Marathon Match',
+        phases: [],
+      });
+      jest
+        .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+        .mockResolvedValue(['newer']);
+      prismaMock.submission.findMany.mockResolvedValue([]);
+      prismaMock.submission.count.mockResolvedValue(1);
+
+      await listService.listSubmission(
+        { isMachine: false, roles: [] } as any,
+        { challengeId: 'challenge-1', isLatest: 'true' } as any,
+        { page: 1, perPage: 10 } as any,
+      );
+
+      const where = { challengeId: 'challenge-1', id: { in: ['newer'] } };
+      expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where, take: 10, skip: 0 }),
+      );
+      expect(prismaMock.submission.count).toHaveBeenCalledWith({ where });
+    });
+
+    it('rejects public history when challenge visibility denies access', async () => {
+      const denied = new ForbiddenException('Challenge access denied');
+      jest
+        .spyOn(listService as any, 'ensureChallengeWhitelistAccess')
+        .mockRejectedValue(denied);
+
+      await expect(
+        listService.listSubmission(
+          { isMachine: false, roles: [] } as any,
+          { challengeId: 'private-marathon', memberId: 'member-2' } as any,
+          { page: 1, perPage: 50 } as any,
+        ),
+      ).rejects.toBe(denied);
+      expect(prismaMock.submission.findMany).not.toHaveBeenCalled();
+    });
 
     it('ranks canonical latest submissions before intersecting row-specific filters', async () => {
       resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
@@ -3832,15 +4006,9 @@ describe('SubmissionService', () => {
           );
 
           expect(latestSpy).toHaveBeenCalled();
-          if (roleName === 'Submitter') {
-            expect(
-              challengeApiServiceMock.getChallengeDetail,
-            ).toHaveBeenCalledWith('challenge-1');
-          } else {
-            expect(
-              challengeApiServiceMock.getChallengeDetail,
-            ).not.toHaveBeenCalled();
-          }
+          expect(
+            challengeApiServiceMock.getChallengeDetail,
+          ).toHaveBeenCalledWith('challenge-1');
         },
       );
 

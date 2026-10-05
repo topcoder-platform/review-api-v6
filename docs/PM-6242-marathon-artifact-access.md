@@ -26,6 +26,13 @@ is unchanged. Registered contestants may request other members' full submission
 history after MM completion; explicit latest-only queries still return latest
 attempts. This lets both UIs discover every released attempt's artifacts.
 
+## Submission history follow-up (PM-6498)
+
+Submission history is now public for every visible Marathon Match, including
+active matches and anonymous or unregistered viewers. This supersedes the
+completed-contestant history exception described above; artifact listing and
+download permissions still follow the original completed-contestant rules.
+
 ## Validation
 
 Regression coverage exercises listing, direct downloads, mixed-case internal
