@@ -126,7 +126,7 @@ export class AiReviewConfigController {
   @ApiOperation({
     summary: 'Update an AI review config',
     description:
-      'Roles: Admin, Copilot, TalentManager | Scopes: update:ai-review-config. Challenge creators with the Copilot role (or Admins) may update configs for their own challenges. Blocked if challenge is completed or config has decisions. challengeId cannot be updated.',
+      'Roles: Admin, Copilot, TalentManager | Scopes: update:ai-review-config. Challenge creators with the Copilot role (or Admins) may update configs for their own challenges. Blocked if challenge is completed or config has decisions. Once the challenge has submissions, only the review mode (AI_GATING / AI_ONLY, with autoFinalize) can change, and only until a review phase starts. challengeId cannot be updated.',
   })
   @ApiParam({
     name: 'id',
@@ -154,7 +154,8 @@ export class AiReviewConfigController {
   @ApiResponse({ status: 404, description: 'AI review config not found.' })
   @ApiResponse({
     status: 409,
-    description: 'Conflict. Config has decisions.',
+    description:
+      'Conflict. Config has decisions, or the challenge has submissions and the update changes more than the review mode or a review phase has started.',
   })
   async update(
     @Param('id') id: string,

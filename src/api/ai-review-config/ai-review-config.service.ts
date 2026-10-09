@@ -24,6 +24,13 @@ import {
 } from '../../dto/aiReviewConfig.dto';
 import { AiReviewMode as ResponseAiReviewMode } from '../../dto/aiReviewTemplateConfig.dto';
 import { AiReviewMode as PrismaAiReviewMode, Prisma } from '@prisma/client';
+import { isDeepStrictEqual } from 'util';
+
+/**
+ * Matches review phase names (AI Screening, AI Review, Review, Iterative Review,
+ * Screening, ...). Once one of them starts, the review mode can no longer switch.
+ */
+const REVIEW_PHASE_NAME_PATTERN = /review|screening/i;
 
 const CONFIG_INCLUDE = {
   workflows: {
@@ -288,6 +295,107 @@ export class AiReviewConfigService {
     }
   }
 
+  /**
+   * Validates a config update against the challenge's submissions.
+   * Without submissions any setting can change. Once submissions exist the config is
+   * locked, except that the review mode can still switch between AI_GATING and AI_ONLY
+   * until a review phase starts. challenge-api then moves the challenge timeline to the
+   * template that matches the new mode.
+   *
+   * @param config persisted config being updated.
+   * @param dto requested update.
+   * @returns resolves when the update is allowed.
+   * @throws ConflictException when the challenge has submissions and the update changes
+   * more than the review mode, or when a review phase has already started.
+   */
+  private async validateUpdateAllowedWithSubmissions(
+    config: AiReviewConfigResponseDto,
+    dto: UpdateAiReviewConfigDto,
+  ): Promise<void> {
+    const challengeId = config.challengeId;
+    const count = await this.prisma.submission.count({
+      where: { challengeId },
+    });
+    if (count === 0) {
+      return;
+    }
+
+    if (!this.isReviewModeOnlyUpdate(config, dto)) {
+      throw new ConflictException(
+        `Cannot update AI review config: challenge ${challengeId} already has submissions. Only the review mode can be switched until the review phase starts.`,
+      );
+    }
+
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
+    const startedReviewPhase = (challenge.phases ?? []).find(
+      (phase) =>
+        REVIEW_PHASE_NAME_PATTERN.test(phase.name ?? '') &&
+        (phase.isOpen === true || !!phase.actualStartTime),
+    );
+    if (startedReviewPhase) {
+      throw new ConflictException(
+        `Cannot switch the AI review mode: the ${startedReviewPhase.name} phase of challenge ${challengeId} has already started.`,
+      );
+    }
+  }
+
+  /**
+   * Checks whether an update changes nothing but the review mode.
+   * `autoFinalize` only applies to AI_ONLY and follows the mode, so it may change too.
+   * Omitted fields, an empty workflow list (ignored by `update`) and values equal to the
+   * persisted ones count as unchanged.
+   *
+   * @param config persisted config being updated.
+   * @param dto requested update.
+   * @returns true when no setting other than `mode` or `autoFinalize` changes.
+   */
+  private isReviewModeOnlyUpdate(
+    config: AiReviewConfigResponseDto,
+    dto: UpdateAiReviewConfigDto,
+  ): boolean {
+    const toWorkflowKey = (workflow: {
+      workflowId: string;
+      weightPercent: number;
+      isGating: boolean;
+    }): string =>
+      `${workflow.workflowId}:${Number(workflow.weightPercent)}:${workflow.isGating === true}`;
+    const requestedWorkflowKeys = (dto.workflows ?? [])
+      .map(toWorkflowKey)
+      .sort();
+    const currentWorkflowKeys = config.workflows.map(toWorkflowKey).sort();
+
+    if (
+      dto.minPassingThreshold !== undefined &&
+      Number(dto.minPassingThreshold) !== Number(config.minPassingThreshold)
+    ) {
+      return false;
+    }
+    if (
+      dto.instantReview !== undefined &&
+      dto.instantReview !== config.instantReview
+    ) {
+      return false;
+    }
+    if (
+      dto.templateId !== undefined &&
+      (dto.templateId || null) !== (config.templateId || null)
+    ) {
+      return false;
+    }
+    if (
+      dto.formula !== undefined &&
+      !isDeepStrictEqual(dto.formula, config.formula)
+    ) {
+      return false;
+    }
+
+    return (
+      requestedWorkflowKeys.length === 0 ||
+      requestedWorkflowKeys.join(',') === currentWorkflowKeys.join(',')
+    );
+  }
+
   private async validateWorkflowIdsExistAndActive(
     workflowIds: string[],
   ): Promise<void> {
@@ -545,7 +653,7 @@ export class AiReviewConfigService {
     const challengeId = config.challengeId;
 
     await this.validateCanManageConfigForChallenge(challengeId, authUser);
-    await this.validateNoSubmissionsExistForChallenge(challengeId);
+    await this.validateUpdateAllowedWithSubmissions(config, dto);
     await this.validateChallengeNotCompleted(challengeId);
     await this.validateNoDecisionsForConfig(id);
     await this.validateNoAiRunsExistForChallenge(challengeId);
