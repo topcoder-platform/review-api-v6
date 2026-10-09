@@ -123,7 +123,7 @@ challenge copilots/managers, admins, project managers, and authorized machine
 clients retain their existing history access. Unavailable challenge or resource
 metadata does not grant broader access.
 
-Two rules keep "latest-only" from hiding a member's own work:
+Three rules keep "latest-only" from hiding a member's own work:
 
 - **Latest is per submission type.** The canonical ranking partitions by
   `challengeId`, `memberId`, and `type`, so a Checkpoint Submission is never
@@ -141,6 +141,12 @@ Two rules keep "latest-only" from hiding a member's own work:
   Submissions rows and totals consistent before and after system testing.
   My Submissions and history requests without the flag retain the owner's full
   history, and a list already scoped to another `memberId` cannot be widened.
+- **Reviewers keep what they reviewed.** On the same imposed latest-only lists,
+  a non-Design review resource (for example a First2Finish iterative reviewer)
+  also receives every older attempt that already has a review by one of their
+  resources. Without this, a submitter who failed an iterative review and
+  resubmitted hid the first iterative review from the reviewer who scored it.
+  Explicit `isLatest=true` requests are not widened.
 
 ## Run tests
 
