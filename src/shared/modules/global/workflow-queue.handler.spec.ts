@@ -53,6 +53,7 @@ describe('WorkflowQueueHandler', () => {
       findUnique: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       createManyAndReturn: jest.fn(),
     },
     aiWorkflow: { findMany: jest.fn() },
@@ -95,6 +96,7 @@ describe('WorkflowQueueHandler', () => {
       status: 'PENDING',
     });
     prismaMock.submission.findUnique.mockResolvedValue(null);
+    prismaMock.aiWorkflowRun.findMany.mockResolvedValue([]);
     handler = buildHandler();
   });
 
@@ -105,6 +107,58 @@ describe('WorkflowQueueHandler', () => {
       expect(
         aiReviewerDecisionMakerMock.evaluateSubmission,
       ).toHaveBeenCalledWith('submission-1');
+      expect(prismaMock.aiWorkflowRun.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('promotes timed out runs with a persisted score to SUCCESS before evaluating', async () => {
+      prismaMock.aiWorkflowRun.findMany.mockResolvedValue([{ id: 'run-1' }]);
+      prismaMock.aiWorkflowRun.updateMany.mockResolvedValue({ count: 1 });
+      aiReviewerDecisionMakerMock.evaluateSubmission.mockResolvedValue({
+        status: 'PASSED',
+      });
+
+      await handler.rebuildSubmissionDecision('submission-1');
+
+      expect(prismaMock.aiWorkflowRun.findMany).toHaveBeenCalledWith({
+        where: {
+          submissionId: 'submission-1',
+          status: 'TIMEOUT',
+          score: { not: null },
+        },
+        select: { id: true },
+      });
+      expect(prismaMock.aiWorkflowRun.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['run-1'] }, status: 'TIMEOUT' },
+        data: { status: 'SUCCESS' },
+      });
+      expect(
+        prismaMock.aiWorkflowRun.updateMany.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        aiReviewerDecisionMakerMock.evaluateSubmission.mock
+          .invocationCallOrder[0],
+      );
+      expect(
+        submissionServiceMock.ensurePendingReviewsForSubmission,
+      ).toHaveBeenCalledWith('submission-1', {
+        requireAiDecisionPass: true,
+        triggerSource: 'ai-decision',
+      });
+    });
+
+    it('marks the decision as errored when the promotion fails', async () => {
+      prismaMock.aiWorkflowRun.findMany.mockRejectedValue(new Error('db down'));
+
+      await handler.rebuildSubmissionDecision('submission-1');
+
+      expect(
+        aiReviewerDecisionMakerMock.evaluateSubmission,
+      ).not.toHaveBeenCalled();
+      expect(
+        aiReviewerDecisionMakerMock.markDecisionError,
+      ).toHaveBeenCalledWith(
+        'submission-1',
+        'Failed to evaluate AI decision: db down',
+      );
     });
   });
 
