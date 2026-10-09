@@ -3,7 +3,11 @@ jest.mock('nanoid', () => ({
   nanoid: () => 'mock-nanoid',
 }));
 
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Prisma, ReviewOpportunityType } from '@prisma/client';
 import {
   ReviewApplicationRole,
@@ -562,6 +566,96 @@ describe('ReviewApplicationService', () => {
         role: ReviewApplicationRole.REVIEWER,
       }),
     );
+  });
+
+  it('stores the generic Reviewer role as Iterative Reviewer for an iterative review opportunity', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      id: 'opportunity-iterative',
+      challengeId: 'challenge-f2f',
+      type: ReviewOpportunityType.ITERATIVE_REVIEW,
+      status: 'OPEN',
+      openPositions: 1,
+      startDate: new Date('2099-01-01T00:00:00Z'),
+      duration: 86400,
+      applications: [],
+    });
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-f2f',
+      status: ChallengeStatus.ACTIVE,
+    });
+    prismaMock.reviewApplication.findMany.mockResolvedValue([]);
+    prismaMock.reviewApplication.create.mockImplementation(({ data }) =>
+      Promise.resolve({
+        id: 'application-iterative',
+        ...data,
+        createdAt: new Date('2026-10-09T00:00:00.000Z'),
+      }),
+    );
+
+    await expect(
+      service.create(
+        {
+          userId: '1001',
+          handle: 'reviewer-one',
+          roles: [] as any,
+          isMachine: false,
+        },
+        {
+          opportunityId: 'opportunity-iterative',
+          role: ReviewApplicationRole.REVIEWER,
+        },
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 'application-iterative',
+        role: ReviewApplicationRole.ITERATIVE_REVIEWER,
+      }),
+    );
+    expect(prismaMock.reviewApplication.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: '1001',
+        opportunityId: 'opportunity-iterative',
+        role: ReviewApplicationRole.ITERATIVE_REVIEWER,
+      },
+    });
+    expect(prismaMock.reviewApplication.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        role: ReviewApplicationRole.ITERATIVE_REVIEWER,
+      }),
+    });
+  });
+
+  it('still rejects a non-iterative role for an iterative review opportunity', async () => {
+    prismaMock.reviewOpportunity.findUnique.mockResolvedValue({
+      id: 'opportunity-iterative',
+      challengeId: 'challenge-f2f',
+      type: ReviewOpportunityType.ITERATIVE_REVIEW,
+      status: 'OPEN',
+      openPositions: 1,
+      startDate: new Date('2099-01-01T00:00:00Z'),
+      duration: 86400,
+      applications: [],
+    });
+    challengeServiceMock.getChallengeDetailForUser.mockResolvedValue({
+      id: 'challenge-f2f',
+      status: ChallengeStatus.ACTIVE,
+    });
+
+    await expect(
+      service.create(
+        {
+          userId: '1001',
+          handle: 'reviewer-one',
+          roles: [] as any,
+          isMachine: false,
+        },
+        {
+          opportunityId: 'opportunity-iterative',
+          role: ReviewApplicationRole.SPECIFICATION_REVIEWER,
+        },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prismaMock.reviewApplication.create).not.toHaveBeenCalled();
   });
 
   it('rejects applications after an OPEN opportunity review window ends', async () => {

@@ -129,7 +129,9 @@ returns the metadata envelope. `GET /review-applications/me` supports repeated
 and `sortOrder`; its metadata is `total`, `page`, `perPage`, and `totalPages`.
 
 `POST /review-applications` remains compatible with
-`{ "opportunityId": "...", "role": "REVIEWER" }`, while failing closed for a
+`{ "opportunityId": "...", "role": "REVIEWER" }`; for an `ITERATIVE_REVIEW`
+opportunity (the First2Finish default) that generic role is stored as
+`ITERATIVE_REVIEWER`. It still fails closed for a mismatched role, a
 closed opportunity, inactive or inaccessible challenge, or duplicate
 application. The database composite uniqueness constraint on opportunity,
 member, and role is authoritative for concurrent duplicate requests; the
