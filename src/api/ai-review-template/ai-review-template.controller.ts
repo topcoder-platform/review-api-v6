@@ -72,12 +72,17 @@ export class AiReviewTemplateController {
   }
 
   @Get()
-  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.TalentManager)
+  @Roles(
+    UserRole.Admin,
+    UserRole.Copilot,
+    UserRole.ProjectManager,
+    UserRole.TalentManager,
+  )
   @Scopes(Scope.ReadAiReviewTemplate)
   @ApiOperation({
     summary: 'List AI review templates',
     description:
-      'Roles: Admin, Copilot, TalentManager | Scopes: read:ai-review-template',
+      'Roles: Admin, Copilot, ProjectManager, TalentManager | Scopes: read:ai-review-template',
   })
   @ApiQuery({
     name: 'challengeTrack',
