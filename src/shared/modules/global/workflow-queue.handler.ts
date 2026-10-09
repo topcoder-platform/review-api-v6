@@ -320,8 +320,23 @@ export class WorkflowQueueHandler {
     return true;
   }
 
+  /**
+   * Re-evaluates the AI decision for a submission and, when it passes, creates
+   * the pending human reviews. Called after every workflow run completion and
+   * by the admin `POST /workflows/runs/rebuild-decision` endpoint.
+   *
+   * Timed-out runs that already have a persisted score are promoted to SUCCESS
+   * first (see {@link promoteScoredTimedOutRuns}), so their score counts
+   * instead of keeping the decision pending forever.
+   *
+   * Errors are not rethrown: they are logged and the decision is marked ERROR.
+   *
+   * @param submissionId the submission whose AI decision should be rebuilt
+   */
   async rebuildSubmissionDecision(submissionId: string): Promise<void> {
     try {
+      await this.promoteScoredTimedOutRuns(submissionId);
+
       const decision =
         await this.aiReviewerDecisionMaker.evaluateSubmission(submissionId);
       const decisionStatus = String((decision as any)?.status ?? '')
@@ -364,6 +379,50 @@ export class WorkflowQueueHandler {
         );
       }
     }
+  }
+
+  /**
+   * A run marked TIMEOUT that has a persisted score did finish: its results
+   * were saved, but nothing moved it out of TIMEOUT. That happens when the
+   * score was saved before the timeout guard fired, or before late results
+   * were reconciled. The decision maker keeps such a submission PENDING
+   * ("must be retriggered"), and the run never reports its real result.
+   *
+   * Promotes those runs to SUCCESS, which is the same rule
+   * `reconcileTimedOutWorkflowRun` applies to late results. The stored
+   * `completedAt` is kept, because the real completion time is unknown.
+   *
+   * Used by `rebuildSubmissionDecision` before the decision is evaluated.
+   * Prisma errors are not caught here; that caller handles them.
+   *
+   * @param submissionId the submission whose timed-out runs should be promoted
+   * @returns the number of promoted runs
+   */
+  private async promoteScoredTimedOutRuns(
+    submissionId: string,
+  ): Promise<number> {
+    const scoredTimedOutRuns = await this.prisma.aiWorkflowRun.findMany({
+      where: { submissionId, status: 'TIMEOUT', score: { not: null } },
+      select: { id: true },
+    });
+
+    if (!scoredTimedOutRuns.length) {
+      return 0;
+    }
+
+    const runIds = scoredTimedOutRuns.map((run) => run.id);
+    const { count } = await this.prisma.aiWorkflowRun.updateMany({
+      where: { id: { in: runIds }, status: 'TIMEOUT' },
+      data: { status: 'SUCCESS' },
+    });
+
+    this.logWithContext(
+      `Promoted ${count} timed out workflow run(s) with a persisted score to SUCCESS before rebuilding the AI decision`,
+      { submissionId, aiWorkflowRunIds: runIds },
+      'warn',
+    );
+
+    return count;
   }
 
   async queueWorkflowRuns(
