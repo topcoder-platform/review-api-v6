@@ -121,6 +121,8 @@ Common events for development workflows:
 - **Create** - Branch or tag creation
 - **Delete** - Branch or tag deletion
 
+AI workflow repositories must send **Workflow jobs** and **Workflow runs** events. Job events track the AI workflow run status. Run `completed` events with a `cancelled` conclusion mark the matching AI workflow run as `CANCELLED`. Gitea does not always send job events for runs that a newer run cancels in the same concurrency group.
+
 ### Step 4: Activate and Create
 
 1. Ensure **Active** checkbox is checked

@@ -799,9 +799,114 @@ export class WorkflowQueueHandler {
   }
 
   /**
-   * Post-completion side effects shared by the gitea `completed` webhook and
-   * the timed-out run reconciliation: re-evaluate the AI decision, notify the
-   * submitter and publish the AI workflow phase completion event.
+   * Handles gitea `workflow_run` webhook events, which report the status of a
+   * whole workflow run instead of a single job.
+   *
+   * Run statuses are otherwise driven by `workflow_job` events (see
+   * `handleWorkflowRunEvents`). When a newer run is dispatched in the same
+   * concurrency group (`cancel-in-progress`, e.g. the member submitted again),
+   * gitea cancels the previous run but does not always send the `completed`
+   * job events for it. The run level `completed` event is still sent, so it is
+   * used here to mark the matching aiWorkflowRun as CANCELLED instead of
+   * leaving it in progress until the timeout guard retries it or marks it
+   * TIMEOUT.
+   *
+   * Only `completed` events with a cancelled conclusion are handled. Other
+   * conclusions keep going through the job events, which also drive the retry
+   * policy. A run that already left the statuses accepted by the job event
+   * handling (e.g. it was already cancelled by a job event) is left untouched.
+   *
+   * Called by `WebhookService` for every gitea `workflow_run` delivery.
+   *
+   * @param event the gitea `workflow_run` webhook payload
+   */
+  async handleWorkflowRunStatusEvent(event: {
+    action: 'requested' | 'in_progress' | 'completed';
+    workflow_run: {
+      id: number;
+      conclusion?: string | null;
+    };
+  }): Promise<void> {
+    const gitRunId = event?.workflow_run?.id;
+    const conclusion = event?.workflow_run?.conclusion?.trim();
+
+    if (
+      event?.action !== 'completed' ||
+      gitRunId === undefined ||
+      gitRunId === null ||
+      !conclusion ||
+      this.normalizeWorkflowConclusion(conclusion, {
+        gitRunId: `${gitRunId}`,
+      }) !== 'CANCELLED'
+    ) {
+      return;
+    }
+
+    const aiWorkflowRuns = await this.prisma.aiWorkflowRun.findMany({
+      where: {
+        gitRunId: `${gitRunId}`,
+      },
+      include: {
+        workflow: true,
+      },
+    });
+
+    if (aiWorkflowRuns.length !== 1) {
+      // No match is expected for gitea runs that review-api did not dispatch,
+      // or that were replaced by a retry dispatch with a new gitRunId.
+      this.logWithContext(
+        `Skipping cancelled workflow_run event, found ${aiWorkflowRuns.length} matching aiWorkflowRuns`,
+        { gitRunId: `${gitRunId}` },
+        aiWorkflowRuns.length > 1 ? 'error' : 'log',
+      );
+      return;
+    }
+
+    const [aiWorkflowRun] = aiWorkflowRuns;
+    const logContext = {
+      aiWorkflowRunId: aiWorkflowRun.id,
+      submissionId: aiWorkflowRun.submissionId ?? null,
+      gitRunId: `${gitRunId}`,
+    };
+
+    // The status check is part of the update, so a cancellation that a
+    // concurrent job event already recorded is not processed twice.
+    const { count } = await this.prisma.aiWorkflowRun.updateMany({
+      where: {
+        id: aiWorkflowRun.id,
+        status: { in: ['INIT', 'DISPATCHED', 'IN_PROGRESS', 'TIMEOUT'] },
+      },
+      data: {
+        status: 'CANCELLED',
+        completedAt: new Date(),
+      },
+    });
+
+    if (!count) {
+      this.logWithContext(
+        `Skipping cancelled workflow_run event for aiWorkflowRun ${aiWorkflowRun.id} in status '${aiWorkflowRun.status}'`,
+        logContext,
+      );
+      return;
+    }
+
+    this.logWithContext(
+      `Workflow run ${aiWorkflowRun.id} was cancelled in gitea. Status updated from ${aiWorkflowRun.status} to CANCELLED`,
+      logContext,
+      'warn',
+    );
+
+    await this.runWorkflowRunCompletionSideEffects(aiWorkflowRun, {
+      notify: false,
+      gitRunId: `${gitRunId}`,
+    });
+  }
+
+  /**
+   * Post-completion side effects shared by the gitea `completed` webhooks
+   * (job events and cancelled run events) and the timed-out run
+   * reconciliation: re-evaluate the AI decision, notify the submitter and
+   * publish the AI workflow phase completion event.
    */
   private async runWorkflowRunCompletionSideEffects(
     aiWorkflowRun: aiWorkflowRun & { workflow: aiWorkflow },

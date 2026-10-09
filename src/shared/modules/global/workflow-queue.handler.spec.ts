@@ -53,6 +53,7 @@ describe('WorkflowQueueHandler', () => {
       findUnique: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       createManyAndReturn: jest.fn(),
     },
     aiWorkflow: { findMany: jest.fn() },
@@ -324,6 +325,99 @@ describe('WorkflowQueueHandler', () => {
       expect(aiWorkflowRunMock.createManyAndReturn).not.toHaveBeenCalled();
       expect(result.skipped).toBe(true);
       expect(result.queuedRuns).toEqual([]);
+    });
+  });
+
+  describe('handleWorkflowRunStatusEvent', () => {
+    const workflowRunEvent = (overrides: Record<string, unknown> = {}) => ({
+      action: 'completed' as const,
+      workflow_run: {
+        id: 3860,
+        status: 'completed',
+        conclusion: 'cancelled',
+        ...overrides,
+      },
+    });
+
+    const dispatchedRun = (overrides: Record<string, unknown> = {}) => ({
+      id: 'run-1',
+      workflowId: 'workflow-1',
+      submissionId: 'submission-1',
+      gitRunId: '3860',
+      status: 'DISPATCHED',
+      score: null,
+      completedAt: null,
+      workflow: { id: 'workflow-1', name: 'AI Reviewer' },
+      ...overrides,
+    });
+
+    it('marks the matching run as CANCELLED when gitea cancels the whole run', async () => {
+      prismaMock.aiWorkflowRun.findMany.mockResolvedValue([dispatchedRun()]);
+      prismaMock.aiWorkflowRun.updateMany.mockResolvedValue({ count: 1 });
+
+      await handler.handleWorkflowRunStatusEvent(workflowRunEvent());
+
+      expect(prismaMock.aiWorkflowRun.findMany).toHaveBeenCalledWith({
+        where: { gitRunId: '3860' },
+        include: { workflow: true },
+      });
+      expect(prismaMock.aiWorkflowRun.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'run-1',
+          status: { in: ['INIT', 'DISPATCHED', 'IN_PROGRESS', 'TIMEOUT'] },
+        },
+        data: {
+          status: 'CANCELLED',
+          completedAt: expect.any(Date),
+        },
+      });
+      expect(
+        aiReviewerDecisionMakerMock.evaluateSubmission,
+      ).toHaveBeenCalledWith('submission-1');
+      // Cancelled runs don't notify the submitter, like cancelled job events.
+      expect(eventBusServiceMock.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['requested', 'cancelled'],
+      ['in_progress', 'cancelled'],
+      ['completed', 'success'],
+      ['completed', 'failure'],
+      ['completed', ''],
+    ])('ignores %s events with conclusion "%s"', async (action, conclusion) => {
+      await handler.handleWorkflowRunStatusEvent({
+        ...workflowRunEvent({ conclusion }),
+        action: action as 'requested' | 'in_progress' | 'completed',
+      });
+
+      expect(prismaMock.aiWorkflowRun.findMany).not.toHaveBeenCalled();
+      expect(prismaMock.aiWorkflowRun.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('ignores gitea runs without a matching aiWorkflowRun', async () => {
+      // e.g. the run was retried and now tracks a newer gitRunId
+      prismaMock.aiWorkflowRun.findMany.mockResolvedValue([]);
+
+      await handler.handleWorkflowRunStatusEvent(workflowRunEvent());
+
+      expect(prismaMock.aiWorkflowRun.updateMany).not.toHaveBeenCalled();
+      expect(
+        aiReviewerDecisionMakerMock.evaluateSubmission,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not process a run whose cancellation was already recorded', async () => {
+      prismaMock.aiWorkflowRun.findMany.mockResolvedValue([
+        dispatchedRun({ status: 'CANCELLED' }),
+      ]);
+      prismaMock.aiWorkflowRun.updateMany.mockResolvedValue({ count: 0 });
+
+      await handler.handleWorkflowRunStatusEvent(workflowRunEvent());
+
+      expect(prismaMock.aiWorkflowRun.updateMany).toHaveBeenCalled();
+      expect(
+        aiReviewerDecisionMakerMock.evaluateSubmission,
+      ).not.toHaveBeenCalled();
     });
   });
 });
