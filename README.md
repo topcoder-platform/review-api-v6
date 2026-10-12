@@ -146,7 +146,10 @@ Three rules keep "latest-only" from hiding a member's own work:
   also receives every older attempt that already has a review by one of their
   resources. Without this, a submitter who failed an iterative review and
   resubmitted hid the first iterative review from the reviewer who scored it.
-  Explicit `isLatest=true` requests are not widened.
+  The original score, review comments, and phase remain available on active and
+  completed challenges, while the older attempt is marked `isLatest=false`.
+  This also applies when the caller requests `isLatest=false`; explicit
+  `isLatest=true` requests are not widened.
 
 ## Run tests
 
