@@ -295,6 +295,8 @@ export class AiWorkflowController {
   @Scopes(Scope.UpdateWorkflowRun)
   @ApiOperation({
     summary: 'Rebuild the AI decision for a submission by submission ID',
+    description:
+      'Timed out runs that already have a persisted score are promoted to SUCCESS before the decision is re-evaluated.',
   })
   @ApiBody({
     description: 'Submission ID to rebuild the AI decision for',

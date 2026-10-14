@@ -3610,6 +3610,263 @@ describe('SubmissionService', () => {
       ]);
     });
 
+    describe('First2Finish iterative reviewer history (PM-6521)', () => {
+      const iterativeReviewer = {
+        userId: 'iterative-reviewer',
+        isMachine: false,
+        roles: [UserRole.User],
+      };
+      /**
+       * Builds a submission fixture for the iterative-review history regressions.
+       * @param id - Submission identifier.
+       * @param memberId - Submitter identifier shared by successive attempts.
+       * @param submittedDate - ISO timestamp used to order the attempts.
+       * @returns An active contest submission; tests attach review details as needed.
+       * @throws Never.
+       */
+      const reviewedAttempt = (
+        id: string,
+        memberId: string,
+        submittedDate: string,
+      ) => ({
+        id,
+        challengeId: 'challenge-1',
+        memberId,
+        submittedDate: new Date(submittedDate),
+        createdAt: new Date(submittedDate),
+        updatedAt: new Date(submittedDate),
+        type: SubmissionType.CONTEST_SUBMISSION,
+        status: SubmissionStatus.ACTIVE,
+        review: [],
+        reviewSummation: [],
+        legacyChallengeId: null,
+        prizeId: null,
+      });
+
+      beforeEach(() => {
+        challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+          id: 'challenge-1',
+          status: ChallengeStatus.COMPLETED,
+          type: 'First2Finish',
+          track: 'Quality Assurance',
+          phases: [],
+        });
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+          { id: 'iterative-resource', roleName: 'Iterative Reviewer' },
+        ]);
+        jest
+          .spyOn(listService as any, 'populateSubmissionCountsForQuery')
+          .mockResolvedValue(undefined);
+      });
+
+      it.each([
+        ['Quality Assurance', ChallengeStatus.ACTIVE, undefined],
+        ['Quality Assurance', ChallengeStatus.ACTIVE, 'false'],
+        ['Quality Assurance', ChallengeStatus.COMPLETED, undefined],
+        ['Quality Assurance', ChallengeStatus.COMPLETED, 'false'],
+        ['Development', ChallengeStatus.ACTIVE, undefined],
+        ['Development', ChallengeStatus.ACTIVE, 'false'],
+        ['Development', ChallengeStatus.COMPLETED, undefined],
+        ['Development', ChallengeStatus.COMPLETED, 'false'],
+      ])(
+        'retains the original review details after resubmission on %s / %s with isLatest=%s',
+        async (track, status, isLatest) => {
+          challengeApiServiceMock.getChallengeDetail.mockResolvedValue({
+            id: 'challenge-1',
+            status,
+            type: 'First2Finish',
+            track,
+            phases: [
+              {
+                id: 'iterative-phase-1',
+                name: 'Iterative Review',
+                isOpen: false,
+              },
+              {
+                id: 'iterative-phase-3',
+                name: 'Iterative Review 3',
+                isOpen: false,
+              },
+            ],
+          });
+          const failedReview = {
+            id: 'failed-review',
+            resourceId: 'iterative-resource',
+            submissionId: 'failed-attempt',
+            phaseId: 'iterative-phase-1',
+            scorecardId: 'iterative-scorecard',
+            status: ReviewStatus.COMPLETED,
+            committed: true,
+            initialScore: 11,
+            finalScore: 11,
+            reviewItems: [
+              {
+                id: 'failed-review-item',
+                scorecardQuestionId: 'question-1',
+                initialAnswer: '1',
+                finalAnswer: '1',
+                reviewItemComments: [
+                  {
+                    id: 'failed-review-comment',
+                    resourceId: 'iterative-resource',
+                    content: 'The submission does not meet the requirements.',
+                  },
+                ],
+              },
+            ],
+          };
+          const latestReview = {
+            ...failedReview,
+            id: 'latest-review',
+            submissionId: 'resubmission',
+            phaseId: 'iterative-phase-3',
+            initialScore: 100,
+            finalScore: 100,
+            reviewItems: [],
+          };
+          const rows = [
+            {
+              ...reviewedAttempt(
+                'resubmission',
+                'submitter-1',
+                '2026-10-02T06:10:02Z',
+              ),
+              review: [structuredClone(latestReview)],
+            },
+            reviewedAttempt(
+              'other-member',
+              'submitter-2',
+              '2026-10-02T06:08:05Z',
+            ),
+            {
+              ...reviewedAttempt(
+                'failed-attempt',
+                'submitter-1',
+                '2026-10-02T06:00:01Z',
+              ),
+              review: [structuredClone(failedReview)],
+            },
+          ];
+          const latestSpy = jest
+            .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+            .mockResolvedValue(['resubmission', 'other-member']);
+          prismaMock.submission.findMany.mockResolvedValue(
+            rows.map((entry) => ({ ...entry })),
+          );
+          prismaMock.submission.count.mockResolvedValue(rows.length);
+          prismaMock.$queryRaw.mockResolvedValue([
+            { id: 'resubmission' },
+            { id: 'other-member' },
+          ]);
+
+          const result = await listService.listSubmission(
+            iterativeReviewer as any,
+            { challengeId: 'challenge-1', isLatest } as any,
+            { page: 1, perPage: 50 } as any,
+          );
+
+          expect(latestSpy).toHaveBeenCalled();
+          expect(prismaMock.submission.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+              where: expect.objectContaining({
+                challengeId: 'challenge-1',
+                AND: [
+                  {
+                    OR: [
+                      { id: { in: ['resubmission', 'other-member'] } },
+                      { memberId: 'iterative-reviewer' },
+                      {
+                        review: {
+                          some: { resourceId: { in: ['iterative-resource'] } },
+                        },
+                      },
+                    ],
+                  },
+                ],
+              }),
+            }),
+          );
+          // The reviewed older attempt is history, so the UI can still tell it
+          // apart from the submitter's current resubmission.
+          expect(
+            result.data.map((entry) => [entry.id, entry.isLatest]),
+          ).toEqual([
+            ['resubmission', true],
+            ['other-member', true],
+            ['failed-attempt', false],
+          ]);
+          expect(
+            result.data.find((entry) => entry.id === 'failed-attempt')?.review,
+          ).toEqual([
+            expect.objectContaining({
+              ...failedReview,
+              phaseName: 'Iterative Review',
+            }),
+          ]);
+          expect(
+            result.data.find((entry) => entry.id === 'resubmission')?.review,
+          ).toEqual([
+            expect.objectContaining({
+              ...latestReview,
+              phaseName: 'Iterative Review 3',
+            }),
+          ]);
+          const { where } = prismaMock.submission.findMany.mock.calls[0][0];
+          expect(prismaMock.submission.count).toHaveBeenCalledWith({ where });
+          expect(result.meta.totalCount).toBe(rows.length);
+        },
+      );
+
+      it('does not widen an explicit latest-only request', async () => {
+        jest
+          .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+          .mockResolvedValue(['resubmission']);
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+
+        await listService.listSubmission(
+          iterativeReviewer as any,
+          { challengeId: 'challenge-1', isLatest: 'true' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        const { where } = prismaMock.submission.findMany.mock.calls[0][0];
+        expect(where.id).toEqual({ in: ['resubmission'] });
+        expect(where.AND).toBeUndefined();
+      });
+
+      it('keeps ordinary participants limited to their own history', async () => {
+        resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
+          {
+            id: 'submitter-resource',
+            roleName: 'Submitter',
+            roleId: CommonConfig.roles.submitterRoleId,
+          },
+        ]);
+        jest
+          .spyOn(listService as any, 'findLatestSubmissionIdsForQuery')
+          .mockResolvedValue(['resubmission']);
+        prismaMock.submission.findMany.mockResolvedValue([]);
+        prismaMock.submission.count.mockResolvedValue(0);
+
+        await listService.listSubmission(
+          iterativeReviewer as any,
+          { challengeId: 'challenge-1' } as any,
+          { page: 1, perPage: 50 } as any,
+        );
+
+        const { where } = prismaMock.submission.findMany.mock.calls[0][0];
+        expect(where.AND).toEqual([
+          {
+            OR: [
+              { id: { in: ['resubmission'] } },
+              { memberId: 'iterative-reviewer' },
+            ],
+          },
+        ]);
+      });
+    });
+
     it('ranks the canonical latest submission per member and type', async () => {
       resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue([
         {

@@ -1,5 +1,6 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ReviewMethod } from '@prisma/client';
 import type { UpdateAiWorkflowRunItemDto } from 'src/dto/aiWorkflow.dto';
 
@@ -85,7 +86,7 @@ describe('AiWorkflowService.updateRunItem', () => {
     service = new AiWorkflowService(
       prismaMock,
       memberPrismaMock,
-      {} as any,
+      challengeApiServiceMock,
       resourceApiServiceMock,
       aiReviewerDecisionMakerMock,
       giteaServiceMock,
@@ -149,5 +150,80 @@ describe('AiWorkflowService.updateRunItem', () => {
     await expect(
       service.updateRunItem(workflowId, runId, itemId, patchData, user),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  describe('score edits on deterministic workflows', () => {
+    const copilot: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    beforeEach(() => {
+      challengeApiServiceMock.isPhaseOpen.mockResolvedValue(true);
+      jest.spyOn(service, 'computeRunScoreForRunItem').mockResolvedValue(42);
+      prismaMock.aiWorkflowRunItem.update.mockReturnValue('item-update');
+      prismaMock.aiWorkflowRunItemComment.create.mockReturnValue(
+        'comment-create',
+      );
+      prismaMock.aiWorkflowRun.update.mockReturnValue('run-update');
+      prismaMock.$transaction.mockResolvedValue([{ id: itemId }]);
+    });
+
+    it('allows a privileged user to edit the score when a reason is provided', async () => {
+      await service.updateRunItem(
+        workflowId,
+        runId,
+        itemId,
+        { questionScore: 0, comment: 'False positive in test fixtures' },
+        copilot,
+      );
+
+      expect(prismaMock.aiWorkflowRunItem.update).toHaveBeenCalledWith({
+        where: { id: itemId },
+        data: { questionScore: 0, originalQuestionScore: 1 },
+      });
+      expect(prismaMock.aiWorkflowRunItemComment.create).toHaveBeenCalledWith({
+        data: {
+          workflowRunItemId: itemId,
+          content: 'False positive in test fixtures',
+          userId: 'copilot-1',
+        },
+      });
+      expect(prismaMock.$transaction).toHaveBeenCalledWith([
+        'item-update',
+        'comment-create',
+        'run-update',
+      ]);
+      expect(
+        aiReviewerDecisionMakerMock.evaluateSubmission,
+      ).toHaveBeenCalledWith('submission-1');
+    });
+
+    it('requires a reason when editing the score', async () => {
+      await expect(
+        service.updateRunItem(
+          workflowId,
+          runId,
+          itemId,
+          { questionScore: 0 },
+          copilot,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects score edits from non-privileged users', async () => {
+      await expect(
+        service.updateRunItem(
+          workflowId,
+          runId,
+          itemId,
+          { questionScore: 0, comment: 'Not a reviewer decision' },
+          user,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
   });
 });

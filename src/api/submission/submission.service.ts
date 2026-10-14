@@ -87,6 +87,8 @@ type ChallengeSubmissionListAccess = {
   canViewFullHistory: boolean;
   /** Design review window; null is unlimited, undefined retains latest-only privacy. */
   reviewSubmissionLimit?: number | null;
+  /** Requester's review resources; submissions they reviewed survive latest-only privacy. */
+  reviewerResourceIds?: string[];
 };
 
 type SubmissionDownloadCandidate = {
@@ -4209,6 +4211,7 @@ export class SubmissionService {
       let canViewFullHistory =
         isRequestingMember || this.hasGlobalSubmissionHistoryAccess(authUser);
       let reviewSubmissionLimit: number | null | undefined;
+      let reviewerResourceIds: string[] = [];
 
       // A challenge-less list cannot establish access to anybody else's
       // submissions. Keep the legacy unfiltered endpoint useful for members by
@@ -4269,6 +4272,7 @@ export class SubmissionService {
           );
           canViewFullHistory = access.canViewFullHistory;
           reviewSubmissionLimit = access.reviewSubmissionLimit;
+          reviewerResourceIds = access.reviewerResourceIds ?? [];
         }
       }
       if (effectiveMemberId) {
@@ -4416,9 +4420,19 @@ export class SubmissionService {
         // latest-only was imposed rather than asked for, the caller keeps every
         // submission they made themselves, which is what the rule above states
         // and what a submitter needs to see their own checkpoint round (PM-6340).
+        // Likewise a reviewer keeps every submission they reviewed, so a failed
+        // First2Finish iterative review stays visible after a resubmit (PM-6521).
         keepsOwnSubmissions = latestOnlyIsImplied && !!requesterUserId;
+        const ownCriteria: Prisma.submissionWhereInput[] = [
+          { memberId: requesterUserId },
+        ];
+        if (reviewerResourceIds.length) {
+          ownCriteria.push({
+            review: { some: { resourceId: { in: reviewerResourceIds } } },
+          });
+        }
         const latestCriteria: Prisma.submissionWhereInput = keepsOwnSubmissions
-          ? { OR: [{ id: latestIdFilter }, { memberId: requesterUserId }] }
+          ? { OR: [{ id: latestIdFilter }, ...ownCriteria] }
           : { id: latestIdFilter };
         if (whereClause.id || keepsOwnSubmissions) {
           const existingAnd = Array.isArray(whereClause.AND)
@@ -4668,11 +4682,15 @@ export class SubmissionService {
    * Every viewer, including anonymous callers, can inspect all attempts of a
    * visible Marathon Match; listSubmission checks whitelist/group access first.
    * This controls history rows only, not artifact downloads or private fields.
-   * Other callers and failed lookups retain latest-only visibility.
+   * Other callers and failed lookups retain latest-only visibility. Non-Design
+   * review resources also get their resource ids, so an older attempt they
+   * already reviewed (e.g. a failed First2Finish iterative review) stays listed
+   * (PM-6521).
    *
    * @param authUser - Authenticated requester.
    * @param challengeId - Challenge whose resource roles should be checked.
-   * @returns Full-history access or the eligible Design submission rank limit.
+   * @returns Full-history access, the eligible Design submission rank limit, or
+   * the requester's review resource ids for latest-only lists.
    * @throws Never; unavailable role or challenge metadata fails closed.
    */
   private async resolveChallengeSubmissionListAccess(
@@ -4706,15 +4724,27 @@ export class SubmissionService {
       ) {
         return { canViewFullHistory: true };
       }
-      const hasReviewRole = roleNames.some((role) =>
-        REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) => role.includes(keyword)),
-      );
-      return hasReviewRole && isDesignTrackChallenge(challenge)
-        ? {
-            canViewFullHistory: false,
-            reviewSubmissionLimit: resolveReviewSubmissionRankLimit(challenge),
-          }
-        : restrictedAccess;
+      const reviewResources = (resources ?? []).filter((resource) => {
+        const role = String(resource?.roleName ?? '').toLowerCase();
+        return REVIEW_ACCESS_ROLE_KEYWORDS.some((keyword) =>
+          role.includes(keyword),
+        );
+      });
+      if (!reviewResources.length) {
+        return restrictedAccess;
+      }
+      if (isDesignTrackChallenge(challenge)) {
+        return {
+          canViewFullHistory: false,
+          reviewSubmissionLimit: resolveReviewSubmissionRankLimit(challenge),
+        };
+      }
+      return {
+        canViewFullHistory: false,
+        reviewerResourceIds: reviewResources
+          .map((resource) => String(resource?.id ?? '').trim())
+          .filter((resourceId) => resourceId.length > 0),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(

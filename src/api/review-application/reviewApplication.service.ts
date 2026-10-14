@@ -19,6 +19,7 @@ import {
   ReviewApplicationRole,
   ReviewApplicationStatus,
   getReviewApplicationRoles,
+  resolveReviewApplicationRole,
 } from 'src/dto/reviewApplication.dto';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
@@ -85,7 +86,9 @@ export class ReviewApplicationService {
 
   /**
    * Creates a review application after enforcing challenge visibility,
-   * opportunity state/window, role compatibility, and uniqueness. Applications
+   * opportunity state/window, role compatibility, and uniqueness. The generic
+   * `REVIEWER` role is stored as `ITERATIVE_REVIEWER` for Iterative Review
+   * opportunities so legacy clients can still apply. Applications
    * stay pending when approved reviewers already fill the advertised positions,
    * so administrators can use them as the opportunity's waitlist.
    * The database uniqueness constraint remains authoritative when concurrent
@@ -106,7 +109,9 @@ export class ReviewApplicationService {
   ): Promise<ReviewApplicationResponseDto> {
     const userId = String(authUser.userId);
     const handle = authUser.handle as string;
-    const duplicateApplicationMessage = `User ${userId} has already submitted an application for opportunity ${dto.opportunityId} with role ${dto.role}`;
+    let role = dto.role;
+    const duplicateApplicationMessage = (): string =>
+      `User ${userId} has already submitted an application for opportunity ${dto.opportunityId} with role ${role}`;
 
     try {
       // make sure review opportunity exists
@@ -141,10 +146,12 @@ export class ReviewApplicationService {
           code: 'REVIEW_OPPORTUNITY_CHALLENGE_NOT_ACTIVE',
         });
       }
+      // map the generic REVIEWER role sent by legacy clients
+      role = resolveReviewApplicationRole(opportunity.type, dto.role);
       // make sure application role matches
-      if (!getReviewApplicationRoles(opportunity.type).includes(dto.role)) {
+      if (!getReviewApplicationRoles(opportunity.type).includes(role)) {
         throw new BadRequestException(
-          `Review application role ${dto.role} doesn't match opportunity type ${opportunity.type}`,
+          `Review application role ${role} doesn't match opportunity type ${opportunity.type}`,
         );
       }
       // check existing
@@ -152,15 +159,15 @@ export class ReviewApplicationService {
         where: {
           userId,
           opportunityId: dto.opportunityId,
-          role: dto.role,
+          role,
         },
       });
       if (existing && existing.length > 0) {
-        throw new ConflictException(duplicateApplicationMessage);
+        throw new ConflictException(duplicateApplicationMessage());
       }
       const entity = await this.prisma.reviewApplication.create({
         data: {
-          role: dto.role,
+          role,
           opportunityId: dto.opportunityId,
           status: ReviewApplicationStatus.PENDING,
           userId,
@@ -176,7 +183,7 @@ export class ReviewApplicationService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException(duplicateApplicationMessage);
+        throw new ConflictException(duplicateApplicationMessage());
       }
 
       // Re-throw business logic exceptions as-is

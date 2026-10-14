@@ -75,7 +75,9 @@ export class WebhookService {
   }
 
   /**
-   * Placeholder for future event-specific processing logic
+   * Event-specific processing logic.
+   * `workflow_job` and `workflow_run` events update the AI workflow runs
+   * through the WorkflowQueueHandler; other events are only stored.
    * This method can be extended to handle different GitHub events differently
    */
   private async handleEventSpecificProcessing(
@@ -92,6 +94,9 @@ export class WebhookService {
     switch (event) {
       case 'workflow_job':
         await this.workflowQueueHandler.handleWorkflowRunEvents(payload);
+        break;
+      case 'workflow_run':
+        await this.workflowQueueHandler.handleWorkflowRunStatusEvent(payload);
         break;
       // case 'push':
       //   await this.handlePushEvent(payload);

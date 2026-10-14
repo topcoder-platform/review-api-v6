@@ -78,6 +78,28 @@ export const getReviewApplicationRoles = (
 ): ReviewApplicationRole[] =>
   ReviewApplicationRolesByOpportunityType[opportunityType] ?? [];
 
+/**
+ * Normalizes the requested application role for one opportunity type.
+ * Legacy clients always submit the generic `REVIEWER` role, but an Iterative
+ * Review opportunity (the First2Finish default in Work Manager) only accepts
+ * `ITERATIVE_REVIEWER`, so the generic role is mapped to it here.
+ * Used by `ReviewApplicationService.create` before role validation.
+ *
+ * @param opportunityType review opportunity classification
+ * @param role role submitted by the applicant
+ * @returns role to validate and persist; other roles are returned unchanged
+ */
+export const resolveReviewApplicationRole = (
+  opportunityType: PrismaReviewOpportunityType,
+  role: ReviewApplicationRole,
+): ReviewApplicationRole =>
+  role === ReviewApplicationRole.REVIEWER &&
+  getReviewApplicationRoles(opportunityType).includes(
+    ReviewApplicationRole.ITERATIVE_REVIEWER,
+  )
+    ? ReviewApplicationRole.ITERATIVE_REVIEWER
+    : role;
+
 const allReviewApplicationRole = Object.values(ReviewApplicationRole);
 
 /**
