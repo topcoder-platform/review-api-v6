@@ -1363,8 +1363,11 @@ export class AiWorkflowService {
         ? patchData.comment.trim()
         : undefined;
 
+    // Deterministic workflows don't support discussion comments, but the
+    // reason a privileged user must provide when editing a score is allowed.
     if (
       commentText &&
+      !scoreUpdateRequested &&
       workflow.reviewMethod === ReviewMethod.DETERMINISTIC
     ) {
       throw new ForbiddenException(
