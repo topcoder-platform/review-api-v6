@@ -587,6 +587,19 @@ export class AppealService {
     }
   }
 
+  /**
+   * Saves a reviewer's appeal response for the Review app, then starts event
+   * publication in the background so notification failures cannot fail a saved response.
+   *
+   * @param authUser - Authenticated reviewer, admin, or machine caller.
+   * @param appealId - Appeal receiving the response.
+   * @param body - Response content and acceptance decision.
+   * @returns The persisted response without waiting for event publication.
+   * @throws BadRequestException for duplicates, invalid appeals, or a closed phase.
+   * @throws ForbiddenException when the caller cannot respond to the appeal.
+   * @throws NotFoundException when the appeal or reviewer resource is missing.
+   * @throws InternalServerErrorException when persistence fails.
+   */
   async createAppealResponse(
     authUser: JwtUser,
     appealId: string,
@@ -691,7 +704,7 @@ export class AppealService {
       });
 
       this.logger.log(`Appeal response created for appeal ID: ${appealId}`);
-      await this.publishAppealRespondedEvent({
+      void this.publishAppealRespondedEvent({
         appealId,
         appealResponseId: data.id,
         reviewId: review.id,
@@ -747,6 +760,15 @@ export class AppealService {
     }
   }
 
+  /**
+   * Publishes the appeal-responded event after createAppealResponse saves the response.
+   * Metadata lookup and publication errors are logged and contained because the
+   * response is already committed and this method runs in the background.
+   *
+   * @param params - Persisted appeal/response IDs, review ID, and reviewer resource.
+   * @returns A promise that resolves when publication completes or its failure is logged.
+   * @throws No lookup or publication errors are propagated to the caller.
+   */
   private async publishAppealRespondedEvent(params: {
     appealId: string;
     appealResponseId: string | null;
@@ -836,7 +858,6 @@ export class AppealService {
         `[publishAppealRespondedEvent] Failed to publish appeal responded event for appeal ${appealId}`,
         error,
       );
-      throw error;
     }
   }
 

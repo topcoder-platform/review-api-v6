@@ -7,6 +7,7 @@ import { AppealService } from './appeal.service';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { CommonConfig } from 'src/shared/config/common.config';
+import { LoggerService } from 'src/shared/modules/global/logger.service';
 
 const prismaMock = {
   appeal: {
@@ -19,6 +20,7 @@ const prismaMock = {
     delete: jest.fn(),
   },
   appealResponse: {
+    create: jest.fn(),
     findUnique: jest.fn(),
     update: jest.fn(),
   },
@@ -683,6 +685,16 @@ describe('AppealService.createAppealResponse', () => {
       },
     });
 
+    prismaMock.appeal.findUniqueOrThrow.mockResolvedValue({
+      ...baseAppeal,
+      appealResponse: null,
+    });
+    prismaMock.appealResponse.create.mockResolvedValue({
+      id: 'appeal-response-1',
+      resourceId: 'resource-1',
+      content: baseRequest.content,
+      success: baseRequest.success,
+    });
     eventBusServiceMock.publish.mockResolvedValue(undefined);
   });
 
@@ -705,7 +717,7 @@ describe('AppealService.createAppealResponse', () => {
       }),
     });
 
-    expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+    expect(prismaMock.appealResponse.create).not.toHaveBeenCalled();
     expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 
@@ -719,15 +731,6 @@ describe('AppealService.createAppealResponse', () => {
       id: 'resource-1',
       memberId: 'member-123',
       memberHandle: 'reviewerHandle',
-    });
-
-    prismaMock.appeal.update.mockResolvedValue({
-      appealResponse: {
-        id: 'appeal-response-1',
-        resourceId: 'resource-1',
-        content: baseRequest.content,
-        success: baseRequest.success,
-      },
     });
 
     await expect(
@@ -746,19 +749,12 @@ describe('AppealService.createAppealResponse', () => {
     expect(
       challengeApiServiceMock.validateAppealResponseSubmission,
     ).toHaveBeenCalledWith('challenge-1');
-    expect(prismaMock.appeal.update).toHaveBeenCalledWith({
-      where: { id: baseAppeal.id },
+    expect(prismaMock.appealResponse.create).toHaveBeenCalledWith({
       data: {
-        appealResponse: {
-          create: {
-            content: baseRequest.content,
-            success: baseRequest.success,
-            resourceId: 'resource-1',
-          },
-        },
-      },
-      include: {
-        appealResponse: true,
+        appealId: baseAppeal.id,
+        content: baseRequest.content,
+        success: baseRequest.success,
+        resourceId: 'resource-1',
       },
     });
     expect(resourcePrismaMock.resource.findUnique).toHaveBeenCalledWith({
@@ -768,6 +764,7 @@ describe('AppealService.createAppealResponse', () => {
       where: { id: 'review-1' },
       select: expect.any(Object),
     });
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(eventBusServiceMock.publish).toHaveBeenCalledWith(
       'review.action.appeal.responded',
       expect.objectContaining({
@@ -786,6 +783,115 @@ describe('AppealService.createAppealResponse', () => {
         submitterMemberId: 'submitter-456',
       }),
     );
+  });
+
+  it('returns the saved response while event publication is still pending', async () => {
+    let finishPublishing!: () => void;
+    eventBusServiceMock.publish.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishPublishing = resolve;
+      }),
+    );
+
+    const request = service.createAppealResponse(
+      reviewerAuthUser,
+      baseAppeal.id,
+      baseRequest,
+    );
+
+    try {
+      // A blocked publisher must not keep the HTTP request pending.
+      await expect(
+        Promise.race([
+          request,
+          new Promise((resolve) => setImmediate(() => resolve('pending'))),
+        ]),
+      ).resolves.toMatchObject({
+        id: 'appeal-response-1',
+        content: baseRequest.content,
+        success: baseRequest.success,
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(prismaMock.appealResponse.create).toHaveBeenCalledTimes(1);
+      expect(eventBusServiceMock.publish).toHaveBeenCalledTimes(1);
+    } finally {
+      finishPublishing();
+      await request;
+    }
+  });
+
+  it.each(['event publication', 'review lookup'])(
+    'returns the saved response and logs a failed %s',
+    async (failureSource) => {
+      const error = new Error(`${failureSource} unavailable`);
+      const logError = jest
+        .spyOn(LoggerService.prototype, 'error')
+        .mockImplementation(() => undefined);
+      const dependency =
+        failureSource === 'event publication'
+          ? eventBusServiceMock.publish
+          : prismaMock.review.findUnique;
+      dependency.mockRejectedValueOnce(error);
+
+      try {
+        await expect(
+          service.createAppealResponse(
+            reviewerAuthUser,
+            baseAppeal.id,
+            baseRequest,
+          ),
+        ).resolves.toMatchObject({
+          id: 'appeal-response-1',
+          content: baseRequest.content,
+          success: baseRequest.success,
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(logError).toHaveBeenCalledWith(
+          '[publishAppealRespondedEvent] Failed to publish appeal responded event for appeal appeal-1',
+          error,
+        );
+        expect(prismaErrorServiceMock.handleError).not.toHaveBeenCalled();
+        expect(prismaMock.appealResponse.create).toHaveBeenCalledTimes(1);
+      } finally {
+        logError.mockRestore();
+      }
+    },
+  );
+
+  it('rejects a failed save without publishing an event', async () => {
+    const error = new Error('Database unavailable');
+    prismaMock.appealResponse.create.mockRejectedValueOnce(error);
+
+    await expect(
+      service.createAppealResponse(
+        reviewerAuthUser,
+        baseAppeal.id,
+        baseRequest,
+      ),
+    ).rejects.toBe(error);
+    expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
+    expect(prismaMock.review.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects a closed appeals response phase before saving or publishing', async () => {
+    challengeApiServiceMock.validateAppealResponseSubmission.mockRejectedValueOnce(
+      new Error(
+        'Appeal responses cannot be submitted outside the response phase',
+      ),
+    );
+
+    await expect(
+      service.createAppealResponse(
+        reviewerAuthUser,
+        baseAppeal.id,
+        baseRequest,
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({ code: 'PHASE_VALIDATION_ERROR' }),
+    });
+    expect(prismaMock.appealResponse.create).not.toHaveBeenCalled();
+    expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 
   it('throws ForbiddenException when requester is not the reviewer', async () => {
@@ -818,7 +924,7 @@ describe('AppealService.createAppealResponse', () => {
       }),
     });
 
-    expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+    expect(prismaMock.appealResponse.create).not.toHaveBeenCalled();
     expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 
@@ -843,7 +949,7 @@ describe('AppealService.createAppealResponse', () => {
       }),
     });
 
-    expect(prismaMock.appeal.update).not.toHaveBeenCalled();
+    expect(prismaMock.appealResponse.create).not.toHaveBeenCalled();
     expect(eventBusServiceMock.publish).not.toHaveBeenCalled();
   });
 
@@ -854,7 +960,7 @@ describe('AppealService.createAppealResponse', () => {
     });
 
     const prismaError = new Error('Unique constraint violation');
-    prismaMock.appeal.update.mockRejectedValue(prismaError);
+    prismaMock.appealResponse.create.mockRejectedValue(prismaError);
     prismaErrorServiceMock.handleError.mockReturnValue({
       message: 'A record with the same appealId already exists.',
       code: 'UNIQUE_CONSTRAINT_FAILED',
