@@ -179,6 +179,10 @@ describe('AiWorkflowService.updateRunItem', () => {
         copilot,
       );
 
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenCalledWith(
+        'challenge-1',
+        ['Approval', 'Review'],
+      );
       expect(prismaMock.aiWorkflowRunItem.update).toHaveBeenCalledWith({
         where: { id: itemId },
         data: { questionScore: 0, originalQuestionScore: 1 },
@@ -211,6 +215,47 @@ describe('AiWorkflowService.updateRunItem', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects score edits when neither Review nor Approval is open', async () => {
+      challengeApiServiceMock.isPhaseOpen.mockResolvedValue(false);
+
+      await expect(
+        service.updateRunItem(
+          workflowId,
+          runId,
+          itemId,
+          { questionScore: 0, comment: 'False positive' },
+          copilot,
+        ),
+      ).rejects.toThrow(
+        'Question score edits are only allowed during the review or approval phase.',
+      );
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('keeps AI-assisted workflow score edits limited to the Approval phase', async () => {
+      prismaMock.aiWorkflow.findUnique.mockResolvedValue({
+        id: workflowId,
+        reviewMethod: ReviewMethod.AI_ASSISTED,
+      });
+      challengeApiServiceMock.isPhaseOpen.mockResolvedValue(false);
+
+      await expect(
+        service.updateRunItem(
+          workflowId,
+          runId,
+          itemId,
+          { questionScore: 0, comment: 'False positive' },
+          copilot,
+        ),
+      ).rejects.toThrow(
+        'Question score edits are only allowed during the approval phase.',
+      );
+      expect(challengeApiServiceMock.isPhaseOpen).toHaveBeenCalledWith(
+        'challenge-1',
+        'Approval',
+      );
     });
 
     it('rejects score edits from non-privileged users', async () => {

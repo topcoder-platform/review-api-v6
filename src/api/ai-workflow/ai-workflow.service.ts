@@ -1404,14 +1404,20 @@ export class AiWorkflowService {
           );
         }
 
-        const approvalOpen = await this.challengeApiService.isPhaseOpen(
+        // Deterministic workflow scores can also be edited during Review, since
+        // challenges using them don't necessarily have an Approval phase.
+        const isDeterministic =
+          workflow.reviewMethod === ReviewMethod.DETERMINISTIC;
+        const editPhaseOpen = await this.challengeApiService.isPhaseOpen(
           submission.challengeId,
-          'Approval',
+          isDeterministic ? ['Approval', 'Review'] : 'Approval',
         );
 
-        if (!approvalOpen) {
+        if (!editPhaseOpen) {
           throw new ForbiddenException(
-            'Question score edits are only allowed during the approval phase.',
+            isDeterministic
+              ? 'Question score edits are only allowed during the review or approval phase.'
+              : 'Question score edits are only allowed during the approval phase.',
           );
         }
 
