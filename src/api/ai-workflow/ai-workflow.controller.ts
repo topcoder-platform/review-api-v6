@@ -243,7 +243,7 @@ export class AiWorkflowController {
   }
 
   @Post('/runs/queue')
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User)
   @Scopes(Scope.CreateWorkflowRun)
   @ApiOperation({
     summary:
@@ -266,12 +266,13 @@ export class AiWorkflowController {
   queueRuns(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     body: QueueAiWorkflowRunsDto,
+    @User() user: JwtUser,
   ) {
-    return this.aiWorkflowService.queueWorkflowRunsForSubmission(body);
+    return this.aiWorkflowService.queueWorkflowRunsForSubmission(user, body);
   }
 
   @Post('/runs/retrigger')
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Copilot, UserRole.User)
   @Scopes(Scope.UpdateWorkflowRun)
   @ApiOperation({ summary: 'Re-trigger an AI workflow run by its run ID' })
   @ApiBody({
@@ -286,8 +287,12 @@ export class AiWorkflowController {
   retriggerRun(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     body: RetriggerAiWorkflowRunDto,
+    @User() user: JwtUser,
   ) {
-    return this.aiWorkflowService.retriggerWorkflowRun(body.workflowRunId);
+    return this.aiWorkflowService.retriggerWorkflowRun(
+      user,
+      body.workflowRunId,
+    );
   }
 
   @Post('/runs/rebuild-decision')
