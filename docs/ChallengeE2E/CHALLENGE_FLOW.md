@@ -458,6 +458,10 @@ curl -X PATCH "https://api.topcoder-dev.com/v6/challenges/{challengeId}/phases/{
 
 ## Create an appeals response from the reviewer
 
+The API returns the saved response without waiting for the
+`review.action.appeal.responded` event to publish. Event preparation or publication
+failures are logged without turning a successful save into a failed request.
+
 **API Call:** `POST /v6/appeals-responses`
 
 **Sample:**
