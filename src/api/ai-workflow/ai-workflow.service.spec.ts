@@ -48,6 +48,7 @@ describe('AiWorkflowService.updateRunItem', () => {
     aiWorkflowRun: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
     aiWorkflowRunItem: {
       findUnique: jest.fn(),
@@ -70,7 +71,9 @@ describe('AiWorkflowService.updateRunItem', () => {
   const challengeApiServiceMock = {
     isPhaseOpen: jest.fn(),
   } as any;
-  const resourceApiServiceMock = {} as any;
+  const resourceApiServiceMock = {
+    getMemberResourcesRoles: jest.fn(),
+  } as any;
   const aiReviewerDecisionMakerMock = {
     evaluateSubmission: jest.fn(),
   } as any;
@@ -140,6 +143,85 @@ describe('AiWorkflowService.updateRunItem', () => {
     expect(workflowQueueHandlerMock.rebuildSubmissionDecision).toHaveBeenCalledWith(
       'submission-1',
     );
+  });
+
+  describe('manual workflow run triggering', () => {
+    const challengeCopilot: JwtUser = {
+      userId: 'copilot-1',
+      roles: [UserRole.Copilot],
+      isMachine: false,
+    };
+
+    beforeEach(() => {
+      prismaMock.aiWorkflowRun.findUnique.mockResolvedValue({
+        id: runId,
+        workflowId,
+        submissionId: 'submission-1',
+        workflow: { id: workflowId, disabled: false },
+        submission: {
+          id: 'submission-1',
+          challengeId: 'challenge-1',
+          memberId: 'member-1',
+        },
+      });
+      prismaMock.aiWorkflowRun.create.mockResolvedValue({
+        id: 'run-2',
+        workflowId,
+        submissionId: 'submission-1',
+      });
+      workflowQueueHandlerMock.isDispatchEnabled = false;
+    });
+
+    it('allows the challenge copilot to retrigger a run', async () => {
+      resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Copilot' },
+      ]);
+
+      await expect(
+        service.retriggerWorkflowRun(challengeCopilot, runId),
+      ).resolves.toEqual(expect.objectContaining({ id: 'run-2' }));
+      expect(
+        resourceApiServiceMock.getMemberResourcesRoles,
+      ).toHaveBeenCalledWith('challenge-1', 'copilot-1');
+    });
+
+    it('rejects a copilot that is not assigned to the challenge', async () => {
+      resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([
+        { roleName: 'Reviewer' },
+      ]);
+
+      await expect(
+        service.retriggerWorkflowRun(challengeCopilot, runId),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.aiWorkflowRun.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects queueing missing runs for a non copilot user', async () => {
+      prismaMock.submission.findUnique.mockResolvedValue({
+        id: 'submission-1',
+        challengeId: 'challenge-1',
+        virusScan: true,
+      });
+      resourceApiServiceMock.getMemberResourcesRoles.mockResolvedValue([]);
+
+      await expect(
+        service.queueWorkflowRunsForSubmission(user, {
+          submissionId: 'submission-1',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lets admins retrigger without a challenge resource lookup', async () => {
+      await service.retriggerWorkflowRun(
+        { userId: 'admin-1', roles: [UserRole.Admin], isMachine: false },
+        runId,
+      );
+
+      expect(
+        resourceApiServiceMock.getMemberResourcesRoles,
+      ).not.toHaveBeenCalled();
+      expect(prismaMock.aiWorkflowRun.create).toHaveBeenCalled();
+    });
   });
 
   it('throws ForbiddenException when adding a comment to a deterministic workflow via updateRunItem', async () => {
