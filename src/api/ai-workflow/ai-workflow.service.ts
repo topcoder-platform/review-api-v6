@@ -505,7 +505,6 @@ export class AiWorkflowService {
       defUrl,
       gitWorkflowId,
       gitOwnerRepo,
-      timeoutSeconds,
       reviewMethod,
     } = createAiWorkflowDto;
 
@@ -539,7 +538,6 @@ export class AiWorkflowService {
           llmId,
           disabled: createAiWorkflowDto.disabled ?? false,
           reviewMethod,
-          timeoutSeconds,
         },
       })
       .catch((e) => {
@@ -738,8 +736,8 @@ export class AiWorkflowService {
       })),
     });
 
-    // Receiving run items proves the workflow finished, even if the timeout
-    // guard already marked the run as timed out.
+    // Receiving run items proves the workflow finished, even if the run was
+    // already marked as timed out.
     if (run.status === 'TIMEOUT' && createdItems.count > 0) {
       await this.workflowQueueHandler.reconcileTimedOutWorkflowRun(runId, {
         previousStatus: run.status,
@@ -1053,8 +1051,8 @@ export class AiWorkflowService {
       throw error;
     }
 
-    // The workflow reported its results after the timeout guard already gave
-    // up on the run - promote it back to SUCCESS and run the completion side
+    // The workflow reported its results after the run was marked as timed
+    // out - promote it back to SUCCESS and run the completion side
     // effects that were skipped.
     if (existingRun?.status === 'TIMEOUT') {
       await this.workflowQueueHandler.reconcileTimedOutWorkflowRun(runId, {

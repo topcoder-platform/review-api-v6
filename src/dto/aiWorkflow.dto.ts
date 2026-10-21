@@ -74,12 +74,6 @@ export class CreateAiWorkflowDto {
   @IsOptional()
   @IsEnum(ReviewMethod)
   reviewMethod?: ReviewMethod;
-
-  @ApiProperty({ required: false, default: 1800, minimum: 30 })
-  @IsOptional()
-  @IsNumber()
-  @Min(30)
-  timeoutSeconds?: number;
 }
 
 export class UpdateAiWorkflowDto extends PartialType(CreateAiWorkflowDto) {}
