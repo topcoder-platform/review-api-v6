@@ -154,7 +154,7 @@ describe('ReviewSummationController', () => {
 
       const payload = await controller.listReviewSummations(
         createRequest('text/tab-separated-values', {
-          isMachine: true,
+          kind: 'service' as const, isMachine: true,
           scopes: ['read:review_summation'],
         }) as any,
         createResponse() as any,

@@ -100,7 +100,7 @@ describe('GiteaTeamSearchService', () => {
 
   it.each([
     ['no signed-in user', undefined],
-    ['a machine token', { isMachine: true }],
+    ['a machine token', { kind: 'service' as const, isMachine: true }],
   ])('finds nothing for %s', async (_label, caller) => {
     expect(await service.searchTeams(caller as any, 'reviewers', 20)).toEqual(
       [],

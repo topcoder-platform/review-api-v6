@@ -178,3 +178,8 @@ Submission responses include that same safe progress subset in nested review sum
 - `crossChallenge` defaults to `false`, which limits matches to `{challengeId}`. Set it to `true` to match across every challenge.
 - Access is limited to admins, machine clients with `read:submission`/`all:submission`, users holding the `Project Manager` role, and challenge Reviewer/Screener/Copilot/Manager resources.
 - The response is keyed by the requested submission id: `{ "s1": { "duplicates": [{ "submissionId", "challenge", "challengeTitle", "user", "submittedAt" }] } }`, newest first. Submissions without a stored digest and `DELETED` submissions never match, so their lists come back empty.
+
+## Keycloak migration branch
+
+Follow [explicit Keycloak configuration and rollout](docs/keycloak-m2m.md).
+Legacy Auth0 M2M configuration examples do not apply to this branch.

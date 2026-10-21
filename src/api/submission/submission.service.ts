@@ -1,3 +1,4 @@
+import { auth, Principal } from 'tc-core-library-js';
 import {
   Injectable,
   Logger,
@@ -1549,9 +1550,7 @@ export class SubmissionService {
 
     // Authorization
     if (authUser.isMachine) {
-      const scopes = authUser.scopes || [];
-      const hasScope =
-        scopes.includes('read:submission') || scopes.includes('all:submission');
+      const hasScope = auth.hasScopes(authUser as unknown as Principal, ['read:submission', 'all:submission'], 'any');
       if (!hasScope) {
         throw new ForbiddenException({
           message: 'M2M token missing required scope to download submission',
@@ -2102,9 +2101,7 @@ export class SubmissionService {
     let isReviewer = false;
 
     if (authUser.isMachine) {
-      const scopes = authUser.scopes || [];
-      const hasScope =
-        scopes.includes('read:submission') || scopes.includes('all:submission');
+      const hasScope = auth.hasScopes(authUser as unknown as Principal, ['read:submission', 'all:submission'], 'any');
       if (!hasScope) {
         throw new ForbiddenException({
           message: 'M2M token missing required scope to download submissions',
@@ -2353,9 +2350,7 @@ export class SubmissionService {
       });
     }
     if (authUser.isMachine) {
-      const scopes = authUser.scopes || [];
-      const hasScope =
-        scopes.includes('read:submission') || scopes.includes('all:submission');
+      const hasScope = auth.hasScopes(authUser as unknown as Principal, ['read:submission', 'all:submission'], 'any');
       if (!hasScope) {
         throw new ForbiddenException({
           message: 'M2M token missing required scope to read submission audit',
@@ -4629,10 +4624,7 @@ export class SubmissionService {
   ): Promise<boolean> {
     // M2M tokens: require read:submission or all:submission scope
     if (authUser.isMachine) {
-      const scopes = authUser.scopes || [];
-      return (
-        scopes.includes('read:submission') || scopes.includes('all:submission')
-      );
+      return auth.hasScopes(authUser as unknown as Principal, ['read:submission', 'all:submission'], 'any');
     }
     // Admins always allowed
     if (isAdmin(authUser)) {
@@ -5074,11 +5066,7 @@ export class SubmissionService {
     challengeId: string,
   ): Promise<void> {
     if (authUser?.isMachine) {
-      const scopes = authUser.scopes ?? [];
-      if (
-        !scopes.includes('read:submission') &&
-        !scopes.includes('all:submission')
-      ) {
+      if (!auth.hasScopes(authUser as unknown as Principal, ['read:submission', 'all:submission'], 'any')) {
         throw new ForbiddenException({
           message:
             'M2M token missing required scope to check duplicate submissions',
@@ -5347,10 +5335,7 @@ export class SubmissionService {
       const existing = await this.checkSubmission(id, authUser);
       // Authorization checks
       if (authUser.isMachine) {
-        const scopes = authUser.scopes || [];
-        const hasScope =
-          scopes.includes('delete:submission') ||
-          scopes.includes('all:submission');
+        const hasScope = auth.hasScopes(authUser as unknown as Principal, ['delete:submission', 'all:submission'], 'any');
         if (!hasScope) {
           throw new ForbiddenException({
             message: 'M2M token missing required scope to delete submission',

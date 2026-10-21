@@ -88,7 +88,7 @@ describe('ReviewService.createReview authorization checks', () => {
   const machineAuthUser: JwtUser = {
     userId: 'machine-1',
     roles: [],
-    isMachine: true,
+    kind: 'service' as const, isMachine: true,
   };
 
   const buildReviewRequest = (
@@ -2904,7 +2904,7 @@ describe('ReviewService.getReviews reviewer visibility', () => {
     const machineUser: JwtUser = {
       userId: 'machine-1',
       roles: [],
-      isMachine: true,
+      kind: 'service' as const, isMachine: true,
     };
 
     const reviewRecord = {
@@ -4735,7 +4735,7 @@ describe('ReviewService.createReviewItemComments', () => {
   let service: ReviewService;
   let recomputeSpy: jest.SpyInstance;
 
-  const machineUser = { isMachine: true } as JwtUser;
+  const machineUser = { kind: 'service' as const, isMachine: true } as JwtUser;
 
   const basePayload = {
     reviewId: 'review-1',

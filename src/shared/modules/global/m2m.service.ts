@@ -1,28 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import * as core from 'tc-core-library-js';
-import { M2mConfig } from 'src/shared/config/m2m.config';
+import { auth } from 'tc-core-library-js';
 
-/**
- * Service to get M2M token with auth0 configs
- */
+/** Supplies verified Keycloak tokens for downstream API calls using the shared credential/scope cache. */
 @Injectable()
 export class M2MService {
-  private readonly m2m;
+  private readonly client = auth.m2m();
 
-  constructor() {
-    const config = M2mConfig.auth0;
-    this.m2m = core.auth.m2m({
-      AUTH0_URL: config.url,
-      AUTH0_AUDIENCE: config.audience,
-      AUTH0_PROXY_SERVER_URL: config.proxyUrl,
-    });
-  }
-
-  async getM2MToken() {
-    const config = M2mConfig.auth0;
-    return (await this.m2m.getMachineToken(
-      config.clientId,
-      config.clientSecret,
-    )) as string;
+  /** Takes no parameters; returns a verified token from explicit Keycloak configuration or throws on issuance/validation failure. */
+  getM2MToken(): Promise<string> {
+    return this.client.getMachineToken();
   }
 }

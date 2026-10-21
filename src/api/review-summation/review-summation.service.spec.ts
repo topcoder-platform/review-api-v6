@@ -179,7 +179,7 @@ describe('ReviewSummationService', () => {
 
       const result = await service.searchSummation(
         {
-          isMachine: true,
+          kind: 'service' as const, isMachine: true,
           roles: [],
         },
         {

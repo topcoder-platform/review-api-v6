@@ -49,7 +49,7 @@ describe('AiReviewConfigService', () => {
       },
     ],
   };
-  const authUser: JwtUser = { userId: 'admin-1', isMachine: true };
+  const authUser: JwtUser = { userId: 'admin-1', kind: 'service' as const, isMachine: true };
 
   const txMock = {
     aiReviewConfig: { update: jest.fn() },

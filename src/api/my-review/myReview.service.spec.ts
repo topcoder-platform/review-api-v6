@@ -52,7 +52,7 @@ describe('MyReviewService', () => {
         },
       ]);
 
-    const result = await service.getMyReviews({ isMachine: true }, {});
+    const result = await service.getMyReviews({ kind: 'service' as const, isMachine: true }, {});
 
     expect(result.data).toHaveLength(1);
     expect(result.data[0]).toMatchObject({
@@ -165,7 +165,7 @@ describe('MyReviewService', () => {
     challengePrismaMock.$queryRaw.mockResolvedValueOnce([{ total: 0n }]);
 
     const result = await service.getMyReviews(
-      { isMachine: true },
+      { kind: 'service' as const, isMachine: true },
       { challengeTypeId: 'type-2' },
     );
 
@@ -311,7 +311,7 @@ describe('MyReviewService', () => {
     challengePrismaMock.$queryRaw.mockResolvedValueOnce([{ total: 0n }]);
 
     await service.getMyReviews(
-      { isMachine: true, userId: 'admin-member-id' },
+      { kind: 'service' as const, isMachine: true, userId: 'admin-member-id' },
       { resourceRoleIds: 'reviewer-role-id' },
     );
 
@@ -333,7 +333,7 @@ describe('MyReviewService', () => {
       .mockResolvedValueOnce([]);
 
     await service.getMyReviews(
-      { isMachine: true, userId: 'admin-member-id' },
+      { kind: 'service' as const, isMachine: true, userId: 'admin-member-id' },
       { past: 'true', resourceRoleIds: 'reviewer-role-id' },
       { page: 1, perPage: 50 },
     );
@@ -405,7 +405,7 @@ describe('MyReviewService', () => {
       ]);
 
     const result = await service.getMyReviews(
-      { isMachine: true },
+      { kind: 'service' as const, isMachine: true },
       { sortBy: 'timeLeft' },
     );
 
@@ -442,7 +442,7 @@ describe('MyReviewService', () => {
       ]);
 
     await service.getMyReviews(
-      { isMachine: true },
+      { kind: 'service' as const, isMachine: true },
       { sortBy: 'challengeName', sortOrder: 'desc' },
     );
 
@@ -522,7 +522,7 @@ describe('MyReviewService', () => {
       ]);
 
     await service.getMyReviews(
-      { isMachine: true },
+      { kind: 'service' as const, isMachine: true },
       {
         past: 'true',
         sortBy: 'challengeEndDate',
@@ -555,7 +555,7 @@ describe('MyReviewService', () => {
       ]);
 
     await service.getMyReviews(
-      { isMachine: true },
+      { kind: 'service' as const, isMachine: true },
       { sortBy: 'timeLeft', sortOrder: 'asc' },
     );
 

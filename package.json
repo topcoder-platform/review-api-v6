@@ -25,7 +25,8 @@
     "fix:topgear-reviewers": "ts-node --project tsconfig.json scripts/update-topgear-reviewers.ts",
     "grant-reviewers": "ts-node scripts/grant-reviewer-role.ts",
     "deploy:dev": "BRANCH=$(git rev-parse --abbrev-ref HEAD) && TAG=\"dev-${BRANCH}\" && git tag -d \"$TAG\" 2>/dev/null; git push origin \":refs/tags/$TAG\" 2>/dev/null; git tag \"$TAG\" && git push origin \"$TAG\"",
-    "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma && pnpm exec prisma generate --schema=prisma/member-schema.prisma"
+    "postinstall": "pnpm exec prisma generate && pnpm exec prisma generate --schema=prisma/challenge-schema.prisma && pnpm exec prisma generate --schema=prisma/resource-schema.prisma && pnpm exec prisma generate --schema=prisma/member-schema.prisma",
+    "test:keycloak": "node --test test/keycloak-auth.test.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1090.0",
@@ -53,7 +54,7 @@
     "prisma": "6.19.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "tc-core-library-js": "topcoder-platform/tc-core-library-js#master",
+    "tc-core-library-js": "https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d",
     "yauzl": "3.2.1"
   },
   "devDependencies": {
@@ -128,6 +129,9 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "setupFiles": [
+      "<rootDir>/test-keycloak.setup.ts"
+    ]
   }
 }

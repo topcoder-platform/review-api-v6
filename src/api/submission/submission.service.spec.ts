@@ -327,7 +327,7 @@ describe('SubmissionService', () => {
     it.each([
       { roles: [UserRole.ProjectManager], isMachine: false },
       { roles: [UserRole.Admin], isMachine: false },
-      { roles: [], isMachine: true },
+      { roles: [], kind: 'service' as const, isMachine: true },
     ])(
       'retains AI decision fields for a global privileged caller',
       (authUser) => {
@@ -654,7 +654,7 @@ describe('SubmissionService', () => {
 
       const result = await validationService.createValidationSubmissionUpload(
         {
-          isMachine: true,
+          kind: 'service' as const, isMachine: true,
           scopes: ['create:submission'],
         } as any,
         {
@@ -709,7 +709,7 @@ describe('SubmissionService', () => {
       await expect(
         validationService.createValidationSubmissionUpload(
           {
-            isMachine: true,
+            kind: 'service' as const, isMachine: true,
             scopes: ['create:submission'],
           } as any,
           {
@@ -5546,7 +5546,7 @@ describe('SubmissionService', () => {
         buffer: Buffer.from('zip-content'),
       } as any;
       const authUser = {
-        isMachine: true,
+        kind: 'service' as const, isMachine: true,
         scopes: ['create:submission'],
       } as any;
 
@@ -5588,7 +5588,7 @@ describe('SubmissionService', () => {
         .mockResolvedValue({ id: 'submission-checkpoint-manual' } as any);
 
       const authUser = {
-        isMachine: true,
+        kind: 'service' as const, isMachine: true,
         scopes: ['create:submission'],
       } as any;
       const body = {
@@ -5639,7 +5639,7 @@ describe('SubmissionService', () => {
         .mockResolvedValue({ id: 'submission-manual' } as any);
 
       await manualUploadService.createManualSubmissionUpload(
-        { isMachine: true, scopes: ['create:submission'] } as any,
+        { kind: 'service' as const, isMachine: true, scopes: ['create:submission'] } as any,
         {
           challengeId: 'challenge-manual',
           memberId: '1001',
@@ -5672,7 +5672,7 @@ describe('SubmissionService', () => {
 
       await expect(
         manualUploadService.createManualSubmissionUpload(
-          { isMachine: true, scopes: ['create:submission'] } as any,
+          { kind: 'service' as const, isMachine: true, scopes: ['create:submission'] } as any,
           {
             challengeId: 'challenge-manual',
             memberId: '1001',
@@ -5832,7 +5832,7 @@ describe('SubmissionService', () => {
         .mockResolvedValueOnce(true);
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         createBody() as any,
         undefined,
         { allowPrivilegedPostSubmissionUpload: true },
@@ -5861,7 +5861,7 @@ describe('SubmissionService', () => {
         .mockResolvedValueOnce(true);
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         createBody() as any,
         undefined,
         { allowPrivilegedPostSubmissionUpload: true },
@@ -5890,7 +5890,7 @@ describe('SubmissionService', () => {
         .mockResolvedValueOnce(true);
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         {
           ...createBody(),
           type: SubmissionType.CHECKPOINT_SUBMISSION,
@@ -5921,7 +5921,7 @@ describe('SubmissionService', () => {
       challengeApiServiceMock.isPhaseOpen.mockResolvedValueOnce(true);
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         createBody() as any,
         undefined,
         { allowPrivilegedPostSubmissionUpload: true },
@@ -5944,7 +5944,7 @@ describe('SubmissionService', () => {
 
       await expect(
         createService.createSubmission(
-          { isMachine: true } as any,
+          { kind: 'service' as const, isMachine: true } as any,
           createBody() as any,
           undefined,
           { allowPrivilegedPostSubmissionUpload: true },
@@ -5965,7 +5965,7 @@ describe('SubmissionService', () => {
       const getS3ClientSpy = jest.spyOn(createService as any, 'getS3Client');
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         createBody() as any,
         {
           buffer: Buffer.from('zip-content'),
@@ -5991,7 +5991,7 @@ describe('SubmissionService', () => {
         .mockResolvedValueOnce(true);
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         createBody() as any,
         {
           buffer: Buffer.from('zip-content'),
@@ -6025,7 +6025,7 @@ describe('SubmissionService', () => {
         .mockReturnValue({ send: s3Send });
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         createBody() as any,
         undefined,
         { allowPrivilegedPostSubmissionUpload: true },
@@ -6055,7 +6055,7 @@ describe('SubmissionService', () => {
       });
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         createBody() as any,
         undefined,
         { allowPrivilegedPostSubmissionUpload: true },
@@ -6079,7 +6079,7 @@ describe('SubmissionService', () => {
 
       try {
         await createService.createSubmission(
-          { isMachine: true } as any,
+          { kind: 'service' as const, isMachine: true } as any,
           createBody() as any,
           undefined,
           { allowPrivilegedPostSubmissionUpload: true },
@@ -6108,7 +6108,7 @@ describe('SubmissionService', () => {
         .mockResolvedValue(undefined);
 
       await createService.createSubmission(
-        { isMachine: true } as any,
+        { kind: 'service' as const, isMachine: true } as any,
         {
           ...createBody(),
           url: 'https://wipro.sharepoint.com/sites/x/submission.docx',
@@ -7403,7 +7403,7 @@ describe('SubmissionService', () => {
 
       for (const authUser of [
         { isMachine: false, userId: '9', roles: [UserRole.Admin] },
-        { isMachine: true, scopes: ['read:submission'] },
+        { kind: 'service' as const, isMachine: true, scopes: ['read:submission'] },
       ]) {
         prismaMock.submission.findMany.mockResolvedValueOnce([
           { id: 'sub-1', challengeId, sha256Hash: null },
@@ -7425,7 +7425,7 @@ describe('SubmissionService', () => {
     it('denies machine tokens without a submission read scope', async () => {
       await expect(
         duplicateService.findDuplicateSubmissions(
-          { isMachine: true, scopes: ['read:review'] } as any,
+          { kind: 'service' as const, isMachine: true, scopes: ['read:review'] } as any,
           challengeId,
           { submissionId: ['sub-1'] } as any,
         ),

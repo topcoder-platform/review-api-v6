@@ -114,7 +114,7 @@ describe('AppealService.createAppeal', () => {
 
   it('allows machine tokens with appeal scopes to create appeals', async () => {
     const machineUser = {
-      isMachine: true,
+      kind: 'service' as const, isMachine: true,
       userId: undefined,
       scopes: ['create:appeal'],
     } as any;
@@ -532,7 +532,7 @@ describe('AppealService.updateAppealResponse', () => {
     });
 
     const machineAuthUser = {
-      isMachine: true,
+      kind: 'service' as const, isMachine: true,
       userId: undefined,
       roles: ['Copilot'],
     } as any;
@@ -1020,7 +1020,7 @@ describe('AppealService.getAppeals', () => {
     prismaMock.appeal.count.mockResolvedValue(1);
 
     const result = await service.getAppeals(
-      { isMachine: true } as any,
+      { kind: 'service' as const, isMachine: true } as any,
       undefined,
       ['review-1', 'review-2'],
       'challenge-1',
@@ -1092,7 +1092,7 @@ describe('AppealService.getAppeals', () => {
     prismaMock.appeal.count.mockResolvedValue(0);
 
     await service.getAppeals(
-      { isMachine: true } as any,
+      { kind: 'service' as const, isMachine: true } as any,
       'resource-1',
       [],
       undefined,

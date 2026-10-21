@@ -87,7 +87,7 @@ describe('ChallengeApiService whitelist access', () => {
   it('bypasses whitelist evaluation for machine callers', async () => {
     await expect(
       service.filterChallengeIdsByWhitelist(
-        { userId: 'machine-client', isMachine: true } as any,
+        { userId: 'machine-client', kind: 'service' as const, isMachine: true } as any,
         ['challenge-1'],
       ),
     ).resolves.toEqual(['challenge-1']);
