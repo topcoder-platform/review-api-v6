@@ -74,9 +74,13 @@ export class AiWorkflowService {
    * AI workflows are normally queued when the virus scan completes or when the
    * AI phase opens. When one of those events is missed (or arrives before the
    * challenge is configured), the submission ends up without any run. This
-   * gives admins a way to queue the missing runs after the fact.
+   * gives admins and challenge copilots a way to queue the missing runs after
+   * the fact.
    */
-  async queueWorkflowRunsForSubmission(body: QueueAiWorkflowRunsDto) {
+  async queueWorkflowRunsForSubmission(
+    user: JwtUser,
+    body: QueueAiWorkflowRunsDto,
+  ) {
     const { submissionId } = body;
 
     const submission = await this.prisma.submission.findUnique({
@@ -89,6 +93,8 @@ export class AiWorkflowService {
         `Submission with id ${submissionId} not found.`,
       );
     }
+
+    await this.ensureCanTriggerWorkflowRuns(user, submission.challengeId);
 
     if (submission.virusScan !== true) {
       throw new BadRequestException(
@@ -160,7 +166,40 @@ export class AiWorkflowService {
     };
   }
 
-  async retriggerWorkflowRun(workflowRunId: string) {
+  /**
+   * Manually triggering AI workflow runs is allowed for admins, M2M tokens and
+   * the copilots of the submission's challenge.
+   */
+  private async ensureCanTriggerWorkflowRuns(
+    user: JwtUser,
+    challengeId?: string | null,
+  ): Promise<void> {
+    if (user.isMachine || user.roles?.includes(UserRole.Admin)) {
+      return;
+    }
+
+    if (!challengeId || !user.userId) {
+      throw new ForbiddenException('Insufficient permissions');
+    }
+
+    const memberResources =
+      await this.resourceApiService.getMemberResourcesRoles(
+        challengeId,
+        String(user.userId),
+      );
+    const isChallengeCopilot = memberResources.some(
+      (resource) =>
+        resource.roleName?.toLowerCase() === UserRole.Copilot.toLowerCase(),
+    );
+
+    if (!isChallengeCopilot) {
+      throw new ForbiddenException(
+        'Only admins and the challenge copilot can trigger AI workflow runs.',
+      );
+    }
+  }
+
+  async retriggerWorkflowRun(user: JwtUser, workflowRunId: string) {
     const existingRun = await this.prisma.aiWorkflowRun.findUnique({
       where: { id: workflowRunId },
       include: {
@@ -192,6 +231,11 @@ export class AiWorkflowService {
         `Challenge ID not found for submission ${existingRun.submissionId}.`,
       );
     }
+
+    await this.ensureCanTriggerWorkflowRuns(
+      user,
+      existingRun.submission.challengeId,
+    );
 
     if (existingRun.workflow?.disabled) {
       throw new BadRequestException(
@@ -1404,14 +1448,20 @@ export class AiWorkflowService {
           );
         }
 
-        const approvalOpen = await this.challengeApiService.isPhaseOpen(
+        // Deterministic workflow scores can also be edited during Review, since
+        // challenges using them don't necessarily have an Approval phase.
+        const isDeterministic =
+          workflow.reviewMethod === ReviewMethod.DETERMINISTIC;
+        const editPhaseOpen = await this.challengeApiService.isPhaseOpen(
           submission.challengeId,
-          'Approval',
+          isDeterministic ? ['Approval', 'Review'] : 'Approval',
         );
 
-        if (!approvalOpen) {
+        if (!editPhaseOpen) {
           throw new ForbiddenException(
-            'Question score edits are only allowed during the approval phase.',
+            isDeterministic
+              ? 'Question score edits are only allowed during the review or approval phase.'
+              : 'Question score edits are only allowed during the approval phase.',
           );
         }
 
