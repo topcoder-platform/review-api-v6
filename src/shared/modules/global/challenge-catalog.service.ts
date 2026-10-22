@@ -3,13 +3,19 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { CommonConfig } from 'src/shared/config/common.config';
-import { M2MService } from './m2m.service';
 import { SubmissionType } from '@prisma/client';
 import { ChallengeData } from './challenge.service';
 
 type ChallengeTypeRecord = { id: string; name: string };
 type ChallengeTrackRecord = { id: string; name: string };
 
+/**
+ * Caches the public challenge type and track catalogs from the v6 Challenge API.
+ *
+ * Loaded on module start and refreshed on demand. Review opportunity and
+ * submission services use it to map type/track IDs and names and to validate
+ * submission types. The catalog endpoints are public, so no token is sent.
+ */
 @Injectable()
 export class ChallengeCatalogService implements OnModuleInit {
   private readonly logger = new Logger(ChallengeCatalogService.name);
@@ -19,10 +25,7 @@ export class ChallengeCatalogService implements OnModuleInit {
   private tracksById = new Map<string, ChallengeTrackRecord>();
   private tracksByName = new Map<string, ChallengeTrackRecord>();
 
-  constructor(
-    private readonly httpService: HttpService,
-    private readonly m2mService: M2MService,
-  ) {}
+  constructor(private readonly httpService: HttpService) {}
 
   async onModuleInit(): Promise<void> {
     try {
@@ -37,22 +40,23 @@ export class ChallengeCatalogService implements OnModuleInit {
     }
   }
 
+  /**
+   * Fetches a public catalog resource from the v6 Challenge API without credentials.
+   *
+   * `challenge-types` and `challenge-tracks` are public routes. Challenge API
+   * rejects machine tokens on public routes that declare no scopes, so sending
+   * this service's M2M token would turn a public read into a 403.
+   *
+   * @param endpoint Path relative to `CommonConfig.apis.v6ApiUrl`, for example `challenge-types`.
+   * @returns The parsed response body.
+   * @throws Error when the HTTP request fails (the Axios error is logged, not rethrown).
+   */
   private async fetchFromV6<T = any>(endpoint: string): Promise<T> {
     const base = (CommonConfig.apis.v6ApiUrl || '').replace(/\/$/, '');
     const url = `${base}/${endpoint.replace(/^\//, '')}`;
-    const headers: Record<string, string> = {};
-    try {
-      // Prefer M2M token if available (some envs require auth)
-      const token = await this.m2mService.getM2MToken();
-      headers['Authorization'] = `Bearer ${token}`;
-    } catch {
-      // proceed without auth
-    }
 
     try {
-      const resp = await firstValueFrom(
-        this.httpService.get<T>(url, { headers }),
-      );
+      const resp = await firstValueFrom(this.httpService.get<T>(url));
       return resp.data;
     } catch (e) {
       if (e instanceof AxiosError) {

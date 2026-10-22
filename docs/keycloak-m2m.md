@@ -21,6 +21,15 @@ explicitly retain existing user-token audience behavior with
 During an approved overlap, `LEGACY_M2M_ISSUERS` and `LEGACY_M2M_AUDIENCE` allow
 old Auth0 machine tokens to pass the same normalizer. Issuance remains Keycloak-only.
 
+Outbound calls that use this service's M2M token need these client scopes:
+- `write:bus_api` for bus events.
+- `read:resources` for resource lookups.
+- `read:groups` for member group lookups.
+
+`ChallengeCatalogService` loads the public `/v6/challenge-types` and
+`/v6/challenge-tracks` catalogs without a token, because Challenge API rejects machine
+tokens on public routes that declare no scopes.
+
 `tc-core-library-js` owns signature, issuer, audience, lifetime, and machine/user
 classification. Service adapters must use its verified `kind`, `isMachine`, and
 `scopes` rather than decode/reclassify claims. Scope guards delegate exact matching
