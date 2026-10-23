@@ -66,7 +66,11 @@ export const isTalentManager = (user: JwtUser): boolean => {
 export class JwtService implements OnModuleInit {
   private validator?: ReturnType<typeof auth.createValidator>;
 
-  /** Initializes explicit Keycloak/member configuration after startup; takes no arguments and throws for invalid settings. */
+  /**
+   * Initializes the core validator after startup. Machine-token trust follows `USE_KEYCLOAK`
+   * (Keycloak settings required when `true`; Auth0 `LEGACY_M2M_*` trust otherwise); member
+   * validation is the same in both modes. Takes no arguments; throws for invalid settings.
+   */
   onModuleInit(): void {
     this.validator = auth.createValidator();
   }

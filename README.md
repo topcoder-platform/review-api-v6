@@ -182,4 +182,5 @@ Submission responses include that same safe progress subset in nested review sum
 ## Keycloak migration branch
 
 Follow [explicit Keycloak configuration and rollout](docs/keycloak-m2m.md).
-Legacy Auth0 M2M configuration examples do not apply to this branch.
+`USE_KEYCLOAK=true` issues M2M tokens from Keycloak (`KEYCLOAK_*`); unset or `false`
+keeps the Auth0 `M2M_AUTH_*` settings, which is also the rollback path.

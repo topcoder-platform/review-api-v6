@@ -5,7 +5,7 @@ const { test } = require('node:test');
 const { JwtService } = require('../dist/src/shared/modules/global/jwt.service');
 
 Object.assign(process.env, {
-  M2M_PROVIDER: 'keycloak',
+  USE_KEYCLOAK: 'true',
   KEYCLOAK_ISSUER: 'https://keycloak.example.test/realms/test',
   KEYCLOAK_AUDIENCE: 'https://api.example.test',
   KEYCLOAK_TOKEN_URL: 'https://keycloak.example.test/m2m/token',

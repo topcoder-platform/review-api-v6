@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  tc-core-library-js: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d
+  tc-core-library-js: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09
   '@aws-sdk/core@^3.975.3': 3.975.3
   '@aws-sdk/signature-v4-multi-region@^3.996.41': 3.996.41
   '@aws-sdk/xml-builder@^3.972.36': 3.972.36
@@ -133,8 +133,8 @@ importers:
         specifier: ^7.8.1
         version: 7.8.2
       tc-core-library-js:
-        specifier: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d
-        version: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
+        specifier: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09
+        version: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
       yauzl:
         specifier: 3.2.1
         version: 3.2.1
@@ -4239,9 +4239,9 @@ packages:
   tar-stream@3.1.7:
     resolution: {integrity: sha512-qJj60CXt7IU1Ffyc3NJMjh6EkuCFej46zUqJ4J7pqYlThyd9bO0XBTmcOIhSzZJVWfsLks0+nle/j538YAW9RQ==}
 
-  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d:
-    resolution: {tarball: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d}
-    version: 4.0.0-keycloak.0
+  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09:
+    resolution: {tarball: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09}
+    version: 4.0.0-keycloak.1
     engines: {node: '>=18.19'}
 
   terser-webpack-plugin@5.6.1:
@@ -9164,7 +9164,7 @@ snapshots:
       - bare-abort-controller
       - react-native-b4a
 
-  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1):
+  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1):
     dependencies:
       axios: 1.18.1(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
       bunyan: 1.8.15
