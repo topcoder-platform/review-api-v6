@@ -2,7 +2,7 @@ packages:
   - "."
 
 overrides:
-  tc-core-library-js: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09
+  tc-core-library-js: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/112d54a3ed66423e7305e94e174937823e76124e
   # Keep the S3 client and presigner on the same Smithy implementation.
   '@aws-sdk/core@^3.975.3': 3.975.3
   '@aws-sdk/signature-v4-multi-region@^3.996.41': 3.996.41
