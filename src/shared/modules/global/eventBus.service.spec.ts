@@ -1,5 +1,5 @@
-import { HttpStatus } from '@nestjs/common';
-import { of } from 'rxjs';
+import { createBusApiClient } from 'tc-core-library-js';
+jest.mock('tc-core-library-js', () => ({ createBusApiClient: jest.fn() }));
 import { CommonConfig } from 'src/shared/config/common.config';
 import { EventBusService } from './eventBus.service';
 
@@ -8,13 +8,9 @@ describe('EventBusService', () => {
     const m2mService = {
       getM2MToken: jest.fn().mockResolvedValue('m2m-token'),
     };
-    const httpService = {
-      post: jest.fn().mockReturnValue(
-        of({
-          status: HttpStatus.ACCEPTED,
-        }),
-      ),
-    };
+    const postEvent = jest.fn().mockResolvedValue({ status: 202 });
+    (createBusApiClient as jest.Mock).mockReturnValue({ postEvent });
+    const httpService = {};
     const service = new EventBusService(
       m2mService as any,
       httpService as any,
@@ -26,8 +22,8 @@ describe('EventBusService', () => {
       'submission-confirmation:submission-1',
     );
 
-    expect(httpService.post).toHaveBeenCalledWith(
-      CommonConfig.apis.busApiUrl,
+    expect(createBusApiClient).toHaveBeenCalledWith(expect.objectContaining({ BUSAPI_URL: CommonConfig.apis.busApiUrl }));
+    expect(postEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         topic: 'submission.notification.send',
         originator: 'review-api-v6',
@@ -36,11 +32,6 @@ describe('EventBusService', () => {
         payload: { recipients: ['member@example.com'] },
         key: 'submission-confirmation:submission-1',
       }),
-      {
-        headers: {
-          Authorization: 'Bearer m2m-token',
-        },
-      },
     );
   });
 });

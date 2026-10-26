@@ -178,3 +178,26 @@ Submission responses include that same safe progress subset in nested review sum
 - `crossChallenge` defaults to `false`, which limits matches to `{challengeId}`. Set it to `true` to match across every challenge.
 - Access is limited to admins, machine clients with `read:submission`/`all:submission`, users holding the `Project Manager` role, and challenge Reviewer/Screener/Copilot/Manager resources.
 - The response is keyed by the requested submission id: `{ "s1": { "duplicates": [{ "submissionId", "challenge", "challengeTitle", "user", "submittedAt" }] } }`, newest first. Submissions without a stored digest and `DELETED` submissions never match, so their lists come back empty.
+
+## Shared authentication and bus client (v6 refresh)
+
+This branch uses `tc-core-library-js` **4.0.0-rc.1**. Use its named
+`createJwtVerifier` / `createJwtAuthenticator`, `createM2MClient`, and
+`createBusApiClient` exports for shared authentication and bus API publishing.
+Service-specific roles, scopes, sessions and ownership checks remain in this service.
+The former bus wrapper dependency and local JWT cryptography must not be reintroduced.
+
+RSA verification requires an exact configured issuer and audience (`JWT_AUDIENCE`
+for client tokens, `AUTH0_AUDIENCE` for machine/API tokens, or this service's explicit
+issuer-policy settings). HMAC secrets must be at least 32 bytes; no default secret
+is supplied. Expiry is enforced. Machine identity comes from the shared verifier,
+not the presence of scopes. Supply real development credentials through the service's
+existing environment configuration before deployment.
+
+Bus publishers use `createBusApiClient(config).postEvent(event)` with the existing
+event envelope and optional key. Configure `BUSAPI_URL` for v6 and the existing
+OAuth credentials/token provider. The client uses bounded HTTPS requests and does
+not retry POSTs automatically. Application retry/outbox behavior remains local.
+
+See the [core migration guide](https://github.com/topcoder-platform/tc-core-library-js/blob/v4.0.0-rc.1/MIGRATION.md)
+for the API mapping, compatibility requirements, and rollout scope.
