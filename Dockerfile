@@ -4,6 +4,7 @@ ARG NODE_VERSION=26.5.1
 ARG PNPM_VERSION=11.15.1
 
 FROM node:${NODE_VERSION}-alpine AS build
+ARG PNPM_VERSION
 
 RUN apk upgrade --no-cache \
     && apk add --no-cache bash
@@ -23,8 +24,11 @@ RUN node node_modules/prisma/build/index.js generate \
 FROM alpine:3.24 AS runtime
 
 ARG NODE_VERSION
+# Alpine replaces old APK patch versions. Keep the configured Node major while
+# accepting maintained patch releases and verify the selected runtime below.
 RUN apk upgrade --no-cache \
-    && apk add --no-cache bash nodejs-current=${NODE_VERSION}-r0 \
+    && apk add --no-cache bash "nodejs-current~${NODE_VERSION%%.*}" \
+    && test "$(node -p 'process.versions.node.split(".")[0]')" = "${NODE_VERSION%%.*}" \
     && addgroup -S app \
     && adduser -S -D -H -u 10001 -G app app
 

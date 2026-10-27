@@ -201,3 +201,14 @@ not retry POSTs automatically. Application retry/outbox behavior remains local.
 
 See the [core migration guide](https://github.com/topcoder-platform/tc-core-library-js/blob/v4.0.0-rc.1/MIGRATION.md)
 for the API mapping, compatibility requirements, and rollout scope.
+
+## Alpine Node runtime packages
+
+Container stages that install Node through APK constrain `nodejs-current` to the
+major version in `NODE_VERSION`, rather than an exact Alpine package revision.
+Alpine replaces older patch packages in its repositories; the compatible pin
+allows current security patches while a build-time check rejects a different
+Node major. The runtime keeps Alpine's dynamically linked Node and system
+libraries. Existing non-root users and application entrypoints are preserved.
+Build stages using a versioned official Node image retain their configured
+version, and pnpm build arguments are explicitly declared in the consuming stage.
