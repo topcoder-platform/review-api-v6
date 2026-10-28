@@ -212,3 +212,22 @@ Node major. The runtime keeps Alpine's dynamically linked Node and system
 libraries. Existing non-root users and application entrypoints are preserved.
 Build stages using a versioned official Node image retain their configured
 version, and pnpm build arguments are explicitly declared in the consuming stage.
+
+## Shared JWT deployment configuration
+
+Development deployments load `/config/common/global-appvar` alongside the service's
+application parameters. JWT verification uses the same four settings as the other
+v6 services: `VALID_ISSUERS` (JSON array or comma-separated exact issuers),
+`AUTH_SECRET` (the existing shared HS256 signing key, at least 32 UTF-8 bytes),
+`JWT_AUDIENCE` (the browser application's audience), and `AUTH0_AUDIENCE` (the
+machine/API audience). RSA keys are fetched over HTTPS from the trusted issuer's
+`/.well-known/jwks.json`. Audience settings must reach the shared verifier; OAuth
+client IDs/secrets used for outbound requests are independent of JWT audiences.
+
+The development browser audience is `BXWXUWnilVUPdN01t2Se29Tw2ZYNGZvH`, and the
+machine audience is `https://m2m.topcoder-dev.com/`. Use the existing Parameter Store
+secret rather than creating a per-service key. Reconcile any service-specific
+overrides of these four keys with the global values before deployment. Parameters
+are consumed on deployment/task startup; changing Parameter Store alone does not
+replace running tasks. Existing role, scope, ownership and active-session checks
+continue after JWT verification.

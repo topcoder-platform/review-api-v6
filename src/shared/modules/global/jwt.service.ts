@@ -80,6 +80,7 @@ export class JwtService implements OnModuleInit {
     this.logger.log('Initializing tc-core JWT authenticator');
     this.verifier = createJwtVerifier({
       AUTH0_AUDIENCE: process.env.AUTH0_AUDIENCE || AuthConfig.jwt.audience,
+      JWT_AUDIENCE: process.env.JWT_AUDIENCE,
       AUTH_SECRET: AuthConfig.authSecret,
       VALID_ISSUERS: AuthConfig.validIssuers,
     });
