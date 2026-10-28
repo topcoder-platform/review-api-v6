@@ -24,13 +24,12 @@ RUN node node_modules/prisma/build/index.js generate \
 
 FROM alpine:${ALPINE_VERSION} AS runtime
 
+ARG NODE_VERSION
+# Allow Alpine package updates within the build's Node major version.
 RUN apk upgrade --no-cache \
-    && apk add --no-cache bash libstdc++ \
+    && apk add --no-cache bash "nodejs-current~${NODE_VERSION%%.*}" \
     && addgroup -S app \
     && adduser -S -D -H -u 10001 -G app app
-
-# Keep Node identical to the build stage without relying on Alpine's rolling package versions.
-COPY --from=build /usr/local/bin/node /usr/local/bin/node
 
 ARG RESET_DB_ARG=false
 ENV RESET_DB=$RESET_DB_ARG
