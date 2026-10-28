@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
 ARG NODE_VERSION=26.5.1
-ARG PNPM_VERSION=11.15.1
+ARG ALPINE_VERSION=3.24
 
-FROM node:${NODE_VERSION}-alpine AS build
+FROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS build
+
+ARG PNPM_VERSION=11.15.1
 
 RUN apk upgrade --no-cache \
     && apk add --no-cache bash
@@ -20,13 +22,15 @@ RUN node node_modules/prisma/build/index.js generate \
     && node node_modules/prisma/build/index.js generate --schema=prisma/resource-schema.prisma \
     && node node_modules/prisma/build/index.js generate --schema=prisma/member-schema.prisma
 
-FROM alpine:3.24 AS runtime
+FROM alpine:${ALPINE_VERSION} AS runtime
 
-ARG NODE_VERSION
 RUN apk upgrade --no-cache \
-    && apk add --no-cache bash nodejs-current=${NODE_VERSION}-r0 \
+    && apk add --no-cache bash libstdc++ \
     && addgroup -S app \
     && adduser -S -D -H -u 10001 -G app app
+
+# Keep Node identical to the build stage without relying on Alpine's rolling package versions.
+COPY --from=build /usr/local/bin/node /usr/local/bin/node
 
 ARG RESET_DB_ARG=false
 ENV RESET_DB=$RESET_DB_ARG
