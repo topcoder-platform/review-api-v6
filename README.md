@@ -15,6 +15,12 @@ Review API built on modern frameworks for managing all review-related Topcoder n
 
 Use Node.js 26.5.1 (see `.nvmrc`) and pnpm 11.15.1 for local development and builds.
 
+The Docker build and runtime stages use the same Alpine release. The runtime
+installs Alpine's available Node.js package within the build's Node.js major
+version, allowing minor, patch, and package revision updates without depending
+on older packages remaining available. This preserves dynamic linkage to patched
+system OpenSSL. The final image runs as the `app` user and excludes npm and pnpm.
+
 ## Project setup
 
 ```bash

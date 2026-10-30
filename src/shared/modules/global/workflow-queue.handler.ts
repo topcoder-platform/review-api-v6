@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Interval } from '@nestjs/schedule';
 import { GiteaService, ActionDispatchWorkflowResponse } from './gitea.service';
 import { PrismaService } from './prisma.service';
 import { Prisma, aiWorkflow, aiWorkflowRun } from '@prisma/client';
@@ -22,24 +21,6 @@ function stringToHash(string: string): number {
   }
   return hash;
 }
-
-const DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = 10000;
-const MIN_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = 1000;
-
-const AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS = (() => {
-  const configured = Number(
-    process.env.AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS ??
-      DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS,
-  );
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS;
-  }
-  const normalized = Math.floor(configured);
-  if (normalized < MIN_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS) {
-    return DEFAULT_AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS;
-  }
-  return normalized;
-})();
 
 export interface QueueWorkflowRunsOptions {
   /**
@@ -84,15 +65,6 @@ export class WorkflowQueueHandler {
     return Math.floor(configured);
   }
 
-  get defaultWorkflowTimeoutSeconds(): number {
-    const configured = Number(process.env.AI_WORKFLOW_TIMEOUT_SECONDS ?? 1800);
-    if (!Number.isFinite(configured) || configured < 30) {
-      return 1800;
-    }
-
-    return Math.floor(configured);
-  }
-
   private buildLogContext(
     context?: {
       submissionId?: string | null;
@@ -125,74 +97,6 @@ export class WorkflowQueueHandler {
     this.logger[logType ?? 'log'](
       `${logMessage}. ${JSON.stringify(logContext)}`,
     );
-  }
-
-  private getWorkflowTimeoutMs(workflow: any): number {
-    const workflowTimeoutSeconds = workflow.timeoutSeconds;
-    if (
-      typeof workflowTimeoutSeconds === 'number' &&
-      Number.isFinite(workflowTimeoutSeconds) &&
-      workflowTimeoutSeconds >= 30
-    ) {
-      return workflowTimeoutSeconds * 1000;
-    }
-
-    return this.defaultWorkflowTimeoutSeconds * 1000;
-  }
-
-  @Interval(AI_WORKFLOW_TIMEOUT_GUARD_INTERVAL_MS)
-  async processTimedOutWorkflowRuns(): Promise<void> {
-    if (!this.isDispatchEnabled) {
-      return;
-    }
-
-    const activeRuns = await this.prisma.aiWorkflowRun.findMany({
-      where: {
-        status: { in: ['DISPATCHED', 'IN_PROGRESS', 'QUEUED'] },
-        completedAt: null,
-      },
-      include: {
-        workflow: true,
-      },
-    });
-
-    if (!activeRuns.length) {
-      return;
-    }
-
-    const now = Date.now();
-
-    for (const run of activeRuns) {
-      const lastDispatchedAt = (run as any).lastDispatchedAt as
-        | Date
-        | null
-        | undefined;
-      const referenceTime =
-        lastDispatchedAt?.getTime() ?? run.startedAt?.getTime() ?? 0;
-      if (!referenceTime) {
-        continue;
-      }
-
-      const timeoutMs = this.getWorkflowTimeoutMs(run.workflow);
-      if (now - referenceTime <= timeoutMs) {
-        continue;
-      }
-
-      this.logWithContext(
-        `Workflow run ${run.id} timed out after ${timeoutMs / 1000}s. Evaluating retry policy.`,
-        {
-          workflowRunId: run.id,
-          submissionId: run.submissionId ?? null,
-          gitRunId: run.gitRunId ?? null,
-        },
-        'warn',
-      );
-
-      await this.retryWorkflowRunIfEligible(run.id, 'TIMEOUT', {
-        failMessage: 'Workflow run timed out and retries exhausted',
-        retryMessage: 'Workflow run timed out, retrying dispatch',
-      });
-    }
   }
 
   private async buildDispatchPayload(workflowRunId: string): Promise<{
@@ -384,7 +288,8 @@ export class WorkflowQueueHandler {
   /**
    * A run marked TIMEOUT that has a persisted score did finish: its results
    * were saved, but nothing moved it out of TIMEOUT. That happens when the
-   * score was saved before the timeout guard fired, or before late results
+   * score was saved before the run was marked TIMEOUT (by gitea, or by the
+   * removed review-api timeout guard on older runs), or before late results
    * were reconciled. The decision maker keeps such a submission PENDING
    * ("must be retriggered"), and the run never reports its real result.
    *
@@ -741,8 +646,9 @@ export class WorkflowQueueHandler {
       return;
     }
 
-    // The timeout guard may have given up on a run that was in fact still
-    // running on the gitea side. Recover it instead of dropping the event.
+    // A run marked TIMEOUT (e.g. by the removed review-api timeout guard on
+    // older runs) may have still been running on the gitea side. Recover it
+    // instead of dropping the event.
     if (
       aiWorkflowRun.status === 'TIMEOUT' &&
       event.action === 'completed' &&
@@ -867,8 +773,7 @@ export class WorkflowQueueHandler {
    * gitea cancels the previous run but does not always send the `completed`
    * job events for it. The run level `completed` event is still sent, so it is
    * used here to mark the matching aiWorkflowRun as CANCELLED instead of
-   * leaving it in progress until the timeout guard retries it or marks it
-   * TIMEOUT.
+   * leaving it in progress forever.
    *
    * Only `completed` events with a cancelled conclusion are handled. Other
    * conclusions keep going through the job events, which also drive the retry
@@ -1019,10 +924,11 @@ export class WorkflowQueueHandler {
   /**
    * A workflow run marked as TIMEOUT may still have finished on the gitea side:
    * the results (score / run items) or a late `completed` webhook can arrive
-   * after the timeout guard already gave up on the run.
+   * after the run was marked TIMEOUT (e.g. by the removed review-api timeout
+   * guard on older runs).
    *
    * When that happens, promote the run from TIMEOUT to SUCCESS and run the
-   * regular post-completion side effects that the timeout path skipped.
+   * regular post-completion side effects that were skipped.
    *
    * @param workflowRunId the run to reconcile
    * @param options.previousStatus the run status observed before the caller
@@ -1031,9 +937,9 @@ export class WorkflowQueueHandler {
    * @param options.conclusion a gitea workflow conclusion, when reconciling
    *   from a late webhook event
    * @param options.completedAt the real completion time reported by the
-   *   workflow, when known. Defaults to now, since the `completedAt` stored by
-   *   the timeout guard is the moment we gave up on the run, not the moment
-   *   the run actually finished.
+   *   workflow, when known. Defaults to now, since the `completedAt` stored
+   *   with the TIMEOUT status is the moment the run was given up on, not the
+   *   moment the run actually finished.
    * @returns true when the run was reconciled
    */
   async reconcileTimedOutWorkflowRun(
