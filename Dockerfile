@@ -25,9 +25,11 @@ RUN node node_modules/prisma/build/index.js generate \
 FROM alpine:${ALPINE_VERSION} AS runtime
 
 ARG NODE_VERSION
-# Allow Alpine package updates within the build's Node major version.
+# Alpine replaces old APK patch versions. Keep the configured Node major while
+# accepting maintained patch releases and verify the selected runtime below.
 RUN apk upgrade --no-cache \
     && apk add --no-cache bash "nodejs-current~${NODE_VERSION%%.*}" \
+    && test "$(node -p 'process.versions.node.split(".")[0]')" = "${NODE_VERSION%%.*}" \
     && addgroup -S app \
     && adduser -S -D -H -u 10001 -G app app
 
