@@ -22,6 +22,6 @@ export const AuthConfig = {
     clockTolerance: 30,
 
     // Whether to enforce token expiration
-    ignoreExpiration: process.env.NODE_ENV !== 'production',
+    ignoreExpiration: false,
   },
 };

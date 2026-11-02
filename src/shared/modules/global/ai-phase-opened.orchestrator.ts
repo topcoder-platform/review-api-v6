@@ -14,12 +14,15 @@ export class AiPhaseOpenedOrchestrator {
 
   async orchestrateChallengePhaseOpened(challengeId: string): Promise<void> {
     if (!challengeId) {
-      this.logger.warn('Skipping AI phase opened orchestration because challengeId is missing.');
+      this.logger.warn(
+        'Skipping AI phase opened orchestration because challengeId is missing.',
+      );
       return;
     }
 
     try {
-      const submissionIds = await this.getLatestContestSubmissionIds(challengeId);
+      const submissionIds =
+        await this.getLatestContestSubmissionIds(challengeId);
       if (!submissionIds.length) {
         this.logger.log(
           `No latest contest submissions found for challenge ${challengeId}; skipping AI workflow queueing.`,

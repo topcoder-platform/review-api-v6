@@ -42,8 +42,7 @@ export class SubmissionConfirmationEmailRetryService {
 
     this.isRunning = true;
     try {
-      const result =
-        await this.confirmationService.retryPendingConfirmations();
+      const result = await this.confirmationService.retryPendingConfirmations();
       if (result.candidates > 0 || result.failed > 0) {
         this.logger.log(
           `Submission confirmation retry complete. candidates=${result.candidates} published=${result.published} skipped=${result.skipped} failed=${result.failed}`,

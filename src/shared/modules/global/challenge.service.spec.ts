@@ -47,9 +47,9 @@ describe('ChallengeApiService whitelist access', () => {
       throwError(() => new Error('skills unavailable')),
     );
 
-    await expect(
-      service.findStandardizedSkillIds('React'),
-    ).resolves.toEqual([]);
+    await expect(service.findStandardizedSkillIds('React')).resolves.toEqual(
+      [],
+    );
   });
 
   it('keeps challenges visible when there are no whitelist rows', async () => {

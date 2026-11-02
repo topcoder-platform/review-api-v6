@@ -4374,11 +4374,13 @@ describe('SubmissionService', () => {
       async (testCase) => {
         jest
           .spyOn(listService as any, 'populateLatestSubmissionFlags')
-          .mockImplementation(async (submissions: any[]) => {
-            submissions.forEach((entry) => {
-              entry.isLatest = true;
-            });
-          });
+          .mockImplementation((submissions: any[]) =>
+            Promise.resolve().then(() => {
+              submissions.forEach((entry) => {
+                entry.isLatest = true;
+              });
+            }),
+          );
         resourceApiServiceListMock.getMemberResourcesRoles.mockResolvedValue(
           testCase.resources,
         );

@@ -22,9 +22,12 @@ describe('AiWorkflowService.updateRunItem', () => {
   jest.mock('src/shared/modules/global/resource.service', () => ({
     ResourceApiService: jest.fn(),
   }));
-  jest.mock('src/shared/modules/global/ai-reviewer-decision-maker.service', () => ({
-    AiReviewerDecisionMakerService: jest.fn(),
-  }));
+  jest.mock(
+    'src/shared/modules/global/ai-reviewer-decision-maker.service',
+    () => ({
+      AiReviewerDecisionMakerService: jest.fn(),
+    }),
+  );
   jest.mock('src/shared/modules/global/gitea.service', () => ({
     GiteaService: jest.fn(),
   }));
@@ -140,9 +143,9 @@ describe('AiWorkflowService.updateRunItem', () => {
       where: { id: 'submission-1' },
       select: { id: true },
     });
-    expect(workflowQueueHandlerMock.rebuildSubmissionDecision).toHaveBeenCalledWith(
-      'submission-1',
-    );
+    expect(
+      workflowQueueHandlerMock.rebuildSubmissionDecision,
+    ).toHaveBeenCalledWith('submission-1');
   });
 
   describe('manual workflow run triggering', () => {

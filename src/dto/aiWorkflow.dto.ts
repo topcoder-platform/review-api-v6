@@ -70,7 +70,11 @@ export class CreateAiWorkflowDto {
   @IsBoolean()
   disabled?: boolean;
 
-  @ApiProperty({ required: false, enum: ReviewMethod, default: ReviewMethod.AI_ASSISTED })
+  @ApiProperty({
+    required: false,
+    enum: ReviewMethod,
+    default: ReviewMethod.AI_ASSISTED,
+  })
   @IsOptional()
   @IsEnum(ReviewMethod)
   reviewMethod?: ReviewMethod;

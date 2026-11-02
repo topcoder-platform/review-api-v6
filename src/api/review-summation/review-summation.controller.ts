@@ -206,8 +206,7 @@ export class ReviewSummationController {
     // unauthenticated caller can trigger that unbounded work.
     if (wantsTabSeparated && !authUser) {
       throw new ForbiddenException({
-        message:
-          'Sign in to download tab-delimited review summations.',
+        message: 'Sign in to download tab-delimited review summations.',
         code: 'TSV_AUTHENTICATION_REQUIRED',
       });
     }

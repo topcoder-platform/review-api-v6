@@ -127,13 +127,13 @@ describe('ReviewSummationController', () => {
         { challengeId: 'challenge-1' } as any,
       );
 
-      const [header, row] = String(payload).split('\n');
+      if (typeof payload !== 'string') throw new Error('Expected TSV response');
+      const [header, row] = payload.split('\n');
       expect(header.split('\t')).toEqual(
         expect.arrayContaining(['score', 'testcase']),
       );
-      expect(row.split('\t')
-        .slice(-2)).toEqual(['', '']);
-      expect(String(payload)).not.toContain('987654321');
+      expect(row.split('\t').slice(-2)).toEqual(['', '']);
+      expect(payload).not.toContain('987654321');
     });
 
     it('emits per-seed rows for a machine token that received metadata', async () => {
@@ -161,9 +161,9 @@ describe('ReviewSummationController', () => {
         { challengeId: 'challenge-1', metadata: 'true' } as any,
       );
 
-      const [, row] = String(payload).split('\n');
-      expect(row.split('\t')
-        .slice(-2)).toEqual(['100', 'seed-987654321']);
+      if (typeof payload !== 'string') throw new Error('Expected TSV response');
+      const [, row] = payload.split('\n');
+      expect(row.split('\t').slice(-2)).toEqual(['100', 'seed-987654321']);
     });
   });
 });

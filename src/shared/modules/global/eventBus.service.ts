@@ -1,5 +1,5 @@
+import { createBusApiClient } from 'tc-core-library-js';
 import {
-  HttpStatus,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -7,7 +7,6 @@ import {
 import { M2MService } from './m2m.service';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
 
 /**
  * Event bus message.
@@ -44,7 +43,7 @@ export class EventBusService {
   ) {}
 
   /**
-   * Posts a message to Bus API using the review-api M2M identity.
+   * Posts a message through tc-core-library-js using the review-api M2M identity.
    *
    * @param topic Event topic to publish.
    * @param payload Topic-specific JSON payload.
@@ -61,7 +60,6 @@ export class EventBusService {
     key?: string,
   ): Promise<void> {
     // Get M2M token
-    const token = await this.m2mService.getM2MToken();
     // build event bus message
     const msg = new EventBusMessage<T>();
     msg.topic = topic;
@@ -73,21 +71,10 @@ export class EventBusService {
     // send message to event bus
     const url = CommonConfig.apis.busApiUrl;
     try {
-      const response = await firstValueFrom(
-        this.httpService.post(url, msg, {
-          headers: {
-            Authorization: 'Bearer ' + token,
-          },
-        }),
-      );
-      const responseStatus: HttpStatus = response.status as HttpStatus;
-      if (
-        responseStatus !== HttpStatus.OK &&
-        responseStatus !== HttpStatus.NO_CONTENT &&
-        responseStatus !== HttpStatus.ACCEPTED
-      ) {
-        throw new Error(`Event bus status code: ${response.status}`);
-      }
+      await createBusApiClient({
+        BUSAPI_URL: url,
+        getToken: () => this.m2mService.getM2MToken(),
+      }).postEvent(msg);
     } catch (e) {
       this.logger.error(`Event bus failed with error: ${e.message}`);
       throw new InternalServerErrorException(
@@ -97,7 +84,7 @@ export class EventBusService {
   }
 
   /**
-   * Send email message to Event bus.
+   * Send email through the shared tc-core-library-js bus publisher.
    *
    * @param payload Legacy external.action.email payload, including its template ID.
    * @returns A promise that resolves after Bus API accepts the event.
