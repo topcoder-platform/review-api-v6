@@ -681,8 +681,7 @@ export class ReviewSummationService {
   ): Promise<void> {
     if (!challengeIdFilter) {
       throw new ForbiddenException({
-        message:
-          'A challengeId is required when listing review summations.',
+        message: 'A challengeId is required when listing review summations.',
         code: 'SUBMITTER_CHALLENGE_ID_REQUIRED',
         details: {
           reason: 'CHALLENGE_ID_REQUIRED',

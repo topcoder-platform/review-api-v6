@@ -83,7 +83,8 @@ export class CreateAiReviewConfigDto {
   autoFinalize: boolean;
 
   @ApiProperty({
-    description: 'Whether AI review should be dispatched immediately after scan completion',
+    description:
+      'Whether AI review should be dispatched immediately after scan completion',
     example: false,
     required: false,
     default: false,

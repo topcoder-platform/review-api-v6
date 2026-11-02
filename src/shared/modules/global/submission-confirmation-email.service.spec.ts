@@ -155,9 +155,7 @@ describe('SubmissionConfirmationEmailService', () => {
 
     const result = await service.dispatchForSubmission('submission-1', now);
 
-    expect(result).toBe(
-      SubmissionConfirmationDispatchStatus.ALREADY_PUBLISHED,
-    );
+    expect(result).toBe(SubmissionConfirmationDispatchStatus.ALREADY_PUBLISHED);
     expect(prisma.submission.findUnique).not.toHaveBeenCalled();
     expect(eventBusService.publish).not.toHaveBeenCalled();
   });
@@ -248,22 +246,25 @@ describe('SubmissionConfirmationEmailService', () => {
   it('does not let a stale failing worker release a newer worker lease', async () => {
     let activeToken: string | null = null;
     prisma.submissionConfirmationEmail.updateMany.mockImplementation(
-      async (operation) => {
-        if (operation.data.attemptCount) {
-          activeToken = operation.data.processingToken;
-          return { count: 1 };
-        }
-        if (operation.where.processingToken === activeToken) {
-          activeToken = null;
-          return { count: 1 };
-        }
-        return { count: 0 };
-      },
+      (operation) =>
+        Promise.resolve().then(() => {
+          if (operation.data.attemptCount) {
+            activeToken = operation.data.processingToken;
+            return { count: 1 };
+          }
+          if (operation.where.processingToken === activeToken) {
+            activeToken = null;
+            return { count: 1 };
+          }
+          return { count: 0 };
+        }),
     );
-    memberService.getUserEmails.mockImplementation(async () => {
-      activeToken = 'newer-worker-token';
-      throw new Error('First worker timed out');
-    });
+    memberService.getUserEmails.mockImplementation(() =>
+      Promise.resolve().then(() => {
+        activeToken = 'newer-worker-token';
+        throw new Error('First worker timed out');
+      }),
+    );
 
     await expect(
       service.dispatchForSubmission('submission-1', now),

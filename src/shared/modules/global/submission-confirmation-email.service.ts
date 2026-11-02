@@ -156,14 +156,13 @@ export class SubmissionConfirmationEmailService {
     });
 
     if (claim.count === 0) {
-      const state =
-        await this.prisma.submissionConfirmationEmail.findUnique({
-          where: { submissionId: normalizedSubmissionId },
-          select: {
-            publishedAt: true,
-            processingStartedAt: true,
-          },
-        });
+      const state = await this.prisma.submissionConfirmationEmail.findUnique({
+        where: { submissionId: normalizedSubmissionId },
+        select: {
+          publishedAt: true,
+          processingStartedAt: true,
+        },
+      });
 
       if (!state) {
         this.logger.warn(

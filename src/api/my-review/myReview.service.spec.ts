@@ -247,7 +247,7 @@ describe('MyReviewService', () => {
     );
 
     const [countQuery, rowQuery] = challengePrismaMock.$queryRaw.mock.calls.map(
-      (call) => call[0],
+      (call) => call[0] as { inspect(): { sql: string; values: unknown[] } },
     );
 
     [countQuery, rowQuery].forEach((query) => {
@@ -339,7 +339,7 @@ describe('MyReviewService', () => {
     );
 
     const [countQuery, rowQuery] = challengePrismaMock.$queryRaw.mock.calls.map(
-      (call) => call[0],
+      (call) => call[0] as { inspect(): { sql: string; values: unknown[] } },
     );
     const countSql = countQuery.inspect().sql.replace(/\s+/g, ' ');
     const rowSql = rowQuery.inspect().sql.replace(/\s+/g, ' ');

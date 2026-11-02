@@ -145,12 +145,7 @@ describe('ProjectResultService', () => {
     ]);
   });
 
-  it.each([
-    undefined,
-    '',
-    'CONTEST_SUBMISSION',
-    'Contest Submission',
-  ])(
+  it.each([undefined, '', 'CONTEST_SUBMISSION', 'Contest Submission'])(
     'accepts the legacy final-placement winner type %p',
     async (winnerType) => {
       challengeApiServiceMock.getChallengeDetailForUser.mockResolvedValue({

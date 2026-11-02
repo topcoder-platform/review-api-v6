@@ -1024,7 +1024,9 @@ export class ReviewOpportunityService {
     const reviewerMetrics = await resolveReviewerMetrics(
       this.challengePrisma,
       entityList.flatMap((entity) =>
-        (entity.applications ?? []).map((application) => application.userId),
+        ((entity.applications ?? []) as { userId: string }[]).map(
+          (application) => application.userId,
+        ),
       ),
     );
     return this.buildResponseList(
@@ -1111,7 +1113,9 @@ export class ReviewOpportunityService {
     );
     const reviewerMetrics = await resolveReviewerMetrics(
       this.challengePrisma,
-      (entity.applications ?? []).map((application) => application.userId),
+      ((entity.applications ?? []) as { userId: string }[]).map(
+        (application) => application.userId,
+      ),
     );
     return this.buildResponse(entity, challengeData, authUser, reviewerMetrics);
   }

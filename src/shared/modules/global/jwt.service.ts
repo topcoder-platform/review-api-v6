@@ -70,7 +70,7 @@ export const isTalentManager = (user: JwtUser): boolean => {
 
 @Injectable()
 export class JwtService implements OnModuleInit {
-    private verifier?: JwtVerifier;
+  private verifier?: JwtVerifier;
   private readonly logger = LoggerService.forRoot('JwtService');
 
   /**
@@ -115,7 +115,9 @@ export class JwtService implements OnModuleInit {
     try {
       // Use tc-core-library-js for JWT validation
       if (!this.verifier) throw new Error('JWT verifier is not initialized');
-      const payload = await this.verifier.verify(token.replace(/^Bearer /i, ''));
+      const payload = await this.verifier.verify(
+        token.replace(/^Bearer /i, ''),
+      );
 
       this.logger.log({
         message: 'Token decoded successfully',

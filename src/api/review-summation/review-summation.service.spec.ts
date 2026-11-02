@@ -240,9 +240,11 @@ describe('ReviewSummationService', () => {
         challengeApiServiceMock as any,
         {
           member: {
-            findMany: jest.fn().mockResolvedValue([
-              { userId: 222n, handle: 'coder', maxRating: { rating: 1500 } },
-            ]),
+            findMany: jest
+              .fn()
+              .mockResolvedValue([
+                { userId: 222n, handle: 'coder', maxRating: { rating: 1500 } },
+              ]),
           },
         } as any,
       );
@@ -321,14 +323,12 @@ describe('ReviewSummationService', () => {
         reviewSummation: { findMany: jest.fn(), count: jest.fn() },
       };
       const challengeApiServiceMock = {
-        ensureChallengeWhitelistAccess: jest
-          .fn()
-          .mockRejectedValue(
-            new ForbiddenException({
-              message: "You don't have access to view this challenge",
-              code: 'FORBIDDEN_CHALLENGE_WHITELIST',
-            }),
-          ),
+        ensureChallengeWhitelistAccess: jest.fn().mockRejectedValue(
+          new ForbiddenException({
+            message: "You don't have access to view this challenge",
+            code: 'FORBIDDEN_CHALLENGE_WHITELIST',
+          }),
+        ),
         getChallengeDetail: jest.fn(),
       };
       const service = new ReviewSummationService(
