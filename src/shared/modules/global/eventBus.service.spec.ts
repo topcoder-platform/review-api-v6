@@ -11,10 +11,7 @@ describe('EventBusService', () => {
     const postEvent = jest.fn().mockResolvedValue({ status: 202 });
     (createBusApiClient as jest.Mock).mockReturnValue({ postEvent });
     const httpService = {};
-    const service = new EventBusService(
-      m2mService as any,
-      httpService as any,
-    );
+    const service = new EventBusService(m2mService as any, httpService as any);
 
     await service.publish(
       'submission.notification.send',
@@ -22,7 +19,9 @@ describe('EventBusService', () => {
       'submission-confirmation:submission-1',
     );
 
-    expect(createBusApiClient).toHaveBeenCalledWith(expect.objectContaining({ BUSAPI_URL: CommonConfig.apis.busApiUrl }));
+    expect(createBusApiClient).toHaveBeenCalledWith(
+      expect.objectContaining({ BUSAPI_URL: CommonConfig.apis.busApiUrl }),
+    );
     expect(postEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         topic: 'submission.notification.send',

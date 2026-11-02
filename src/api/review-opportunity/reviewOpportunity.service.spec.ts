@@ -210,9 +210,7 @@ describe('ReviewOpportunityService search', () => {
   });
 
   it('matches review opportunity chips through challenge tags and standardized skills', async () => {
-    prismaMock.reviewOpportunity.findMany.mockResolvedValueOnce([
-      candidate(),
-    ]);
+    prismaMock.reviewOpportunity.findMany.mockResolvedValueOnce([candidate()]);
     challengeServiceMock.findStandardizedSkillIds.mockResolvedValue([
       'skill-uicollectionview',
     ]);
@@ -232,10 +230,7 @@ describe('ReviewOpportunityService search', () => {
     expect(sqlText).toContain('unnest(COALESCE(c.tags');
     expect(sqlText).toContain('FROM "ChallengeSkill"');
     expect(challengeQuery.values).toEqual(
-      expect.arrayContaining([
-        '%UICollectionView%',
-        'skill-uicollectionview',
-      ]),
+      expect.arrayContaining(['%UICollectionView%', 'skill-uicollectionview']),
     );
   });
 
@@ -548,7 +543,7 @@ describe('ReviewOpportunityService search', () => {
     });
   });
 
-  it('marks the CTA inactive for an authenticated non-reviewer', async () => {
+  it('marks the CTA inactive for an authenticated non-reviewer', () => {
     const reason = (service as any).resolveCanApplyReason(
       { status: ReviewOpportunityStatus.OPEN },
       { status: ChallengeStatus.ACTIVE },

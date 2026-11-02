@@ -48,9 +48,8 @@ export class AiWorkflowQueueService {
   ): Promise<QueueWorkflowRunsResult> {
     this.logger.log(`Queueing AI workflows for submission ${submissionId}`);
 
-    const submission = await this.submissionBaseService.getSubmissionById(
-      submissionId,
-    );
+    const submission =
+      await this.submissionBaseService.getSubmissionById(submissionId);
     const challengeId = String(submission.challengeId ?? '').trim();
     if (!challengeId) {
       const reason = `Skipping AI workflow queueing because submission ${submissionId} is missing challengeId.`;
@@ -100,9 +99,8 @@ export class AiWorkflowQueueService {
       return [];
     }
 
-    const challenge = await this.challengeApiService.getChallengeDetail(
-      challengeId,
-    );
+    const challenge =
+      await this.challengeApiService.getChallengeDetail(challengeId);
 
     return Array.from(
       new Set(
@@ -144,16 +142,11 @@ export class AiWorkflowQueueService {
     }
   }
 
-  private async getConfiguredAiWorkflowIds(
-    challengeId: string,
-  ): Promise<
-    | {
-        instantReviewEnabled: boolean;
-        templateDisabled: boolean;
-        workflowIds: string[];
-      }
-    | null
-  > {
+  private async getConfiguredAiWorkflowIds(challengeId: string): Promise<{
+    instantReviewEnabled: boolean;
+    templateDisabled: boolean;
+    workflowIds: string[];
+  } | null> {
     if (!challengeId) {
       return null;
     }

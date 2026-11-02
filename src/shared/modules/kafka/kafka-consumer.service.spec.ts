@@ -240,8 +240,10 @@ describe('KafkaConsumerService configuration', () => {
     const service = new KafkaConsumerService(options, registry);
     const stream = Object.assign(new EventEmitter(), {
       close: jest.fn().mockResolvedValue(undefined),
-      async *[Symbol.asyncIterator]() {
-        return;
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => Promise.resolve({ done: true, value: undefined }),
+        };
       },
     });
     const consumerClient = createConsumerClientDouble();
@@ -293,6 +295,7 @@ describe('KafkaConsumerService configuration', () => {
         'wait',
       )
       .mockResolvedValue(undefined);
+    const commitMessage = jest.fn();
     const message = {
       key: Buffer.from('submission-confirmation:submission-1'),
       value: Buffer.from('{"payload":{"id":"submission-1"}}'),
@@ -302,14 +305,14 @@ describe('KafkaConsumerService configuration', () => {
       timestamp: 123n,
       offset: 456n,
       metadata: {},
-      commit: jest.fn().mockResolvedValue(undefined),
+      commit: commitMessage.mockResolvedValue(undefined),
       toJSON: jest.fn(),
     } as unknown as Message<Buffer, Buffer, Buffer, Buffer>;
 
     await service.processMessage(message.topic, message.partition, message);
 
     expect(handler.handle).toHaveBeenCalledTimes(3);
-    expect(message.commit).toHaveBeenCalledTimes(1);
+    expect(commitMessage).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -401,6 +404,7 @@ describe('KafkaConsumerService recovery', () => {
         'scheduleReconnect',
       )
       .mockResolvedValue(undefined);
+    const commitMessage = jest.fn();
     const message = {
       key: Buffer.alloc(0),
       value: Buffer.from('{"submissionId":"submission-123"}'),
@@ -410,7 +414,9 @@ describe('KafkaConsumerService recovery', () => {
       timestamp: 123n,
       offset: 686n,
       metadata: {},
-      commit: jest.fn().mockRejectedValue(new Error('offset commit timed out')),
+      commit: commitMessage.mockRejectedValue(
+        new Error('offset commit timed out'),
+      ),
       toJSON: jest.fn(),
     } as unknown as Message<Buffer, Buffer, Buffer, Buffer>;
 
@@ -424,7 +430,7 @@ describe('KafkaConsumerService recovery', () => {
     expect(handler.handle).toHaveBeenCalledWith({
       submissionId: 'submission-123',
     });
-    expect(message.commit).toHaveBeenCalledTimes(1);
+    expect(commitMessage).toHaveBeenCalledTimes(1);
     expect(scheduleReconnect).toHaveBeenCalledTimes(1);
     expect(service.getKafkaStatus()).toMatchObject({
       state: KafkaConnectionState.reconnecting,

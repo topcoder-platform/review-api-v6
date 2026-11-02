@@ -21,9 +21,9 @@ describe('SubmissionConfirmationEmailRetryService', () => {
 
     await service.retryPendingConfirmations();
 
-    expect(
-      confirmationService.retryPendingConfirmations,
-    ).toHaveBeenCalledTimes(1);
+    expect(confirmationService.retryPendingConfirmations).toHaveBeenCalledTimes(
+      1,
+    );
   });
 
   it('contains recovery failures so later schedules can continue', async () => {
@@ -45,8 +45,8 @@ describe('SubmissionConfirmationEmailRetryService', () => {
     await expect(service.retryPendingConfirmations()).resolves.toBeUndefined();
     await expect(service.retryPendingConfirmations()).resolves.toBeUndefined();
 
-    expect(
-      confirmationService.retryPendingConfirmations,
-    ).toHaveBeenCalledTimes(2);
+    expect(confirmationService.retryPendingConfirmations).toHaveBeenCalledTimes(
+      2,
+    );
   });
 });

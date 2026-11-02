@@ -359,12 +359,12 @@ describe('SubmissionPreviewService', () => {
   });
 
   it('rejects traversal paths before attempting preview extraction', () => {
-    expect(() =>
-      (service as any).validateZipEntryPath('../preview.png'),
-    ).toThrow('unsafe path');
-    expect(() => (service as any).validateZipEntryPath('/preview.png')).toThrow(
-      'unsafe path',
-    );
+    expect(() => {
+      (service as any).validateZipEntryPath('../preview.png');
+    }).toThrow('unsafe path');
+    expect(() => {
+      (service as any).validateZipEntryPath('/preview.png');
+    }).toThrow('unsafe path');
   });
 
   it('rejects an explicitly non-ZIP source content type', async () => {

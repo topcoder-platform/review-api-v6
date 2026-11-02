@@ -225,9 +225,7 @@ export class ChallengeApiService {
         : (payload.result?.content ?? payload.content ?? []);
       return Array.from(
         new Set(
-          skills
-            .map((skill) => String(skill?.id ?? '').trim())
-            .filter(Boolean),
+          skills.map((skill) => String(skill?.id ?? '').trim()).filter(Boolean),
         ),
       );
     } catch (error) {

@@ -21,9 +21,8 @@ describe('SubmissionScanCompleteOrchestrator', () => {
   it('delegates workflow queueing to the shared AI workflow queue service and asks for AI phase detection', async () => {
     await orchestrator.orchestrateScanComplete('submission-1');
 
-    expect(aiWorkflowQueueServiceMock.queueWorkflowsForSubmission).toHaveBeenCalledWith(
-      'submission-1',
-      { detectAiPhaseOpened: true },
-    );
+    expect(
+      aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
+    ).toHaveBeenCalledWith('submission-1', { detectAiPhaseOpened: true });
   });
 });
