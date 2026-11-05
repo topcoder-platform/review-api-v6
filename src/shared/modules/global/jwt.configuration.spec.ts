@@ -60,7 +60,7 @@ describe('shared JWT audience configuration', () => {
 
   it('accepts the separate browser audience', async () => {
     const token = jwt.sign(
-      { sub: 'user', userId: '42', roles: ['User'], handle: 'tester' },
+      { emailVerified: true, sub: 'user', userId: '42', roles: ['User'], handle: 'tester' },
       privateKey,
       {
         algorithm: 'RS256',
@@ -113,7 +113,7 @@ describe('shared JWT audience configuration', () => {
   );
 
   it('rejects a human token with an untrusted audience', async () => {
-    const token = jwt.sign({ userId: '42', roles: ['User'] }, privateKey, {
+    const token = jwt.sign({ emailVerified: true, userId: '42', roles: ['User'] }, privateKey, {
       algorithm: 'RS256',
       keyid: 'test-key',
       issuer,
