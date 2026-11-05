@@ -3,3 +3,17 @@
 coverage
 dist
 node_modules
+
+.aws
+.ssh
+awsenvconf
+*_env
+buildenvvar
+.env
+.env.*
+!.env.example
+!.env.sample
+.npmrc
+fetched_parameters.json
+paramwithvalue.json
+cli-input.json

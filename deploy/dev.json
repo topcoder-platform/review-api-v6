@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "environment": "dev",
+  "accountId": "811668436784",
+  "region": "us-east-1",
+  "deployRoleArn": "arn:aws:iam::811668436784:role/review-api-v6-dev-deploy",
+  "taskRoleArn": "arn:aws:iam::811668436784:role/topcoder-submissions-role",
+  "executionRoleArn": "arn:aws:iam::811668436784:role/ecsTaskExecutionRole",
+  "cluster": "tc-review-serverless",
+  "service": "review-api-v6",
+  "taskFamily": "review-api-v6",
+  "circleciOrgId": "947bef5e-1669-415d-b83c-4fc85155b7df",
+  "circleciProjectId": "55ad3c1b-675d-4caa-a143-8f3d019b37ae",
+  "repository": "github.com/topcoder-platform/review-api-v6",
+  "branch": "develop",
+  "images": {
+    "review-api-v6": "review-api-v6"
+  }
+}
