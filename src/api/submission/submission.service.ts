@@ -26,7 +26,11 @@ import {
   SubmissionResponseDto,
   SubmissionUpdateRequestDto,
 } from 'src/dto/submission.dto';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import {
+  JwtUser,
+  isAdmin,
+  resolveAuditActor,
+} from 'src/shared/modules/global/jwt.service';
 import { UserRole } from 'src/shared/enums/userRole.enum';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
 import { CommonConfig } from 'src/shared/config/common.config';
@@ -688,10 +692,7 @@ export class SubmissionService {
       body,
       file,
     );
-    const actor =
-      authUser.userId != null && String(authUser.userId).trim().length > 0
-        ? String(authUser.userId).trim()
-        : 'machine-token';
+    const actor = resolveAuditActor(authUser) ?? 'machine-token';
     const submittedDate = body.submittedDate
       ? new Date(body.submittedDate)
       : new Date();
@@ -2332,8 +2333,7 @@ export class SubmissionService {
 
   private deriveAuditHandle(authUser: JwtUser): string {
     if (authUser?.isMachine) {
-      const clientId = authUser.userId || 'unknown-client';
-      return `M2M - ${clientId}`;
+      return `M2M - ${resolveAuditActor(authUser) ?? 'unknown-client'}`;
     }
     return authUser?.handle || `user-${authUser?.userId || 'unknown'}`;
   }
@@ -2751,10 +2751,7 @@ export class SubmissionService {
 
     const bodyStream = await this.resolveUploadedFileBody(file);
     const s3 = this.getS3Client();
-    const actor =
-      authUser.userId != null && String(authUser.userId).trim().length > 0
-        ? String(authUser.userId).trim()
-        : 'machine-token';
+    const actor = resolveAuditActor(authUser) ?? 'machine-token';
 
     const upload = new Upload({
       client: s3,
@@ -2850,10 +2847,7 @@ export class SubmissionService {
 
     const bodyStream = await this.resolveUploadedFileBody(file);
     const s3 = this.getS3Client();
-    const actor =
-      authUser.userId != null && String(authUser.userId).trim().length > 0
-        ? String(authUser.userId).trim()
-        : 'machine-token';
+    const actor = resolveAuditActor(authUser) ?? 'machine-token';
 
     const upload = new Upload({
       client: s3,

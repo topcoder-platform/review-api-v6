@@ -15,7 +15,11 @@ import {
   ReviewSummationUpdateRequestDto,
 } from 'src/dto/reviewSummation.dto';
 import { SortDto } from 'src/dto/sort.dto';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import {
+  JwtUser,
+  isAdmin,
+  resolveAuditActor,
+} from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
 import {
@@ -305,9 +309,7 @@ export class ReviewSummationService {
     }
 
     try {
-      const actor = authUser?.userId
-        ? String(authUser.userId)
-        : this.systemActor;
+      const actor = resolveAuditActor(authUser) ?? this.systemActor;
 
       const challenge =
         await this.challengeApiService.getChallengeDetail(challengeId);

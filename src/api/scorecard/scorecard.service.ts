@@ -20,7 +20,10 @@ import {
   ScorecardWithGroupResponseDto,
   SearchScorecardQuery,
 } from 'src/dto/scorecard.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import {
+  JwtUser,
+  resolveAuditActor,
+} from 'src/shared/modules/global/jwt.service';
 import { PrismaService } from 'src/shared/modules/global/prisma.service';
 import { omit } from 'lodash';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
@@ -121,7 +124,7 @@ export class ScoreCardService {
         });
       }
 
-      const userId = user.isMachine ? 'System' : (user.userId as string);
+      const userId = resolveAuditActor(user) ?? 'System';
 
       this.logger.log(
         `[updateScorecard] Updating scorecard with id: ${scorecardId}`,
