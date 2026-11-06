@@ -54,7 +54,7 @@
     "prisma": "6.19.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "tc-core-library-js": "github:topcoder-platform/tc-core-library-js#v4.0.0-rc.2",
+    "tc-core-library-js": "https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c2df92b2227089909ab6e229df0ec6b658bb431a",
     "yauzl": "3.2.1"
   },
   "devDependencies": {

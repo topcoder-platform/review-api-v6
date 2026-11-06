@@ -136,8 +136,8 @@ importers:
         specifier: ^7.8.1
         version: 7.8.2
       tc-core-library-js:
-        specifier: github:topcoder-platform/tc-core-library-js#v4.0.0-rc.2
-        version: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/58de37670180e183e8378c3d203df0112a0414f6(supports-color@8.1.1)
+        specifier: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c2df92b2227089909ab6e229df0ec6b658bb431a
+        version: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c2df92b2227089909ab6e229df0ec6b658bb431a(supports-color@8.1.1)
       yauzl:
         specifier: 3.2.1
         version: 3.2.1
@@ -4113,9 +4113,9 @@ packages:
   tar-stream@3.1.7:
     resolution: {integrity: sha512-qJj60CXt7IU1Ffyc3NJMjh6EkuCFej46zUqJ4J7pqYlThyd9bO0XBTmcOIhSzZJVWfsLks0+nle/j538YAW9RQ==}
 
-  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/58de37670180e183e8378c3d203df0112a0414f6:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/58de37670180e183e8378c3d203df0112a0414f6}
-    version: 4.0.0-rc.2
+  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c2df92b2227089909ab6e229df0ec6b658bb431a:
+    resolution: {gitHosted: true, integrity: sha512-n+4KUOeV4LEIsTI/R216dBc6bUkbSyO/2O0LpoY3Hk7eqKsRQFUHloB3y0hfK/v1rzf8qYQxTdv8ikeRGBn4pQ==, tarball: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c2df92b2227089909ab6e229df0ec6b658bb431a}
+    version: 4.0.0-rc.2.1
     engines: {node: '>=22.13'}
 
   terser-webpack-plugin@5.6.1:
@@ -8874,7 +8874,7 @@ snapshots:
       - bare-abort-controller
       - react-native-b4a
 
-  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/58de37670180e183e8378c3d203df0112a0414f6(supports-color@8.1.1):
+  tc-core-library-js@https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c2df92b2227089909ab6e229df0ec6b658bb431a(supports-color@8.1.1):
     dependencies:
       '@types/jsonwebtoken': 9.0.10
       jsonwebtoken: 9.0.3
