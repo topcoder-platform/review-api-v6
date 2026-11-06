@@ -18,7 +18,10 @@ import {
   QueueAiWorkflowRunsDto,
 } from '../../dto/aiWorkflow.dto';
 import { ScorecardStatus } from 'src/dto/scorecard.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import {
+  JwtUser,
+  resolveAuditActor,
+} from 'src/shared/modules/global/jwt.service';
 import {
   ChallengeApiService,
   ChallengeData,
@@ -1229,13 +1232,20 @@ export class AiWorkflowService {
       },
     });
 
-    const createdByList = items
-      .map((item) => item.comments)
-      .flat()
-      .map((item) => item.createdBy as string);
+    // Comment authors may be machine clients (`<clientId>@clients`) or legacy
+    // `System` rows; only numeric member IDs can be resolved to members.
+    const memberIds = Array.from(
+      new Set(
+        items
+          .map((item) => item.comments)
+          .flat()
+          .map((item) => item.createdBy)
+          .filter((id): id is string => /^\d+$/.test(id ?? '')),
+      ),
+    );
 
     const members = await this.memberPrisma.member.findMany({
-      where: { userId: { in: createdByList.map((id) => BigInt(id)) } },
+      where: { userId: { in: memberIds.map((id) => BigInt(id)) } },
       select: {
         userId: true,
         handle: true,
@@ -1348,15 +1358,18 @@ export class AiWorkflowService {
     }
 
     if (patchData.upVote !== undefined || patchData.downVote !== undefined) {
-      // Remove existing votes by this user for this item
-      if (!user.userId) {
+      // Look up and store the vote under the same audit actor the Prisma
+      // extension writes, so machine callers replace their own previous vote.
+      const voter = resolveAuditActor(user);
+      if (!voter) {
         throw new BadRequestException('User id is not available');
       }
 
+      // Remove existing votes by this user for this item
       await this.prisma.aiWorkflowRunItemVote.deleteMany({
         where: {
           workflowRunItemId: itemId,
-          createdBy: user.userId.toString(),
+          createdBy: voter,
         },
       });
 
@@ -1366,7 +1379,7 @@ export class AiWorkflowService {
           data: {
             workflowRunItemId: itemId,
             voteType: VoteType.UPVOTE,
-            createdBy: user.userId.toString(),
+            createdBy: voter,
           },
         });
       } else if (patchData.downVote) {
@@ -1374,7 +1387,7 @@ export class AiWorkflowService {
           data: {
             workflowRunItemId: itemId,
             voteType: VoteType.DOWNVOTE,
-            createdBy: user.userId.toString(),
+            createdBy: voter,
           },
         });
       }

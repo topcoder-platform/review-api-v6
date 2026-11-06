@@ -95,6 +95,7 @@ const checkForNestedUpdateCreateOps = (
 /**
  * Adds a user audit field to the provided data object(s) if the current user ID is available
  * and the specified model contains the audit field. Handles both single objects and arrays of objects.
+ * The user ID is the member ID, or `<clientId>@clients` for machine (M2M) callers.
  * Also checks for nested update/create operations within the data.
  *
  * @param model - The name of the model to check for the audit field.
@@ -135,8 +136,8 @@ export const __test__ = {
  * Prisma extension that automatically adds audit fields (`createdBy`, `updatedBy`)
  * to all models during create, update, and upsert operations.
  *
- * - On `create` and `createMany`, both `createdBy` and `updatedBy` fields are set.
- * - On `update` and `updateMany`, only the `updatedBy` field is set.
+ * - On `create`, `createMany` and `createManyAndReturn`, both `createdBy` and `updatedBy` fields are set.
+ * - On `update`, `updateMany` and `updateManyAndReturn`, only the `updatedBy` field is set.
  * - On `upsert`, sets `createdBy` and `updatedBy` on creation, and `updatedBy` on update.
  *
  * This extension relies on the `addUserAuditField` helper to inject audit information
@@ -160,12 +161,23 @@ const auditFieldsExtension = Prisma.defineExtension({
         return query(args);
       },
 
+      async createManyAndReturn({ model, args, query }) {
+        addUserAuditField(model, auditField.createdBy, args.data);
+        addUserAuditField(model, auditField.updatedBy, args.data);
+        return query(args);
+      },
+
       async update({ model, args, query }) {
         addUserAuditField(model, auditField.updatedBy, args.data);
         return query(args);
       },
 
       async updateMany({ model, args, query }) {
+        addUserAuditField(model, auditField.updatedBy, args.data);
+        return query(args);
+      },
+
+      async updateManyAndReturn({ model, args, query }) {
         addUserAuditField(model, auditField.updatedBy, args.data);
         return query(args);
       },

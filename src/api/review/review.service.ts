@@ -33,7 +33,11 @@ import {
 import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
 import { LoggerService } from 'src/shared/modules/global/logger.service';
 import { computeScoresFromItems as computeScorecardScoresFromItems } from 'src/shared/modules/global/scorecard-score.util';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import {
+  JwtUser,
+  isAdmin,
+  resolveAuditActor,
+} from 'src/shared/modules/global/jwt.service';
 import { EventBusService } from 'src/shared/modules/global/eventBus.service';
 import { CommonConfig } from 'src/shared/config/common.config';
 import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
@@ -431,7 +435,7 @@ export class ReviewService {
       return 'unknown';
     }
 
-    const candidateId = authUser.userId ?? authUser.handle;
+    const candidateId = resolveAuditActor(authUser) ?? authUser.handle;
 
     if (candidateId && String(candidateId).trim().length > 0) {
       return String(candidateId).trim();

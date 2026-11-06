@@ -18,7 +18,64 @@ export interface JwtUser {
   roles?: UserRole[];
   scopes?: string[];
   isMachine: boolean;
+  /**
+   * Client ID of the calling application. Set only for machine (M2M) tokens,
+   * where it identifies which client made the request.
+   */
+  clientId?: string;
 }
+
+/**
+ * Resolves the calling application's client ID from verified M2M token claims.
+ *
+ * Prefers the `azp` (authorized party) claim and falls back to `sub`, which
+ * Auth0 issues as `<clientId>@clients` for client-credentials tokens.
+ *
+ * @param payload verified JWT claims.
+ * @returns the client ID, or undefined when the token carries neither claim.
+ * @throws Does not throw.
+ */
+export const resolveMachineClientId = (payload: {
+  azp?: unknown;
+  sub?: unknown;
+}): string | undefined => {
+  const normalize = (value: unknown): string | undefined => {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  return (
+    normalize(payload.azp) ??
+    normalize(normalize(payload.sub)?.replace(/@clients$/, ''))
+  );
+};
+
+/**
+ * Resolves the identity written to audit fields for a caller.
+ *
+ * Members are recorded by member ID. Machine (M2M) callers are recorded as
+ * `<clientId>@clients`, so a change can be traced to the application that made
+ * it rather than to a generic system actor.
+ *
+ * @param user authenticated caller, or null/undefined for an anonymous request.
+ * @returns the audit actor, or undefined when the caller carries no identity.
+ * @throws Does not throw.
+ */
+export const resolveAuditActor = (
+  user: JwtUser | null | undefined,
+): string | undefined => {
+  if (!user) {
+    return undefined;
+  }
+
+  if (user.isMachine && user.clientId) {
+    return `${user.clientId}@clients`;
+  }
+
+  // For machine tokens without a resolved client ID this is the token `sub`.
+  const id = user.userId == null ? '' : String(user.userId).trim();
+  return id.length > 0 ? id : undefined;
+};
 
 /**
  * Reports whether a caller has administrator authority.
@@ -125,12 +182,16 @@ export class JwtService implements OnModuleInit {
         hasScopes: Boolean(payload?.scopes || payload?.scope),
       });
       const id = payload.userId ?? payload.sub;
+      const clientId = payload.isMachine
+        ? resolveMachineClientId(payload)
+        : undefined;
       const user: JwtUser = {
         userId: id === undefined ? undefined : String(id),
         handle: payload.handle,
         roles: payload.roles as UserRole[],
         scopes: this.expandScopes(payload.scopes),
         isMachine: payload.isMachine,
+        ...(clientId ? { clientId } : {}),
       };
 
       this.logger.log({
