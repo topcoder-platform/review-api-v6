@@ -180,6 +180,19 @@ describe('Uppy S3 uploads', () => {
     );
   });
 
+  it('preserves the DOCX MIME type for CV preview while serving an attachment', async () => {
+    const contentType =
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    const session = service.create(
+      { ...file, purpose: 'cv', filename: 'cv.docx', contentType, size: 100 },
+      member,
+    );
+    await service.download(session.url.split('/files/')[1]);
+    const input = (signed.mock.calls.at(-1)?.[1] as any).input;
+    expect(input.ResponseContentType).toBe(contentType);
+    expect(input.ResponseContentDisposition).toMatch(/^attachment;/);
+  });
+
   it('forces active content to download and preserves each destination', async () => {
     for (const [purpose, bucket] of [
       ['forum', 'forum-files'],

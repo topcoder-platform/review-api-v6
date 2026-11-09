@@ -232,12 +232,15 @@ export class UploadsService {
     const inline = /^(image\/(png|jpeg|gif|webp|avif)|application\/pdf)$/.test(
       grant.contentType,
     );
+    const officeDocument =
+      grant.contentType ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     return getSignedUrl(
       this.s3,
       new GetObjectCommand({
         Bucket: grant.bucket,
         Key: grant.key,
-        ResponseContentType: inline
+        ResponseContentType: inline || officeDocument
           ? grant.contentType
           : 'application/octet-stream',
         ResponseContentDisposition: `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(grant.filename)}`,
