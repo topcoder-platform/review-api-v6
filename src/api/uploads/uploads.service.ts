@@ -240,9 +240,10 @@ export class UploadsService {
       new GetObjectCommand({
         Bucket: grant.bucket,
         Key: grant.key,
-        ResponseContentType: inline || officeDocument
-          ? grant.contentType
-          : 'application/octet-stream',
+        ResponseContentType:
+          inline || officeDocument
+            ? grant.contentType
+            : 'application/octet-stream',
         ResponseContentDisposition: `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(grant.filename)}`,
       }),
       { expiresIn: 300 },
