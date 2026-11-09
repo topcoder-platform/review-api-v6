@@ -39,7 +39,7 @@ describe('Uppy S3 uploads', () => {
     const one = service.create(file, member);
     expect(one.bucket).toBe('submission-dmz');
     expect(one.url).toMatch(
-      /^https:\/\/s3.amazonaws.com\/submission-dmz\/uppy\/submission\//,
+      /^https:\/\/s3\.amazonaws\.com\/submission-dmz\/uppy\/submission\//,
     );
     expect(one.key).not.toBe(service.create(file, member).key);
     expect(one.partSize).toBe(UPLOAD_PART_SIZE);
