@@ -1,5 +1,3 @@
-import { UploadsController } from './uploads/uploads.controller';
-import { UploadsService } from './uploads/uploads.service';
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { GlobalProvidersModule } from 'src/shared/modules/global/globalProviders.module';
@@ -67,7 +65,6 @@ import { ChallengeReviewContextService } from './challenge-review-context/challe
     ChallengeReviewContextModule,
   ],
   controllers: [
-    UploadsController,
     HealthCheckController,
     ScorecardController,
     AppealController,
@@ -91,7 +88,6 @@ import { ChallengeReviewContextService } from './challenge-review-context/challe
     GiteaTeamController,
   ],
   providers: [
-    UploadsService,
     ReviewService,
     AppealService,
     ReviewOpportunityService,
