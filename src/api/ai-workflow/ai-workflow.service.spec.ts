@@ -148,6 +148,81 @@ describe('AiWorkflowService.updateRunItem', () => {
     ).toHaveBeenCalledWith('submission-1');
   });
 
+  describe('machine (M2M) callers', () => {
+    const machineUser: JwtUser = {
+      userId: 'client-app-id@clients',
+      clientId: 'client-app-id',
+      scopes: ['update:workflow-run'],
+      isMachine: true,
+    };
+
+    it('stores and replaces a vote under the client identity', async () => {
+      await service.updateRunItem(
+        workflowId,
+        runId,
+        itemId,
+        { upVote: true } as UpdateAiWorkflowRunItemDto,
+        machineUser,
+      );
+
+      expect(prismaMock.aiWorkflowRunItemVote.deleteMany).toHaveBeenCalledWith({
+        where: {
+          workflowRunItemId: itemId,
+          createdBy: 'client-app-id@clients',
+        },
+      });
+      expect(prismaMock.aiWorkflowRunItemVote.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          workflowRunItemId: itemId,
+          createdBy: 'client-app-id@clients',
+        }),
+      });
+    });
+
+    it('lists run items whose comments were written by machine clients', async () => {
+      challengeApiServiceMock.getChallengeDetail = jest
+        .fn()
+        .mockResolvedValue({ id: 'challenge-1' });
+      prismaMock.aiWorkflowRunItem.findMany = jest.fn().mockResolvedValue([
+        {
+          id: itemId,
+          votes: [],
+          comments: [
+            { id: 'c-1', createdBy: '42', parentId: null, votes: [] },
+            {
+              id: 'c-2',
+              createdBy: 'client-app-id@clients',
+              parentId: null,
+              votes: [],
+            },
+            { id: 'c-3', createdBy: 'System', parentId: null, votes: [] },
+            { id: 'c-4', createdBy: null, parentId: null, votes: [] },
+          ],
+        },
+      ]);
+      memberPrismaMock.member = {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { userId: BigInt(42), handle: 'member', maxRating: null },
+          ]),
+      };
+
+      const [item] = await service.getRunItems(workflowId, runId, machineUser);
+
+      expect(memberPrismaMock.member.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: { in: [BigInt(42)] } },
+        }),
+      );
+      expect(
+        (item.comments as Array<{ createdUser?: { handle: string } }>).map(
+          (c) => c.createdUser?.handle,
+        ),
+      ).toEqual(['member', undefined, undefined, undefined]);
+    });
+  });
+
   describe('manual workflow run triggering', () => {
     const challengeCopilot: JwtUser = {
       userId: 'copilot-1',

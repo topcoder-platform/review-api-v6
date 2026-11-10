@@ -5,6 +5,7 @@ import { NextFunction } from 'express';
 // Class for storing request specific metadata
 export class RequestMetadata {
   requestId: string;
+  // Audit actor: member ID, or `<clientId>@clients` for machine (M2M) callers
   userId?: string;
 
   constructor(params: { requestId?: string; userId?: string }) {
