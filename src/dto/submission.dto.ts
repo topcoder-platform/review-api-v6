@@ -192,6 +192,21 @@ export class SubmissionQueryDto {
   isLatest?: string;
 }
 
+/**
+ * Converts a query-string boolean into a real boolean for class validation.
+ *
+ * @param value - Raw query parameter value.
+ * @returns Parsed boolean, or the original value so validation can reject it.
+ */
+const toQueryBoolean = (value: unknown): unknown => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  return value;
+};
+
 export class SubmissionRequestBaseDto {
   @ApiProperty({
     description: 'The submission type',
@@ -258,6 +273,17 @@ export class SubmissionRequestBaseDto {
   @IsOptional()
   @IsDateString()
   submittedDate?: string;
+
+  @ApiProperty({
+    description:
+      "Submitter's answer to \"Did AI tools write most of your submission's code?\". Accepts booleans or 'true'/'false' strings for multipart requests.",
+    required: false,
+    type: Boolean,
+  })
+  @IsOptional()
+  @Transform(({ value }) => toQueryBoolean(value))
+  @IsBoolean()
+  aiAssisted?: boolean;
 }
 
 export class ManualSubmissionUploadRequestDto {
@@ -532,6 +558,15 @@ export class SubmissionResponseDto {
   sha256Hash?: string | null;
 
   @ApiProperty({
+    description:
+      'Submitter\'s answer to "Did AI tools write most of your submission\'s code?"; null when the question was not asked.',
+    required: false,
+    nullable: true,
+    type: Boolean,
+  })
+  aiAssisted?: boolean | null;
+
+  @ApiProperty({
     description: 'The creation timestamp',
     example: '2023-10-01T00:00:00Z',
   })
@@ -627,21 +662,6 @@ const toUniqueQueryStrings = (input: unknown): unknown => {
     }
   }
   return [...unique];
-};
-
-/**
- * Converts a query-string boolean into a real boolean for class validation.
- *
- * @param value - Raw query parameter value.
- * @returns Parsed boolean, or the original value so validation can reject it.
- */
-const toQueryBoolean = (value: unknown): unknown => {
-  if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') return value;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'true' || normalized === '1') return true;
-  if (normalized === 'false' || normalized === '0') return false;
-  return value;
 };
 
 /** Query filters for the SHA-256 duplicate-submission lookup. */
