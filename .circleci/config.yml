@@ -86,7 +86,9 @@ workflows:
         serial-group: << pipeline.project.slug >>/deploy-dev
         filters:
           branches:
-            only: develop
+            only:
+              - develop
+              - PM-6737_mm-ai-usage-question
           tags:
             ignore: /.*/
     - approve-prod:
