@@ -193,12 +193,14 @@ export class SubmissionQueryDto {
 }
 
 /**
- * Converts a query-string boolean into a real boolean for class validation.
+ * Converts a boolean-like string into a real boolean for class validation.
+ * Used for query parameters and multipart/form-data fields, where booleans
+ * arrive as strings such as 'true', 'false', '1', or '0'.
  *
- * @param value - Raw query parameter value.
+ * @param value - Raw query parameter or form field value.
  * @returns Parsed boolean, or the original value so validation can reject it.
  */
-const toQueryBoolean = (value: unknown): unknown => {
+const toBooleanInput = (value: unknown): unknown => {
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return value;
   const normalized = value.trim().toLowerCase();
@@ -281,7 +283,7 @@ export class SubmissionRequestBaseDto {
     type: Boolean,
   })
   @IsOptional()
-  @Transform(({ value }) => toQueryBoolean(value))
+  @Transform(({ value }) => toBooleanInput(value))
   @IsBoolean()
   aiAssisted?: boolean;
 }
@@ -691,7 +693,7 @@ export class SubmissionDuplicatesQueryDto {
     type: Boolean,
   })
   @IsOptional()
-  @Transform(({ value }) => toQueryBoolean(value))
+  @Transform(({ value }) => toBooleanInput(value))
   @IsBoolean()
   crossChallenge?: boolean = false;
 }
