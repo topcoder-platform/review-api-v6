@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG NODE_VERSION=26.12.1
+ARG NODE_VERSION=26.13.1
 ARG ALPINE_VERSION=3.24
 
 FROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS build
@@ -29,7 +29,7 @@ ARG NODE_VERSION
 # Alpine replaces old APK patch versions. Keep the configured Node major while
 # accepting maintained patch releases and verify the selected runtime below.
 RUN apk upgrade --no-cache \
-    && apk add --no-cache bash "nodejs-current~${NODE_VERSION%%.*}" \
+    && apk add --no-cache bash "nodejs-current~${NODE_VERSION%%.*}" "nodejs-current>=26.13.1-r0" "zlib>=1.4-r0" \
     && test "$(node -p 'process.versions.node.split(".")[0]')" = "${NODE_VERSION%%.*}" \
     && addgroup -S app \
     && adduser -S -D -H -u 10001 -G app app
