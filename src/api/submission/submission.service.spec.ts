@@ -512,7 +512,7 @@ describe('SubmissionService', () => {
           callbackKafkaTopic: 'submission.scan.complete',
           callbackOption: 'kafka',
           cleanDestinationBucket: 'unit-test-clean-bucket',
-          fileName: 'solution.zip',
+          fileName: 'submissions/submission-retry/file.zip',
           moveFile: true,
           quarantineDestinationBucket: 'unit-test-quarantine-bucket',
           submissionId: 'submission-retry',
@@ -525,6 +525,41 @@ describe('SubmissionService', () => {
         retried: 1,
         skipped: 0,
       });
+    });
+
+    it('isolates same-name uploads and reuses the destination on retry', async () => {
+      const { eventBusService, retryService } = createRetryService([]);
+      for (const id of ['first', 'second', 'first']) {
+        await (retryService as any).publishSubmissionScanEvent({
+          id,
+          systemFileName: 'solution.zip',
+          url: `https://s3.amazonaws.com/dmz/uppy/submission/${id}/solution.zip`,
+        });
+      }
+
+      expect(
+        eventBusService.publish.mock.calls.map(
+          ([, payload]) => (payload as { fileName: string }).fileName,
+        ),
+      ).toEqual([
+        'submissions/first/file.zip',
+        'submissions/second/file.zip',
+        'submissions/first/file.zip',
+      ]);
+    });
+
+    it('preserves the source key when scanning a file already in clean storage', async () => {
+      const { eventBusService, retryService } = createRetryService([]);
+      await (retryService as any).publishSubmissionScanEvent({
+        id: 'existing',
+        systemFileName: 'solution.zip',
+        url: 'https://s3.amazonaws.com/unit-test-clean-bucket/legacy/my%20solution.zip',
+      });
+
+      expect(eventBusService.publish).toHaveBeenCalledWith(
+        'avscan.action.scan',
+        expect.objectContaining({ fileName: 'legacy/my solution.zip' }),
+      );
     });
 
     it('skips retry when the submission file is not verified in DMZ', async () => {
