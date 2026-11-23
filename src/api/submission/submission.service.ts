@@ -3454,10 +3454,20 @@ export class SubmissionService {
       });
     }
 
+    // The scanner uses fileName as the destination key. Files already in a
+    // destination bucket must keep their key because the scanner moves its source.
+    const source = this.parseS3Url(submission.url);
+    const extension = /\.[a-zA-Z0-9]+$/.exec(fileName)?.[0] ?? '';
+    const destinationKey =
+      source?.key &&
+      (source.bucket === cleanBucket || source.bucket === quarantineBucket)
+        ? decodeURIComponent(source.key)
+        : `submissions/${submission.id}/file${extension}`;
+
     const payload = {
       submissionId: submission.id,
       url: submission.url,
-      fileName,
+      fileName: destinationKey,
       moveFile: true,
       cleanDestinationBucket: cleanBucket,
       quarantineDestinationBucket: quarantineBucket,
