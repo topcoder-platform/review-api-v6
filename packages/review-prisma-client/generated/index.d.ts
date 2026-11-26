@@ -3,7 +3,7 @@
  * Client
 **/
 
-import * as runtime from './runtime/library.js';
+import * as runtime from './runtime/client.js';
 import $Types = runtime.Types // general types
 import $Public = runtime.Types.Public
 import $Utils = runtime.Types.Utils
@@ -528,13 +528,15 @@ export const ChallengeReviewContextStatus: typeof $Enums.ChallengeReviewContextS
  * Type-safe database client for TypeScript & Node.js
  * @example
  * ```
- * const prisma = new PrismaClient()
+ * const prisma = new PrismaClient({
+ *   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL })
+ * })
  * // Fetch zero or more Scorecards
  * const scorecards = await prisma.scorecard.findMany()
  * ```
  *
  *
- * Read more in our [docs](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client).
+ * Read more in our [docs](https://pris.ly/d/client).
  */
 export class PrismaClient<
   ClientOptions extends Prisma.PrismaClientOptions = Prisma.PrismaClientOptions,
@@ -549,16 +551,18 @@ export class PrismaClient<
    * Type-safe database client for TypeScript & Node.js
    * @example
    * ```
-   * const prisma = new PrismaClient()
+   * const prisma = new PrismaClient({
+   *   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL })
+   * })
    * // Fetch zero or more Scorecards
    * const scorecards = await prisma.scorecard.findMany()
    * ```
    *
    *
-   * Read more in our [docs](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client).
+   * Read more in our [docs](https://pris.ly/d/client).
    */
 
-  constructor(optionsArg ?: Prisma.Subset<ClientOptions, Prisma.PrismaClientOptions>);
+  constructor(optionsArg ?: Prisma.PrismaClientConstructorArgs<ClientOptions>);
   $on<V extends U>(eventType: V, callback: (event: V extends 'query' ? Prisma.QueryEvent : Prisma.LogEvent) => void): PrismaClient;
 
   /**
@@ -578,7 +582,7 @@ export class PrismaClient<
    * const result = await prisma.$executeRaw`UPDATE User SET cool = ${true} WHERE email = ${'user@email.com'};`
    * ```
    *
-   * Read more in our [docs](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client/raw-database-access).
+   * Read more in our [docs](https://pris.ly/d/raw-queries).
    */
   $executeRaw<T = unknown>(query: TemplateStringsArray | Prisma.Sql, ...values: any[]): Prisma.PrismaPromise<number>;
 
@@ -590,7 +594,7 @@ export class PrismaClient<
    * const result = await prisma.$executeRawUnsafe('UPDATE User SET cool = $1 WHERE email = $2 ;', true, 'user@email.com')
    * ```
    *
-   * Read more in our [docs](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client/raw-database-access).
+   * Read more in our [docs](https://pris.ly/d/raw-queries).
    */
   $executeRawUnsafe<T = unknown>(query: string, ...values: any[]): Prisma.PrismaPromise<number>;
 
@@ -601,7 +605,7 @@ export class PrismaClient<
    * const result = await prisma.$queryRaw`SELECT * FROM User WHERE id = ${1} OR email = ${'user@email.com'};`
    * ```
    *
-   * Read more in our [docs](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client/raw-database-access).
+   * Read more in our [docs](https://pris.ly/d/raw-queries).
    */
   $queryRaw<T = unknown>(query: TemplateStringsArray | Prisma.Sql, ...values: any[]): Prisma.PrismaPromise<T>;
 
@@ -613,7 +617,7 @@ export class PrismaClient<
    * const result = await prisma.$queryRawUnsafe('SELECT * FROM User WHERE id = $1 OR email = $2;', 1, 'user@email.com')
    * ```
    *
-   * Read more in our [docs](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client/raw-database-access).
+   * Read more in our [docs](https://pris.ly/d/raw-queries).
    */
   $queryRawUnsafe<T = unknown>(query: string, ...values: any[]): Prisma.PrismaPromise<T>;
 
@@ -629,12 +633,11 @@ export class PrismaClient<
    * ])
    * ```
    * 
-   * Read more in our [docs](https://www.prisma.io/docs/concepts/components/prisma-client/transactions).
+   * Read more in our [docs](https://www.prisma.io/docs/orm/prisma-client/queries/transactions).
    */
-  $transaction<P extends Prisma.PrismaPromise<any>[]>(arg: [...P], options?: { isolationLevel?: Prisma.TransactionIsolationLevel }): $Utils.JsPromise<runtime.Types.Utils.UnwrapTuple<P>>
+  $transaction<P extends Prisma.PrismaPromise<any>[]>(arg: [...P], options?: { maxWait?: number, timeout?: number, isolationLevel?: Prisma.TransactionIsolationLevel }): $Utils.JsPromise<runtime.Types.Utils.UnwrapTuple<P>>
 
   $transaction<R>(fn: (prisma: Omit<PrismaClient, runtime.ITXClientDenyList>) => $Utils.JsPromise<R>, options?: { maxWait?: number, timeout?: number, isolationLevel?: Prisma.TransactionIsolationLevel }): $Utils.JsPromise<R>
-
 
   $extends: $Extensions.ExtendsHook<"extends", Prisma.TypeMapCb<ClientOptions>, ExtArgs, $Utils.Call<Prisma.TypeMapCb<ClientOptions>, {
     extArgs: ExtArgs
@@ -1069,14 +1072,6 @@ export namespace Prisma {
   export type DecimalJsLike = runtime.DecimalJsLike
 
   /**
-   * Metrics
-   */
-  export type Metrics = runtime.Metrics
-  export type Metric<T> = runtime.Metric<T>
-  export type MetricHistogram = runtime.MetricHistogram
-  export type MetricHistogramBucket = runtime.MetricHistogramBucket
-
-  /**
   * Extensions
   */
   export import Extension = $Extensions.UserArgs
@@ -1087,11 +1082,12 @@ export namespace Prisma {
   export import Exact = $Public.Exact
 
   /**
-   * Prisma Client JS version: 6.19.3
-   * Query Engine version: c2990dca591cba766e3b7ef5d9e8a84796e47ab7
+   * Prisma Client JS version: 7.10.1
+   * Query Engine version: d1b3f377ca835d73fd50954a5e22128b9ebdd6b8
    */
   export type PrismaVersion = {
     client: string
+    engine: string
   }
 
   export const prismaVersion: PrismaVersion
@@ -1222,6 +1218,19 @@ export namespace Prisma {
   };
 
   /**
+   * Resolved type of the argument passed to the `PrismaClient` constructor.
+   *
+   * When called without a narrower options type (the common case), this resolves
+   * to `PrismaClientOptions` directly, which produces a clear TypeScript error
+   * message (`not assignable to parameter of type 'PrismaClientOptions'`) when
+   * the argument is missing or incomplete. When the user supplies a narrower
+   * options type (e.g. via a literal), it falls back to `Subset` to keep
+   * filtering out unknown properties.
+   */
+  export type PrismaClientConstructorArgs<Options extends PrismaClientOptions> =
+    [PrismaClientOptions] extends [Options] ? PrismaClientOptions : Subset<Options, PrismaClientOptions>;
+
+  /**
    * SelectSubset
    * @desc From `T` pick properties that exist in `U`. Simple version of Intersection.
    * Additionally, it validates, if both select and include are present. If the case, it errors.
@@ -1253,7 +1262,7 @@ export namespace Prisma {
   type XOR<T, U> =
     T extends object ?
     U extends object ?
-      (Without<T, U> & U) | (Without<U, T> & T)
+      ((Without<T, U> & U) | (Without<U, T> & T)) & object
     : U : T
 
 
@@ -1514,9 +1523,6 @@ export namespace Prisma {
   export type ModelName = (typeof ModelName)[keyof typeof ModelName]
 
 
-  export type Datasources = {
-    db?: Datasource
-  }
 
   interface TypeMapCb<ClientOptions = {}> extends $Utils.Fn<{extArgs: $Extensions.InternalArgs }, $Utils.Record<string, any>> {
     returns: Prisma.TypeMap<this['params']['extArgs'], ClientOptions extends { omit: infer OmitOptions } ? OmitOptions : {}>
@@ -4446,14 +4452,6 @@ export namespace Prisma {
   export type ErrorFormat = 'pretty' | 'colorless' | 'minimal'
   export interface PrismaClientOptions {
     /**
-     * Overwrites the datasource url from your schema.prisma file
-     */
-    datasources?: Datasources
-    /**
-     * Overwrites the datasource url from your schema.prisma file
-     */
-    datasourceUrl?: string
-    /**
      * @default "colorless"
      */
     errorFormat?: ErrorFormat
@@ -4479,7 +4477,7 @@ export namespace Prisma {
      *  { emit: 'stdout', level: 'error' }
      * 
      * ```
-     * Read more in our [docs](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client/logging#the-log-option).
+     * Read more in our [docs](https://pris.ly/d/logging).
      */
     log?: (LogLevel | LogDefinition)[]
     /**
@@ -4493,9 +4491,28 @@ export namespace Prisma {
       isolationLevel?: Prisma.TransactionIsolationLevel
     }
     /**
-     * Instance of a Driver Adapter, e.g., like one provided by `@prisma/adapter-planetscale`
+     * A driver adapter that PrismaClient uses to connect to your database, such as the ones provided by `@prisma/adapter-pg`, `@prisma/adapter-libsql`, `@prisma/adapter-planetscale`, etc.
+     * 
+     * A driver adapter is **required** unless you connect to your database through Prisma Accelerate (in which case use `accelerateUrl` instead).
+     * 
+     * Learn more: https://pris.ly/d/driver-adapters
+     * 
+     * @example
+     * ```ts
+     * import { PrismaPg } from '@prisma/adapter-pg'
+     * import { PrismaClient } from './generated/prisma/client'
+     * 
+     * const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL })
+     * const prisma = new PrismaClient({ adapter })
+     * ```
      */
-    adapter?: runtime.SqlDriverAdapterFactory | null
+    adapter?: runtime.SqlDriverAdapterFactory
+    /**
+     * The Prisma Accelerate connection URL. Use this option to connect to your database through Prisma Accelerate instead of using a driver adapter to connect directly.
+     * 
+     * Learn more: https://pris.ly/d/accelerate
+     */
+    accelerateUrl?: string
     /**
      * Global configuration for omitting model fields by default.
      * 
@@ -4511,6 +4528,22 @@ export namespace Prisma {
      * ```
      */
     omit?: Prisma.GlobalOmitConfig
+    /**
+     * SQL commenter plugins that add metadata to SQL queries as comments.
+     * Comments follow the sqlcommenter format: https://google.github.io/sqlcommenter/
+     * 
+     * @example
+     * ```
+     * const prisma = new PrismaClient({
+     *   adapter,
+     *   comments: [
+     *     traceContext(),
+     *     queryInsights(),
+     *   ],
+     * })
+     * ```
+     */
+    comments?: runtime.SqlCommenterPlugin[]
   }
   export type GlobalOmitConfig = {
     scorecard?: scorecardOmit
@@ -6353,6 +6386,11 @@ export namespace Prisma {
      * Skip the first `n` scorecards.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of scorecards.
+     */
     distinct?: ScorecardScalarFieldEnum | ScorecardScalarFieldEnum[]
   }
 
@@ -7608,6 +7646,11 @@ export namespace Prisma {
      * Skip the first `n` scorecardGroups.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of scorecardGroups.
+     */
     distinct?: ScorecardGroupScalarFieldEnum | ScorecardGroupScalarFieldEnum[]
   }
 
@@ -8799,6 +8842,11 @@ export namespace Prisma {
      * Skip the first `n` scorecardSections.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of scorecardSections.
+     */
     distinct?: ScorecardSectionScalarFieldEnum | ScorecardSectionScalarFieldEnum[]
   }
 
@@ -10063,6 +10111,11 @@ export namespace Prisma {
      * Skip the first `n` scorecardQuestions.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of scorecardQuestions.
+     */
     distinct?: ScorecardQuestionScalarFieldEnum | ScorecardQuestionScalarFieldEnum[]
   }
 
@@ -11366,6 +11419,11 @@ export namespace Prisma {
      * Skip the first `n` reviews.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviews.
+     */
     distinct?: ReviewScalarFieldEnum | ReviewScalarFieldEnum[]
   }
 
@@ -12588,6 +12646,11 @@ export namespace Prisma {
      * Skip the first `n` reviewItems.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewItems.
+     */
     distinct?: ReviewItemScalarFieldEnum | ReviewItemScalarFieldEnum[]
   }
 
@@ -13786,6 +13849,11 @@ export namespace Prisma {
      * Skip the first `n` reviewItemComments.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewItemComments.
+     */
     distinct?: ReviewItemCommentScalarFieldEnum | ReviewItemCommentScalarFieldEnum[]
   }
 
@@ -14897,6 +14965,11 @@ export namespace Prisma {
      * Skip the first `n` reviewAudits.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewAudits.
+     */
     distinct?: ReviewAuditScalarFieldEnum | ReviewAuditScalarFieldEnum[]
   }
 
@@ -16030,6 +16103,11 @@ export namespace Prisma {
      * Skip the first `n` appeals.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of appeals.
+     */
     distinct?: AppealScalarFieldEnum | AppealScalarFieldEnum[]
   }
 
@@ -17172,6 +17250,11 @@ export namespace Prisma {
      * Skip the first `n` appealResponses.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of appealResponses.
+     */
     distinct?: AppealResponseScalarFieldEnum | AppealResponseScalarFieldEnum[]
   }
 
@@ -18203,6 +18286,11 @@ export namespace Prisma {
      * Skip the first `n` reviewPendingSummaries.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewPendingSummaries.
+     */
     distinct?: ReviewPendingSummaryScalarFieldEnum | ReviewPendingSummaryScalarFieldEnum[]
   }
 
@@ -19425,6 +19513,11 @@ export namespace Prisma {
      * Skip the first `n` challengeResults.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of challengeResults.
+     */
     distinct?: ChallengeResultScalarFieldEnum | ChallengeResultScalarFieldEnum[]
   }
 
@@ -20459,6 +20552,11 @@ export namespace Prisma {
      * Skip the first `n` contactRequests.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of contactRequests.
+     */
     distinct?: ContactRequestScalarFieldEnum | ContactRequestScalarFieldEnum[]
   }
 
@@ -21428,6 +21526,11 @@ export namespace Prisma {
      * Skip the first `n` reviewTypes.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewTypes.
+     */
     distinct?: ReviewTypeScalarFieldEnum | ReviewTypeScalarFieldEnum[]
   }
 
@@ -22639,6 +22742,11 @@ export namespace Prisma {
      * Skip the first `n` reviewSummations.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewSummations.
+     */
     distinct?: ReviewSummationScalarFieldEnum | ReviewSummationScalarFieldEnum[]
   }
 
@@ -24203,6 +24311,11 @@ export namespace Prisma {
      * Skip the first `n` submissions.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of submissions.
+     */
     distinct?: SubmissionScalarFieldEnum | SubmissionScalarFieldEnum[]
   }
 
@@ -25641,6 +25754,11 @@ export namespace Prisma {
      * Skip the first `n` submissionPreviews.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of submissionPreviews.
+     */
     distinct?: SubmissionPreviewScalarFieldEnum | SubmissionPreviewScalarFieldEnum[]
   }
 
@@ -26785,6 +26903,11 @@ export namespace Prisma {
      * Skip the first `n` submissionConfirmationEmails.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of submissionConfirmationEmails.
+     */
     distinct?: SubmissionConfirmationEmailScalarFieldEnum | SubmissionConfirmationEmailScalarFieldEnum[]
   }
 
@@ -27989,6 +28112,11 @@ export namespace Prisma {
      * Skip the first `n` reviewOpportunities.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewOpportunities.
+     */
     distinct?: ReviewOpportunityScalarFieldEnum | ReviewOpportunityScalarFieldEnum[]
   }
 
@@ -29128,6 +29256,11 @@ export namespace Prisma {
      * Skip the first `n` reviewApplications.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of reviewApplications.
+     */
     distinct?: ReviewApplicationScalarFieldEnum | ReviewApplicationScalarFieldEnum[]
   }
 
@@ -30299,6 +30432,11 @@ export namespace Prisma {
      * Skip the first `n` uploads.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of uploads.
+     */
     distinct?: UploadScalarFieldEnum | UploadScalarFieldEnum[]
   }
 
@@ -31412,6 +31550,11 @@ export namespace Prisma {
      * Skip the first `n` resourceSubmissions.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of resourceSubmissions.
+     */
     distinct?: ResourceSubmissionScalarFieldEnum | ResourceSubmissionScalarFieldEnum[]
   }
 
@@ -32450,6 +32593,11 @@ export namespace Prisma {
      * Skip the first `n` gitWebhookLogs.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of gitWebhookLogs.
+     */
     distinct?: GitWebhookLogScalarFieldEnum | GitWebhookLogScalarFieldEnum[]
   }
 
@@ -33467,6 +33615,11 @@ export namespace Prisma {
      * Skip the first `n` submissionAccessAudits.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of submissionAccessAudits.
+     */
     distinct?: SubmissionAccessAuditScalarFieldEnum | SubmissionAccessAuditScalarFieldEnum[]
   }
 
@@ -34508,6 +34661,11 @@ export namespace Prisma {
      * Skip the first `n` llmProviders.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of llmProviders.
+     */
     distinct?: LlmProviderScalarFieldEnum | LlmProviderScalarFieldEnum[]
   }
 
@@ -35640,6 +35798,11 @@ export namespace Prisma {
      * Skip the first `n` llmModels.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of llmModels.
+     */
     distinct?: LlmModelScalarFieldEnum | LlmModelScalarFieldEnum[]
   }
 
@@ -36722,6 +36885,11 @@ export namespace Prisma {
      * Skip the first `n` aiWorkflowRunItemVotes.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiWorkflowRunItemVotes.
+     */
     distinct?: AiWorkflowRunItemVoteScalarFieldEnum | AiWorkflowRunItemVoteScalarFieldEnum[]
   }
 
@@ -37780,6 +37948,11 @@ export namespace Prisma {
      * Skip the first `n` aiWorkflowRunItemCommentVotes.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiWorkflowRunItemCommentVotes.
+     */
     distinct?: AiWorkflowRunItemCommentVoteScalarFieldEnum | AiWorkflowRunItemCommentVoteScalarFieldEnum[]
   }
 
@@ -39024,6 +39197,11 @@ export namespace Prisma {
      * Skip the first `n` aiWorkflows.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiWorkflows.
+     */
     distinct?: AiWorkflowScalarFieldEnum | AiWorkflowScalarFieldEnum[]
   }
 
@@ -40357,6 +40535,11 @@ export namespace Prisma {
      * Skip the first `n` aiWorkflowRuns.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiWorkflowRuns.
+     */
     distinct?: AiWorkflowRunScalarFieldEnum | AiWorkflowRunScalarFieldEnum[]
   }
 
@@ -41534,6 +41717,11 @@ export namespace Prisma {
      * Skip the first `n` aiWorkflowRunItems.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiWorkflowRunItems.
+     */
     distinct?: AiWorkflowRunItemScalarFieldEnum | AiWorkflowRunItemScalarFieldEnum[]
   }
 
@@ -42710,6 +42898,11 @@ export namespace Prisma {
      * Skip the first `n` aiWorkflowRunItemComments.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiWorkflowRunItemComments.
+     */
     distinct?: AiWorkflowRunItemCommentScalarFieldEnum | AiWorkflowRunItemCommentScalarFieldEnum[]
   }
 
@@ -43983,6 +44176,11 @@ export namespace Prisma {
      * Skip the first `n` aiReviewConfigs.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiReviewConfigs.
+     */
     distinct?: AiReviewConfigScalarFieldEnum | AiReviewConfigScalarFieldEnum[]
   }
 
@@ -45272,6 +45470,11 @@ export namespace Prisma {
      * Skip the first `n` aiReviewTemplateConfigs.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiReviewTemplateConfigs.
+     */
     distinct?: AiReviewTemplateConfigScalarFieldEnum | AiReviewTemplateConfigScalarFieldEnum[]
   }
 
@@ -46438,6 +46641,11 @@ export namespace Prisma {
      * Skip the first `n` aiReviewTemplateConfigWorkflows.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiReviewTemplateConfigWorkflows.
+     */
     distinct?: AiReviewTemplateConfigWorkflowScalarFieldEnum | AiReviewTemplateConfigWorkflowScalarFieldEnum[]
   }
 
@@ -47564,6 +47772,11 @@ export namespace Prisma {
      * Skip the first `n` aiReviewConfigWorkflows.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiReviewConfigWorkflows.
+     */
     distinct?: AiReviewConfigWorkflowScalarFieldEnum | AiReviewConfigWorkflowScalarFieldEnum[]
   }
 
@@ -48757,6 +48970,11 @@ export namespace Prisma {
      * Skip the first `n` aiReviewDecisions.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiReviewDecisions.
+     */
     distinct?: AiReviewDecisionScalarFieldEnum | AiReviewDecisionScalarFieldEnum[]
   }
 
@@ -49891,6 +50109,11 @@ export namespace Prisma {
      * Skip the first `n` aiReviewDecisionEscalations.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of aiReviewDecisionEscalations.
+     */
     distinct?: AiReviewDecisionEscalationScalarFieldEnum | AiReviewDecisionEscalationScalarFieldEnum[]
   }
 
@@ -50949,6 +51172,11 @@ export namespace Prisma {
      * Skip the first `n` challengeReviewContexts.
      */
     skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of challengeReviewContexts.
+     */
     distinct?: ChallengeReviewContextScalarFieldEnum | ChallengeReviewContextScalarFieldEnum[]
   }
 

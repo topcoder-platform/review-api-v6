@@ -1,9 +1,10 @@
 'use strict';
 
 const generated = require('./generated');
+const { PrismaPg } = require('@prisma/adapter-pg');
 
 /**
- * Create a review database client without exposing Prisma 6 constructor
+ * Create a review database client without exposing Prisma constructor
  * details to downstream services.
  *
  * @param {string} connectionString PostgreSQL connection string for review DB.
@@ -17,12 +18,10 @@ function createReviewPrismaClient(connectionString) {
     );
   }
 
+  const url = connectionString.trim();
+  const schema = new URL(url).searchParams.get('schema') || undefined;
   return new generated.PrismaClient({
-    datasources: {
-      db: {
-        url: connectionString.trim(),
-      },
-    },
+    adapter: new PrismaPg({ connectionString: url }, { schema }),
   });
 }
 
