@@ -1,5 +1,5 @@
 import { ReviewApplicationRole } from '@prisma/client';
-import { ReviewOpportunityType } from 'src/dto/reviewOpportunity.dto';
+import { ReviewOpportunityType } from '../../dto/reviewOpportunity.dto';
 
 // Build payment config for each review opportunity config.
 const paymentConfig: Record<string, Record<string, number>> = {};

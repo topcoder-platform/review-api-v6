@@ -6,28 +6,28 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PaginationDto } from 'src/dto/pagination.dto';
+import { PaginationDto } from '../../dto/pagination.dto';
 import {
   ReviewSummationBatchResponseDto,
   ReviewSummationQueryDto,
   ReviewSummationRequestDto,
   ReviewSummationResponseDto,
   ReviewSummationUpdateRequestDto,
-} from 'src/dto/reviewSummation.dto';
-import { SortDto } from 'src/dto/sort.dto';
+} from '../../dto/reviewSummation.dto';
+import { SortDto } from '../../dto/sort.dto';
 import {
   JwtUser,
   isAdmin,
   resolveAuditActor,
-} from 'src/shared/modules/global/jwt.service';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+} from '../../shared/modules/global/jwt.service';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 import {
   ChallengeApiService,
   ChallengeData,
-} from 'src/shared/modules/global/challenge.service';
-import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { UserRole } from 'src/shared/enums/userRole.enum';
+} from '../../shared/modules/global/challenge.service';
+import { MemberPrismaService } from '../../shared/modules/global/member-prisma.service';
+import { UserRole } from '../../shared/enums/userRole.enum';
 import { Prisma } from '@prisma/client';
 
 const REVIEW_SUMMATION_RESPONSE_SELECT = {

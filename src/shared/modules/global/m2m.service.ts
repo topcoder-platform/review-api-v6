@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as core from 'tc-core-library-js';
-import { M2mConfig } from 'src/shared/config/m2m.config';
+import { M2mConfig } from '../../config/m2m.config';
 
 /**
  * Service to get M2M token with auth0 configs

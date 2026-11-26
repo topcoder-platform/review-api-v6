@@ -19,7 +19,7 @@ import { SubmissionScanCompleteOrchestrator } from './submission-scan-complete.o
 import { AiPhaseOpenedOrchestrator } from './ai-phase-opened.orchestrator';
 import { AiWorkflowQueueService } from './ai-workflow-queue.service';
 import { ChallengeCatalogService } from './challenge-catalog.service';
-import { SubmissionService } from 'src/api/submission/submission.service';
+import { SubmissionService } from '../../../api/submission/submission.service';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 import { WorkflowQueueHandler } from './workflow-queue.handler';

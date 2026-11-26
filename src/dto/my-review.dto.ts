@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEnum, IsIn, IsOptional, IsString } from 'class-validator';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { ChallengeStatus } from '../shared/enums/challengeStatus.enum';
 
 export const ACTIVE_MY_REVIEW_SORT_FIELDS = [
   'challengeName',

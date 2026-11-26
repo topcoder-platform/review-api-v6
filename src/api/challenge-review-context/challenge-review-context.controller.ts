@@ -23,12 +23,12 @@ import {
   UpdateChallengeReviewContextDto,
   ChallengeReviewContextResponseDto,
 } from '../../dto/challengeReviewContext.dto';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { User } from 'src/shared/decorators/user.decorator';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Scope } from 'src/shared/enums/scopes.enum';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { User } from '../../shared/decorators/user.decorator';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Scope } from '../../shared/enums/scopes.enum';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
 
 @ApiTags('Challenge Review Context')
 @ApiBearerAuth()

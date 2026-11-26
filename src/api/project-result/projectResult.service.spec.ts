@@ -1,6 +1,6 @@
 import { SubmissionStatus, SubmissionType } from '@prisma/client';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 import { ProjectResultService } from './projectResult.service';
 
 jest.mock('src/shared/modules/global/prisma.service', () => ({

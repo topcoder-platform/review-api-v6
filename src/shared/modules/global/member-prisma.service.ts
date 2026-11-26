@@ -1,3 +1,4 @@
+import { createPostgresAdapter } from '../../../prisma-adapter';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client-member';
 import { LoggerService } from './logger.service';
@@ -19,11 +20,7 @@ export class MemberPrismaService
         { level: 'warn', emit: 'event' },
         { level: 'error', emit: 'event' },
       ],
-      datasources: {
-        db: {
-          url: process.env.MEMBER_DB_URL,
-        },
-      },
+      adapter: createPostgresAdapter(process.env.MEMBER_DB_URL),
     });
 
     this.$on('info' as never, (e: Prisma.LogEvent) =>

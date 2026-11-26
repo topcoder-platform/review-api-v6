@@ -12,13 +12,13 @@ import {
   ALL_MY_REVIEW_SORT_FIELDS,
   MyReviewFilterDto,
   MyReviewSummaryDto,
-} from 'src/dto/my-review.dto';
-import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { Scope } from 'src/shared/enums/scopes.enum';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+} from '../../dto/my-review.dto';
+import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { Scope } from '../../shared/enums/scopes.enum';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
 
 @ApiTags('My Reviews')
 @ApiBearerAuth()

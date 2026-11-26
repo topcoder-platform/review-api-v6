@@ -4,11 +4,11 @@ jest.mock('nanoid', () => ({
 }));
 
 import { ReviewService } from './review.service';
-import { ReviewRequestDto, ReviewStatus } from 'src/dto/review.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { ReviewRequestDto, ReviewStatus } from '../../dto/review.dto';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { CommonConfig } from '../../shared/config/common.config';
 import { ScorecardType, SubmissionType } from '@prisma/client';
 
 describe('ReviewService.createReview authorization checks', () => {

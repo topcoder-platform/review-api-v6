@@ -3,23 +3,23 @@ import {
   InternalServerErrorException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { ResourceApiService } from '../../shared/modules/global/resource.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
 import {
   ContactRequestDto,
   ContactRequestResponseDto,
-} from 'src/dto/contactRequest.dto';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+} from '../../dto/contactRequest.dto';
+import { JwtUser, isAdmin } from '../../shared/modules/global/jwt.service';
 import {
   EventBusSendEmailPayload,
   EventBusService,
-} from 'src/shared/modules/global/eventBus.service';
-import { MemberService } from 'src/shared/modules/global/member.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+} from '../../shared/modules/global/eventBus.service';
+import { MemberService } from '../../shared/modules/global/member.service';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
+import { CommonConfig } from '../../shared/config/common.config';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
 
 @Injectable()
 export class ContactRequestsService {

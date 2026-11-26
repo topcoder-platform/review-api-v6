@@ -6,7 +6,7 @@ import {
   WebhookEventDto,
   WebhookResponseDto,
 } from '../../dto/webhook-event.dto';
-import { WorkflowQueueHandler } from 'src/shared/modules/global/workflow-queue.handler';
+import { WorkflowQueueHandler } from '../../shared/modules/global/workflow-queue.handler';
 
 @Injectable()
 export class WebhookService {

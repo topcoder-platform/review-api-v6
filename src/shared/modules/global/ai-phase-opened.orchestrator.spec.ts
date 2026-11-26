@@ -61,7 +61,7 @@ describe('AiPhaseOpenedOrchestrator', () => {
 
     expect(prismaMock.$queryRaw).toHaveBeenCalled();
     const query = prismaMock.$queryRaw.mock.calls[0][0];
-    expect(String(query)).toContain('"virusScan" = TRUE');
+    expect(query.text).toContain('"virusScan" = TRUE');
     expect(
       aiWorkflowQueueServiceMock.queueWorkflowsForSubmission,
     ).toHaveBeenCalledWith('submission-1', { aiPhaseOpened: true });

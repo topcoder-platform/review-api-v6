@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
-import { GlobalProvidersModule } from 'src/shared/modules/global/globalProviders.module';
-import { FileUploadModule } from 'src/shared/modules/global/file-upload.module';
+import { GlobalProvidersModule } from '../shared/modules/global/globalProviders.module';
+import { FileUploadModule } from '../shared/modules/global/file-upload.module';
 import { HealthCheckController } from './health-check/healthCheck.controller';
 import { ScorecardController } from './scorecard/scorecard.controller';
 import { AppealController } from './appeal/appeal.controller';
@@ -24,8 +24,8 @@ import { ReviewApplicationController } from './review-application/reviewApplicat
 import { ReviewOpportunityService } from './review-opportunity/reviewOpportunity.service';
 import { ReviewApplicationService } from './review-application/reviewApplication.service';
 import { ReviewHistoryController } from './review-history/reviewHistory.controller';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
+import { ChallengeApiService } from '../shared/modules/global/challenge.service';
+import { ResourceApiService } from '../shared/modules/global/resource.service';
 import { SubmissionService } from './submission/submission.service';
 import { ReviewSummationService } from './review-summation/review-summation.service';
 import { WebhookController } from './webhook/webhook.controller';

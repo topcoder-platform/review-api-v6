@@ -24,13 +24,13 @@ import {
   AppealResponseDto,
   AppealResponseRequestDto,
   AppealResponseResponseDto,
-} from 'src/dto/appeal.dto';
-import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
-import { Scope } from 'src/shared/enums/scopes.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+} from '../../dto/appeal.dto';
+import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { Scope } from '../../shared/enums/scopes.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 import { AppealService } from './appeal.service';
 
 function parseCsvIds(value?: string): string[] {

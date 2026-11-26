@@ -13,17 +13,17 @@ import {
   AppealResponseRequestDto,
   AppealResponseResponseDto,
   mapAppealResponseRequestToDto,
-} from 'src/dto/appeal.dto';
-import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { EventBusService } from 'src/shared/modules/global/eventBus.service';
+} from '../../dto/appeal.dto';
+import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { JwtUser, isAdmin } from '../../shared/modules/global/jwt.service';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
+import { CommonConfig } from '../../shared/config/common.config';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { EventBusService } from '../../shared/modules/global/eventBus.service';
 
 @Injectable()
 export class AppealService {

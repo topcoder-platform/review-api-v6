@@ -1,13 +1,11 @@
 generator client {
   provider      = "prisma-client-js"
   output        = "../node_modules/@prisma/client-challenge"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
   previewFeatures = ["fullTextSearchPostgres"]
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("CHALLENGE_DB_URL")
 }
 
 // Enum for allowed challenge track values (matches app-constants)

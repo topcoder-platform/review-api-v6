@@ -14,7 +14,7 @@ import {
   IsInt,
   IsEmpty,
 } from 'class-validator';
-import { AppealResponseDto } from 'src/dto/appeal.dto';
+import { AppealResponseDto } from './appeal.dto';
 
 export enum ReviewItemCommentType {
   COMMENT = 'COMMENT',

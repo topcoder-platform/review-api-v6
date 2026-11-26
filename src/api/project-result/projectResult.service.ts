@@ -4,7 +4,7 @@ import { LoggerService } from '../../shared/modules/global/logger.service';
 import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { ProjectResultResponseDto } from '../../dto/projectResult.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 
 const CANONICAL_PROJECT_RESULT_SELECT = {
   challengeId: true,

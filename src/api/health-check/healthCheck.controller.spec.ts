@@ -3,9 +3,9 @@ import {
   HealthCheckController,
   HealthCheckStatus,
 } from './healthCheck.controller';
-import { KafkaConnectionState } from 'src/shared/modules/kafka/kafka-consumer.service';
-import type { PrismaService } from 'src/shared/modules/global/prisma.service';
-import type { KafkaConsumerService } from 'src/shared/modules/kafka/kafka-consumer.service';
+import { KafkaConnectionState } from '../../shared/modules/kafka/kafka-consumer.service';
+import type { PrismaService } from '../../shared/modules/global/prisma.service';
+import type { KafkaConsumerService } from '../../shared/modules/kafka/kafka-consumer.service';
 
 type PrismaServiceLike = {
   scorecard: {

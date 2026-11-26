@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SubmissionService } from 'src/api/submission/submission.service';
-import { SubmissionResponseDto } from 'src/dto/submission.dto';
+import { SubmissionService } from '../../../api/submission/submission.service';
+import { SubmissionResponseDto } from '../../../dto/submission.dto';
 
 /**
  * Service to handle submission-related operations.

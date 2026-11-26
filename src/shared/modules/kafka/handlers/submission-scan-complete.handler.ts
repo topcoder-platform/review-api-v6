@@ -7,7 +7,7 @@ import { SubmissionScanCompleteOrchestrator } from '../../global/submission-scan
 import { ChallengeApiService } from '../../global/challenge.service';
 import { EventBusService } from '../../global/eventBus.service';
 import { ResourcePrismaService } from '../../global/resource-prisma.service';
-import { SubmissionService } from 'src/api/submission/submission.service';
+import { SubmissionService } from '../../../../api/submission/submission.service';
 
 interface First2FinishSubmissionEventPayload {
   submissionId: string;

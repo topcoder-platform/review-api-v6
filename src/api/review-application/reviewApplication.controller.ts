@@ -18,15 +18,15 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Request } from 'express';
-import { OkResponse, ResponseDto } from 'src/dto/common.dto';
+import { OkResponse, ResponseDto } from '../../dto/common.dto';
 import {
   CreateReviewApplicationDto,
   QueryMyReviewApplicationDto,
   ReviewApplicationResponseDto,
-} from 'src/dto/reviewApplication.dto';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { isAdmin, JwtUser } from 'src/shared/modules/global/jwt.service';
+} from '../../dto/reviewApplication.dto';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { isAdmin, JwtUser } from '../../shared/modules/global/jwt.service';
 import { ReviewApplicationService } from './reviewApplication.service';
 
 @ApiTags('Review Application')

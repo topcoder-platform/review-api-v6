@@ -3,8 +3,8 @@ jest.mock('nanoid', () => ({
   nanoid: () => 'mock-nanoid',
 }));
 
-import { SCOPES_KEY } from 'src/shared/decorators/scopes.decorator';
-import { Scope } from 'src/shared/enums/scopes.enum';
+import { SCOPES_KEY } from '../../shared/decorators/scopes.decorator';
+import { Scope } from '../../shared/enums/scopes.enum';
 import { HttpStatus } from '@nestjs/common';
 import { HEADERS_METADATA, REDIRECT_METADATA } from '@nestjs/common/constants';
 import { SubmissionController } from './submission.controller';

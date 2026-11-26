@@ -1,3 +1,4 @@
+import { createPostgresAdapter } from '../src/prisma-adapter';
 /* eslint-disable no-console */
 import {
   PrismaClient as ReviewPrismaClient,
@@ -204,18 +205,10 @@ async function main() {
   const resourceDbUrl = ensureEnv('RESOURCE_DB_URL');
 
   const reviewPrisma = new ReviewPrismaClient({
-    datasources: {
-      db: {
-        url: reviewDbUrl,
-      },
-    },
+    adapter: createPostgresAdapter(reviewDbUrl),
   });
   const resourcePrisma = new ResourcePrismaClient({
-    datasources: {
-      db: {
-        url: resourceDbUrl,
-      },
-    },
+    adapter: createPostgresAdapter(resourceDbUrl),
   });
 
   try {

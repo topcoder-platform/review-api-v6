@@ -6,8 +6,8 @@ import { ConflictException } from '@nestjs/common';
 import { AiReviewConfigService } from './ai-review-config.service';
 import { AiReviewMode } from '../../dto/aiReviewTemplateConfig.dto';
 import { UpdateAiReviewConfigDto } from '../../dto/aiReviewConfig.dto';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import type { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import type { JwtUser } from '../../shared/modules/global/jwt.service';
 
 describe('AiReviewConfigService', () => {
   const configId = 'config-1';

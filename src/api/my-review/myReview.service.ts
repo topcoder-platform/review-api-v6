@@ -1,8 +1,8 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
+import { MemberPrismaService } from '../../shared/modules/global/member-prisma.service';
+import { JwtUser, isAdmin } from '../../shared/modules/global/jwt.service';
 import {
   ACTIVE_MY_REVIEW_SORT_FIELDS,
   MyReviewFilterDto,
@@ -10,9 +10,9 @@ import {
   MyReviewSummaryDto,
   MyReviewWinnerDto,
   PAST_MY_REVIEW_SORT_FIELDS,
-} from 'src/dto/my-review.dto';
-import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
+} from '../../dto/my-review.dto';
+import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { LoggerService } from '../../shared/modules/global/logger.service';
 
 interface ChallengeSummaryRow {
   challengeId: string;

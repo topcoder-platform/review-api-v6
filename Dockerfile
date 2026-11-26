@@ -26,11 +26,9 @@ RUN node node_modules/prisma/build/index.js generate \
 FROM alpine:${ALPINE_VERSION} AS runtime
 
 ARG NODE_VERSION
-# Alpine replaces old APK patch versions. Keep the configured Node major while
-# accepting maintained patch releases and verify the selected runtime below.
 RUN apk upgrade --no-cache \
-    && apk add --no-cache 'libcrypto3>=3.5.9-r1' 'libssl3>=3.5.9-r1' bash "nodejs-current~${NODE_VERSION%%.*}" "nodejs-current>=26.13.1-r0" "zlib>=1.4-r0" \
-    && test "$(node -p 'process.versions.node.split(".")[0]')" = "${NODE_VERSION%%.*}" \
+    && apk add --no-cache 'libcrypto3>=3.5.9-r1' 'libssl3>=3.5.9-r1' bash 'nodejs-current~26.13.1' "zlib>=1.4-r0" \
+    && test "$(node -p 'process.versions.node')" = "${NODE_VERSION}" \
     && addgroup -S app \
     && adduser -S -D -H -u 10001 -G app app
 
@@ -42,6 +40,7 @@ WORKDIR /app
 COPY --chown=app:app --from=build /app/dist ./dist
 COPY --chown=app:app --from=build /app/node_modules ./node_modules
 COPY --chown=app:app --from=build /app/prisma ./prisma
+COPY --chown=app:app --from=build /app/prisma.config.ts ./prisma.config.ts
 COPY --chown=app:app --from=build /app/package.json ./package.json
 COPY --chown=app:app --from=build /app/appStartUp.sh ./appStartUp.sh
 RUN chmod +x appStartUp.sh

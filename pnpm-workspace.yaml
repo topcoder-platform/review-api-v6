@@ -56,6 +56,7 @@ overrides:
 
 allowBuilds:
   "@nestjs/core": false
+  '@parcel/watcher': false
   "@prisma/client": true
   "@prisma/engines": true
   "@scarf/scarf": false
@@ -63,3 +64,9 @@ allowBuilds:
   dtrace-provider: false
   prisma: true
   unrs-resolver: true
+
+minimumReleaseAgeExclude:
+  - '@nestjs/common@12.6.3'
+  - '@nestjs/core@12.6.3'
+  - '@nestjs/platform-express@12.6.3'
+  - '@nestjs/testing@12.6.3'

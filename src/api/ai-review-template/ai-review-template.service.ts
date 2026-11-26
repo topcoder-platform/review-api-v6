@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
 import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
 import {
   CreateAiReviewTemplateConfigDto,

@@ -5,7 +5,7 @@ jest.mock('nanoid', () => ({
 
 import { UnauthorizedException } from '@nestjs/common';
 import { MyReviewService } from './myReview.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
 
 describe('MyReviewService', () => {
   let service: MyReviewService;

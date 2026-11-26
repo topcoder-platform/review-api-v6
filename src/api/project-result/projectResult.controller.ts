@@ -13,16 +13,16 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { Scope } from 'src/shared/enums/scopes.enum';
-import { ProjectResultResponseDto } from 'src/dto/projectResult.dto';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { Scope } from '../../shared/enums/scopes.enum';
+import { ProjectResultResponseDto } from '../../dto/projectResult.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { ProjectResultService } from './projectResult.service';
 import { Request } from 'express';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 
 @ApiTags('ProjectResult')
 @ApiBearerAuth()

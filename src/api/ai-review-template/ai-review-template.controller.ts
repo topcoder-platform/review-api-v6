@@ -25,10 +25,10 @@ import {
   ListAiReviewTemplateQueryDto,
   AiReviewTemplateConfigResponseDto,
 } from '../../dto/aiReviewTemplateConfig.dto';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Scope } from 'src/shared/enums/scopes.enum';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Scope } from '../../shared/enums/scopes.enum';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
 
 @ApiTags('AI Review Templates')
 @ApiBearerAuth()

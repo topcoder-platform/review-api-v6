@@ -1,3 +1,4 @@
+import { createPostgresAdapter } from '../src/prisma-adapter';
 import {
   PrismaClient,
   ChallengeStatusEnum,
@@ -7,11 +8,7 @@ import {
 } from '@prisma/client-challenge';
 
 const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.CHALLENGE_DB_URL,
-    },
-  },
+  adapter: createPostgresAdapter(process.env.CHALLENGE_DB_URL),
 });
 
 const SCRIPT_ACTOR = 'scripts/update-topgear-reviewers';

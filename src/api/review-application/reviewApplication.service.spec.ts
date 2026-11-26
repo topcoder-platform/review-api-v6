@@ -12,9 +12,9 @@ import { Prisma, ReviewOpportunityType } from '@prisma/client';
 import {
   ReviewApplicationRole,
   ReviewApplicationStatus,
-} from 'src/dto/reviewApplication.dto';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+} from '../../dto/reviewApplication.dto';
+import { CommonConfig } from '../../shared/config/common.config';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
 import { ReviewApplicationService } from './reviewApplication.service';
 
 describe('ReviewApplicationService', () => {

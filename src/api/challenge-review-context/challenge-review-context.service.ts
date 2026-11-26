@@ -8,15 +8,15 @@ import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
   ChallengeApiService,
   ChallengeData,
-} from 'src/shared/modules/global/challenge.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+} from '../../shared/modules/global/challenge.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
 import {
   CreateChallengeReviewContextDto,
   UpdateChallengeReviewContextDto,
   ChallengeReviewContextResponseDto,
   ChallengeReviewContextStatus,
 } from '../../dto/challengeReviewContext.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 import { ChallengeReviewContextStatus as PrismaStatus } from '@prisma/client';
 
 const REGISTRATION_PHASE_NAMES = ['Registration'];

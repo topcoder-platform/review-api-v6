@@ -6,16 +6,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
-import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
 import {
   JwtUser,
   isAdmin,
   isTalentManager,
-} from 'src/shared/modules/global/jwt.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+} from '../../shared/modules/global/jwt.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
 import {
   CreateAiReviewConfigDto,
   UpdateAiReviewConfigDto,

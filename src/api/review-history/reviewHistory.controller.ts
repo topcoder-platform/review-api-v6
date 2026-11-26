@@ -14,11 +14,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { ReviewApplicationService } from '../review-application/reviewApplication.service';
-import { OkResponse, ResponseDto } from 'src/dto/common.dto';
-import { ReviewApplicationResponseDto } from 'src/dto/reviewApplication.dto';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { isAdmin, JwtUser } from 'src/shared/modules/global/jwt.service';
+import { OkResponse, ResponseDto } from '../../dto/common.dto';
+import { ReviewApplicationResponseDto } from '../../dto/reviewApplication.dto';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { isAdmin, JwtUser } from '../../shared/modules/global/jwt.service';
 
 @ApiTags('Review History')
 @Controller('/review-history')

@@ -12,7 +12,7 @@ import {
   ReviewApplicationRole,
   ReviewApplicationRoleIds,
   getReviewApplicationRoles,
-} from 'src/dto/reviewApplication.dto';
+} from '../../dto/reviewApplication.dto';
 import {
   CreateReviewOpportunityDto,
   QueryReviewOpportunityDto,
@@ -22,30 +22,30 @@ import {
   ReviewOpportunityStatus,
   ReviewOpportunitySummaryDto,
   UpdateReviewOpportunityDto,
-} from 'src/dto/reviewOpportunity.dto';
-import { QueryReviewOpportunitySummaryDto } from 'src/dto/reviewOpportunity.dto';
-import { CommonConfig } from 'src/shared/config/common.config';
+} from '../../dto/reviewOpportunity.dto';
+import { QueryReviewOpportunitySummaryDto } from '../../dto/reviewOpportunity.dto';
+import { CommonConfig } from '../../shared/config/common.config';
 import {
   ChallengeApiService,
   ChallengeData,
-} from 'src/shared/modules/global/challenge.service';
-import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
-import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
+} from '../../shared/modules/global/challenge.service';
+import { ChallengeCatalogService } from '../../shared/modules/global/challenge-catalog.service';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
 import {
   Prisma,
   ReviewApplicationStatus,
   ReviewOpportunityStatus as PrismaReviewOpportunityStatus,
 } from '@prisma/client';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
 import {
   resolveReviewerMetrics,
   ReviewerMetrics,
-} from 'src/shared/modules/global/reviewer-metrics.util';
-import { hasReviewOpportunityWindowEnded } from 'src/shared/utils/review-opportunity-lifecycle.util';
+} from '../../shared/modules/global/reviewer-metrics.util';
+import { hasReviewOpportunityWindowEnded } from '../../shared/utils/review-opportunity-lifecycle.util';
 
 type SubmissionPhaseSummary = {
   scheduledEndDate: Date | null;
