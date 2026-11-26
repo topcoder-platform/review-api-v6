@@ -5,22 +5,19 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  provider = "prisma-client-js"
 }
 
 // Generated for read-only consumers such as opportunities-api-v6. Consumers
 // import this package directly instead of coupling to this service's runtime
 // Prisma client under node_modules.
 generator externalClient {
-  provider      = "prisma-client-js"
-  output        = "../packages/review-prisma-client/generated"
-  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+  provider = "prisma-client-js"
+  output   = "../packages/review-prisma-client/generated"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model scorecard {

@@ -2,9 +2,9 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { ResourceRole } from 'src/shared/models/ResourceRole.model';
-import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
+import { CommonConfig } from '../../config/common.config';
+import { ResourceRole } from '../../models/ResourceRole.model';
+import { ResourceInfo } from '../../models/ResourceInfo.model';
 import { JwtUser } from './jwt.service';
 import { M2MService } from './m2m.service';
 

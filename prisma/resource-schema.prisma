@@ -4,12 +4,10 @@ generator client {
   provider      = "prisma-client-js"
   // Generate a separate client so we can import it as @prisma/client-resource
   output        = "../node_modules/@prisma/client-resource"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("RESOURCE_DB_URL")
 }
 
 model Resource {

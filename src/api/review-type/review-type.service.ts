@@ -8,12 +8,12 @@ import {
   ReviewTypeRequestDto,
   ReviewTypeResponseDto,
   ReviewTypeUpdateRequestDto,
-} from 'src/dto/reviewType.dto';
-import { PaginationDto } from 'src/dto/pagination.dto';
-import { SortDto } from 'src/dto/sort.dto';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+} from '../../dto/reviewType.dto';
+import { PaginationDto } from '../../dto/pagination.dto';
+import { SortDto } from '../../dto/sort.dto';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 
 @Injectable()
 export class ReviewTypeService {

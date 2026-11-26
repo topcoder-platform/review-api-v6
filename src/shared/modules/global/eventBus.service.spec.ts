@@ -1,6 +1,6 @@
 import { createBusApiClient } from 'tc-core-library-js';
 jest.mock('tc-core-library-js', () => ({ createBusApiClient: jest.fn() }));
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../config/common.config';
 import { EventBusService } from './eventBus.service';
 
 describe('EventBusService', () => {

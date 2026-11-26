@@ -6,7 +6,7 @@ jest.mock('nanoid', () => ({
 import { ForbiddenException } from '@nestjs/common';
 
 import { ReviewSummationService } from './review-summation.service';
-import { UserRole } from 'src/shared/enums/userRole.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
 
 describe('ReviewSummationService', () => {
   describe('searchSummation', () => {

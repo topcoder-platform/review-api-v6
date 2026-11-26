@@ -19,15 +19,15 @@ import {
   ScorecardSectionBaseDto,
   ScorecardWithGroupResponseDto,
   SearchScorecardQuery,
-} from 'src/dto/scorecard.dto';
+} from '../../dto/scorecard.dto';
 import {
   JwtUser,
   resolveAuditActor,
-} from 'src/shared/modules/global/jwt.service';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
+} from '../../shared/modules/global/jwt.service';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
 import { omit } from 'lodash';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 
 type ChildEntity = scorecardGroup | scorecardSection | scorecardQuestion;
 

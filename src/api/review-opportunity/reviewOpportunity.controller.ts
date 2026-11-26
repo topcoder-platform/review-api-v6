@@ -18,7 +18,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { OkResponse, ResponseDto } from 'src/dto/common.dto';
+import { OkResponse, ResponseDto } from '../../dto/common.dto';
 import {
   CreateReviewOpportunityDto,
   QueryReviewOpportunityDto,
@@ -26,13 +26,13 @@ import {
   ReviewOpportunitySummaryDto,
   UpdateReviewOpportunityDto,
   QueryReviewOpportunitySummaryDto,
-} from 'src/dto/reviewOpportunity.dto';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+} from '../../dto/reviewOpportunity.dto';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 import { ReviewOpportunityService } from './reviewOpportunity.service';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { Scope } from 'src/shared/enums/scopes.enum';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { Scope } from '../../shared/enums/scopes.enum';
 import { Request, Response } from 'express';
 
 /**

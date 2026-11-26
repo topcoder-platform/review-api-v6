@@ -4,10 +4,10 @@ jest.mock('nanoid', () => ({
 }));
 
 import { AppealService } from './appeal.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { CommonConfig } from '../../shared/config/common.config';
+import { LoggerService } from '../../shared/modules/global/logger.service';
 
 const prismaMock = {
   appeal: {

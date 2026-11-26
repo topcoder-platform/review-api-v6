@@ -19,35 +19,35 @@ import {
   mapReviewItemRequestForUpdate,
   mapReviewItemRequestToDto,
   mapReviewRequestToDto,
-} from 'src/dto/review.dto';
+} from '../../dto/review.dto';
 import { Prisma, ScorecardType, SubmissionType } from '@prisma/client';
-import { PaginatedResponse, PaginationDto } from 'src/dto/pagination.dto';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ResourceApiService } from '../../shared/modules/global/resource.service';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
 import {
   ChallengeApiService,
   ChallengeData,
-} from 'src/shared/modules/global/challenge.service';
-import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { computeScoresFromItems as computeScorecardScoresFromItems } from 'src/shared/modules/global/scorecard-score.util';
+} from '../../shared/modules/global/challenge.service';
+import { MemberPrismaService } from '../../shared/modules/global/member-prisma.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { computeScoresFromItems as computeScorecardScoresFromItems } from '../../shared/modules/global/scorecard-score.util';
 import {
   JwtUser,
   isAdmin,
   resolveAuditActor,
-} from 'src/shared/modules/global/jwt.service';
-import { EventBusService } from 'src/shared/modules/global/eventBus.service';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
+} from '../../shared/modules/global/jwt.service';
+import { EventBusService } from '../../shared/modules/global/eventBus.service';
+import { CommonConfig } from '../../shared/config/common.config';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { ResourceInfo } from '../../shared/models/ResourceInfo.model';
 import {
   isSubmissionRankEligible,
   resolveReviewSubmissionRankLimit,
-} from 'src/shared/utils/submission-limit.util';
-import { SubmissionPreviewService } from 'src/shared/modules/global/submission-preview.service';
+} from '../../shared/utils/submission-limit.util';
+import { SubmissionPreviewService } from '../../shared/modules/global/submission-preview.service';
 
 const REVIEW_ITEM_COMMENTS_INCLUDE = {
   reviewItemComments: {

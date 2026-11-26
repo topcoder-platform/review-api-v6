@@ -4,8 +4,8 @@ jest.mock('../../shared/modules/global/prisma.service', () => ({
 
 import { ForbiddenException } from '@nestjs/common';
 import { ChallengeReviewContextService } from './challenge-review-context.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import type { JwtUser } from 'src/shared/modules/global/jwt.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import type { JwtUser } from '../../shared/modules/global/jwt.service';
 import {
   CreateChallengeReviewContextDto,
   UpdateChallengeReviewContextDto,

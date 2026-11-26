@@ -17,7 +17,7 @@ import {
 } from '@prisma/client';
 import archiver from 'archiver';
 import { PassThrough, Readable } from 'stream';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { ChallengeStatus } from '../../enums/challengeStatus.enum';
 import { SubmissionPreviewService } from './submission-preview.service';
 
 /**

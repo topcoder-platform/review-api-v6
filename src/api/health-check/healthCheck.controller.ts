@@ -1,10 +1,10 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
 import {
   KafkaConnectionState,
   KafkaConsumerService,
-} from 'src/shared/modules/kafka/kafka-consumer.service';
+} from '../../shared/modules/kafka/kafka-consumer.service';
 
 export enum HealthCheckStatus {
   healthy = 'healthy',

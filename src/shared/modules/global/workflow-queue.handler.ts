@@ -3,12 +3,12 @@ import { GiteaService, ActionDispatchWorkflowResponse } from './gitea.service';
 import { PrismaService } from './prisma.service';
 import { Prisma, aiWorkflow, aiWorkflowRun } from '@prisma/client';
 import { EventBusSendEmailPayload, EventBusService } from './eventBus.service';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../config/common.config';
 import { ChallengePrismaService } from './challenge-prisma.service';
 import { MemberPrismaService } from './member-prisma.service';
 import { AiReviewerDecisionMakerService } from './ai-reviewer-decision-maker.service';
 import { ChallengeApiService, PhaseData } from './challenge.service';
-import { SubmissionService } from 'src/api/submission/submission.service';
+import { SubmissionService } from '../../../api/submission/submission.service';
 
 // A helper to generate a 32-bit integer hash from a string
 function stringToHash(string: string): number {

@@ -9,14 +9,14 @@ import {
 import {
   GiteaTeamResponseDto,
   GiteaTeamSearchQueryDto,
-} from 'src/dto/giteaTeam.dto';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { User } from 'src/shared/decorators/user.decorator';
-import { Scope } from 'src/shared/enums/scopes.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { GiteaTeamSearchService } from 'src/shared/modules/global/gitea-team-search.service';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+} from '../../dto/giteaTeam.dto';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { User } from '../../shared/decorators/user.decorator';
+import { Scope } from '../../shared/enums/scopes.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { GiteaTeamSearchService } from '../../shared/modules/global/gitea-team-search.service';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 
 @ApiTags('Gitea Teams')
 @ApiBearerAuth()

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../config/common.config';
 import { GiteaService, GiteaTeamMatch } from './gitea.service';
 import { JwtUser } from './jwt.service';
 import { MemberService } from './member.service';

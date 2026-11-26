@@ -1,5 +1,5 @@
 import { OnModuleInit } from '@nestjs/common';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../../config/common.config';
 import {
   GiteaMembershipMember,
   GiteaTeamMembershipService,

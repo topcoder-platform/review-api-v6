@@ -7,15 +7,15 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Request } from 'express';
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { Scope } from 'src/shared/enums/scopes.enum';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { Scope } from '../../shared/enums/scopes.enum';
 import {
   ContactRequestDto,
   ContactRequestResponseDto,
-} from 'src/dto/contactRequest.dto';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
+} from '../../dto/contactRequest.dto';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { ContactRequestsService } from './contactRequests.service';
 

@@ -1,4 +1,4 @@
-import type { ChallengeData } from 'src/shared/modules/global/challenge.service';
+import type { ChallengeData } from '../modules/global/challenge.service';
 
 type SubmissionLimitChallenge = Pick<ChallengeData, 'track' | 'legacy'> & {
   metadata?: Record<string, unknown> | undefined;

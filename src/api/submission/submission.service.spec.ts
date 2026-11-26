@@ -12,9 +12,9 @@ import {
 import { createHash } from 'crypto';
 import { Readable } from 'stream';
 import { SubmissionService } from './submission.service';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { CommonConfig } from '../../shared/config/common.config';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 

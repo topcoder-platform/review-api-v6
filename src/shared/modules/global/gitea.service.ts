@@ -6,9 +6,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { AxiosResponse } from 'axios';
-import { Api, Repository, User } from 'src/shared/clients/gitea/gitea.client';
+import { Api, Repository, User } from '../../clients/gitea/gitea.client';
 import { aiWorkflow, aiWorkflowRun } from '@prisma/client';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../config/common.config';
 
 /** Page size used when reading the organizations a Gitea user belongs to. */
 const GITEA_ORGANIZATIONS_PAGE_SIZE = 50;

@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { M2MService } from './m2m.service';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../config/common.config';
 import { HttpService } from '@nestjs/axios';
 
 /**

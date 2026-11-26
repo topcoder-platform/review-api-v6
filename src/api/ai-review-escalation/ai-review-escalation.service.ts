@@ -5,20 +5,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
 import {
   ChallengeApiService,
   ChallengeData,
-} from 'src/shared/modules/global/challenge.service';
-import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+} from '../../shared/modules/global/challenge.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
+import { JwtUser, isAdmin } from '../../shared/modules/global/jwt.service';
 import {
   EventBusSendEmailPayload,
   EventBusService,
-} from 'src/shared/modules/global/eventBus.service';
-import { MemberService } from 'src/shared/modules/global/member.service';
-import { CommonConfig } from 'src/shared/config/common.config';
+} from '../../shared/modules/global/eventBus.service';
+import { MemberService } from '../../shared/modules/global/member.service';
+import { CommonConfig } from '../../shared/config/common.config';
 import {
   CreateAiReviewEscalationDto,
   UpdateAiReviewEscalationDto,

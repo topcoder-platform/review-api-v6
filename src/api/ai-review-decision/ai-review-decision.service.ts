@@ -5,9 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/modules/global/prisma.service';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
-import { JwtUser, isAdmin } from 'src/shared/modules/global/jwt.service';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
+import { JwtUser, isAdmin } from '../../shared/modules/global/jwt.service';
 import {
   ListAiReviewDecisionQueryDto,
   AiReviewDecisionResponseDto,
@@ -18,8 +18,8 @@ import {
   AiReviewDecisionEscalationStatus,
 } from '../../dto/aiReviewEscalation.dto';
 import { Prisma } from '@prisma/client';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
 
 const DECISION_INCLUDE = {
   config: {

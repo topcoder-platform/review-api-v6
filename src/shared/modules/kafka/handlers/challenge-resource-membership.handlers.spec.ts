@@ -1,4 +1,4 @@
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../../config/common.config';
 import { ChallengeResourceCreateHandler } from './challenge-resource-create.handler';
 import { ChallengeResourceDeleteHandler } from './challenge-resource-delete.handler';
 

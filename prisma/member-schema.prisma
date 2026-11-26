@@ -1,12 +1,10 @@
 generator client {
   provider      = "prisma-client-js"
   output        = "../node_modules/@prisma/client-member"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("MEMBER_DB_URL")
 }
 
 enum MemberStatus {

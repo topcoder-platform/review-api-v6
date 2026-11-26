@@ -20,25 +20,25 @@ import {
   ReviewApplicationStatus,
   getReviewApplicationRoles,
   resolveReviewApplicationRole,
-} from 'src/dto/reviewApplication.dto';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { ChallengeApiService } from 'src/shared/modules/global/challenge.service';
-import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
+} from '../../dto/reviewApplication.dto';
+import { CommonConfig } from '../../shared/config/common.config';
+import { ChallengeApiService } from '../../shared/modules/global/challenge.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
 import {
   EventBusSendEmailPayload,
   EventBusService,
-} from 'src/shared/modules/global/eventBus.service';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
-import { MemberService } from 'src/shared/modules/global/member.service';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+} from '../../shared/modules/global/eventBus.service';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
+import { MemberService } from '../../shared/modules/global/member.service';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
 import {
   RECENT_REVIEW_WINDOW_DAYS,
   resolveReviewerMetrics,
-} from 'src/shared/modules/global/reviewer-metrics.util';
-import { isReviewOpportunityWindowOpen } from 'src/shared/utils/review-opportunity-lifecycle.util';
+} from '../../shared/modules/global/reviewer-metrics.util';
+import { isReviewOpportunityWindowOpen } from '../../shared/utils/review-opportunity-lifecycle.util';
 
 const RESOURCE_CREATED_TOPIC = 'challenge.action.resource.create';
 

@@ -33,10 +33,10 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Request } from 'express';
 
-import { Roles } from 'src/shared/guards/tokenRoles.guard';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { Scopes } from 'src/shared/decorators/scopes.decorator';
-import { Scope } from 'src/shared/enums/scopes.enum';
+import { Roles } from '../../shared/guards/tokenRoles.guard';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { Scopes } from '../../shared/decorators/scopes.decorator';
+import { Scope } from '../../shared/enums/scopes.enum';
 import {
   SubmissionQueryDto,
   SubmissionResponseDto,
@@ -51,19 +51,19 @@ import {
   SubmissionDuplicateGroupDto,
   SubmissionDuplicatesQueryDto,
   SubmissionDuplicatesResponse,
-} from 'src/dto/submission.dto';
+} from '../../dto/submission.dto';
 import {
   // ArtifactsCreateRequestDto,
   ArtifactsCreateResponseDto,
   ArtifactsListResponseDto,
-} from 'src/dto/artifacts.dto';
+} from '../../dto/artifacts.dto';
 import { LoggerService } from '../../shared/modules/global/logger.service';
 import { PaginatedResponse, PaginationDto } from '../../dto/pagination.dto';
 import { SortDto } from '../../dto/sort.dto';
 import { SubmissionService } from './submission.service';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
-import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
-import { SubmissionPreviewService } from 'src/shared/modules/global/submission-preview.service';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
+import { SubmissionAccessAuditResponseDto } from '../../dto/submission-access-audit.dto';
+import { SubmissionPreviewService } from '../../shared/modules/global/submission-preview.service';
 
 @ApiTags('Submissions')
 @ApiBearerAuth()

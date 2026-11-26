@@ -17,27 +17,27 @@ import {
   UpdateRunItemCommentDto,
   QueueAiWorkflowRunsDto,
 } from '../../dto/aiWorkflow.dto';
-import { ScorecardStatus } from 'src/dto/scorecard.dto';
+import { ScorecardStatus } from '../../dto/scorecard.dto';
 import {
   JwtUser,
   resolveAuditActor,
-} from 'src/shared/modules/global/jwt.service';
+} from '../../shared/modules/global/jwt.service';
 import {
   ChallengeApiService,
   ChallengeData,
-} from 'src/shared/modules/global/challenge.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
-import { AiReviewerDecisionMakerService } from 'src/shared/modules/global/ai-reviewer-decision-maker.service';
-import { computeScorecardTotal } from 'src/shared/modules/global/scorecard-score.util';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { LoggerService } from 'src/shared/modules/global/logger.service';
-import { GiteaService } from 'src/shared/modules/global/gitea.service';
-import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
+} from '../../shared/modules/global/challenge.service';
+import { ResourceApiService } from '../../shared/modules/global/resource.service';
+import { AiReviewerDecisionMakerService } from '../../shared/modules/global/ai-reviewer-decision-maker.service';
+import { computeScorecardTotal } from '../../shared/modules/global/scorecard-score.util';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { LoggerService } from '../../shared/modules/global/logger.service';
+import { GiteaService } from '../../shared/modules/global/gitea.service';
+import { MemberPrismaService } from '../../shared/modules/global/member-prisma.service';
 import { Prisma, ReviewMethod, VoteType } from '@prisma/client';
-import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { WorkflowQueueHandler } from 'src/shared/modules/global/workflow-queue.handler';
-import { AiWorkflowQueueService } from 'src/shared/modules/global/ai-workflow-queue.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
+import { WorkflowQueueHandler } from '../../shared/modules/global/workflow-queue.handler';
+import { AiWorkflowQueueService } from '../../shared/modules/global/ai-workflow-queue.service';
 
 @Injectable()
 export class AiWorkflowService {

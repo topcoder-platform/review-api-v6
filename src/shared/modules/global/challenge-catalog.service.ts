@@ -2,7 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { CommonConfig } from '../../config/common.config';
 import { M2MService } from './m2m.service';
 import { SubmissionType } from '@prisma/client';
 import { ChallengeData } from './challenge.service';

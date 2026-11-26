@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { SubmissionService } from 'src/api/submission/submission.service';
+import { SubmissionService } from '../../../api/submission/submission.service';
 
 /**
  * Scheduled provider that retries AV scan requests for stale unscanned submissions.

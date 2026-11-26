@@ -25,6 +25,8 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
-    "@prisma/client": "6.19.3"
+    "@prisma/client": "7.10.1",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client-runtime-utils": "7.10.1"
   }
 }

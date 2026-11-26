@@ -12,9 +12,9 @@ import {
   ScorecardType,
   ReviewStatus,
 } from '@prisma/client';
-import { PaginationDto } from 'src/dto/pagination.dto';
-import { ReviewResponseDto } from 'src/dto/review.dto';
-import { SortDto } from 'src/dto/sort.dto';
+import { PaginationDto } from '../../dto/pagination.dto';
+import { ReviewResponseDto } from '../../dto/review.dto';
+import { SortDto } from '../../dto/sort.dto';
 import {
   MAX_DUPLICATE_CHECK_SUBMISSION_IDS,
   SubmissionQueryDto,
@@ -25,32 +25,32 @@ import {
   SubmissionRequestDto,
   SubmissionResponseDto,
   SubmissionUpdateRequestDto,
-} from 'src/dto/submission.dto';
+} from '../../dto/submission.dto';
 import {
   JwtUser,
   isAdmin,
   resolveAuditActor,
-} from 'src/shared/modules/global/jwt.service';
-import { UserRole } from 'src/shared/enums/userRole.enum';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { CommonConfig } from 'src/shared/config/common.config';
-import { PrismaService } from 'src/shared/modules/global/prisma.service';
-import { ChallengePrismaService } from 'src/shared/modules/global/challenge-prisma.service';
-import { MemberPrismaService } from 'src/shared/modules/global/member-prisma.service';
-import { Utils } from 'src/shared/modules/global/utils.service';
-import { PrismaErrorService } from 'src/shared/modules/global/prisma-error.service';
+} from '../../shared/modules/global/jwt.service';
+import { UserRole } from '../../shared/enums/userRole.enum';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { CommonConfig } from '../../shared/config/common.config';
+import { PrismaService } from '../../shared/modules/global/prisma.service';
+import { ChallengePrismaService } from '../../shared/modules/global/challenge-prisma.service';
+import { MemberPrismaService } from '../../shared/modules/global/member-prisma.service';
+import { Utils } from '../../shared/modules/global/utils.service';
+import { PrismaErrorService } from '../../shared/modules/global/prisma-error.service';
 import {
   ChallengeApiService,
   ChallengeData,
-} from 'src/shared/modules/global/challenge.service';
-import { buildSafeReviewSummationMetadata } from 'src/shared/utils/review-summation-metadata.util';
-import { ChallengeCatalogService } from 'src/shared/modules/global/challenge-catalog.service';
-import { ResourceApiService } from 'src/shared/modules/global/resource.service';
-import { ResourcePrismaService } from 'src/shared/modules/global/resource-prisma.service';
-import { ArtifactsCreateResponseDto } from 'src/dto/artifacts.dto';
+} from '../../shared/modules/global/challenge.service';
+import { buildSafeReviewSummationMetadata } from '../../shared/utils/review-summation-metadata.util';
+import { ChallengeCatalogService } from '../../shared/modules/global/challenge-catalog.service';
+import { ResourceApiService } from '../../shared/modules/global/resource.service';
+import { ResourcePrismaService } from '../../shared/modules/global/resource-prisma.service';
+import { ArtifactsCreateResponseDto } from '../../dto/artifacts.dto';
 import { createHash, randomUUID } from 'crypto';
 import { basename } from 'path';
-import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
+import { ResourceInfo } from '../../shared/models/ResourceInfo.model';
 import {
   S3Client,
   ListObjectsV2Command,
@@ -61,8 +61,8 @@ import {
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable, PassThrough } from 'stream';
-import { EventBusService } from 'src/shared/modules/global/eventBus.service';
-import { SubmissionAccessAuditResponseDto } from 'src/dto/submission-access-audit.dto';
+import { EventBusService } from '../../shared/modules/global/eventBus.service';
+import { SubmissionAccessAuditResponseDto } from '../../dto/submission-access-audit.dto';
 import { Prisma } from '@prisma/client';
 import type { Express } from 'express';
 import {
@@ -70,7 +70,7 @@ import {
   isSubmissionRankEligible,
   parseSubmissionLimitCount,
   resolveReviewSubmissionRankLimit,
-} from 'src/shared/utils/submission-limit.util';
+} from '../../shared/utils/submission-limit.util';
 
 type SubmissionMinimal = {
   id: string;

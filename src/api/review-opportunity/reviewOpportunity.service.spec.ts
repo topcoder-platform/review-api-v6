@@ -9,9 +9,9 @@ import {
   ReviewOpportunityCanApplyReason,
   ReviewOpportunityStatus,
   ReviewOpportunityType,
-} from 'src/dto/reviewOpportunity.dto';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
-import { UserRole } from 'src/shared/enums/userRole.enum';
+} from '../../dto/reviewOpportunity.dto';
+import { ChallengeStatus } from '../../shared/enums/challengeStatus.enum';
+import { UserRole } from '../../shared/enums/userRole.enum';
 import { ReviewOpportunityService } from './reviewOpportunity.service';
 
 describe('ReviewOpportunityService search', () => {

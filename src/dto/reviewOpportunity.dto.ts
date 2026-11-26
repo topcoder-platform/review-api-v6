@@ -25,7 +25,7 @@ import type {
   ReviewApplicationStatus,
 } from './reviewApplication.dto';
 import { Expose, Transform } from 'class-transformer';
-import { ChallengeStatus } from 'src/shared/enums/challengeStatus.enum';
+import { ChallengeStatus } from '../shared/enums/challengeStatus.enum';
 
 /**
  * Normalizes one scalar or repeated query parameter into trimmed strings.

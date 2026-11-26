@@ -3,8 +3,8 @@ import { HttpService } from '@nestjs/axios';
 import { M2MService } from './m2m.service';
 import { of } from 'rxjs';
 import { AxiosResponse } from 'axios';
-import { ResourceInfo } from 'src/shared/models/ResourceInfo.model';
-import { CommonConfig } from 'src/shared/config/common.config';
+import { ResourceInfo } from '../../models/ResourceInfo.model';
+import { CommonConfig } from '../../config/common.config';
 
 describe('ResourceApiService', () => {
   let httpService: { get: jest.Mock };

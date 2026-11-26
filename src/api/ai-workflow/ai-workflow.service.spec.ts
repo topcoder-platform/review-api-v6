@@ -1,8 +1,8 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { JwtUser } from 'src/shared/modules/global/jwt.service';
-import { UserRole } from 'src/shared/enums/userRole.enum';
+import { JwtUser } from '../../shared/modules/global/jwt.service';
+import { UserRole } from '../../shared/enums/userRole.enum';
 import { ReviewMethod } from '@prisma/client';
-import type { UpdateAiWorkflowRunItemDto } from 'src/dto/aiWorkflow.dto';
+import type { UpdateAiWorkflowRunItemDto } from '../../dto/aiWorkflow.dto';
 
 describe('AiWorkflowService.updateRunItem', () => {
   jest.mock('src/shared/modules/global/prisma.service', () => ({

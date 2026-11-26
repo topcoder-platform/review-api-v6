@@ -5,7 +5,7 @@ jest.mock('src/shared/request/requestStore', () => {
 });
 
 import { __test__ } from './prisma.service';
-import { getStore } from 'src/shared/request/requestStore';
+import { getStore } from '../../request/requestStore';
 
 describe('Prisma audit helpers', () => {
   const { addUserAuditField, auditField } = __test__;

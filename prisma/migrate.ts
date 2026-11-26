@@ -1,3 +1,4 @@
+import { createPostgresAdapter } from '../src/prisma-adapter';
 import { PrismaClient, Prisma } from '@prisma/client';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -28,7 +29,9 @@ interface ProjectTypeMap {
 const schema = process.env.POSTGRES_SCHEMA || 'public';
 console.log(`Using PostgreSQL schema: ${schema}`);
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  adapter: createPostgresAdapter(process.env.DATABASE_URL),
+});
 const DEFAULT_DATA_DIR = '/mnt/export/review_tables';
 const DATA_DIR = process.env.DATA_DIR || DEFAULT_DATA_DIR;
 const batchSize = 1000;

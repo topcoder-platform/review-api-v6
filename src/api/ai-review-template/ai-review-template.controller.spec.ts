@@ -8,8 +8,11 @@ import 'reflect-metadata';
 import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
-import { ROLES_KEY, TokenRolesGuard } from 'src/shared/guards/tokenRoles.guard';
-import { UserRole } from 'src/shared/enums/userRole.enum';
+import {
+  ROLES_KEY,
+  TokenRolesGuard,
+} from '../../shared/guards/tokenRoles.guard';
+import { UserRole } from '../../shared/enums/userRole.enum';
 import { AiReviewTemplateController } from './ai-review-template.controller';
 
 describe('AiReviewTemplateController', () => {
