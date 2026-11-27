@@ -565,6 +565,43 @@ export class ChallengeApiService {
   }
 
   /**
+   * Loads the full Challenge API v6 representation of a challenge (prizes,
+   * skills, reviewers, discussions, dates) with a service M2M token. Callers
+   * must enforce challenge visibility before using this reader.
+   *
+   * @param challengeId challenge id to load
+   * @returns raw Challenge API payload, or null when the API is unavailable
+   * @throws Does not throw; dependency failures are logged and return null.
+   */
+  async getChallengeApiPayload(
+    challengeId: string,
+  ): Promise<Record<string, unknown> | null> {
+    if (!this.httpService || !this.m2mService) {
+      this.logger.warn('Challenge API dependencies are unavailable.');
+      return null;
+    }
+
+    try {
+      const token = await this.m2mService.getM2MToken();
+      const baseUrl = CommonConfig.apis.challengeApiUrl.replace(/\/+$/, '');
+      const response = await firstValueFrom(
+        this.httpService.get(`${baseUrl}/${encodeURIComponent(challengeId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+      const payload: unknown = response.data;
+      return payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : null;
+    } catch (error) {
+      this.logger.warn(
+        `Challenge API lookup failed for ${challengeId}: ${this.errorMessage(error)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Get challenge details for ids visible to the caller.
    *
    * @param authUser the authenticated request user, if any
