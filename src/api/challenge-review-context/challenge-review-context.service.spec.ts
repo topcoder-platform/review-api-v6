@@ -15,6 +15,7 @@ import {
 describe('ChallengeReviewContextService', () => {
   const challengeApiMock = {
     getChallengeDetailForUser: jest.fn(),
+    getChallengeApiPayload: jest.fn(),
   };
 
   const prismaMock = {
@@ -22,6 +23,9 @@ describe('ChallengeReviewContextService', () => {
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+    },
+    scorecard: {
+      findUnique: jest.fn(),
     },
   };
 
@@ -190,6 +194,193 @@ describe('ChallengeReviewContextService', () => {
         status: dto.status,
         updatedBy: authUser.userId?.toString(),
       },
+    });
+  });
+
+  describe('getByChallengeId backfill', () => {
+    const storedRow = (context: Record<string, unknown>) => ({
+      id: 'context-5',
+      challengeId: 'challenge-5',
+      context,
+      status: ChallengeReviewContextStatus.HUMAN_APPROVED,
+      createdAt: new Date(),
+      createdBy: 'user-1',
+      updatedAt: new Date(),
+      updatedBy: 'user-1',
+    });
+
+    const requirements = [
+      {
+        id: 'REQ_01',
+        title: 'Manual requirement',
+        priority: 'high',
+        description: 'Entered by a copilot',
+        constraints: [],
+      },
+    ];
+
+    const challengePayload = {
+      id: 'challenge-5',
+      name: 'Build the widget',
+      description: '## Spec',
+      descriptionFormat: 'markdown',
+      status: 'Active',
+      track: { name: 'Development' },
+      type: { name: 'Challenge' },
+      overview: { totalPrizes: 1500 },
+      numOfRegistrants: 7,
+      numOfSubmissions: 2,
+      task: { isTask: false },
+      registrationStartDate: '2026-11-01T00:00:00.000Z',
+      registrationEndDate: '2026-11-05T00:00:00.000Z',
+      startDate: '2026-11-01T00:00:00.000Z',
+      endDate: '2026-11-11T00:00:00.000Z',
+      prizeSets: [
+        { type: 'COPILOT', prizes: [{ type: 'USD', value: 200 }] },
+        {
+          type: 'PLACEMENT',
+          prizes: [
+            { type: 'USD', value: 1000 },
+            { type: 'USD', value: 500 },
+          ],
+        },
+      ],
+      skills: [{ id: 'skill-1', name: 'TypeScript', category: { id: 'c' } }],
+      reviewers: [
+        { scorecardId: 'sc-ai', isMemberReview: false, aiWorkflowId: 'wf-1' },
+        { scorecardId: 'sc-human', isMemberReview: true, type: 'REGULAR' },
+      ],
+      discussions: [{ url: 'https://discussions.example/1' }],
+      legacy: { reviewType: 'COMMUNITY' },
+    };
+
+    beforeEach(() => {
+      challengeApiMock.getChallengeDetailForUser.mockResolvedValue({
+        id: 'challenge-5',
+        status: ChallengeStatus.ACTIVE,
+        phases: [],
+      });
+    });
+
+    it('fills missing unified-context fields for a requirements-only context', async () => {
+      prismaMock.challengeReviewContext.findUnique.mockResolvedValue(
+        storedRow({ requirements }),
+      );
+      challengeApiMock.getChallengeApiPayload.mockResolvedValue(
+        challengePayload,
+      );
+      const scorecard = { id: 'sc-human', name: 'Dev', scorecardGroups: [] };
+      prismaMock.scorecard.findUnique.mockResolvedValue(scorecard);
+
+      const result = await service.getByChallengeId('challenge-5', authUser);
+
+      expect(challengeApiMock.getChallengeApiPayload).toHaveBeenCalledWith(
+        'challenge-5',
+      );
+      expect(prismaMock.scorecard.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'sc-human' } }),
+      );
+      expect(result.context).toEqual({
+        requirements,
+        challengeId: 'challenge-5',
+        title: 'Build the widget',
+        descriptionRaw: '## Spec',
+        descriptionFormat: 'markdown',
+        requirement_groups: [],
+        tech_stack: [],
+        skills: [{ id: 'skill-1', name: 'TypeScript' }],
+        challenge_metadata: {
+          status: 'Active',
+          track: 'Development',
+          type: 'Challenge',
+          totalPrizes: 1500,
+          numOfRegistrants: 7,
+          numOfSubmissions: 2,
+          isTask: false,
+        },
+        timeline: {
+          registrationStartDate: '2026-11-01T00:00:00.000Z',
+          registrationEndDate: '2026-11-05T00:00:00.000Z',
+          startDate: '2026-11-01T00:00:00.000Z',
+          endDate: '2026-11-11T00:00:00.000Z',
+          totalDurationDays: 10,
+        },
+        prizes: [
+          { placement: 1, value: 1000, currency: 'USD' },
+          { placement: 2, value: 500, currency: 'USD' },
+        ],
+        review_criteria: {
+          reviewType: 'COMMUNITY',
+          reviewers: [
+            {
+              scorecardId: 'sc-ai',
+              isMemberReview: false,
+              type: undefined,
+              aiWorkflowId: 'wf-1',
+            },
+            {
+              scorecardId: 'sc-human',
+              isMemberReview: true,
+              type: 'REGULAR',
+              aiWorkflowId: undefined,
+            },
+          ],
+          scorecard,
+        },
+        discussion_url: 'https://discussions.example/1',
+      });
+    });
+
+    it('keeps stored fields over derived values', async () => {
+      prismaMock.challengeReviewContext.findUnique.mockResolvedValue(
+        storedRow({ requirements, title: 'Edited title' }),
+      );
+      challengeApiMock.getChallengeApiPayload.mockResolvedValue(
+        challengePayload,
+      );
+      prismaMock.scorecard.findUnique.mockResolvedValue(null);
+
+      const result = await service.getByChallengeId('challenge-5', authUser);
+
+      expect(result.context.title).toBe('Edited title');
+      expect(result.context.requirements).toBe(requirements);
+    });
+
+    it('does not call the challenge API when the context is complete', async () => {
+      const complete = {
+        challengeId: 'challenge-5',
+        title: 't',
+        descriptionRaw: 'd',
+        descriptionFormat: 'markdown',
+        requirements,
+        requirement_groups: [],
+        tech_stack: ['Node.js'],
+        skills: [],
+        challenge_metadata: {},
+        timeline: {},
+        prizes: [],
+        review_criteria: {},
+      };
+      prismaMock.challengeReviewContext.findUnique.mockResolvedValue(
+        storedRow(complete),
+      );
+
+      const result = await service.getByChallengeId('challenge-5', authUser);
+
+      expect(result.context).toEqual(complete);
+      expect(challengeApiMock.getChallengeApiPayload).not.toHaveBeenCalled();
+    });
+
+    it('returns the stored context unchanged when challenge data is unavailable', async () => {
+      prismaMock.challengeReviewContext.findUnique.mockResolvedValue(
+        storedRow({ requirements }),
+      );
+      challengeApiMock.getChallengeApiPayload.mockResolvedValue(null);
+
+      const result = await service.getByChallengeId('challenge-5', authUser);
+
+      expect(result.context).toEqual({ requirements });
+      expect(prismaMock.scorecard.findUnique).not.toHaveBeenCalled();
     });
   });
 });

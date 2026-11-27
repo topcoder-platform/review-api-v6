@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -18,6 +19,13 @@ import {
 } from '../../dto/challengeReviewContext.dto';
 import { JwtUser } from '../../shared/modules/global/jwt.service';
 import { ChallengeReviewContextStatus as PrismaStatus } from '@prisma/client';
+import {
+  backfillReviewContext,
+  buildDeterministicReviewContext,
+  findMemberReviewScorecardId,
+  isReviewContextIncomplete,
+  ReviewContextScorecard,
+} from './challenge-review-context.builder';
 
 const REGISTRATION_PHASE_NAMES = ['Registration'];
 
@@ -49,6 +57,8 @@ function toPrismaStatus(status: ChallengeReviewContextStatus): PrismaStatus {
 
 @Injectable()
 export class ChallengeReviewContextService {
+  private readonly logger = new Logger(ChallengeReviewContextService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengeApiService: ChallengeApiService,
@@ -156,7 +166,122 @@ export class ChallengeReviewContextService {
       );
     }
 
-    return mapToResponse(record);
+    const response = mapToResponse(record);
+    response.context = await this.backfillMissingContextFields(
+      challengeId,
+      response.context,
+    );
+    return response;
+  }
+
+  /**
+   * Fills unified-context fields missing from a stored context (for example
+   * contexts created manually in Work Manager, which only carry
+   * `requirements`) with values derived from current challenge data. Stored
+   * keys always win. When challenge data cannot be loaded, the stored
+   * context is returned unchanged.
+   *
+   * @param challengeId - Challenge the context belongs to.
+   * @param stored - Context persisted for the challenge.
+   * @returns Context with missing top-level fields backfilled.
+   */
+  private async backfillMissingContextFields(
+    challengeId: string,
+    stored: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!isReviewContextIncomplete(stored)) {
+      return stored;
+    }
+
+    const challenge =
+      await this.challengeApiService.getChallengeApiPayload(challengeId);
+    if (!challenge) {
+      this.logger.warn(
+        `Returning incomplete review context for challenge ${challengeId}: challenge data unavailable.`,
+      );
+      return stored;
+    }
+
+    const scorecard = await this.loadScorecard(
+      findMemberReviewScorecardId(challenge),
+    );
+    return backfillReviewContext(
+      stored,
+      buildDeterministicReviewContext(challenge, scorecard),
+    );
+  }
+
+  /**
+   * Loads a scorecard with ordered groups, sections and questions in the
+   * shape embedded in `review_criteria.scorecard` by the AI workflow.
+   *
+   * @param scorecardId - Member-review scorecard id, if any.
+   * @returns Scorecard tree, or null when absent or not loadable.
+   */
+  private async loadScorecard(
+    scorecardId: string | undefined,
+  ): Promise<ReviewContextScorecard | null> {
+    if (!scorecardId) {
+      return null;
+    }
+
+    try {
+      const scorecard = await this.prisma.scorecard.findUnique({
+        where: { id: scorecardId },
+        select: {
+          id: true,
+          name: true,
+          version: true,
+          status: true,
+          type: true,
+          challengeTrack: true,
+          challengeType: true,
+          minScore: true,
+          minimumPassingScore: true,
+          maxScore: true,
+          scorecardGroups: {
+            orderBy: { sortOrder: 'asc' },
+            select: {
+              id: true,
+              name: true,
+              weight: true,
+              sortOrder: true,
+              sections: {
+                orderBy: { sortOrder: 'asc' },
+                select: {
+                  id: true,
+                  name: true,
+                  weight: true,
+                  sortOrder: true,
+                  questions: {
+                    orderBy: { sortOrder: 'asc' },
+                    select: {
+                      id: true,
+                      type: true,
+                      description: true,
+                      guidelines: true,
+                      weight: true,
+                      requiresUpload: true,
+                      scaleMin: true,
+                      scaleMax: true,
+                      sortOrder: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      return scorecard;
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load scorecard ${scorecardId} for review context: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
   }
 
   async update(
